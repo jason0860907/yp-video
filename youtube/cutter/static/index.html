@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Cutter</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: system-ui, sans-serif; background: #1a1a1a; color: #fff; padding: 20px; }
+        h1 { margin-bottom: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .panel { background: #2a2a2a; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+        select, button, input { padding: 8px 16px; border-radius: 4px; border: none; font-size: 14px; }
+        select { background: #3a3a3a; color: #fff; min-width: 200px; }
+        button { background: #4a9eff; color: #fff; cursor: pointer; }
+        button:hover { background: #3a8eef; }
+        button:disabled { background: #555; cursor: not-allowed; }
+        input { background: #3a3a3a; color: #fff; width: 120px; }
+        video { width: 100%; max-height: 500px; background: #000; border-radius: 8px; }
+        .controls { display: flex; gap: 10px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+        .time-display { font-family: monospace; font-size: 16px; background: #3a3a3a; padding: 8px 12px; border-radius: 4px; }
+        .segments { margin-top: 16px; }
+        .segment { display: flex; align-items: center; gap: 10px; padding: 10px; background: #3a3a3a; border-radius: 4px; margin-bottom: 8px; }
+        .segment input { width: 150px; }
+        .segment .times { font-family: monospace; color: #888; }
+        .btn-danger { background: #e74c3c; }
+        .btn-danger:hover { background: #c0392b; }
+        .btn-success { background: #27ae60; }
+        .btn-success:hover { background: #1e8449; }
+        .status { margin-top: 12px; padding: 12px; border-radius: 4px; }
+        .status.success { background: #1e4620; }
+        .status.error { background: #4a1515; }
+        .empty { color: #888; font-style: italic; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Video Cutter</h1>
+
+        <div class="panel">
+            <label>Select Video: </label>
+            <select id="videoSelect">
+                <option value="">-- Choose a video --</option>
+            </select>
+        </div>
+
+        <div class="panel">
+            <video id="player" controls></video>
+            <div class="controls">
+                <span class="time-display" id="currentTime">00:00.000</span>
+                <button id="markStart">Mark Start</button>
+                <button id="markEnd">Mark End</button>
+                <span>Name:</span>
+                <input type="text" id="segmentName" placeholder="segment name">
+                <button id="addSegment" class="btn-success">Add Segment</button>
+            </div>
+            <div id="pendingSegment" style="margin-top: 10px; color: #888;"></div>
+        </div>
+
+        <div class="panel">
+            <h3>Segments</h3>
+            <div id="segmentList" class="segments">
+                <p class="empty">No segments added yet</p>
+            </div>
+            <button id="exportAll" class="btn-success" style="margin-top: 12px;">Export All</button>
+        </div>
+
+        <div id="statusArea"></div>
+    </div>
+
+    <script>
+        const videoSelect = document.getElementById('videoSelect');
+        const player = document.getElementById('player');
+        const currentTimeDisplay = document.getElementById('currentTime');
+        const markStartBtn = document.getElementById('markStart');
+        const markEndBtn = document.getElementById('markEnd');
+        const segmentNameInput = document.getElementById('segmentName');
+        const addSegmentBtn = document.getElementById('addSegment');
+        const segmentList = document.getElementById('segmentList');
+        const exportAllBtn = document.getElementById('exportAll');
+        const pendingSegmentDiv = document.getElementById('pendingSegment');
+        const statusArea = document.getElementById('statusArea');
+
+        let segments = [];
+        let pendingStart = null;
+        let pendingEnd = null;
+
+        function formatTime(seconds) {
+            const mins = Math.floor(seconds / 60);
+            const secs = seconds % 60;
+            return `${String(mins).padStart(2, '0')}:${secs.toFixed(3).padStart(6, '0')}`;
+        }
+
+        async function loadVideos() {
+            const res = await fetch('/api/videos');
+            const videos = await res.json();
+            videos.forEach(name => {
+                const opt = document.createElement('option');
+                opt.value = name;
+                opt.textContent = name;
+                videoSelect.appendChild(opt);
+            });
+        }
+
+        videoSelect.addEventListener('change', () => {
+            if (videoSelect.value) {
+                player.src = `/api/video/${encodeURIComponent(videoSelect.value)}`;
+            } else {
+                player.src = '';
+            }
+            segments = [];
+            pendingStart = null;
+            pendingEnd = null;
+            renderSegments();
+            updatePendingDisplay();
+        });
+
+        player.addEventListener('timeupdate', () => {
+            currentTimeDisplay.textContent = formatTime(player.currentTime);
+        });
+
+        markStartBtn.addEventListener('click', () => {
+            pendingStart = player.currentTime;
+            updatePendingDisplay();
+        });
+
+        markEndBtn.addEventListener('click', () => {
+            pendingEnd = player.currentTime;
+            updatePendingDisplay();
+        });
+
+        function updatePendingDisplay() {
+            if (pendingStart !== null || pendingEnd !== null) {
+                const startStr = pendingStart !== null ? formatTime(pendingStart) : '---';
+                const endStr = pendingEnd !== null ? formatTime(pendingEnd) : '---';
+                pendingSegmentDiv.textContent = `Pending: ${startStr} → ${endStr}`;
+            } else {
+                pendingSegmentDiv.textContent = '';
+            }
+        }
+
+        addSegmentBtn.addEventListener('click', () => {
+            if (pendingStart === null || pendingEnd === null) {
+                alert('Please mark both start and end times');
+                return;
+            }
+            if (pendingEnd <= pendingStart) {
+                alert('End time must be after start time');
+                return;
+            }
+            const name = segmentNameInput.value.trim() || `segment_${segments.length + 1}`;
+            segments.push({ name, start: pendingStart, end: pendingEnd });
+            pendingStart = null;
+            pendingEnd = null;
+            segmentNameInput.value = '';
+            renderSegments();
+            updatePendingDisplay();
+        });
+
+        function renderSegments() {
+            if (segments.length === 0) {
+                segmentList.innerHTML = '<p class="empty">No segments added yet</p>';
+                return;
+            }
+            segmentList.innerHTML = segments.map((seg, i) => `
+                <div class="segment">
+                    <input type="text" value="${seg.name}" onchange="updateSegmentName(${i}, this.value)">
+                    <span class="times">${formatTime(seg.start)} → ${formatTime(seg.end)}</span>
+                    <button class="btn-danger" onclick="removeSegment(${i})">Remove</button>
+                </div>
+            `).join('');
+        }
+
+        window.updateSegmentName = (index, name) => {
+            segments[index].name = name;
+        };
+
+        window.removeSegment = (index) => {
+            segments.splice(index, 1);
+            renderSegments();
+        };
+
+        exportAllBtn.addEventListener('click', async () => {
+            if (!videoSelect.value) {
+                alert('Please select a video');
+                return;
+            }
+            if (segments.length === 0) {
+                alert('Please add at least one segment');
+                return;
+            }
+
+            exportAllBtn.disabled = true;
+            exportAllBtn.textContent = 'Exporting...';
+            statusArea.innerHTML = '';
+
+            try {
+                const res = await fetch('/api/export', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        source: videoSelect.value,
+                        segments: segments
+                    })
+                });
+                const result = await res.json();
+
+                let html = '';
+                if (result.success.length > 0) {
+                    html += `<div class="status success">Exported: ${result.success.join(', ')}</div>`;
+                }
+                if (result.failed.length > 0) {
+                    html += `<div class="status error">Failed: ${result.failed.join(', ')}</div>`;
+                }
+                statusArea.innerHTML = html;
+            } catch (err) {
+                statusArea.innerHTML = `<div class="status error">Error: ${err.message}</div>`;
+            } finally {
+                exportAllBtn.disabled = false;
+                exportAllBtn.textContent = 'Export All';
+            }
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.target.tagName === 'INPUT') return;
+
+            const skip = 5;
+            if (e.key === 'ArrowLeft') {
+                player.currentTime = Math.max(0, player.currentTime - skip);
+            } else if (e.key === 'ArrowRight') {
+                player.currentTime = Math.min(player.duration, player.currentTime + skip);
+            }
+        });
+
+        loadVideos();
+    </script>
+</body>
+</html>
