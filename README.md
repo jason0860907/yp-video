@@ -69,10 +69,11 @@ python detect_volleyball.py --video path/to/video.mp4 \
     --server http://localhost:8000 \
     --output results.json
 
-# 調整分析參數
+# 調整分析參數與並行數量
 python detect_volleyball.py --video path/to/video.mp4 \
     --clip-duration 6.0 \
-    --slide-interval 2.0
+    --slide-interval 3.0 \
+    --batch-size 8
 ```
 
 參數說明：
@@ -80,7 +81,8 @@ python detect_volleyball.py --video path/to/video.mp4 \
 - `--server, -s` - vLLM 伺服器 URL（預設：http://localhost:8000）
 - `--model, -m` - 模型名稱（預設：Qwen/Qwen3-VL-8B-Instruct）
 - `--clip-duration, -d` - 每個片段長度（秒，預設：6.0）
-- `--slide-interval, -i` - 滑動視窗間隔（秒，預設：2.0）
+- `--slide-interval, -i` - 滑動視窗間隔（秒，預設：3.0）
+- `--batch-size, -b` - 並行處理的片段數量（預設：32）
 - `--output, -o` - 輸出 JSON 檔案路徑
 
 ## 工作流程範例
@@ -120,4 +122,6 @@ yp-video/
 - `yt-dlp` - YouTube 下載
 - `fastapi` + `uvicorn` - Web 伺服器
 - `torch` + `transformers` - 模型推論
+- `aiohttp` - 並行 API 請求
+- `tqdm` - 進度條顯示
 - `ffmpeg` (系統) - 影片處理
