@@ -232,15 +232,6 @@ yp-video/
 |------|------|
 | `yp-download` | 下載 YouTube 影片（CLI） |
 | `yp-downloader` | 啟動批次下載伺服器（Web UI，port 8003） |
+| `python -m youtube.rename_tpvl` | 批次重命名 TPVL 影片 |
 | `yp-cutter` | 啟動影片剪輯伺服器（Web UI，port 8001） |
 | `yp-annotator` | 啟動 Rally 標註伺服器（Web UI，port 8002） |
-
-## 依賴
-
-主要依賴：
-- `yt-dlp` - YouTube 下載
-- `fastapi` + `uvicorn` - Web 伺服器
-- `torch` + `transformers` - 模型推論
-- `aiohttp` - 並行 API 請求
-- `tqdm` - 進度條顯示
-- `ffmpeg` (系統) - 影片處理
