@@ -259,8 +259,9 @@
             }
         }
 
-        // Merge adjacent full_court clips into rally annotations
-        // close_up clips act as rally separators (e.g., celebrations between rallies)
+        // Merge adjacent gameplay clips into rally annotations
+        // Gameplay = has_volleyball AND full_court shot
+        // Non-gameplay clips act as rally separators
         function mergeClipsToRallies(results, gapThreshold = 2.0) {
             if (results.length === 0) return [];
 
@@ -270,8 +271,8 @@
             let currentRally = null;
 
             for (const clip of sorted) {
-                // full_court = gameplay, close_up = non-gameplay
-                const isGameplay = clip.shot_type === 'full_court';
+                // Gameplay: has volleyball activity AND full court view
+                const isGameplay = clip.has_volleyball && clip.shot_type === 'full_court';
 
                 if (isGameplay) {
                     if (currentRally === null) {
