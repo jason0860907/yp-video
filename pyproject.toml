@@ -26,13 +26,14 @@ dependencies = [
 [project.scripts]
 yp-download = "youtube.download:main"
 yp-cutter = "youtube.cutter.main:run_server"
+yp-annotator = "annotator.main:run_server"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["utils", "youtube"]
+packages = ["utils", "youtube", "annotator"]
 
 [tool.uv]
 dev-dependencies = []

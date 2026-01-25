@@ -30,6 +30,7 @@ class ClipResult:
     end_time: float
     has_volleyball: bool
     confidence: str  # high, medium, low
+    shot_type: str   # close_up, full_court
     description: str
 
 
@@ -55,6 +56,7 @@ def save_results(output_file: str, video_path: str, clip_duration: float,
                 "end_time": r.end_time,
                 "has_volleyball": r.has_volleyball,
                 "confidence": r.confidence,
+                "shot_type": r.shot_type,
                 "description": r.description
             }
             for r in results
@@ -74,20 +76,22 @@ def analyze_clip_with_vllm(
     # Use file:// URL for local files (requires --allowed-local-media-path on server)
     video_url = f"file://{video_path}"
 
-    prompt = """Analyze this video clip and determine if volleyball activity is occurring.
+    prompt = """Analyze this video clip of a volleyball broadcast.
 
-Look for:
-- Volleyball court (indoor or outdoor/beach)
-- Players in volleyball positions
-- Ball being served, passed, set, or spiked
-- Net visible
-- Active gameplay or training
+Determine:
+1. Is active volleyball gameplay occurring? (rally in progress)
+2. What is the camera shot type?
+
+Shot types:
+- "full_court": Can see the entire court, both teams, suitable for watching gameplay
+- "close_up": Player close-up, celebration, interview, replay, or partial court view
 
 Respond in this exact JSON format:
 {
     "has_volleyball": true/false,
     "confidence": "high"/"medium"/"low",
-    "description": "Brief description of what you see"
+    "shot_type": "full_court"/"close_up",
+    "description": "Brief description"
 }
 
 Only output the JSON, no other text."""
@@ -139,6 +143,7 @@ Only output the JSON, no other text."""
         return {
             "has_volleyball": False,
             "confidence": "low",
+            "shot_type": "close_up",
             "description": f"Failed to parse response: {content[:100]}"
         }
 
@@ -190,6 +195,7 @@ def process_video(
                     end_time=end_time,
                     has_volleyball=analysis.get("has_volleyball", False),
                     confidence=analysis.get("confidence", "low"),
+                    shot_type=analysis.get("shot_type", "full_court"),
                     description=analysis.get("description", "")
                 )
                 results.append(result)
@@ -227,6 +233,7 @@ def process_video(
                         end_time=end_time,
                         has_volleyball=analysis.get("has_volleyball", False),
                         confidence=analysis.get("confidence", "low"),
+                        shot_type=analysis.get("shot_type", "full_court"),
                         description=analysis.get("description", "")
                     )
                     results.append(result)
