@@ -53,13 +53,13 @@ def list_results() -> list[str]:
     """List all .json files in ~/videos."""
     if not VIDEOS_DIR.exists():
         return []
-    return sorted(f.name for f in VIDEOS_DIR.glob("*.json"))
+    return sorted(f.name for f in VIDEOS_DIR.glob("cuts/*.json"))
 
 
 @app.get("/api/results/{name}")
 def get_result(name: str) -> dict:
     """Get contents of a specific results JSON file."""
-    path = VIDEOS_DIR / name
+    path = VIDEOS_DIR / "cuts" / name
     if not path.exists() or not path.is_file():
         raise HTTPException(404, "Results file not found")
 
@@ -107,8 +107,8 @@ def save_annotations(req: SaveAnnotationsRequest) -> dict:
         ]
     }
 
-    with open(output_path, "w") as f:
-        json.dump(data, f, indent=2)
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
 
     return {"saved": str(output_path), "count": len(req.annotations)}
 

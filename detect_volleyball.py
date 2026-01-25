@@ -107,8 +107,8 @@ def save_results(output_file: str, video_path: str, clip_duration: float,
             for r in results
         ]
     }
-    with open(output_file, "w") as f:
-        json.dump(output_data, f, indent=2)
+    with open(output_file, "w", encoding="utf-8") as f:
+        json.dump(output_data, f, indent=2, ensure_ascii=False)
 
 
 def analyze_clip_with_vllm(
@@ -526,7 +526,7 @@ def main():
     # Default output to ~/videos/{video_basename}.json
     if args.output is None:
         video_base = os.path.splitext(os.path.basename(args.video))[0]
-        args.output = os.path.expanduser(f"~/videos/{video_base}.json")
+        args.output = os.path.expanduser(f"~/videos/cuts/{video_base}.json")
 
     if not os.path.exists(args.video):
         print(f"Error: Video file not found: {args.video}")
