@@ -5,6 +5,7 @@
 ## 功能
 
 - **YouTube 下載** - 下載 YouTube 影片（支援多種畫質與純音訊）
+- **TPVL 重命名** - 批次將 TPVL 影片從長標題重命名為簡潔格式
 - **影片剪輯** - Web UI 介面，可視覺化標記並匯出影片片段
 - **排球偵測** - 使用 Qwen3-VL 模型分析影片中的排球活動（支援並行處理）
 - **Rally 標註** - 檢視偵測結果並標註 rally 片段
@@ -24,27 +25,50 @@ uv sync
 
 ```bash
 # 下載影片（預設輸出至 ~/videos）
-python -m youtube.download "https://youtube.com/watch?v=xxx"
+uv run python -m youtube.download "https://youtube.com/watch?v=xxx"
 
 # 指定畫質
-python -m youtube.download "https://youtube.com/watch?v=xxx" -q 720
+uv run python -m youtube.download "https://youtube.com/watch?v=xxx" -q 720
 
 # 下載純音訊 (MP3)
-python -m youtube.download "https://youtube.com/watch?v=xxx" --audio-only
+uv run python -m youtube.download "https://youtube.com/watch?v=xxx" --audio-only
 
 # 指定輸出目錄
-python -m youtube.download "https://youtube.com/watch?v=xxx" -o ~/my-videos
+uv run python -m youtube.download "https://youtube.com/watch?v=xxx" -o ~/my-videos
 
 # 列出可用格式
-python -m youtube.download "https://youtube.com/watch?v=xxx" --list
+uv run python -m youtube.download "https://youtube.com/watch?v=xxx" --list
 ```
 
-### 2. 影片剪輯 (Video Cutter)
+### 2. TPVL 影片重命名
+
+將 TPVL 影片從長標題重命名為簡潔格式：
+
+```
+原始：【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL 2025-26 例行賽 G96 5/17 18:30 台中連莊 vs 桃園雲豹飛將.mp4
+目標：2025-05-17_G96_台中連莊_vs_桃園雲豹飛將.mp4
+```
+
+```bash
+# 預覽變更（不實際執行）
+uv run python -m youtube.rename_tpvl --dry-run
+
+# 執行重命名（會詢問確認）
+uv run python -m youtube.rename_tpvl
+
+# 直接執行不詢問
+uv run python -m youtube.rename_tpvl --yes
+
+# 指定目錄
+uv run python -m youtube.rename_tpvl -d ~/my-videos --dry-run
+```
+
+### 3. 影片剪輯 (Video Cutter)
 
 啟動 Web 伺服器：
 
 ```bash
-uvicorn youtube.cutter.main:app --port 8001
+uv run uvicorn youtube.cutter.main:app --port 8001
 ```
 
 開啟瀏覽器至 http://localhost:8001
@@ -57,7 +81,7 @@ uvicorn youtube.cutter.main:app --port 8001
 快捷鍵：
 - `←` / `→` - 快轉 5 秒
 
-### 3. 排球活動偵測
+### 4. 排球活動偵測
 
 首先啟動 vLLM 伺服器：
 
@@ -73,15 +97,15 @@ uvicorn youtube.cutter.main:app --port 8001
 
 ```bash
 # 基本使用
-python detect_volleyball.py --video path/to/video.mp4
+uv run python detect_volleyball.py --video path/to/video.mp4
 
 # 指定伺服器與輸出檔案
-python detect_volleyball.py --video path/to/video.mp4 \
+uv run python detect_volleyball.py --video path/to/video.mp4 \
     --server http://localhost:8000 \
     --output results.json
 
 # 調整分析參數與並行數量
-python detect_volleyball.py --video path/to/video.mp4 \
+uv run python detect_volleyball.py --video path/to/video.mp4 \
     --clip-duration 6.0 \
     --slide-interval 3.0 \
     --batch-size 8
@@ -96,16 +120,16 @@ python detect_volleyball.py --video path/to/video.mp4 \
 - `--batch-size, -b` - 並行處理的片段數量（預設：32）
 - `--output, -o` - 輸出 JSON 檔案路徑
 
-### 4. Rally 標註器
+### 5. Rally 標註器
 
 檢視偵測結果並標註 rally 片段：
 
 ```bash
 # 啟動標註伺服器
-yp-annotator
+uv run yp-annotator
 
 # 或使用 uvicorn
-uvicorn annotator.main:app --port 8002
+uv run uvicorn annotator.main:app --port 8002
 ```
 
 開啟瀏覽器至 http://localhost:8002
@@ -141,19 +165,22 @@ uvicorn annotator.main:app --port 8002
 
 ```bash
 # 1. 下載 YouTube 影片
-yp-download "https://youtube.com/watch?v=xxx"
+uv run yp-download "https://youtube.com/watch?v=xxx"
 
-# 2. 啟動 vLLM 伺服器（另開 terminal）
+# 2. 重命名 TPVL 影片（可選）
+uv run python -m youtube.rename_tpvl
+
+# 3. 啟動 vLLM 伺服器（另開 terminal）
 ./start_qwen3_vl_server.sh
 
-# 3. 分析排球活動
-python detect_volleyball.py --video ~/videos/影片名稱.mp4 --output results.json
+# 4. 分析排球活動
+uv run python detect_volleyball.py --video ~/videos/影片名稱.mp4 --output results.json
 
-# 4. 檢視結果並標註（可選）
-yp-annotator
+# 5. 檢視結果並標註（可選）
+uv run yp-annotator
 
-# 5. 根據分析結果剪輯精彩片段
-yp-cutter
+# 6. 根據分析結果剪輯精彩片段
+uv run yp-cutter
 ```
 
 ## 專案結構
@@ -167,6 +194,7 @@ yp-video/
 │   └── ffmpeg.py             # FFmpeg 操作函式
 ├── youtube/                  # YouTube 相關功能
 │   ├── download.py           # YouTube 下載器
+│   ├── rename_tpvl.py        # TPVL 影片重命名
 │   └── cutter/               # 影片剪輯器
 │       ├── main.py           # FastAPI 伺服器
 │       └── static/           # Web UI
