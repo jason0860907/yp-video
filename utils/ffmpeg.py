@@ -3,6 +3,22 @@
 import subprocess
 from pathlib import Path
 
+
+class FFmpegError(Exception):
+    """Base exception for FFmpeg operations."""
+
+    pass
+
+
+class FFmpegTimeoutError(FFmpegError):
+    """Raised when FFmpeg operation times out."""
+
+    def __init__(self, output_path: str, timeout: int):
+        self.output_path = output_path
+        self.timeout = timeout
+        super().__init__(f"FFmpeg timeout after {timeout}s for {output_path}")
+
+
 # 10 minutes timeout for FFmpeg operations
 FFMPEG_TIMEOUT = 600
 
@@ -30,23 +46,27 @@ def extract_clip(video_path: str, start_time: float, duration: float, output_pat
 
     Returns:
         True if extraction succeeded, False otherwise
+
+    Raises:
+        FFmpegTimeoutError: If FFmpeg operation times out
+        FFmpegError: If FFmpeg returns non-zero exit code
     """
     cmd = [
         "ffmpeg", "-y",
         "-ss", str(start_time),
         "-i", video_path,
         "-t", str(duration),
-        "-c:v", "libx264",
-        "-preset", "ultrafast",
+        "-c:v", "copy",
         "-an",  # No audio
         output_path
     ]
     try:
         result = subprocess.run(cmd, capture_output=True, timeout=FFMPEG_TIMEOUT)
-        return result.returncode == 0
-    except subprocess.TimeoutExpired:
-        print(f"FFmpeg timeout after {FFMPEG_TIMEOUT}s for {output_path}")
-        return False
+        if result.returncode != 0:
+            raise FFmpegError(f"FFmpeg failed with code {result.returncode}: {result.stderr.decode()[:200]}")
+        return True
+    except subprocess.TimeoutExpired as e:
+        raise FFmpegTimeoutError(output_path, FFMPEG_TIMEOUT) from e
 
 
 def export_segment(source: Path | str, start: float, end: float, output: Path | str) -> bool:
@@ -60,6 +80,10 @@ def export_segment(source: Path | str, start: float, end: float, output: Path | 
 
     Returns:
         True if export succeeded, False otherwise
+
+    Raises:
+        FFmpegTimeoutError: If FFmpeg operation times out
+        FFmpegError: If FFmpeg returns non-zero exit code
     """
     cmd = [
         "ffmpeg", "-y",
@@ -73,7 +97,8 @@ def export_segment(source: Path | str, start: float, end: float, output: Path | 
     ]
     try:
         result = subprocess.run(cmd, capture_output=True, timeout=FFMPEG_TIMEOUT)
-        return result.returncode == 0
-    except subprocess.TimeoutExpired:
-        print(f"FFmpeg timeout after {FFMPEG_TIMEOUT}s for {output}")
-        return False
+        if result.returncode != 0:
+            raise FFmpegError(f"FFmpeg failed with code {result.returncode}: {result.stderr.decode()[:200]}")
+        return True
+    except subprocess.TimeoutExpired as e:
+        raise FFmpegTimeoutError(str(output), FFMPEG_TIMEOUT) from e

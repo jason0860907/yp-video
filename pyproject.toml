@@ -17,10 +17,13 @@ dependencies = [
     "packaging>=23.0",
     "ninja>=1.11.0",
     "requests>=2.31.0",
+    "aiohttp>=3.9.0",
+    "tqdm>=4.66.0",
     # YouTube download and cutter dependencies
     "yt-dlp>=2024.0.0",
     "fastapi>=0.110.0",
     "uvicorn>=0.27.0",
+    "vllm>=0.8.0",
 ]
 
 [project.scripts]
@@ -35,5 +38,7 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["utils", "youtube", "annotator"]
 
-[tool.uv]
-dev-dependencies = []
+[dependency-groups]
+dev = [
+    "pyright>=1.1.408",
+]

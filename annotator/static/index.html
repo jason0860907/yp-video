@@ -227,22 +227,10 @@
         let videoDuration = 0;
 
         // Utility functions
-        function formatTime(seconds) {
-            const mins = Math.floor(seconds / 60);
-            const secs = seconds % 60;
-            return `${String(mins).padStart(2, '0')}:${secs.toFixed(3).padStart(6, '0')}`;
-        }
-
         function formatTimeShort(seconds) {
             const mins = Math.floor(seconds / 60);
             const secs = Math.floor(seconds % 60);
             return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-        }
-
-        function formatTimeInput(seconds) {
-            const mins = Math.floor(seconds / 60);
-            const secs = (seconds % 60).toFixed(1);
-            return `${String(mins).padStart(2, '0')}:${secs.padStart(4, '0')}`;
         }
 
         function parseTimeInput(timeStr) {
@@ -358,7 +346,7 @@
 
         // Video time update
         player.addEventListener('timeupdate', () => {
-            currentTimeDisplay.textContent = formatTime(player.currentTime);
+            currentTimeDisplay.textContent = formatTimeShort(player.currentTime);
             updatePlayhead();
         });
 
@@ -392,8 +380,8 @@
 
         function updatePendingDisplay() {
             if (pendingStart !== null || pendingEnd !== null) {
-                const startStr = pendingStart !== null ? formatTime(pendingStart) : '---';
-                const endStr = pendingEnd !== null ? formatTime(pendingEnd) : '---';
+                const startStr = pendingStart !== null ? formatTimeShort(pendingStart) : '---';
+                const endStr = pendingEnd !== null ? formatTimeShort(pendingEnd) : '---';
                 pendingAnnotationDiv.textContent = `Pending: ${startStr} → ${endStr}`;
             } else {
                 pendingAnnotationDiv.textContent = '';
@@ -483,10 +471,10 @@
                     <span class="index">${i + 1}</span>
                     <button class="label-btn ${ann.label}" onclick="toggleLabel(${i})">${ann.label}</button>
                     <span class="times">
-                        <input type="text" value="${formatTimeInput(ann.start)}"
+                        <input type="text" value="${formatTimeShort(ann.start)}"
                                onchange="updateAnnotation(${i}, 'start', parseTimeInput(this.value))" onclick="event.stopPropagation()">
                         →
-                        <input type="text" value="${formatTimeInput(ann.end)}"
+                        <input type="text" value="${formatTimeShort(ann.end)}"
                                onchange="updateAnnotation(${i}, 'end', parseTimeInput(this.value))" onclick="event.stopPropagation()">
                     </span>
                     <button onclick="jumpToAnnotation(${i}); event.stopPropagation();">Jump</button>
