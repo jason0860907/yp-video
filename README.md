@@ -116,6 +116,22 @@ uvicorn annotator.main:app --port 8002
 - 標註 rally（keep）或非 rally（skip）
 - 儲存標註結果
 
+#### Rally 自動合併邏輯
+
+載入偵測結果時，會自動將連續的 clips 合併成 rally 片段：
+
+```
+輸入 clips:  [full_court] [full_court] [close_up] [full_court] [full_court] [full_court]
+                 ↓            ↓            ↓           ↓            ↓            ↓
+合併後:      [────── rally 1 ──────]   分隔    [─────────── rally 2 ───────────]
+```
+
+規則：
+1. **full_court** (全場畫面) = 比賽進行中，視為 rally
+2. **close_up** (特寫畫面) = 非比賽畫面（慶祝、回放等），作為 rally 分隔點
+3. 相鄰的 full_court clips 若間隔 ≤ 2 秒，合併為同一個 rally
+4. 遇到 close_up 時結束當前 rally，開始新的 rally
+
 ## 工作流程範例
 
 完整的 **下載 → 分析 → 標註 → 剪輯** 流程：
