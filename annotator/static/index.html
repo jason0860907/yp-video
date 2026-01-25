@@ -225,6 +225,7 @@
         let pendingEnd = null;
         let currentVideoPath = '';
         let videoDuration = 0;
+        let playUntil = null;  // Auto-pause at this time
 
         // Utility functions
         function formatTimeShort(seconds) {
@@ -349,6 +350,12 @@
         player.addEventListener('timeupdate', () => {
             currentTimeDisplay.textContent = formatTimeShort(player.currentTime);
             updatePlayhead();
+
+            // Auto-pause when reaching playUntil time
+            if (playUntil !== null && player.currentTime >= playUntil) {
+                player.pause();
+                playUntil = null;
+            }
         });
 
         function updatePlayhead() {
@@ -483,10 +490,10 @@
                 </div>
             `).join('');
 
-            // Add click handlers for selection
+            // Add click handlers for selection and playback
             annotationList.querySelectorAll('.annotation').forEach(el => {
                 el.addEventListener('click', () => {
-                    selectAnnotation(parseInt(el.dataset.index));
+                    playAnnotation(parseInt(el.dataset.index));
                 });
             });
         }
@@ -495,6 +502,14 @@
             selectedIndex = index;
             renderTimeline();
             renderAnnotations();
+        }
+
+        function playAnnotation(index) {
+            selectAnnotation(index);
+            const ann = annotations[index];
+            player.currentTime = ann.start;
+            playUntil = ann.end;
+            player.play();
         }
 
         window.toggleLabel = function(index) {
