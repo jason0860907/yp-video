@@ -523,6 +523,11 @@ def main():
 
     args = parser.parse_args()
 
+    # Default output to ~/videos/{video_basename}.json
+    if args.output is None:
+        video_base = os.path.splitext(os.path.basename(args.video))[0]
+        args.output = os.path.expanduser(f"~/videos/{video_base}.json")
+
     if not os.path.exists(args.video):
         print(f"Error: Video file not found: {args.video}")
         return 1

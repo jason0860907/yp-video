@@ -50,10 +50,10 @@ class SaveAnnotationsRequest(BaseModel):
 
 @app.get("/api/results")
 def list_results() -> list[str]:
-    """List all *_results.json files in ~/videos."""
+    """List all .json files in ~/videos."""
     if not VIDEOS_DIR.exists():
         return []
-    return sorted(f.name for f in VIDEOS_DIR.glob("*_results.json"))
+    return sorted(f.name for f in VIDEOS_DIR.glob("*.json"))
 
 
 @app.get("/api/results/{name}")

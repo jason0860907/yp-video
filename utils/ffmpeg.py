@@ -70,7 +70,10 @@ def extract_clip(video_path: str, start_time: float, duration: float, output_pat
 
 
 def export_segment(source: Path | str, start: float, end: float, output: Path | str) -> bool:
-    """Export a single segment with re-encoding for frame-accurate cuts.
+    """Export a single segment using stream copy for fast extraction.
+
+    Note: Copy mode doesn't re-encode, so cuts may not be frame-accurate
+    (a few seconds of drift possible if cut points aren't keyframes).
 
     Args:
         source: Source video path
@@ -90,8 +93,8 @@ def export_segment(source: Path | str, start: float, end: float, output: Path | 
         "-i", str(source),
         "-ss", str(start),
         "-to", str(end),
-        "-c:v", "libx264",
-        "-c:a", "aac",
+        "-c:v", "copy",
+        "-c:a", "copy",
         "-movflags", "+faststart",
         str(output)
     ]
