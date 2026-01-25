@@ -98,7 +98,7 @@
             font-family: monospace;
             flex: 1;
         }
-        .annotation input[type="number"] {
+        .annotation input[type="text"] {
             width: 80px;
             padding: 4px 8px;
         }
@@ -237,6 +237,22 @@
             const mins = Math.floor(seconds / 60);
             const secs = Math.floor(seconds % 60);
             return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+        }
+
+        function formatTimeInput(seconds) {
+            const mins = Math.floor(seconds / 60);
+            const secs = (seconds % 60).toFixed(1);
+            return `${String(mins).padStart(2, '0')}:${secs.padStart(4, '0')}`;
+        }
+
+        function parseTimeInput(timeStr) {
+            const parts = timeStr.split(':');
+            if (parts.length === 2) {
+                const mins = parseInt(parts[0], 10) || 0;
+                const secs = parseFloat(parts[1]) || 0;
+                return mins * 60 + secs;
+            }
+            return parseFloat(timeStr) || 0;
         }
 
         // Load results list
@@ -467,11 +483,11 @@
                     <span class="index">${i + 1}</span>
                     <button class="label-btn ${ann.label}" onclick="toggleLabel(${i})">${ann.label}</button>
                     <span class="times">
-                        <input type="number" step="0.1" value="${ann.start.toFixed(1)}"
-                               onchange="updateAnnotation(${i}, 'start', parseFloat(this.value))" onclick="event.stopPropagation()">
+                        <input type="text" value="${formatTimeInput(ann.start)}"
+                               onchange="updateAnnotation(${i}, 'start', parseTimeInput(this.value))" onclick="event.stopPropagation()">
                         →
-                        <input type="number" step="0.1" value="${ann.end.toFixed(1)}"
-                               onchange="updateAnnotation(${i}, 'end', parseFloat(this.value))" onclick="event.stopPropagation()">
+                        <input type="text" value="${formatTimeInput(ann.end)}"
+                               onchange="updateAnnotation(${i}, 'end', parseTimeInput(this.value))" onclick="event.stopPropagation()">
                     </span>
                     <button onclick="jumpToAnnotation(${i}); event.stopPropagation();">Jump</button>
                     <button class="btn-danger" onclick="deleteAnnotation(${i}); event.stopPropagation();">Del</button>
