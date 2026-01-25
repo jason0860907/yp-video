@@ -8,7 +8,10 @@
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: system-ui, sans-serif; background: #1a1a1a; color: #fff; padding: 20px; }
         h1 { margin-bottom: 20px; }
-        .container { max-width: 1200px; margin: 0 auto; }
+        .container { max-width: 1600px; margin: 0 auto; }
+        .main-layout { display: flex; gap: 16px; }
+        .main-layout .left-panel { flex: 1; min-width: 0; }
+        .main-layout .right-panel { width: 400px; flex-shrink: 0; }
         .panel { background: #2a2a2a; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
         select, button, input { padding: 8px 16px; border-radius: 4px; border: none; font-size: 14px; }
         select { background: #3a3a3a; color: #fff; min-width: 200px; }
@@ -67,7 +70,7 @@
         }
 
         /* Annotation list */
-        .annotations { margin-top: 16px; max-height: 300px; overflow-y: auto; }
+        .annotations { margin-top: 16px; max-height: 500px; overflow-y: auto; }
         .annotation {
             display: flex;
             align-items: center;
@@ -145,39 +148,45 @@
             <span id="loadStatus" style="margin-left: 12px; color: #888;"></span>
         </div>
 
-        <div class="panel">
-            <video id="player" controls></video>
+        <div class="main-layout">
+            <div class="left-panel">
+                <div class="panel">
+                    <video id="player" controls></video>
 
-            <div class="timeline-container">
-                <div class="timeline" id="timeline">
-                    <div class="timeline-playhead" id="playhead"></div>
+                    <div class="timeline-container">
+                        <div class="timeline" id="timeline">
+                            <div class="timeline-playhead" id="playhead"></div>
+                        </div>
+                        <div class="timeline-times">
+                            <span>00:00</span>
+                            <span id="durationDisplay">00:00</span>
+                        </div>
+                    </div>
+
+                    <div class="controls">
+                        <span class="time-display" id="currentTime">00:00.000</span>
+                        <button id="markStart">[  Mark Start</button>
+                        <button id="markEnd">]  Mark End</button>
+                        <button id="addAnnotation" class="btn-success">Enter  Add Rally</button>
+                    </div>
+                    <div id="pendingAnnotation" style="margin-top: 10px; color: #f1c40f;"></div>
                 </div>
-                <div class="timeline-times">
-                    <span>00:00</span>
-                    <span id="durationDisplay">00:00</span>
+            </div>
+
+            <div class="right-panel">
+                <div class="panel">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <h3>Annotations</h3>
+                        <button id="addNonRally" class="btn-secondary">Add Non-Rally</button>
+                    </div>
+                    <div id="annotationList" class="annotations">
+                        <p class="empty">No annotations yet. Load a detection result to start.</p>
+                    </div>
+                    <div style="margin-top: 12px; display: flex; gap: 10px;">
+                        <button id="saveBtn" class="btn-success">Save Annotations</button>
+                        <button id="clearBtn" class="btn-danger">Clear All</button>
+                    </div>
                 </div>
-            </div>
-
-            <div class="controls">
-                <span class="time-display" id="currentTime">00:00.000</span>
-                <button id="markStart">[  Mark Start</button>
-                <button id="markEnd">]  Mark End</button>
-                <button id="addAnnotation" class="btn-success">Enter  Add Rally</button>
-            </div>
-            <div id="pendingAnnotation" style="margin-top: 10px; color: #f1c40f;"></div>
-        </div>
-
-        <div class="panel">
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-                <h3>Annotations</h3>
-                <button id="addNonRally" class="btn-secondary">Add Non-Rally</button>
-            </div>
-            <div id="annotationList" class="annotations">
-                <p class="empty">No annotations yet. Load a detection result to start.</p>
-            </div>
-            <div style="margin-top: 12px; display: flex; gap: 10px;">
-                <button id="saveBtn" class="btn-success">Save Annotations</button>
-                <button id="clearBtn" class="btn-danger">Clear All</button>
             </div>
         </div>
 
