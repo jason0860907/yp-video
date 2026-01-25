@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from utils.ffmpeg import export_segment
+from utils.ffmpeg import FFmpegError, export_segment
 
 
 @asynccontextmanager
@@ -86,9 +86,10 @@ def export_segments(req: ExportRequest) -> ExportResult:
         output_name = f"{stem}_{seg.name}.mp4"
         output_path = CUTS_DIR / output_name
 
-        if export_segment(source_path, seg.start, seg.end, output_path):
+        try:
+            export_segment(source_path, seg.start, seg.end, output_path)
             success.append(output_name)
-        else:
+        except FFmpegError:
             failed.append(output_name)
 
     return ExportResult(success=success, failed=failed)

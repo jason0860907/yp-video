@@ -41,10 +41,10 @@ def install_ytdlp():
 
 def download_video(
     url: str,
-    output_dir: str | Path = None,
+    output_dir: str | Path | None = None,
     quality: str = "best",
     audio_only: bool = False,
-    format_id: str = None,
+    format_id: str | None = None,
     filename_template: str = "%(title)s.%(ext)s"
 ) -> str | None:
     """
@@ -123,7 +123,7 @@ def download_video(
         return None
 
 
-def download_youtube_video(url: str, output_dir: str | Path = None, quality: str = "best") -> str | None:
+def download_youtube_video(url: str, output_dir: str | Path | None = None, quality: str = "best") -> str | None:
     """Convenience function for pipeline use.
 
     Args:

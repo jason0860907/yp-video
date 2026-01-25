@@ -16,17 +16,12 @@ echo "Model: ${MODEL_NAME}"
 echo "Port: ${PORT}"
 echo "----------------------------------------"
 
-# Install vllm if not available
-if ! python -c "import vllm" 2>/dev/null; then
-    echo "Installing vllm..."
-    pip install vllm>=0.8.0
-fi
-
 # Start vLLM server with OpenAI-compatible API
+source .venv/bin/activate
 python -m vllm.entrypoints.openai.api_server \
     --model "${MODEL_NAME}" \
     --port "${PORT}" \
     --dtype bfloat16 \
-    --max-model-len 16384 \
+    --max-model-len 32768 \
     --gpu-memory-utilization 0.9 \
     --allowed-local-media-path /home/jason_yp_wang

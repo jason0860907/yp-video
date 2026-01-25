@@ -6,7 +6,8 @@
 
 - **YouTube 下載** - 下載 YouTube 影片（支援多種畫質與純音訊）
 - **影片剪輯** - Web UI 介面，可視覺化標記並匯出影片片段
-- **排球偵測** - 使用 Qwen3-VL 模型分析影片中的排球活動
+- **排球偵測** - 使用 Qwen3-VL 模型分析影片中的排球活動（支援並行處理）
+- **Rally 標註** - 檢視偵測結果並標註 rally 片段
 
 ## 安裝
 
@@ -58,7 +59,17 @@ uvicorn youtube.cutter.main:app --port 8001
 
 ### 3. 排球活動偵測
 
-需要先啟動 vLLM 伺服器（Qwen3-VL 模型）。
+首先啟動 vLLM 伺服器：
+
+```bash
+# 使用預設模型 (Qwen3-VL-8B) 在 port 8000
+./start_qwen3_vl_server.sh
+
+# 或指定模型和 port
+./start_qwen3_vl_server.sh Qwen/Qwen3-VL-4B-Instruct 8001
+```
+
+執行偵測：
 
 ```bash
 # 基本使用
@@ -85,36 +96,76 @@ python detect_volleyball.py --video path/to/video.mp4 \
 - `--batch-size, -b` - 並行處理的片段數量（預設：32）
 - `--output, -o` - 輸出 JSON 檔案路徑
 
+### 4. Rally 標註器
+
+檢視偵測結果並標註 rally 片段：
+
+```bash
+# 啟動標註伺服器
+yp-annotator
+
+# 或使用 uvicorn
+uvicorn annotator.main:app --port 8002
+```
+
+開啟瀏覽器至 http://localhost:8002
+
+功能：
+- 載入偵測結果 JSON 檔案
+- 播放影片並檢視各片段的偵測結果
+- 標註 rally（keep）或非 rally（skip）
+- 儲存標註結果
+
 ## 工作流程範例
 
-完整的 **下載 → 分析 → 剪輯** 流程：
+完整的 **下載 → 分析 → 標註 → 剪輯** 流程：
 
 ```bash
 # 1. 下載 YouTube 影片
-python -m youtube.download "https://youtube.com/watch?v=xxx"
+yp-download "https://youtube.com/watch?v=xxx"
 
-# 2. 分析排球活動
+# 2. 啟動 vLLM 伺服器（另開 terminal）
+./start_qwen3_vl_server.sh
+
+# 3. 分析排球活動
 python detect_volleyball.py --video ~/videos/影片名稱.mp4 --output results.json
 
-# 3. 啟動剪輯介面，根據分析結果剪輯精彩片段
-uvicorn youtube.cutter.main:app --port 8001
+# 4. 檢視結果並標註（可選）
+yp-annotator
+
+# 5. 根據分析結果剪輯精彩片段
+yp-cutter
 ```
 
 ## 專案結構
 
 ```
 yp-video/
-├── pyproject.toml          # 專案設定與依賴
-├── detect_volleyball.py    # 排球偵測主程式
-├── utils/                  # 共用工具
-│   └── ffmpeg.py           # FFmpeg 操作函式
-├── youtube/                # YouTube 相關功能
-│   ├── download.py         # YouTube 下載器
-│   └── cutter/             # 影片剪輯器
-│       ├── main.py         # FastAPI 伺服器
-│       └── static/         # Web UI
-└── InternVideo/            # InternVideo 模型（子模組）
+├── pyproject.toml            # 專案設定與依賴
+├── detect_volleyball.py      # 排球偵測主程式
+├── start_qwen3_vl_server.sh  # vLLM 伺服器啟動腳本
+├── utils/                    # 共用工具
+│   └── ffmpeg.py             # FFmpeg 操作函式
+├── youtube/                  # YouTube 相關功能
+│   ├── download.py           # YouTube 下載器
+│   └── cutter/               # 影片剪輯器
+│       ├── main.py           # FastAPI 伺服器
+│       └── static/           # Web UI
+├── annotator/                # Rally 標註器
+│   ├── main.py               # FastAPI 伺服器
+│   └── static/               # Web UI
+└── InternVideo/              # InternVideo 模型（子模組）
 ```
+
+## CLI 指令
+
+安裝後可使用以下指令：
+
+| 指令 | 說明 |
+|------|------|
+| `yp-download` | 下載 YouTube 影片 |
+| `yp-cutter` | 啟動影片剪輯伺服器 |
+| `yp-annotator` | 啟動 Rally 標註伺服器 |
 
 ## 依賴
 

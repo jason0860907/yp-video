@@ -1,5 +1,17 @@
 """FFmpeg utilities - redirects to utils.ffmpeg for backward compatibility."""
 
-from utils.ffmpeg import export_segment, get_video_duration, extract_clip
+from utils.ffmpeg import (
+    FFmpegError,
+    FFmpegTimeoutError,
+    export_segment,
+    extract_clip,
+    get_video_duration,
+)
 
-__all__ = ["export_segment", "get_video_duration", "extract_clip"]
+__all__ = [
+    "FFmpegError",
+    "FFmpegTimeoutError",
+    "export_segment",
+    "extract_clip",
+    "get_video_duration",
+]
