@@ -28,6 +28,7 @@ dependencies = [
 
 [project.scripts]
 yp-download = "youtube.download:main"
+yp-downloader = "youtube.downloader.main:run_server"
 yp-cutter = "youtube.cutter.main:run_server"
 yp-annotator = "annotator.main:run_server"
 

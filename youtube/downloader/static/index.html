@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube Playlist Downloader</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: system-ui, sans-serif; background: #1a1a1a; color: #fff; padding: 20px; }
+        h1 { margin-bottom: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .panel { background: #2a2a2a; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+        select, button, input { padding: 8px 16px; border-radius: 4px; border: none; font-size: 14px; }
+        select { background: #3a3a3a; color: #fff; }
+        button { background: #4a9eff; color: #fff; cursor: pointer; }
+        button:hover { background: #3a8eef; }
+        button:disabled { background: #555; cursor: not-allowed; }
+        input { background: #3a3a3a; color: #fff; }
+        input[type="text"] { width: 100%; }
+
+        .url-input { display: flex; gap: 10px; }
+        .url-input input { flex: 1; }
+
+        .btn-danger { background: #e74c3c; }
+        .btn-danger:hover { background: #c0392b; }
+        .btn-success { background: #27ae60; }
+        .btn-success:hover { background: #1e8449; }
+        .btn-secondary { background: #7f8c8d; }
+        .btn-secondary:hover { background: #6c7a7b; }
+
+        .controls { display: flex; gap: 10px; align-items: center; margin: 16px 0; flex-wrap: wrap; }
+
+        .video-list { max-height: 600px; overflow-y: auto; }
+        .video-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            padding: 12px;
+            background: #3a3a3a;
+            border-radius: 4px;
+            margin-bottom: 8px;
+        }
+        .video-item:hover { background: #4a4a4a; }
+        .video-item.downloading { background: #2a4a3a; }
+        .video-item.completed { background: #1e4620; }
+        .video-item.error { background: #4a1515; }
+
+        .video-item input[type="checkbox"] {
+            margin-top: 4px;
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+        }
+
+        .video-info { flex: 1; min-width: 0; }
+        .video-title {
+            word-break: break-word;
+            line-height: 1.4;
+            margin-bottom: 6px;
+        }
+        .video-meta {
+            font-size: 12px;
+            color: #888;
+            display: flex;
+            gap: 12px;
+        }
+
+        .progress-container {
+            margin-top: 8px;
+            display: none;
+        }
+        .progress-bar {
+            height: 6px;
+            background: #555;
+            border-radius: 3px;
+            overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%;
+            background: #4a9eff;
+            width: 0%;
+            transition: width 0.2s ease;
+        }
+        .progress-fill.complete { background: #27ae60; }
+        .progress-fill.error { background: #e74c3c; }
+        .progress-text {
+            font-size: 11px;
+            color: #aaa;
+            margin-top: 4px;
+        }
+
+        .status { padding: 12px; border-radius: 4px; margin-top: 12px; }
+        .status.success { background: #1e4620; }
+        .status.error { background: #4a1515; }
+        .status.info { background: #1a3a5c; }
+
+        .empty { color: #888; font-style: italic; text-align: center; padding: 40px; }
+
+        h3 { margin-bottom: 12px; }
+
+        .playlist-title {
+            font-size: 18px;
+            margin-bottom: 8px;
+            color: #4a9eff;
+        }
+        .playlist-count {
+            font-size: 14px;
+            color: #888;
+            margin-bottom: 16px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>YouTube Playlist Downloader</h1>
+
+        <div class="panel">
+            <h3>Playlist URL</h3>
+            <div class="url-input">
+                <input type="text" id="urlInput" placeholder="https://www.youtube.com/playlist?list=..." value="https://www.youtube.com/watch?v=c1rA-A001TA&list=PLt1RWDGIDkSiNYaITj5XsSKUtGYmVrKaU">
+                <button id="fetchBtn">Fetch Playlist</button>
+            </div>
+            <div id="fetchStatus" style="margin-top: 10px; color: #888;"></div>
+        </div>
+
+        <div class="panel" id="playlistPanel" style="display: none;">
+            <div class="playlist-title" id="playlistTitle"></div>
+            <div class="playlist-count" id="playlistCount"></div>
+
+            <div class="controls">
+                <button id="selectAllBtn">Select All</button>
+                <button id="deselectAllBtn" class="btn-secondary">Deselect All</button>
+                <span style="margin-left: auto;">Quality:</span>
+                <select id="qualitySelect">
+                    <option value="best">Best</option>
+                    <option value="1080">1080p</option>
+                    <option value="720" selected>720p</option>
+                    <option value="480">480p</option>
+                    <option value="360">360p</option>
+                </select>
+                <button id="downloadBtn" class="btn-success">Download Selected</button>
+                <button id="cancelBtn" class="btn-danger" style="display: none;">Cancel</button>
+            </div>
+
+            <div class="video-list" id="videoList">
+                <p class="empty">No videos loaded</p>
+            </div>
+        </div>
+
+        <div id="statusArea"></div>
+    </div>
+
+    <script>
+        // DOM elements
+        const urlInput = document.getElementById('urlInput');
+        const fetchBtn = document.getElementById('fetchBtn');
+        const fetchStatus = document.getElementById('fetchStatus');
+        const playlistPanel = document.getElementById('playlistPanel');
+        const playlistTitle = document.getElementById('playlistTitle');
+        const playlistCount = document.getElementById('playlistCount');
+        const selectAllBtn = document.getElementById('selectAllBtn');
+        const deselectAllBtn = document.getElementById('deselectAllBtn');
+        const qualitySelect = document.getElementById('qualitySelect');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const cancelBtn = document.getElementById('cancelBtn');
+        const videoList = document.getElementById('videoList');
+        const statusArea = document.getElementById('statusArea');
+
+        // State
+        let videos = [];
+        let currentSessionId = null;
+        let eventSource = null;
+
+        // Utility functions
+        function formatDuration(seconds) {
+            if (!seconds) return '--:--';
+            const mins = Math.floor(seconds / 60);
+            const secs = Math.floor(seconds % 60);
+            if (mins >= 60) {
+                const hours = Math.floor(mins / 60);
+                const remainMins = mins % 60;
+                return `${hours}:${String(remainMins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+            }
+            return `${mins}:${String(secs).padStart(2, '0')}`;
+        }
+
+        function formatBytes(bytes) {
+            if (!bytes) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+        }
+
+        function formatSpeed(bytesPerSec) {
+            if (!bytesPerSec) return '-- MB/s';
+            return formatBytes(bytesPerSec) + '/s';
+        }
+
+        function formatEta(seconds) {
+            if (!seconds) return '--:--';
+            if (seconds > 3600) return '> 1 hour';
+            const mins = Math.floor(seconds / 60);
+            const secs = Math.floor(seconds % 60);
+            return `${mins}:${String(secs).padStart(2, '0')}`;
+        }
+
+        // Fetch playlist
+        fetchBtn.addEventListener('click', async () => {
+            const url = urlInput.value.trim();
+            if (!url) {
+                alert('Please enter a YouTube playlist URL');
+                return;
+            }
+
+            fetchBtn.disabled = true;
+            fetchStatus.textContent = 'Fetching playlist info...';
+
+            try {
+                const res = await fetch(`/api/playlist?url=${encodeURIComponent(url)}`);
+                if (!res.ok) {
+                    const err = await res.json();
+                    throw new Error(err.detail || 'Failed to fetch playlist');
+                }
+
+                const data = await res.json();
+                videos = data.videos;
+
+                playlistTitle.textContent = data.title;
+                playlistCount.textContent = `${videos.length} videos`;
+
+                renderVideoList();
+                playlistPanel.style.display = 'block';
+                fetchStatus.textContent = '';
+
+            } catch (err) {
+                fetchStatus.textContent = `Error: ${err.message}`;
+            } finally {
+                fetchBtn.disabled = false;
+            }
+        });
+
+        // Enter key to fetch
+        urlInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                fetchBtn.click();
+            }
+        });
+
+        // Render video list
+        function renderVideoList() {
+            if (videos.length === 0) {
+                videoList.innerHTML = '<p class="empty">No videos in playlist</p>';
+                return;
+            }
+
+            videoList.innerHTML = videos.map((v, i) => `
+                <div class="video-item" data-id="${v.id}" data-index="${i}">
+                    <input type="checkbox" id="cb-${v.id}" checked>
+                    <div class="video-info">
+                        <div class="video-title">${escapeHtml(v.title)}</div>
+                        <div class="video-meta">
+                            <span>Duration: ${formatDuration(v.duration)}</span>
+                        </div>
+                        <div class="progress-container" id="progress-${v.id}">
+                            <div class="progress-bar">
+                                <div class="progress-fill" id="fill-${v.id}"></div>
+                            </div>
+                            <div class="progress-text" id="text-${v.id}"></div>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Select all / deselect all
+        selectAllBtn.addEventListener('click', () => {
+            document.querySelectorAll('.video-item input[type="checkbox"]').forEach(cb => {
+                cb.checked = true;
+            });
+        });
+
+        deselectAllBtn.addEventListener('click', () => {
+            document.querySelectorAll('.video-item input[type="checkbox"]').forEach(cb => {
+                cb.checked = false;
+            });
+        });
+
+        // Start download
+        downloadBtn.addEventListener('click', async () => {
+            const selected = [];
+            videos.forEach((v, i) => {
+                const cb = document.getElementById(`cb-${v.id}`);
+                if (cb && cb.checked) {
+                    selected.push(v);
+                }
+            });
+
+            if (selected.length === 0) {
+                alert('Please select at least one video');
+                return;
+            }
+
+            downloadBtn.style.display = 'none';
+            cancelBtn.style.display = 'inline-block';
+            fetchBtn.disabled = true;
+            selectAllBtn.disabled = true;
+            deselectAllBtn.disabled = true;
+            qualitySelect.disabled = true;
+
+            // Disable all checkboxes
+            document.querySelectorAll('.video-item input[type="checkbox"]').forEach(cb => {
+                cb.disabled = true;
+            });
+
+            try {
+                const res = await fetch('/api/download', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        videos: selected,
+                        quality: qualitySelect.value
+                    })
+                });
+
+                if (!res.ok) {
+                    throw new Error('Failed to start download');
+                }
+
+                const data = await res.json();
+                currentSessionId = data.session_id;
+
+                // Connect to SSE
+                connectToProgress(currentSessionId);
+
+            } catch (err) {
+                statusArea.innerHTML = `<div class="status error">Error: ${err.message}</div>`;
+                resetUI();
+            }
+        });
+
+        // Connect to progress stream
+        function connectToProgress(sessionId) {
+            eventSource = new EventSource(`/api/download/${sessionId}/progress`);
+
+            eventSource.onmessage = (e) => {
+                const msg = JSON.parse(e.data);
+                handleProgressMessage(msg);
+            };
+
+            eventSource.onerror = () => {
+                eventSource.close();
+                eventSource = null;
+            };
+        }
+
+        // Handle progress message
+        function handleProgressMessage(msg) {
+            if (!msg.type) return;
+
+            const videoItem = document.querySelector(`.video-item[data-id="${msg.video_id}"]`);
+            const progressContainer = document.getElementById(`progress-${msg.video_id}`);
+            const progressFill = document.getElementById(`fill-${msg.video_id}`);
+            const progressText = document.getElementById(`text-${msg.video_id}`);
+
+            switch (msg.type) {
+                case 'start':
+                    if (videoItem) {
+                        videoItem.classList.add('downloading');
+                        videoItem.classList.remove('completed', 'error');
+                    }
+                    if (progressContainer) {
+                        progressContainer.style.display = 'block';
+                    }
+                    statusArea.innerHTML = `<div class="status info">Downloading ${msg.index + 1}/${msg.total}: ${escapeHtml(msg.title)}</div>`;
+                    break;
+
+                case 'progress':
+                    if (progressFill) {
+                        progressFill.style.width = `${msg.percent}%`;
+                    }
+                    if (progressText) {
+                        progressText.textContent = `${msg.percent.toFixed(1)}% | ${formatBytes(msg.downloaded)} / ${formatBytes(msg.total)} | ${formatSpeed(msg.speed)} | ETA: ${formatEta(msg.eta)}`;
+                    }
+                    break;
+
+                case 'finished':
+                case 'complete':
+                    if (progressFill) {
+                        progressFill.style.width = '100%';
+                        progressFill.classList.add('complete');
+                    }
+                    if (progressText) {
+                        progressText.textContent = 'Complete';
+                    }
+                    if (videoItem) {
+                        videoItem.classList.remove('downloading');
+                        videoItem.classList.add('completed');
+                    }
+                    break;
+
+                case 'error':
+                    if (progressFill) {
+                        progressFill.classList.add('error');
+                    }
+                    if (progressText) {
+                        progressText.textContent = `Error: ${msg.error}`;
+                    }
+                    if (videoItem) {
+                        videoItem.classList.remove('downloading');
+                        videoItem.classList.add('error');
+                    }
+                    break;
+
+                case 'done':
+                    statusArea.innerHTML = `<div class="status success">All downloads completed!</div>`;
+                    resetUI();
+                    break;
+
+                case 'cancelled':
+                    statusArea.innerHTML = `<div class="status info">Download cancelled</div>`;
+                    resetUI();
+                    break;
+            }
+        }
+
+        // Cancel download
+        cancelBtn.addEventListener('click', async () => {
+            if (!currentSessionId) return;
+
+            try {
+                await fetch(`/api/download/${currentSessionId}/cancel`, { method: 'POST' });
+            } catch (err) {
+                console.error('Cancel error:', err);
+            }
+
+            if (eventSource) {
+                eventSource.close();
+                eventSource = null;
+            }
+
+            resetUI();
+        });
+
+        // Reset UI after download
+        function resetUI() {
+            downloadBtn.style.display = 'inline-block';
+            cancelBtn.style.display = 'none';
+            fetchBtn.disabled = false;
+            selectAllBtn.disabled = false;
+            deselectAllBtn.disabled = false;
+            qualitySelect.disabled = false;
+            currentSessionId = null;
+
+            // Re-enable checkboxes
+            document.querySelectorAll('.video-item input[type="checkbox"]').forEach(cb => {
+                cb.disabled = false;
+            });
+        }
+    </script>
+</body>
+</html>
