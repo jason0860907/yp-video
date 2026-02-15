@@ -301,7 +301,7 @@ static_dir = Path(__file__).parent / "static"
 app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
 
 
-def run_server(host: str = "0.0.0.0", port: int = 8003):
+def run_server(host: str = "0.0.0.0", port: int = 8001):
     """Run the downloader server."""
     import uvicorn
     uvicorn.run(app, host=host, port=port)

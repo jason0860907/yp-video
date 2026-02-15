@@ -99,7 +99,7 @@ static_dir = Path(__file__).parent / "static"
 app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
 
 
-def run_server(host: str = "0.0.0.0", port: int = 8001):
+def run_server(host: str = "0.0.0.0", port: int = 8002):
     """Run the video cutter server."""
     import uvicorn
     uvicorn.run(app, host=host, port=port)

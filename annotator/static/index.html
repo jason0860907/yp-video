@@ -112,6 +112,18 @@
         .btn-success:hover { background: #1e8449; }
         .btn-secondary { background: #7f8c8d; }
         .btn-secondary:hover { background: #6c7a7b; }
+        .btn-preview {
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 2px 6px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .btn-preview:hover {
+            background: #2980b9;
+        }
 
         .status { margin-top: 12px; padding: 12px; border-radius: 4px; }
         .status.success { background: #1e4620; }
@@ -482,9 +494,12 @@
                 return;
             }
 
-            annotationList.innerHTML = annotations.map((ann, i) => `
+            let rallyCount = 0;
+            annotationList.innerHTML = annotations.map((ann, i) => {
+                const indexDisplay = ann.label === 'rally' ? ++rallyCount : '';
+                return `
                 <div class="annotation${i === selectedIndex ? ' selected' : ''}" data-index="${i}">
-                    <span class="index">${i + 1}</span>
+                    <span class="index">${indexDisplay}</span>
                     <button class="label-btn ${ann.label}" onclick="toggleLabel(${i})">${ann.label}</button>
                     <span class="times">
                         <input type="text" value="${formatTimeShort(ann.start)}"
@@ -493,9 +508,11 @@
                         <input type="text" value="${formatTimeShort(ann.end)}"
                                onchange="updateAnnotation(${i}, 'end', parseTimeInput(this.value))" onclick="event.stopPropagation()">
                     </span>
+                    <button class="btn-preview" onclick="previewEnd(${i}); event.stopPropagation();" title="Preview last 3s">▶End</button>
                     <button class="btn-danger" onclick="deleteAnnotation(${i}); event.stopPropagation();">Del</button>
                 </div>
-            `).join('');
+            `;
+            }).join('');
 
             // Add click handlers for selection and playback
             annotationList.querySelectorAll('.annotation').forEach(el => {
@@ -542,6 +559,15 @@
             renderAnnotations();
         };
 
+        window.previewEnd = function(index) {
+            selectAnnotation(index);
+            const ann = annotations[index];
+            const previewStart = Math.max(0, ann.end - 3);  // 結束前 3 秒
+            player.currentTime = previewStart;
+            playUntil = ann.end;  // 播放到結束點自動暫停
+            player.play();
+        };
+
         // Save annotations
         saveBtn.addEventListener('click', async () => {
             if (!currentVideoPath) {
@@ -549,8 +575,8 @@
                 return;
             }
 
-            // Filter to only rally annotations for TAD training
-            const rallyAnnotations = annotations.filter(a => a.label === 'rally');
+            // Save all annotations (rally and non-rally) for TAD training
+            const allAnnotations = annotations;
 
             saveBtn.disabled = true;
             saveBtn.textContent = 'Saving...';
@@ -562,11 +588,11 @@
                     body: JSON.stringify({
                         video: currentVideoPath,
                         duration: videoDuration,
-                        annotations: rallyAnnotations
+                        annotations: allAnnotations
                     })
                 });
                 const result = await res.json();
-                statusArea.innerHTML = `<div class="status success">Saved ${result.count} rally annotations to: ${result.saved}</div>`;
+                statusArea.innerHTML = `<div class="status success">Saved ${result.count} annotations to: ${result.saved}</div>`;
             } catch (err) {
                 statusArea.innerHTML = `<div class="status error">Error: ${err.message}</div>`;
             } finally {
