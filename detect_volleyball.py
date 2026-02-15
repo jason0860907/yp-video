@@ -36,12 +36,6 @@ def format_time(seconds: float) -> str:
 
 
 
-class Confidence(str, Enum):
-    HIGH = "high"
-    MEDIUM = "medium"
-    LOW = "low"
-
-
 class ShotType(str, Enum):
     FULL_COURT = "full_court"
     CLOSE_UP = "close_up"
@@ -53,7 +47,6 @@ class ClipResult:
     start_time: float
     end_time: float
     has_volleyball: bool
-    confidence: Confidence
     shot_type: ShotType
     description: str
 
@@ -79,7 +72,6 @@ def extract_json_from_response(content: str) -> dict:
     except json.JSONDecodeError:
         return {
             "has_volleyball": False,
-            "confidence": Confidence.LOW,
             "shot_type": ShotType.CLOSE_UP,
             "description": f"Failed to parse response: {content[:100]}"
         }
@@ -87,28 +79,36 @@ def extract_json_from_response(content: str) -> dict:
 
 def save_results(output_file: str, video_path: str, clip_duration: float,
                  slide_interval: float, results: list[ClipResult]) -> None:
-    """Save current results to JSON file."""
+    """Save current results to JSONL file.
+
+    Format:
+        Line 1: metadata with _meta=true
+        Line 2+: one clip result per line
+    """
     volleyball_clips = [r for r in results if r.has_volleyball]
-    output_data = {
-        "video": video_path,
-        "clip_duration": clip_duration,
-        "slide_interval": slide_interval,
-        "total_clips": len(results),
-        "volleyball_clips": len(volleyball_clips),
-        "results": [
-            {
+
+    with open(output_file, "w", encoding="utf-8") as f:
+        # First line: metadata
+        meta = {
+            "_meta": True,
+            "video": video_path,
+            "clip_duration": clip_duration,
+            "slide_interval": slide_interval,
+            "total_clips": len(results),
+            "volleyball_clips": len(volleyball_clips),
+        }
+        f.write(json.dumps(meta, ensure_ascii=False) + "\n")
+
+        # Subsequent lines: one result per line
+        for r in results:
+            result_dict = {
                 "start_time": r.start_time,
                 "end_time": r.end_time,
                 "has_volleyball": r.has_volleyball,
-                "confidence": r.confidence.value,
                 "shot_type": r.shot_type.value,
                 "description": r.description
             }
-            for r in results
-        ]
-    }
-    with open(output_file, "w", encoding="utf-8") as f:
-        json.dump(output_data, f, indent=2, ensure_ascii=False)
+            f.write(json.dumps(result_dict, ensure_ascii=False) + "\n")
 
 
 def analyze_clip_with_vllm(
@@ -134,7 +134,6 @@ Shot types:
 Respond in this exact JSON format:
 {
     "has_volleyball": true/false,
-    "confidence": "high"/"medium"/"low",
     "shot_type": "full_court"/"close_up",
     "description": "Brief description"
 }
@@ -200,7 +199,6 @@ Shot types:
 Respond in this exact JSON format:
 {
     "has_volleyball": true/false,
-    "confidence": "high"/"medium"/"low",
     "shot_type": "full_court"/"close_up",
     "description": "Brief description"
 }
@@ -236,16 +234,6 @@ Only output the JSON, no other text."""
         result = await response.json()
         content = result["choices"][0]["message"]["content"]
         return extract_json_from_response(content)
-
-
-def _parse_confidence(value: str | Confidence) -> Confidence:
-    """Convert string to Confidence enum."""
-    if isinstance(value, Confidence):
-        return value
-    try:
-        return Confidence(value)
-    except ValueError:
-        return Confidence.LOW
 
 
 def _parse_shot_type(value: str | ShotType) -> ShotType:
@@ -300,13 +288,12 @@ def process_single_clip(
             start_time=start_time,
             end_time=end_time,
             has_volleyball=analysis.get("has_volleyball", False),
-            confidence=_parse_confidence(analysis.get("confidence", "low")),
             shot_type=_parse_shot_type(analysis.get("shot_type", "full_court")),
             description=analysis.get("description", "")
         )
 
         status = "VOLLEYBALL" if result.has_volleyball else "NO"
-        print(f"  [{status}] ({result.confidence.value}) {result.description[:60]}...")
+        print(f"  [{status}] {result.description[:60]}...")
 
         return result
 
@@ -350,7 +337,6 @@ async def process_batch_async(
                     start_time=start_time,
                     end_time=end_time,
                     has_volleyball=result.get("has_volleyball", False),
-                    confidence=_parse_confidence(result.get("confidence", "low")),
                     shot_type=_parse_shot_type(result.get("shot_type", "full_court")),
                     description=result.get("description", "")
                 )
@@ -512,7 +498,7 @@ def main():
         "--output", "-o",
         type=str,
         default=None,
-        help="Output JSON file for results"
+        help="Output JSONL file for results"
     )
     parser.add_argument(
         "--batch-size", "-b",
@@ -523,10 +509,10 @@ def main():
 
     args = parser.parse_args()
 
-    # Default output to ~/videos/{video_basename}.json
+    # Default output to ~/videos/annotations/{video_basename}.jsonl
     if args.output is None:
         video_base = os.path.splitext(os.path.basename(args.video))[0]
-        args.output = os.path.expanduser(f"~/videos/cuts/{video_base}.json")
+        args.output = os.path.expanduser(f"~/videos/seg-annotations/{video_base}.jsonl")
 
     if not os.path.exists(args.video):
         print(f"Error: Video file not found: {args.video}")

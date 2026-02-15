@@ -26,3 +26,9 @@ ENV/
 
 # Large directories (use git submodule if needed)
 InternVideo/
+OpenTAD/
+
+# TAD data and checkpoints
+tad/checkpoints/
+tad/data/features/*.npy
+tad/data/annotations/*.json

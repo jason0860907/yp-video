@@ -33,7 +33,8 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 VIDEOS_DIR = Path.home() / "videos"
-ANNOTATIONS_DIR = VIDEOS_DIR / "annotations"
+PRE_ANNOTATIONS_DIR = VIDEOS_DIR / "rally-pre-annotations"
+ANNOTATIONS_DIR = VIDEOS_DIR / "rally-annotations"
 
 
 class Annotation(BaseModel):
@@ -48,26 +49,73 @@ class SaveAnnotationsRequest(BaseModel):
     annotations: list[Annotation]
 
 
+def read_jsonl(path: Path) -> dict:
+    """Read JSONL file and return structure compatible with JSON format.
+
+    JSONL format:
+        Line 1: metadata with _meta=true
+        Line 2+: one clip result per line
+
+    Returns:
+        Dict with metadata fields + "results" list
+    """
+    with open(path, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+
+    if not lines:
+        return {"results": []}
+
+    # First line is metadata
+    meta = json.loads(lines[0])
+    meta.pop("_meta", None)
+
+    # Remaining lines are results
+    results = []
+    for line in lines[1:]:
+        line = line.strip()
+        if line:
+            results.append(json.loads(line))
+
+    meta["results"] = results
+    return meta
+
+
 @app.get("/api/results")
 def list_results() -> list[str]:
-    """List all .json files in ~/videos."""
-    if not VIDEOS_DIR.exists():
-        return []
-    return sorted(f.name for f in VIDEOS_DIR.glob("cuts/*.json"))
+    """List .jsonl files from rally-annotations and rally-pre-annotations.
+
+    Files in rally-annotations (human-corrected) take priority over
+    rally-pre-annotations (auto-generated) when both exist.
+    """
+    files: dict[str, None] = {}
+    # Add pre-annotations first
+    if PRE_ANNOTATIONS_DIR.exists():
+        for f in PRE_ANNOTATIONS_DIR.glob("*.jsonl"):
+            files[f.name] = None
+    # Override with human-corrected annotations
+    if ANNOTATIONS_DIR.exists():
+        for f in ANNOTATIONS_DIR.glob("*.jsonl"):
+            files[f.name] = None
+    return sorted(files)
 
 
 @app.get("/api/results/{name}")
 def get_result(name: str) -> dict:
-    """Get contents of a specific results JSON file."""
-    path = VIDEOS_DIR / "cuts" / name
+    """Get contents of a specific results JSONL file.
+
+    Checks rally-annotations first, then falls back to rally-pre-annotations.
+    """
+    # Prefer human-corrected annotations
+    path = ANNOTATIONS_DIR / name
+    if not path.exists() or not path.is_file():
+        path = PRE_ANNOTATIONS_DIR / name
     if not path.exists() or not path.is_file():
         raise HTTPException(404, "Results file not found")
 
     try:
-        with open(path) as f:
-            return json.load(f)
+        return read_jsonl(path)
     except json.JSONDecodeError:
-        raise HTTPException(400, "Invalid JSON file")
+        raise HTTPException(400, "Invalid JSONL file")
 
 
 @app.get("/api/video/{path:path}")
@@ -90,25 +138,28 @@ def stream_video(path: str):
 
 @app.post("/api/annotations")
 def save_annotations(req: SaveAnnotationsRequest) -> dict:
-    """Save annotations to JSON file."""
+    """Save annotations to JSONL file.
+
+    Format:
+        Line 1: metadata with _meta=true
+        Line 2+: one annotation per line
+    """
     ANNOTATIONS_DIR.mkdir(parents=True, exist_ok=True)
 
     # Extract video stem from path
     video_path = Path(req.video)
-    output_name = f"{video_path.stem}_annotations.json"
+    output_name = f"{video_path.stem}_annotations.jsonl"
     output_path = ANNOTATIONS_DIR / output_name
 
-    data = {
-        "video": req.video,
-        "duration": req.duration,
-        "annotations": [
-            {"start": a.start, "end": a.end, "label": a.label}
-            for a in req.annotations
-        ]
-    }
-
     with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+        # First line: metadata
+        meta = {"_meta": True, "video": req.video, "duration": req.duration}
+        f.write(json.dumps(meta, ensure_ascii=False) + "\n")
+
+        # Subsequent lines: one annotation per line
+        for a in req.annotations:
+            annotation = {"start": a.start, "end": a.end, "label": a.label}
+            f.write(json.dumps(annotation, ensure_ascii=False) + "\n")
 
     return {"saved": str(output_path), "count": len(req.annotations)}
 
@@ -117,7 +168,7 @@ static_dir = Path(__file__).parent / "static"
 app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
 
 
-def run_server(host: str = "0.0.0.0", port: int = 8002):
+def run_server(host: str = "0.0.0.0", port: int = 8003):
     """Run the Rally Annotator server."""
     import uvicorn
     uvicorn.run(app, host=host, port=port)

@@ -8,7 +8,9 @@
 - **TPVL 重命名** - 批次將 TPVL 影片從長標題重命名為簡潔格式
 - **影片剪輯** - Web UI 介面，將完整比賽影片切分為個別 set
 - **排球偵測** - 使用 Qwen3-VL 模型分析 set 影片中的排球活動（支援並行處理）
-- **Rally 標註** - 檢視偵測結果並人工微調標註，產生訓練資料
+- **VLM→Rally 轉換** - 將逐片段偵測結果合併為 rally 標註
+- **Rally 標註** - 檢視自動標註並人工校正，產生 ground truth 訓練資料
+- **TAD 推論** - 使用 Temporal Action Detection 模型預測 rally 片段
 
 ## 安裝
 
@@ -48,7 +50,7 @@ uv run yp-download "https://youtube.com/watch?v=xxx" --list
 uv run yp-downloader
 ```
 
-開啟瀏覽器至 http://localhost:8003
+開啟瀏覽器至 http://localhost:8001
 
 功能：
 - 貼上 YouTube 播放清單網址
@@ -86,7 +88,7 @@ uv run python -m youtube.rename_tpvl -d ~/my-videos --dry-run
 uv run yp-cutter
 ```
 
-開啟瀏覽器至 http://localhost:8001
+開啟瀏覽器至 http://localhost:8002
 
 功能：
 - 從 `~/videos` 載入完整比賽影片
@@ -137,25 +139,18 @@ uv run python detect_volleyball.py --video path/to/video.mp4 \
 - `--batch-size, -b` - 並行處理的片段數量（預設：32）
 - `--output, -o` - 輸出 JSON 檔案路徑
 
-### 5. Rally 標註器
+### 5. VLM→Rally 轉換
 
-人工檢視並微調 VLM 偵測結果，產生 temporal segmentation 訓練資料。
+將 VLM 逐片段偵測結果合併為 rally 標註：
 
 ```bash
-uv run yp-annotator
+uv run python -m tad.vlm_to_rally
+# 讀取 ~/videos/seg-annotations/ → 輸出至 ~/videos/rally-pre-annotations/
 ```
-
-開啟瀏覽器至 http://localhost:8002
-
-功能：
-- 載入偵測結果 JSON 檔案
-- 播放影片並檢視各片段的偵測結果
-- 微調 rally 邊界，標註 rally（keep）或非 rally（skip）
-- 儲存標註結果作為訓練資料
 
 #### Rally 自動合併邏輯
 
-載入偵測結果時，會自動將連續的 clips 合併成 rally 片段：
+自動將連續的 clips 合併成 rally 片段：
 
 ```
 輸入 clips:  [gameplay] [gameplay] [non-gameplay] [gameplay] [gameplay]
@@ -172,9 +167,26 @@ uv run yp-annotator
 2. 相鄰 gameplay clips 間隔 ≤ 2 秒也會合併
 3. 遇到 non-gameplay 時結束當前 rally
 
+### 6. Rally 標註器
+
+人工校正自動產生的 rally 標註，產生 ground truth 訓練資料。
+
+```bash
+uv run yp-annotator
+```
+
+開啟瀏覽器至 http://localhost:8003
+
+功能：
+- 載入 `~/videos/rally-pre-annotations/`（自動）和 `~/videos/rally-annotations/`（人工校正）的檔案
+- 已校正的版本優先顯示
+- 播放影片並檢視各片段的偵測結果
+- 微調 rally 邊界，標註 rally（keep）或非 rally（skip）
+- 儲存校正結果至 `~/videos/rally-annotations/`
+
 ## 工作流程範例
 
-完整的 **下載 → 剪輯 → 偵測 → 標註** 流程：
+完整的 **下載 → 剪輯 → 偵測 → 轉換 → 標註** 流程：
 
 ```bash
 # 1. 下載 YouTube 比賽影片
@@ -191,21 +203,38 @@ uv run yp-cutter
 # 4. 啟動 vLLM 伺服器（另開 terminal）
 ./start_qwen3_vl_server.sh
 
-# 5. 對 set 影片進行排球活動偵測
-uv run python detect_volleyball.py --video ~/videos/cuts/set1.mp4 --output set1.json
+# 5. 對 set 影片進行 VLM 排球活動偵測
+uv run python detect_volleyball.py --video ~/videos/cuts/set1.mp4
+# 輸出至 ~/videos/seg-annotations/
 
-# 6. 人工微調標註，產生訓練資料
+# 6. 將 VLM 片段偵測合併為 rally 標註
+uv run python -m tad.vlm_to_rally
+# 讀取 ~/videos/seg-annotations/ → ~/videos/rally-pre-annotations/
+
+# 7. 人工校正標註，產生 ground truth
 uv run yp-annotator
+# 讀取 rally-pre-annotations + rally-annotations，存入 rally-annotations
 ```
 
 產生的標註資料可用於訓練 temporal segmentation 模型。
+
+### ~/videos 目錄結構
+
+```
+~/videos/
+├── cuts/                    # 剪輯後的 set 影片
+├── seg-annotations/         # VLM 逐片段偵測結果（自動）
+├── rally-pre-annotations/   # 自動合併的 rally 標註（自動）
+├── rally-annotations/       # 人工校正後的 ground truth（人工）
+└── tad-predictions/         # TAD 模型預測結果（自動）
+```
 
 ## 專案結構
 
 ```
 yp-video/
 ├── pyproject.toml            # 專案設定與依賴
-├── detect_volleyball.py      # 排球偵測主程式
+├── detect_volleyball.py      # VLM 排球偵測主程式
 ├── start_qwen3_vl_server.sh  # vLLM 伺服器啟動腳本
 ├── utils/                    # 共用工具
 │   └── ffmpeg.py             # FFmpeg 操作函式
@@ -221,7 +250,11 @@ yp-video/
 ├── annotator/                # Rally 標註器
 │   ├── main.py               # FastAPI 伺服器
 │   └── static/               # Web UI
-└── InternVideo/              # InternVideo 模型（子模組）
+└── tad/                      # Temporal Action Detection
+    ├── vlm_to_rally.py       # VLM→rally 轉換
+    ├── convert_annotations.py # 標註格式轉換
+    ├── infer.py              # TAD 推論
+    └── output_converter.py   # MambaTAD 輸出轉換
 ```
 
 ## CLI 指令
@@ -231,7 +264,7 @@ yp-video/
 | 指令 | 說明 |
 |------|------|
 | `yp-download` | 下載 YouTube 影片（CLI） |
-| `yp-downloader` | 啟動批次下載伺服器（Web UI，port 8003） |
+| `yp-downloader` | 啟動批次下載伺服器（Web UI，port 8001） |
 | `python -m youtube.rename_tpvl` | 批次重命名 TPVL 影片 |
-| `yp-cutter` | 啟動影片剪輯伺服器（Web UI，port 8001） |
-| `yp-annotator` | 啟動 Rally 標註伺服器（Web UI，port 8002） |
+| `yp-cutter` | 啟動影片剪輯伺服器（Web UI，port 8002） |
+| `yp-annotator` | 啟動 Rally 標註伺服器（Web UI，port 8003） |
