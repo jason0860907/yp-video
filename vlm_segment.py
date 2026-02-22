@@ -6,8 +6,8 @@ Processes video with sliding window approach:
 - 2 second sliding interval
 
 Usage:
-    python detect_volleyball.py --video ~/videos/cuts/tpvl_set1.mp4 --output ~/videos/tpvl_set1_test_results.json
-    python detect_volleyball.py --video ~/videos/cuts/tpvl_set1.mp4 --server http://localhost:8000 --output tpvl_set1_test_results.json
+    python vlm_segment.py --video ~/videos/cuts/tpvl_set1.mp4 --output ~/videos/tpvl_set1_test_results.json
+    python vlm_segment.py --video ~/videos/cuts/tpvl_set1.mp4 --server http://localhost:8000 --output tpvl_set1_test_results.json
 """
 
 import argparse
@@ -25,6 +25,25 @@ import requests
 from tqdm import tqdm
 
 from utils.ffmpeg import FFmpegError, extract_clip, get_video_duration
+
+
+def load_vllm_env() -> dict[str, str]:
+    """Load config from vllm.env next to this script."""
+    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vllm.env")
+    config = {}
+    try:
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, _, value = line.partition("=")
+                    config[key.strip()] = value.strip()
+    except FileNotFoundError:
+        pass
+    return config
+
+
+_VLLM_CONFIG = load_vllm_env()
 
 
 def format_time(seconds: float) -> str:
@@ -470,17 +489,21 @@ def main():
         required=True,
         help="Path to video file"
     )
+    _default_port = _VLLM_CONFIG.get("VLLM_PORT", "8000")
+    _default_model = _VLLM_CONFIG.get("VLLM_MODEL", "Qwen/Qwen3-VL-8B-Instruct")
+    _default_server = f"http://localhost:{_default_port}"
+
     parser.add_argument(
         "--server", "-s",
         type=str,
-        default="http://localhost:8000",
-        help="vLLM server URL (default: http://localhost:8000)"
+        default=_default_server,
+        help=f"vLLM server URL (default: {_default_server})"
     )
     parser.add_argument(
         "--model", "-m",
         type=str,
-        default="Qwen/Qwen3-VL-8B-Instruct",
-        help="Model name (default: Qwen/Qwen3-VL-8B-Instruct)"
+        default=_default_model,
+        help=f"Model name (default: {_default_model})"
     )
     parser.add_argument(
         "--clip-duration", "-d",

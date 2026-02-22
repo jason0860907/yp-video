@@ -106,25 +106,25 @@ uv run yp-cutter
 
 ```bash
 # 使用預設模型 (Qwen3-VL-8B) 在 port 8000
-./start_qwen3_vl_server.sh
+./start_vllm_server.sh
 
 # 或指定模型和 port
-./start_qwen3_vl_server.sh Qwen/Qwen3-VL-4B-Instruct 8001
+./start_vllm_server.sh Qwen/Qwen3-VL-4B-Instruct 8001
 ```
 
 執行偵測：
 
 ```bash
 # 基本使用
-uv run python detect_volleyball.py --video path/to/video.mp4
+uv run python vlm_segment.py --video path/to/video.mp4
 
 # 指定伺服器與輸出檔案
-uv run python detect_volleyball.py --video path/to/video.mp4 \
+uv run python vlm_segment.py --video path/to/video.mp4 \
     --server http://localhost:8000 \
     --output results.json
 
 # 調整分析參數與並行數量
-uv run python detect_volleyball.py --video path/to/video.mp4 \
+uv run python vlm_segment.py --video path/to/video.mp4 \
     --clip-duration 6.0 \
     --slide-interval 3.0 \
     --batch-size 8
@@ -201,10 +201,10 @@ uv run yp-cutter
 # 輸出至 ~/videos/cuts/
 
 # 4. 啟動 vLLM 伺服器（另開 terminal）
-./start_qwen3_vl_server.sh
+./start_vllm_server.sh
 
 # 5. 對 set 影片進行 VLM 排球活動偵測
-uv run python detect_volleyball.py --video ~/videos/cuts/set1.mp4
+uv run python vlm_segment.py --video ~/videos/cuts/set1.mp4
 # 輸出至 ~/videos/seg-annotations/
 
 # 6. 將 VLM 片段偵測合併為 rally 標註
@@ -234,8 +234,8 @@ uv run yp-annotator
 ```
 yp-video/
 ├── pyproject.toml            # 專案設定與依賴
-├── detect_volleyball.py      # VLM 排球偵測主程式
-├── start_qwen3_vl_server.sh  # vLLM 伺服器啟動腳本
+├── vlm_segment.py      # VLM 排球偵測主程式
+├── start_vllm_server.sh  # vLLM 伺服器啟動腳本
 ├── utils/                    # 共用工具
 │   └── ffmpeg.py             # FFmpeg 操作函式
 ├── youtube/                  # YouTube 相關功能
