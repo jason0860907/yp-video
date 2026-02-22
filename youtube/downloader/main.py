@@ -223,6 +223,8 @@ async def download_videos(session_id: str, videos: list[VideoInfo], quality: str
             "outtmpl": str(VIDEOS_DIR / "%(title)s.%(ext)s"),
             "progress_hooks": [make_progress_hook(video_id, queue, loop)],
             "postprocessor_args": {"ffmpeg": ["-movflags", "+faststart"]},
+            "cookiefile": str(Path.home() / "cookies.txt"),
+            "js_runtimes": {"node": {}},
             "quiet": True,
             "no_warnings": True,
         }

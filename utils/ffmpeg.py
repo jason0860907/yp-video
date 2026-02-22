@@ -69,17 +69,16 @@ def extract_clip(video_path: str, start_time: float, duration: float, output_pat
         raise FFmpegTimeoutError(output_path, FFMPEG_TIMEOUT) from e
 
 
-def export_segment(source: Path | str, start: float, end: float, output: Path | str) -> bool:
-    """Export a single segment using stream copy for fast extraction.
-
-    Note: Copy mode doesn't re-encode, so cuts may not be frame-accurate
-    (a few seconds of drift possible if cut points aren't keyframes).
+def export_segment(source: Path | str, start: float, end: float, output: Path | str, *, copy: bool = False) -> bool:
+    """Export a single video segment.
 
     Args:
         source: Source video path
         start: Start time in seconds
         end: End time in seconds
         output: Output file path
+        copy: If True, use stream copy (fast, not frame-accurate).
+              If False (default), re-encode with libx264 (slower, frame-accurate).
 
     Returns:
         True if export succeeded, False otherwise
@@ -90,14 +89,15 @@ def export_segment(source: Path | str, start: float, end: float, output: Path | 
     """
     cmd = [
         "ffmpeg", "-y",
-        "-i", str(source),
         "-ss", str(start),
-        "-to", str(end),
-        "-c:v", "copy",
-        "-c:a", "copy",
-        "-movflags", "+faststart",
-        str(output)
+        "-i", str(source),
+        "-t", str(end - start),
     ]
+    if copy:
+        cmd += ["-c:v", "copy", "-c:a", "copy"]
+    else:
+        cmd += ["-c:v", "libx264", "-preset", "fast", "-crf", "18", "-c:a", "aac"]
+    cmd += ["-movflags", "+faststart", str(output)]
     try:
         result = subprocess.run(cmd, capture_output=True, timeout=FFMPEG_TIMEOUT)
         if result.returncode != 0:

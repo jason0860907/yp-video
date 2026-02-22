@@ -69,7 +69,7 @@ def download_video(
 
     output_template = str(output_dir / filename_template)
 
-    cmd = ["yt-dlp"]
+    cmd = ["yt-dlp", "--cookies", str(Path.home() / "cookies.txt"), "--js-runtimes", "node"]
 
     if audio_only:
         # Best audio only, convert to mp3

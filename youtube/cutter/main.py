@@ -87,7 +87,7 @@ def export_segments(req: ExportRequest) -> ExportResult:
         output_path = CUTS_DIR / output_name
 
         try:
-            export_segment(source_path, seg.start, seg.end, output_path)
+            export_segment(source_path, seg.start, seg.end, output_path, copy=True)
             success.append(output_name)
         except FFmpegError:
             failed.append(output_name)
