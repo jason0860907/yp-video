@@ -14,6 +14,7 @@ source "$(dirname "$0")/vllm.env"
 MODEL_NAME="${1:-$VLLM_MODEL}"
 PORT="${2:-$VLLM_PORT}"
 
+echo "----------------------------------------"
 echo "Starting vLLM server..."
 echo "Model: ${MODEL_NAME}"
 echo "Port: ${PORT}"

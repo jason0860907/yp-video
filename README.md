@@ -159,7 +159,7 @@ uv run python -m tad.vlm_to_rally
 ```
 
 判斷規則：
-- **Gameplay** = `has_volleyball: true` **且** `shot_type: full_court`
+- **Gameplay** = `in_rally: true` **且** `shot_type: full_court`
 - **Non-gameplay** = 其他情況（無排球活動、特寫畫面等）
 
 合併規則：

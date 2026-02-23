@@ -107,13 +107,17 @@ def get_result(name: str) -> dict:
     """
     # Prefer human-corrected annotations
     path = ANNOTATIONS_DIR / name
+    source = "rally-annotations"
     if not path.exists() or not path.is_file():
         path = PRE_ANNOTATIONS_DIR / name
+        source = "rally-pre-annotations"
     if not path.exists() or not path.is_file():
         raise HTTPException(404, "Results file not found")
 
     try:
-        return read_jsonl(path)
+        data = read_jsonl(path)
+        data["source"] = source
+        return data
     except json.JSONDecodeError:
         raise HTTPException(400, "Invalid JSONL file")
 

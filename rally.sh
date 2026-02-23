@@ -2,7 +2,7 @@
 source .venv/bin/activate
 
 # 在這裡列出要處理的比賽
-GAMES="G11 G12 G13 G14 G15"
+GAMES="G1 G2 G3 G4 G5 G6 G7 G8 G9 G10"
 
 for game in $GAMES; do
     for video in ~/videos/cuts/*_${game}_*.mp4; do

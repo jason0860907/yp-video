@@ -1,0 +1,24 @@
+Analyze this video clip of a volleyball broadcast.
+
+Determine:
+1. Is a live rally in progress?
+   - true: The ball is actively in play in LIVE footage — from the moment the server contacts the ball until the point ends (ball lands, goes out, or a fault occurs)
+   - false:
+     - Replays or slow-motion playback (even if showing rally action — look for slow motion, "REPLAY" overlays, or repeated footage)
+     - Serve preparation (player bouncing ball, tossing but not yet contacting)
+     - Celebrations, reactions after a point ends
+     - Timeouts, substitutions, walking between points
+     - Interviews, ads, or other non-gameplay content
+     - Player close-up
+
+2. What is the camera shot type?
+   - "full_court": Fixed high-angle camera showing the entire court with both teams visible and the camera not moving — the standard live gameplay broadcast view
+   - "close_up": Any other shot — player close-ups, replays, celebrations, interviews, partial court views, or any shot where the camera is panning, zooming, or tracking a player
+
+Respond in this exact JSON format:
+{
+    "in_rally": true/false,
+    "shot_type": "full_court"/"close_up"
+}
+
+Only output the JSON, no other text.

@@ -14,6 +14,7 @@ import argparse
 import asyncio
 import json
 import os
+from pathlib import Path
 import re
 import tempfile
 import time
@@ -46,6 +47,26 @@ def load_vllm_env() -> dict[str, str]:
 _VLLM_CONFIG = load_vllm_env()
 
 
+def _load_prompt(filename: str) -> str:
+    """Load a prompt template from the prompts/ directory."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "prompts", filename)
+    with open(path) as f:
+        return f.read()
+
+
+VOLLEYBALL_SEGMENT_PROMPT = _load_prompt("volleyball_segment.txt")
+
+
+def check_server(server_url: str) -> None:
+    """Check if vLLM server is reachable. Raises SystemExit if not."""
+    try:
+        resp = requests.get(f"{server_url}/v1/models", timeout=5)
+        resp.raise_for_status()
+    except requests.exceptions.RequestException as e:
+        print(f"ERROR: vLLM server not reachable at {server_url}: {e}")
+        raise SystemExit(1)
+
+
 def format_time(seconds: float) -> str:
     """Format seconds as MM:SS (e.g., 01:04)."""
     mins = int(seconds // 60)
@@ -65,9 +86,8 @@ class ClipResult:
     """Result for a single video clip."""
     start_time: float
     end_time: float
-    has_volleyball: bool
+    in_rally: bool
     shot_type: ShotType
-    description: str
 
 
 def extract_json_from_response(content: str) -> dict:
@@ -90,9 +110,8 @@ def extract_json_from_response(content: str) -> dict:
         return json.loads(json_str)
     except json.JSONDecodeError:
         return {
-            "has_volleyball": False,
+            "in_rally": False,
             "shot_type": ShotType.CLOSE_UP,
-            "description": f"Failed to parse response: {content[:100]}"
         }
 
 
@@ -104,8 +123,9 @@ def save_results(output_file: str, video_path: str, clip_duration: float,
         Line 1: metadata with _meta=true
         Line 2+: one clip result per line
     """
-    volleyball_clips = [r for r in results if r.has_volleyball]
+    rally_clips = [r for r in results if r.in_rally]
 
+    Path(output_file).parent.mkdir(parents=True, exist_ok=True)
     with open(output_file, "w", encoding="utf-8") as f:
         # First line: metadata
         meta = {
@@ -114,7 +134,7 @@ def save_results(output_file: str, video_path: str, clip_duration: float,
             "clip_duration": clip_duration,
             "slide_interval": slide_interval,
             "total_clips": len(results),
-            "volleyball_clips": len(volleyball_clips),
+            "rally_clips": len(rally_clips),
         }
         f.write(json.dumps(meta, ensure_ascii=False) + "\n")
 
@@ -123,9 +143,8 @@ def save_results(output_file: str, video_path: str, clip_duration: float,
             result_dict = {
                 "start_time": r.start_time,
                 "end_time": r.end_time,
-                "has_volleyball": r.has_volleyball,
+                "in_rally": r.in_rally,
                 "shot_type": r.shot_type.value,
-                "description": r.description
             }
             f.write(json.dumps(result_dict, ensure_ascii=False) + "\n")
 
@@ -140,24 +159,7 @@ def analyze_clip_with_vllm(
     # Use file:// URL for local files (requires --allowed-local-media-path on server)
     video_url = f"file://{video_path}"
 
-    prompt = """Analyze this video clip of a volleyball broadcast.
-
-Determine:
-1. Is active volleyball gameplay occurring? (rally in progress)
-2. What is the camera shot type?
-
-Shot types:
-- "full_court": Can see the entire court, both teams, suitable for watching gameplay
-- "close_up": Player close-up, celebration, interview, replay, or partial court view
-
-Respond in this exact JSON format:
-{
-    "has_volleyball": true/false,
-    "shot_type": "full_court"/"close_up",
-    "description": "Brief description"
-}
-
-Only output the JSON, no other text."""
+    prompt = VOLLEYBALL_SEGMENT_PROMPT
 
     payload = {
         "model": model,
@@ -205,24 +207,7 @@ async def analyze_clip_async(
     """Async version of analyze_clip_with_vllm."""
     video_url = f"file://{video_path}"
 
-    prompt = """Analyze this video clip of a volleyball broadcast.
-
-Determine:
-1. Is active volleyball gameplay occurring? (rally in progress)
-2. What is the camera shot type?
-
-Shot types:
-- "full_court": Can see the entire court, both teams, suitable for watching gameplay
-- "close_up": Player close-up, celebration, interview, replay, or partial court view
-
-Respond in this exact JSON format:
-{
-    "has_volleyball": true/false,
-    "shot_type": "full_court"/"close_up",
-    "description": "Brief description"
-}
-
-Only output the JSON, no other text."""
+    prompt = VOLLEYBALL_SEGMENT_PROMPT
 
     payload = {
         "model": model,
@@ -306,16 +291,17 @@ def process_single_clip(
         result = ClipResult(
             start_time=start_time,
             end_time=end_time,
-            has_volleyball=analysis.get("has_volleyball", False),
+            in_rally=analysis.get("in_rally", False),
             shot_type=_parse_shot_type(analysis.get("shot_type", "full_court")),
-            description=analysis.get("description", "")
         )
 
-        status = "VOLLEYBALL" if result.has_volleyball else "NO"
-        print(f"  [{status}] {result.description[:60]}...")
+        status = "RALLY" if result.in_rally else "NO"
+        print(f"  [{status}] {result.shot_type.value}")
 
         return result
 
+    except requests.exceptions.ConnectionError:
+        raise
     except requests.exceptions.RequestException as e:
         print(f"  [ERROR] API request failed: {e}")
         return None
@@ -349,15 +335,18 @@ async def process_batch_async(
 
         output = []
         for (clip_path, clip_index, start_time, end_time), result in zip(batch_clips, results):
-            if isinstance(result, Exception):
+            if isinstance(result, (aiohttp.ClientError, OSError)):
+                raise ConnectionError(
+                    f"vLLM server unreachable: {result}"
+                ) from result
+            elif isinstance(result, Exception):
                 output.append((clip_index, None))
             else:
                 clip_result = ClipResult(
                     start_time=start_time,
                     end_time=end_time,
-                    has_volleyball=result.get("has_volleyball", False),
+                    in_rally=result.get("in_rally", False),
                     shot_type=_parse_shot_type(result.get("shot_type", "full_court")),
-                    description=result.get("description", "")
                 )
                 output.append((clip_index, clip_result))
 
@@ -388,6 +377,10 @@ def process_video(
         List of ClipResult objects
     """
     video_path = os.path.abspath(video_path)
+
+    # Verify server is up before starting
+    check_server(server_url)
+
     total_duration = get_video_duration(video_path)
 
     print(f"Video: {video_path}")
@@ -449,9 +442,16 @@ def process_video(
             total_inference_time += time.time() - inference_start
 
             # Step 3: Collect results (maintaining order)
+            batch_successes = 0
             for clip_idx, clip_result in batch_results:
                 if clip_result:
                     results.append(clip_result)
+                    batch_successes += 1
+
+            # If entire batch failed, server likely crashed
+            if batch_successes == 0 and len(batch_clips) > 0:
+                print("\nERROR: Entire batch failed. Checking server health...")
+                check_server(server_url)  # raises SystemExit if down
 
             # Step 4: Save results after each batch
             if output_file:
@@ -470,8 +470,8 @@ def process_video(
         pbar.close()
 
     # Summary
-    volleyball_clips = [r for r in results if r.has_volleyball]
-    print(f"\nAnalyzed: {len(results)} clips | Volleyball: {len(volleyball_clips)} | Inference time: {total_inference_time:.1f}s")
+    rally_clips = [r for r in results if r.in_rally]
+    print(f"\nAnalyzed: {len(results)} clips | Rally: {len(rally_clips)} | Inference time: {total_inference_time:.1f}s")
 
     if output_file:
         print(f"Saved to: {output_file}")
@@ -515,7 +515,7 @@ def main():
         "--slide-interval", "-i",
         type=float,
         default=3.0,
-        help="Sliding window interval in seconds (default: 2.0)"
+        help="Sliding window interval in seconds (default: 3.0)"
     )
     parser.add_argument(
         "--output", "-o",
