@@ -32,7 +32,7 @@ tmux new-session -d -s "${SESSION_NAME}" \
     for game in ${GAMES}; do \
         for video in ~/videos/cuts/*_\${game}_*.mp4; do \
             if [ -f \"\$video\" ]; then \
-                python vlm_segment.py --video \"\$video\"; \
+                python -m yp_video.core.vlm_segment --video \"\$video\"; \
             fi; \
         done; \
     done; \
