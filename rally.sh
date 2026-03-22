@@ -2,18 +2,17 @@
 # Run VLM rally detection in a tmux session
 #
 # Usage:
-#   ./rally.sh              # Process default games (G1-G10)
-#   ./rally.sh G11 G12 G13  # Process specific games
+#   ./rally.sh G1 G2 G3     # Process specific games
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SESSION_NAME="rally"
 
-# Use arguments if provided, otherwise default list
-if [ $# -gt 0 ]; then
-    GAMES="$*"
-else
-    GAMES="G4 G5 G6 G7 G8 G9 G10"
+# Require at least one game argument
+if [ $# -eq 0 ]; then
+    echo "Usage: ./rally.sh G1 G2 G3 ..."
+    exit 1
 fi
+GAMES="$*"
 
 # Kill existing session if running
 if tmux has-session -t "${SESSION_NAME}" 2>/dev/null; then

@@ -180,6 +180,7 @@ def process_directory(
     clip_len: int = 16,
     stride: int = 16,
     videos: list[str] | None = None,
+    batch_size: int = 128,
 ):
     """Process all videos in a directory.
 
@@ -213,7 +214,7 @@ def process_directory(
 
         try:
             features = extract_features_from_video(
-                video_path, model, device, clip_len, stride
+                video_path, model, device, clip_len, stride, batch_size
             )
             np.save(output_path, features)
             print(f"Saved {output_path.name}: {features.shape}")
@@ -250,6 +251,12 @@ def main():
         help="Stride between clips (in frames)",
     )
     parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=64,
+        help="Number of clips to process at once (default: 64)",
+    )
+    parser.add_argument(
         "--device",
         type=str,
         default="cuda" if torch.cuda.is_available() else "cpu",
@@ -268,7 +275,7 @@ def main():
     print(f"Using device: {device}")
 
     process_directory(
-        args.input, args.output, device, args.clip_len, args.stride, args.videos
+        args.input, args.output, device, args.clip_len, args.stride, args.videos, args.batch_size
     )
     print("Feature extraction complete!")
 

@@ -37,8 +37,8 @@ tmux new-session -d -s "${SESSION_NAME}" \
     --port '${PORT}' \
     --max-model-len '${VLLM_MAX_MODEL_LEN}' \
     --gpu-memory-utilization '${VLLM_GPU_MEMORY_UTILIZATION}' \
-    --kv-cache-dtype fp8_e4m3 \
     --max-num-seqs '${VLLM_MAX_NUM_SEQS}' \
     --enable-prefix-caching \
-    --disable-log-requests \
+    --reasoning-parser qwen3 \
+    --no-enable-log-requests \
     --allowed-local-media-path /home/jason_yp_wang"

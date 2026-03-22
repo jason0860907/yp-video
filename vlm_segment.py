@@ -181,7 +181,9 @@ def analyze_clip_with_vllm(
             }
         ],
         "max_tokens": 256,
-        "temperature": 0.1
+        "temperature": 0.1,
+        "chat_template_kwargs": {"enable_thinking": False},
+        "mm_processor_kwargs": {"fps": 4.0}
     }
 
     response = requests.post(
@@ -229,7 +231,9 @@ async def analyze_clip_async(
             }
         ],
         "max_tokens": 256,
-        "temperature": 0.1
+        "temperature": 0.1,
+        "chat_template_kwargs": {"enable_thinking": False},
+        "mm_processor_kwargs": {"fps": 4.0}
     }
 
     url = f"{server_url}/v1/chat/completions"

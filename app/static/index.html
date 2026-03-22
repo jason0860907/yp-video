@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>YP Video Pipeline</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            primary: { DEFAULT: '#6366F1', light: '#818CF8', dark: '#4F46E5', dim: 'rgba(99,102,241,0.15)' },
+            accent: { DEFAULT: '#F97316', light: '#FB923C', dark: '#EA580C', dim: 'rgba(249,115,22,0.15)' },
+            surface: { DEFAULT: '#09090F', '50': '#111118', '100': '#18181F', '200': '#1F1F28', '300': '#282832', '400': '#333340' },
+            'text-primary': '#F0F0F2',
+            'text-secondary': '#9D9DB5',
+            'text-muted': '#5C5C72',
+            border: { DEFAULT: 'rgba(255,255,255,0.06)', light: 'rgba(255,255,255,0.10)', bright: 'rgba(255,255,255,0.16)' },
+          },
+          fontFamily: {
+            heading: ['"Fira Code"', 'monospace'],
+            body: ['"Fira Sans"', 'sans-serif'],
+          },
+          keyframes: {
+            'fade-in': { from: { opacity: '0', transform: 'translateY(6px)' }, to: { opacity: '1', transform: 'translateY(0)' } },
+            'slide-in': { from: { opacity: '0', transform: 'translateX(12px)' }, to: { opacity: '1', transform: 'translateX(0)' } },
+            'shimmer': { from: { backgroundPosition: '-200% 0' }, to: { backgroundPosition: '200% 0' } },
+            'pulse-dot': { '0%, 100%': { opacity: '1' }, '50%': { opacity: '0.4' } },
+          },
+          animation: {
+            'fade-in': 'fade-in 0.3s ease-out',
+            'slide-in': 'slide-in 0.25s ease-out',
+            'shimmer': 'shimmer 2s linear infinite',
+            'pulse-dot': 'pulse-dot 1.5s ease-in-out infinite',
+          },
+        }
+      }
+    }
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: 'Fira Sans', sans-serif; background: #09090F; color: #F0F0F2; }
+    h1, h2, h3, h4, h5, h6 { font-family: 'Fira Code', monospace; }
+
+    :focus-visible { outline: 2px solid #6366F1; outline-offset: 2px; }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+
+    /* ── Sidebar ── */
+    #sidebar {
+      background: linear-gradient(180deg, #0E0E16 0%, #0A0A12 100%);
+      border-right: 1px solid rgba(255,255,255,0.04);
+    }
+    .sidebar-link {
+      transition: all 180ms ease;
+      cursor: pointer;
+      border-left: 3px solid transparent;
+      position: relative;
+    }
+    .sidebar-link:hover {
+      background: rgba(255,255,255,0.04);
+      color: #F0F0F2;
+    }
+    .sidebar-link.active {
+      background: linear-gradient(90deg, rgba(99,102,241,0.10) 0%, transparent 100%);
+      border-left-color: #6366F1;
+      color: #F0F0F2;
+    }
+    .sidebar-link.active svg { color: #818CF8; }
+
+    /* ── Accent stripe on sidebar top ── */
+    #sidebar::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, #6366F1, #F97316);
+      opacity: 0.6;
+    }
+
+    /* ── Main content ── */
+    #app {
+      background: radial-gradient(ellipse at 50% 0%, rgba(99,102,241,0.03) 0%, transparent 60%),
+                  #09090F;
+    }
+
+    /* ── Page transitions ── */
+    .page-enter {
+      animation: fade-in 0.25s ease-out;
+    }
+
+    /* ── Scrollbars ── */
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.07); border-radius: 10px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.13); }
+
+    /* ── Utility ── */
+    .glow-primary { box-shadow: 0 0 20px rgba(99,102,241,0.15), 0 0 4px rgba(99,102,241,0.1); }
+    .glow-accent  { box-shadow: 0 0 20px rgba(249,115,22,0.2), 0 0 4px rgba(249,115,22,0.1); }
+    .glow-green   { box-shadow: 0 0 15px rgba(34,197,94,0.2); }
+    .glow-red     { box-shadow: 0 0 15px rgba(239,68,68,0.2); }
+
+    .glass-card {
+      background: rgba(17, 17, 24, 0.7);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255,255,255,0.06);
+    }
+    .glass-card:hover {
+      border-color: rgba(255,255,255,0.09);
+    }
+
+    /* ── Shimmer effect for loading ── */
+    .shimmer-bg {
+      background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.04) 50%, transparent 100%);
+      background-size: 200% 100%;
+      animation: shimmer 2s linear infinite;
+    }
+  </style>
+</head>
+<body class="flex h-screen overflow-hidden">
+  <!-- Sidebar -->
+  <aside id="sidebar" class="w-56 flex-shrink-0 flex flex-col h-screen relative">
+    <!-- Logo -->
+    <div class="px-5 py-5">
+      <div class="flex items-center gap-2.5">
+        <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-accent flex items-center justify-center shadow-lg">
+          <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        </div>
+        <div>
+          <h1 class="text-sm font-bold text-text-primary font-heading tracking-tight">YP Video</h1>
+          <p class="text-[10px] text-text-muted leading-none mt-0.5">Pipeline Dashboard</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Nav links -->
+    <nav class="flex-1 px-2 space-y-0.5 overflow-y-auto">
+      <p class="px-3 pt-3 pb-1.5 text-[10px] font-semibold uppercase tracking-widest text-text-muted">Pipeline</p>
+
+      <a href="#/download" class="sidebar-link flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-text-secondary" data-page="download">
+        <svg class="w-[18px] h-[18px] flex-shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v12m0 0l-4-4m4 4l4-4M4 20h16"/></svg>
+        Download
+      </a>
+      <a href="#/cut" class="sidebar-link flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-text-secondary" data-page="cut">
+        <svg class="w-[18px] h-[18px] flex-shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M14.121 14.121A3 3 0 109.879 9.879m4.242 4.242L9.879 9.879m4.242 4.242l4.243 4.243M9.879 9.879L5.636 5.636m4.243 4.243L5.636 14.121M14.121 9.879l4.243-4.243"/></svg>
+        Cut
+      </a>
+      <a href="#/detect" class="sidebar-link flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-text-secondary" data-page="detect">
+        <svg class="w-[18px] h-[18px] flex-shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+        Detect
+      </a>
+      <a href="#/annotate" class="sidebar-link flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-text-secondary" data-page="annotate">
+        <svg class="w-[18px] h-[18px] flex-shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+        Annotate
+      </a>
+
+      <p class="px-3 pt-5 pb-1.5 text-[10px] font-semibold uppercase tracking-widest text-text-muted">Model</p>
+
+      <a href="#/train" class="sidebar-link flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-text-secondary" data-page="train">
+        <svg class="w-[18px] h-[18px] flex-shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+        Train
+      </a>
+      <a href="#/predict" class="sidebar-link flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-text-secondary" data-page="predict">
+        <svg class="w-[18px] h-[18px] flex-shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/></svg>
+        Predict
+      </a>
+
+      <p class="px-3 pt-5 pb-1.5 text-[10px] font-semibold uppercase tracking-widest text-text-muted">System</p>
+
+      <a href="#/jobs" class="sidebar-link flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-text-secondary" data-page="jobs">
+        <svg class="w-[18px] h-[18px] flex-shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z"/></svg>
+        Jobs
+        <span id="sidebar-job-count" class="ml-auto text-[10px] bg-accent text-white rounded-full w-5 h-5 flex items-center justify-center font-semibold hidden">0</span>
+      </a>
+    </nav>
+
+    <!-- vLLM status + stats footer -->
+    <div class="p-3 mx-2 mb-3 rounded-xl glass-card space-y-2.5">
+      <div id="vllm-indicator" class="flex items-center gap-2 text-xs text-text-muted cursor-pointer hover:text-text-secondary transition-colors duration-200" onclick="window.location.hash='#/jobs'" title="vLLM Status">
+        <span id="vllm-dot" class="w-2 h-2 rounded-full bg-text-muted flex-shrink-0 ring-2 ring-surface-100"></span>
+        <span id="vllm-label" class="font-heading text-[11px]">vLLM: checking...</span>
+      </div>
+      <div class="w-full h-px bg-border"></div>
+      <div id="sidebar-stats" class="text-[11px] text-text-muted space-y-1"></div>
+    </div>
+  </aside>
+
+  <!-- Main content -->
+  <main id="app" class="flex-1 overflow-y-auto px-6 py-6 lg:px-8 lg:py-7"></main>
+
+  <!-- Scripts -->
+  <script type="module" src="/static/js/shared.js"></script>
+  <script type="module" src="/static/js/router.js"></script>
+</body>
+</html>
