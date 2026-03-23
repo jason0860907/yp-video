@@ -35,9 +35,13 @@ dependencies = [
 ]
 
 [project.scripts]
+# Web Dashboard
 yp-app = "yp_video.web.app:run_server"
+# Pipeline CLI (按使用順序)
 yp-download = "yp_video.youtube.download:main"
 yp-vlm-segment = "yp_video.core.vlm_segment:main"
+yp-vlm-to-rally = "yp_video.tad.vlm_to_rally:main"
+yp-tad-convert = "yp_video.tad.convert_annotations:main"
 yp-tad-extract = "yp_video.tad.extract_features:main"
 yp-tad-train = "yp_video.tad.train:main"
 yp-tad-infer = "yp_video.tad.infer:main"

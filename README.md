@@ -31,28 +31,38 @@ uv run yp-app
 
 開啟瀏覽器至 http://localhost:8080，即可操作所有功能。
 
-### CLI 工具
+### CLI 工具（按 Pipeline 順序）
 
 ```bash
-# 下載 YouTube 影片
+# 1. 下載 YouTube 影片
 uv run yp-download "https://youtube.com/watch?v=xxx"
 uv run yp-download "https://youtube.com/watch?v=xxx" -q 720
-uv run yp-download "https://youtube.com/watch?v=xxx" --audio-only
 
-# VLM 偵測（需先啟動 vLLM 伺服器）
+# 2. VLM 偵測（需先啟動 vLLM 伺服器）
 ./start_vllm_server.sh
 uv run yp-vlm-segment --video ~/videos/cuts/set1.mp4
 
 # 批次偵測多場比賽
 ./rally.sh G1 G2 G3
 
-# TAD 相關
-uv run yp-tad-extract    # 提取 R3D-18 特徵
-uv run yp-tad-train      # 訓練 TAD 模型
-uv run yp-tad-infer      # TAD 推論
+# 3. VLM 片段偵測 → Rally 標註合併
+uv run yp-vlm-to-rally
+# 讀取 ~/videos/seg-annotations/ → 輸出至 ~/videos/rally-pre-annotations/
 
-# TPVL 影片重命名
-uv run python -m yp_video.youtube.rename_tpvl --dry-run
+# 4. （人工校正標註 → 使用 Web Dashboard）
+
+# 5. 標註格式轉換（JSONL → OpenTAD JSON）
+uv run yp-tad-convert
+# 讀取 ~/videos/rally-annotations/ → 輸出至 tad/data/annotations/volleyball_anno.json
+
+# 6. 提取 R3D-18 影片特徵
+uv run yp-tad-extract
+
+# 7. 訓練 TAD 模型
+uv run yp-tad-train
+
+# 8. TAD 模型推論
+uv run yp-tad-infer --video ~/videos/cuts/set1.mp4
 ```
 
 ### VLM 偵測參數
@@ -65,15 +75,24 @@ uv run yp-vlm-segment --video path/to/video.mp4 \
     --batch-size 32
 ```
 
+### TPVL 影片重命名（選用）
+
+```bash
+uv run python -m yp_video.youtube.rename_tpvl --dry-run
+```
+
 ## 工作流程
 
 ```
-Download → Cut → Detect → Annotate → Train → Predict
-   │        │       │         │         │        │
-   │        │       │         │         │        └─ TAD 模型預測 rally
-   │        │       │         │         └─ 轉換標註 + 提取特徵 + 訓練
-   │        │       │         └─ 人工校正 → ground truth
-   │        │       └─ VLM 偵測 + 投票平滑 → pre-annotations
+Download → Cut → Detect → VLM→Rally → Annotate → Convert → Extract → Train → Predict
+   │        │       │         │          │           │          │        │        │
+   │        │       │         │          │           │          │        │        └─ TAD 推論
+   │        │       │         │          │           │          │        └─ 訓練 ActionFormer
+   │        │       │         │          │           │          └─ R3D-18 特徵提取
+   │        │       │         │          │           └─ JSONL → OpenTAD JSON
+   │        │       │         │          └─ 人工校正 → ground truth
+   │        │       │         └─ 片段偵測合併為 rally 標註
+   │        │       └─ VLM 偵測（Qwen3-VL）
    │        └─ 切分為個別 set
    └─ 下載 YouTube 影片
 ```
@@ -129,11 +148,13 @@ yp-video/
 
 ## CLI 指令一覽
 
-| 指令 | 說明 |
-|------|------|
-| `yp-app` | 啟動 Web Dashboard（port 8080） |
-| `yp-download` | 下載 YouTube 影片（CLI） |
-| `yp-vlm-segment` | VLM 排球偵測（CLI） |
-| `yp-tad-extract` | 提取 R3D-18 影片特徵 |
-| `yp-tad-train` | 訓練 TAD 模型 |
-| `yp-tad-infer` | TAD 模型推論 |
+| 指令 | Pipeline 順序 | 說明 |
+|------|:---:|------|
+| `yp-app` | — | 啟動 Web Dashboard（port 8080） |
+| `yp-download` | 1 | 下載 YouTube 影片 |
+| `yp-vlm-segment` | 2 | VLM 排球偵測 |
+| `yp-vlm-to-rally` | 3 | VLM 片段偵測 → Rally 標註合併 |
+| `yp-tad-convert` | 4 | JSONL 標註 → OpenTAD 格式轉換 |
+| `yp-tad-extract` | 5 | 提取 R3D-18 影片特徵 |
+| `yp-tad-train` | 6 | 訓練 TAD 模型 |
+| `yp-tad-infer` | 7 | TAD 模型推論 |
