@@ -332,6 +332,39 @@ async def process_batch_async(
         return output
 
 
+def build_clip_specs(
+    total_duration: float, clip_duration: float = 6.0, slide_interval: float = 3.0
+) -> list[tuple[int, float, float]]:
+    """Build list of (clip_index, start_time, end_time) for a video.
+
+    Single source of truth for clip windowing logic used by both
+    count_clips() and process_video().
+    """
+    specs: list[tuple[int, float, float]] = []
+    current_time = 0.0
+    clip_index = 0
+
+    while current_time + clip_duration <= total_duration:
+        clip_index += 1
+        specs.append((clip_index, current_time, current_time + clip_duration))
+        current_time += slide_interval
+
+    # Final partial clip if remaining time > slide_interval
+    remaining = total_duration - current_time
+    if remaining > slide_interval:
+        clip_index += 1
+        start_time = max(0, total_duration - clip_duration)
+        specs.append((clip_index, start_time, total_duration))
+
+    return specs
+
+
+def count_clips(video_path: str, clip_duration: float = 6.0, slide_interval: float = 3.0) -> int:
+    """Count how many clips a video will produce without processing it."""
+    total_duration = get_video_duration(os.path.abspath(video_path))
+    return len(build_clip_specs(total_duration, clip_duration, slide_interval))
+
+
 def process_video(
     video_path: str,
     server_url: str = "http://localhost:8000",
@@ -339,7 +372,8 @@ def process_video(
     clip_duration: float = 6.0,
     slide_interval: float = 3.0,
     output_file: str | None = None,
-    batch_size: int = 8
+    batch_size: int = 8,
+    on_progress: "Callable[[int, int], None] | None" = None,
 ) -> list[ClipResult]:
     """Process video with sliding window approach using parallel batch processing.
 
@@ -365,24 +399,7 @@ def process_video(
     print(f"Video: {video_path}")
     print(f"Duration: {format_time(int(total_duration))} | Clip: {clip_duration}s | Interval: {slide_interval}s | Batch: {batch_size}")
 
-    # Build list of all clip specs: (clip_index, start_time, end_time)
-    clip_specs: list[tuple[int, float, float]] = []
-    current_time = 0.0
-    clip_index = 0
-
-    while current_time + clip_duration <= total_duration:
-        clip_index += 1
-        end_time = current_time + clip_duration
-        clip_specs.append((clip_index, current_time, end_time))
-        current_time += slide_interval
-
-    # Add final partial clip if remaining time > slide_interval
-    remaining = total_duration - current_time
-    if remaining > slide_interval:
-        clip_index += 1
-        start_time = max(0, total_duration - clip_duration)
-        clip_specs.append((clip_index, start_time, total_duration))
-
+    clip_specs = build_clip_specs(total_duration, clip_duration, slide_interval)
     total_clips = len(clip_specs)
     num_batches = (total_clips + batch_size - 1) // batch_size
 
@@ -438,6 +455,10 @@ def process_video(
 
             # Update progress bar
             pbar.update(len(batch_specs))
+
+            # Report progress via callback
+            if on_progress:
+                on_progress(pbar.n, total_clips)
 
             # Clean up batch clips to free disk space
             for clip_path, _, _, _ in batch_clips:

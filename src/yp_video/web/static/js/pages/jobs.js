@@ -43,7 +43,7 @@ export function render(container) {
 
   document.getElementById('jobs-refresh').addEventListener('click', loadAll);
   loadAll();
-  pollTimer = setInterval(loadAll, 5000);
+  pollTimer = setInterval(loadAll, 15000);
 }
 
 export function destroy() {

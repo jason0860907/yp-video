@@ -314,7 +314,7 @@ let _pollInterval = null;
 export function startSidebarPolling() {
   if (_pollInterval) return;
   pollSidebar();
-  _pollInterval = setInterval(pollSidebar, 10000);
+  _pollInterval = setInterval(pollSidebar, 30000);
 }
 
 async function pollSidebar() {

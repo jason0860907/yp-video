@@ -56,38 +56,65 @@ async def start_detection(req: DetectRequest):
         try:
             await job_manager.update_job(job.id, status="running", message="Starting detection...")
 
-            from yp_video.core.vlm_segment import process_video
+            from yp_video.core.vlm_segment import process_video, count_clips
             from yp_video.web.vllm_manager import vllm_manager
 
-            total = len(req.videos)
+            total_videos = len(req.videos)
+            loop = asyncio.get_event_loop()
+
+            # Pre-calculate total segments across all videos
+            clips_per_video = []
+            for video_name in req.videos:
+                video_path = str(CUTS_DIR / video_name)
+                n = await loop.run_in_executor(
+                    None,
+                    lambda p=video_path: count_clips(p, req.clip_duration, req.slide_interval),
+                )
+                clips_per_video.append(n)
+            total_segments = sum(clips_per_video)
+            segments_done = 0
+
             for i, video_name in enumerate(req.videos):
                 video_path = str(CUTS_DIR / video_name)
                 output_file = str(SEG_ANNOTATIONS_DIR / f"{Path(video_name).stem}.jsonl")
+                base_done = segments_done
+
+                def make_callback(base):
+                    def on_progress(done, _total):
+                        nonlocal segments_done
+                        segments_done = base + done
+                        # Schedule async update from sync callback
+                        loop.call_soon_threadsafe(
+                            lambda: asyncio.ensure_future(job_manager.update_job(
+                                job.id,
+                                progress=segments_done / total_segments if total_segments else 0,
+                            ))
+                        )
+                    return on_progress
 
                 await job_manager.update_job(
                     job.id,
-                    progress=(i / total),
-                    message=f"Processing {video_name} ({i+1}/{total})",
+                    message=f"Processing {video_name} ({i+1}/{total_videos})",
                 )
 
-                # Run in executor to not block event loop
-                loop = asyncio.get_event_loop()
                 await loop.run_in_executor(
                     None,
-                    lambda: process_video(
-                        video_path=video_path,
+                    lambda vp=video_path, of=output_file, cb=make_callback(base_done): process_video(
+                        video_path=vp,
                         server_url=vllm_manager.server_url,
                         model=vllm_manager.model,
                         clip_duration=req.clip_duration,
                         slide_interval=req.slide_interval,
-                        output_file=output_file,
+                        output_file=of,
                         batch_size=req.batch_size,
+                        on_progress=cb,
                     ),
                 )
+                segments_done = base_done + clips_per_video[i]
 
             await job_manager.update_job(
                 job.id, status="completed", progress=1.0,
-                message=f"Completed detection for {total} videos",
+                message=f"Completed detection for {total_videos} videos",
             )
         except asyncio.CancelledError:
             await job_manager.update_job(job.id, status="cancelled", message="Cancelled")

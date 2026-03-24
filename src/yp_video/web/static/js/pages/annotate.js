@@ -114,6 +114,14 @@ function bindEvents() {
   });
   videoEl.addEventListener('timeupdate', () => {
     document.getElementById('ann-time').textContent = formatTime(videoEl.currentTime);
+    // Auto-pause when reaching end of selected segment
+    if (_selectedIdx >= 0 && _selectedIdx < state.annotations.length) {
+      const a = state.annotations[_selectedIdx];
+      if (!videoEl.paused && videoEl.currentTime >= a.end) {
+        videoEl.pause();
+        videoEl.currentTime = a.end;
+      }
+    }
   });
 
   timelineCanvas.addEventListener('click', (e) => {
@@ -293,9 +301,12 @@ function renderAnnotations() {
   });
   el.querySelectorAll('.ann-preview').forEach(btn => {
     btn.addEventListener('click', (e) => {
-      const a = state.annotations[parseInt(e.currentTarget.dataset.idx)];
+      const idx = parseInt(e.currentTarget.dataset.idx);
+      _selectedIdx = idx;
+      const a = state.annotations[idx];
       videoEl.currentTime = Math.max(a.start, a.end - 5);
       videoEl.play();
+      renderAnnotations();
     });
   });
   el.querySelectorAll('.ann-delete').forEach(btn => {
