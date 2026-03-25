@@ -7,7 +7,7 @@ from pathlib import Path
 
 import aiohttp
 
-from yp_video.config import load_vllm_env, PROJECT_ROOT, VENV_PYTHON
+from yp_video.config import load_vllm_env, PROJECT_ROOT
 
 
 class VLLMManager:
@@ -15,7 +15,6 @@ class VLLMManager:
 
     def __init__(self):
         self.config = load_vllm_env()
-        self.process: asyncio.subprocess.Process | None = None
         self._health_task: asyncio.Task | None = None
         self._status = "stopped"  # stopped, starting, running, error
         self._model = self.config.get("VLLM_MODEL", "")
@@ -42,7 +41,7 @@ class VLLMManager:
             "status": self._status,
             "model": self._model,
             "port": self._port,
-            "pid": self.process.pid if self.process else None,
+            "pid": None,
         }
 
     async def check_health(self) -> bool:
@@ -76,26 +75,18 @@ class VLLMManager:
 
         self._status = "starting"
 
-        cmd = [
-            str(VENV_PYTHON), "-m", "vllm.entrypoints.openai.api_server",
-            "--model", self._model,
-            "--port", str(self._port),
-            "--max-model-len", self.config.get("VLLM_MAX_MODEL_LEN", "32768"),
-            "--gpu-memory-utilization", self.config.get("VLLM_GPU_MEMORY_UTILIZATION", "0.95"),
-            "--max-num-seqs", self.config.get("VLLM_MAX_NUM_SEQS", "16"),
-            "--enable-prefix-caching",
-            "--reasoning-parser", "qwen3",
-            "--no-enable-log-requests",
-            "--allowed-local-media-path", str(Path.home()),
-        ]
-
+        script = str(PROJECT_ROOT / "start_vllm_server.sh")
         try:
-            self.process = await asyncio.create_subprocess_exec(
-                *cmd,
+            proc = await asyncio.create_subprocess_exec(
+                "bash", script,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 cwd=str(PROJECT_ROOT),
             )
+            await proc.wait()
+            if proc.returncode != 0:
+                self._status = "error"
+                return {"ok": False, "message": f"Script exited with code {proc.returncode}"}
         except Exception as e:
             self._status = "error"
             return {"ok": False, "message": str(e)}
@@ -116,23 +107,18 @@ class VLLMManager:
             if await self.check_health():
                 self._status = "running"
                 return
-            if self.process and self.process.returncode is not None:
+            # Check if tmux session is still alive
+            result = subprocess.run(
+                ["tmux", "has-session", "-t", "vllm"],
+                capture_output=True, timeout=5,
+            )
+            if result.returncode != 0:
                 self._status = "error"
                 return
         self._status = "error"
 
     async def stop(self) -> dict:
-        """Stop vLLM server."""
-        # Try to kill our managed process
-        if self.process and self.process.returncode is None:
-            self.process.terminate()
-            try:
-                await asyncio.wait_for(self.process.wait(), timeout=10)
-            except asyncio.TimeoutError:
-                self.process.kill()
-            self.process = None
-
-        # Also try to kill tmux session
+        """Stop vLLM server by killing the tmux session."""
         try:
             subprocess.run(["tmux", "kill-session", "-t", "vllm"],
                            capture_output=True, timeout=5)

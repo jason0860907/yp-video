@@ -84,18 +84,21 @@ export function render(container) {
   timelineCanvas = document.getElementById('ann-timeline');
   loadResults();
   bindEvents();
-  startTimelineLoop();
+  activate();
 }
 
-export function destroy() {
+export function activate() {
+  document.addEventListener('keydown', handleKeydown);
+  window.addEventListener('resize', resizeTimeline);
+  startTimelineLoop();
+  resizeTimeline();
+}
+
+export function deactivate() {
   document.removeEventListener('keydown', handleKeydown);
   window.removeEventListener('resize', resizeTimeline);
-  if (animFrame) cancelAnimationFrame(animFrame);
-  state = { results: [], annotations: [], videoName: '', duration: 0 };
-  videoEl = null;
-  timelineCanvas = null;
-  _markStart = null;
-  _selectedIdx = -1;
+  if (animFrame) { cancelAnimationFrame(animFrame); animFrame = null; }
+  if (videoEl && !videoEl.paused) videoEl.pause();
 }
 
 function bindEvents() {
@@ -106,7 +109,6 @@ function bindEvents() {
   document.getElementById('ann-add-nonrally').addEventListener('click', () => addAnnotation('non-rally'));
   document.getElementById('ann-save').addEventListener('click', saveAnnotations);
   document.getElementById('ann-clear').addEventListener('click', clearAll);
-  document.addEventListener('keydown', handleKeydown);
 
   videoEl.addEventListener('loadedmetadata', () => {
     state.duration = videoEl.duration;
@@ -131,7 +133,6 @@ function bindEvents() {
     videoEl.currentTime = ratio * state.duration;
   });
 
-  window.addEventListener('resize', resizeTimeline);
 }
 
 function handleKeydown(e) {
@@ -345,6 +346,7 @@ function clearAll() {
 function resizeTimeline() {
   if (!timelineCanvas) return;
   const rect = timelineCanvas.getBoundingClientRect();
+  if (rect.width === 0) return; // hidden container
   timelineCanvas.width = rect.width * devicePixelRatio;
   timelineCanvas.height = rect.height * devicePixelRatio;
 }

@@ -98,9 +98,8 @@ export function render(container) {
   bindEvents();
 }
 
-export function destroy() {
-  if (sseClient) { sseClient.stop(); sseClient = null; }
-}
+export function activate() {}
+export function deactivate() {}
 
 function bindEvents() {
   document.getElementById('train-convert').addEventListener('click', convertAnnotations);

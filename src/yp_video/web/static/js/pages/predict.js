@@ -86,10 +86,8 @@ export function render(container) {
   bindEvents();
 }
 
-export function destroy() {
-  if (sseClient) { sseClient.stop(); sseClient = null; }
-  state = { videos: [], checkpoints: [], results: [] };
-}
+export function activate() {}
+export function deactivate() {}
 
 function bindEvents() {
   document.getElementById('pred-start').addEventListener('click', startPrediction);

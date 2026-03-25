@@ -95,14 +95,14 @@ dataset = dict(
 
 # Solver settings
 solver = dict(
-    train=dict(batch_size=2, num_workers=2),
+    train=dict(batch_size=64, num_workers=4),
     val=dict(batch_size=1, num_workers=1),
     test=dict(batch_size=1, num_workers=1),
     clip_grad_norm=1,
     ema=True,
 )
 
-optimizer = dict(type="AdamW", lr=1e-4, weight_decay=0.05, paramwise=True)
+optimizer = dict(type="AdamW", lr=1e-3, weight_decay=0.05, paramwise=True)
 scheduler = dict(type="LinearWarmupCosineAnnealingLR", warmup_epoch=5, max_epoch=300)
 
 # Evaluation

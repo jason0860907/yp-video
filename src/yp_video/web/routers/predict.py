@@ -96,7 +96,7 @@ async def start_prediction(req: PredictRequest):
     job = job_manager.create_job("infer", {
         "video": req.video,
         "checkpoint": req.checkpoint,
-    })
+    }, name=req.video)
 
     async def run_prediction():
         try:

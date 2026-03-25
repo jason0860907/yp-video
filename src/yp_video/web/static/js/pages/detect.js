@@ -3,8 +3,8 @@
  */
 import { api, SSEClient, card, pageHeader, sectionTitle, stepBadge, btnPrimary, btnSecondary, btnSmall, createProgressBar, showToast, emptyState, inputCls } from '../shared.js';
 
-let sseClient = null;
-let state = { videos: [], jobId: null };
+let sseClients = [];
+let state = { videos: [], jobs: [] };
 
 export function render(container) {
   container.innerHTML = `
@@ -32,7 +32,7 @@ export function render(container) {
           <div class="ml-10 grid grid-cols-3 gap-4">
             <div>
               <label class="block text-[11px] text-text-muted mb-1.5 uppercase tracking-wider">Batch Size</label>
-              <input id="det-batch" type="number" value="32" min="1" max="128" class="w-full ${inputCls}">
+              <input id="det-batch" type="number" value="16" min="1" max="128" class="w-full ${inputCls}">
             </div>
             <div>
               <label class="block text-[11px] text-text-muted mb-1.5 uppercase tracking-wider">Clip Duration</label>
@@ -52,15 +52,11 @@ export function render(container) {
       <div id="det-progress" class="hidden">
         ${card(`
           <div class="space-y-3">
-            <div class="flex items-center justify-between">
-              <div class="flex items-center gap-2.5">
-                <span class="w-2 h-2 rounded-full bg-primary-light animate-pulse-dot"></span>
-                <h3 class="text-sm font-heading font-semibold text-text-primary">Progress</h3>
-              </div>
-              <span id="det-progress-pct" class="text-xs font-heading text-primary-light tabular-nums"></span>
+            <div class="flex items-center gap-2.5 mb-3">
+              <span class="w-2 h-2 rounded-full bg-primary-light animate-pulse-dot"></span>
+              <h3 class="text-sm font-heading font-semibold text-text-primary">Progress</h3>
             </div>
-            <div id="det-progress-bar"></div>
-            <p id="det-progress-msg" class="text-xs text-text-muted"></p>
+            <div id="det-jobs-progress" class="space-y-3"></div>
           </div>
         `)}
       </div>
@@ -92,10 +88,8 @@ export function render(container) {
   bindEvents();
 }
 
-export function destroy() {
-  if (sseClient) { sseClient.stop(); sseClient = null; }
-  state = { videos: [], jobId: null };
-}
+export function activate() {}
+export function deactivate() {}
 
 function bindEvents() {
   document.getElementById('det-start').addEventListener('click', startDetection);
@@ -155,8 +149,12 @@ async function startDetection() {
   const btn = document.getElementById('det-start');
   btn.disabled = true;
 
+  // Stop any existing SSE clients
+  sseClients.forEach(c => c.stop());
+  sseClients = [];
+
   try {
-    const res = await api('/detect/start', {
+    const jobs = await api('/detect/start', {
       method: 'POST',
       body: {
         videos: selected,
@@ -166,33 +164,76 @@ async function startDetection() {
       },
     });
 
-    state.jobId = res.id;
+    state.jobs = jobs.map(j => ({ ...j }));
     document.getElementById('det-progress').classList.remove('hidden');
+    renderJobsProgress();
 
-    sseClient = new SSEClient(`/api/jobs/${res.id}/events`, {
-      onMessage: (data) => {
-        const pct = Math.round((data.progress || 0) * 100);
-        document.getElementById('det-progress-pct').textContent = `${pct}%`;
-        document.getElementById('det-progress-bar').innerHTML = createProgressBar(data.progress);
-        document.getElementById('det-progress-msg').textContent = data.message || '';
+    let doneCount = 0;
+    const total = jobs.length;
 
-        if (data.status === 'completed') {
-          sseClient?.stop();
-          showToast('Detection complete!', 'success');
-          btn.disabled = false;
-          loadVideos();
-        } else if (data.status === 'failed') {
-          sseClient?.stop();
-          showToast(`Detection failed: ${data.error || 'Unknown error'}`, 'error');
-          btn.disabled = false;
-        }
-      },
-      onError: () => { btn.disabled = false; },
-    }).start();
+    for (const job of jobs) {
+      const client = new SSEClient(`/api/jobs/${job.id}/events`, {
+        onMessage: (data) => {
+          const idx = state.jobs.findIndex(j => j.id === data.id);
+          if (idx >= 0) state.jobs[idx] = data;
+          renderJobsProgress();
+
+          if (data.status === 'completed' || data.status === 'failed' || data.status === 'cancelled') {
+            client.stop();
+            doneCount++;
+            if (data.status === 'failed') {
+              showToast(`${job.name} failed: ${data.error || 'Unknown error'}`, 'error');
+            }
+            if (doneCount >= total) {
+              const failed = state.jobs.filter(j => j.status === 'failed').length;
+              if (failed === 0) showToast('All detections complete!', 'success');
+              else showToast(`${total - failed}/${total} completed, ${failed} failed`, 'warning');
+              btn.disabled = false;
+              loadVideos();
+            }
+          }
+        },
+        onError: () => {
+          doneCount++;
+          if (doneCount >= total) btn.disabled = false;
+        },
+      }).start();
+      sseClients.push(client);
+    }
   } catch (e) {
     showToast(`Failed to start detection: ${e.message}`, 'error');
     btn.disabled = false;
   }
+}
+
+function renderJobsProgress() {
+  const el = document.getElementById('det-jobs-progress');
+  if (!el) return;
+
+  el.innerHTML = state.jobs.map(job => {
+    const pct = Math.round((job.progress || 0) * 100);
+    const isRunning = job.status === 'running';
+    const isDone = job.status === 'completed';
+    const isFailed = job.status === 'failed';
+    const isCancelled = job.status === 'cancelled';
+
+    let statusColor = 'text-text-muted';
+    if (isRunning) statusColor = 'text-primary-light';
+    else if (isDone) statusColor = 'text-emerald-400';
+    else if (isFailed) statusColor = 'text-red-400';
+    else if (isCancelled) statusColor = 'text-amber-400';
+
+    return `
+      <div class="space-y-1.5">
+        <div class="flex items-center justify-between">
+          <span class="text-xs text-text-primary font-medium truncate">${job.name}</span>
+          <span class="text-[11px] ${statusColor} tabular-nums font-medium">${isDone ? 'done' : isFailed ? 'failed' : isCancelled ? 'cancelled' : pct + '%'}</span>
+        </div>
+        ${createProgressBar(job.progress)}
+        ${job.message && isRunning ? `<p class="text-[10px] text-text-muted truncate">${job.message}</p>` : ''}
+        ${job.error ? `<p class="text-[10px] text-red-400/80 truncate">${job.error}</p>` : ''}
+      </div>`;
+  }).join('');
 }
 
 async function convertDetections() {

@@ -71,7 +71,7 @@ async def extract_features(req: ExtractFeaturesRequest):
     if job_manager.vllm_using_gpu:
         raise HTTPException(400, "GPU is in use by vLLM. Stop vLLM first.")
 
-    job = job_manager.create_job("feature_extract", {"videos": req.videos})
+    job = job_manager.create_job("feature_extract", {"videos": req.videos}, name="Feature extraction")
 
     async def run_extraction():
         try:
@@ -135,7 +135,7 @@ async def start_training(req: TrainRequest):
     if not TAD_ANNOTATIONS_FILE.exists():
         raise HTTPException(400, "No annotations file found. Run convert-annotations first.")
 
-    job = job_manager.create_job("train", {"gpu": req.gpu, "seed": req.seed})
+    job = job_manager.create_job("train", {"gpu": req.gpu, "seed": req.seed}, name="ActionFormer training")
 
     async def run_training():
         try:

@@ -42,16 +42,22 @@ export function render(container) {
     </div>`;
 
   document.getElementById('jobs-refresh').addEventListener('click', loadAll);
-  loadAll();
-  pollTimer = setInterval(loadAll, 15000);
+  activate();
 }
 
-export function destroy() {
+export function activate() {
+  loadAll();
+  if (!pollTimer) pollTimer = setInterval(loadAll, 15000);
+}
+
+export function deactivate() {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
 }
 
-async function loadAll() {
-  await Promise.all([loadVLLM(), loadStats(), loadJobs()]);
+function loadAll() {
+  loadVLLM();
+  loadStats();
+  loadJobs();
 }
 
 async function loadVLLM() {
@@ -154,8 +160,8 @@ async function loadJobs() {
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-3">
               ${createStatusBadge(job.status)}
-              <span class="text-sm text-text-primary font-heading font-medium">${job.type || 'unknown'}</span>
-              <span class="text-[11px] text-text-muted font-mono opacity-60">${job.id?.substring(0, 8) || ''}</span>
+              <span class="text-sm text-text-primary font-heading font-medium">${job.name || job.type || 'unknown'}</span>
+              <span class="text-[11px] text-text-muted opacity-60">${job.type}</span>
             </div>
             ${isRunning ? `<button class="job-cancel text-[11px] text-red-400/80 cursor-pointer hover:text-red-300 font-medium px-2 py-1 rounded-lg hover:bg-red-500/10 transition-all duration-200" data-id="${job.id}">Cancel</button>` : ''}
           </div>

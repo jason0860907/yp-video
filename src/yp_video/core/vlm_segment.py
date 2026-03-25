@@ -292,44 +292,44 @@ def process_single_clip(
 async def process_batch_async(
     batch_clips: list[tuple[str, int, float, float]],  # (clip_path, index, start, end)
     server_url: str,
-    model: str
+    model: str,
+    session: aiohttp.ClientSession,
 ) -> list[tuple[int, ClipResult | None]]:
-    """Process a batch of clips concurrently.
+    """Process a batch of clips concurrently using a shared session.
 
     Args:
         batch_clips: List of (clip_path, clip_index, start_time, end_time) tuples
         server_url: vLLM server URL
         model: Model name
+        session: Shared aiohttp session (reused across batches)
 
     Returns:
         List of (clip_index, ClipResult or None) tuples
     """
-    timeout = aiohttp.ClientTimeout(total=120)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        tasks = [
-            analyze_clip_async(session, clip_path, server_url, model)
-            for clip_path, _, _, _ in batch_clips
-        ]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+    tasks = [
+        analyze_clip_async(session, clip_path, server_url, model)
+        for clip_path, _, _, _ in batch_clips
+    ]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        output = []
-        for (clip_path, clip_index, start_time, end_time), result in zip(batch_clips, results):
-            if isinstance(result, (aiohttp.ClientError, OSError)):
-                raise ConnectionError(
-                    f"vLLM server unreachable: {result}"
-                ) from result
-            elif isinstance(result, Exception):
-                output.append((clip_index, None))
-            else:
-                clip_result = ClipResult(
-                    start_time=start_time,
-                    end_time=end_time,
-                    in_rally=result.get("in_rally", False),
-                    shot_type=_parse_shot_type(result.get("shot_type", "full_court")),
-                )
-                output.append((clip_index, clip_result))
+    output = []
+    for (clip_path, clip_index, start_time, end_time), result in zip(batch_clips, results):
+        if isinstance(result, (aiohttp.ClientError, OSError)):
+            raise ConnectionError(
+                f"vLLM server unreachable: {result}"
+            ) from result
+        elif isinstance(result, Exception):
+            output.append((clip_index, None))
+        else:
+            clip_result = ClipResult(
+                start_time=start_time,
+                end_time=end_time,
+                in_rally=result.get("in_rally", False),
+                shot_type=_parse_shot_type(result.get("shot_type", "full_court")),
+            )
+            output.append((clip_index, clip_result))
 
-        return output
+    return output
 
 
 def build_clip_specs(
@@ -372,7 +372,8 @@ def process_video(
     clip_duration: float = 6.0,
     slide_interval: float = 3.0,
     output_file: str | None = None,
-    batch_size: int = 8,
+    batch_size: int = 16,
+    max_concurrent: int = 16,
     on_progress: "Callable[[int, int], None] | None" = None,
 ) -> list[ClipResult]:
     """Process video with sliding window approach using parallel batch processing.
@@ -384,7 +385,9 @@ def process_video(
         clip_duration: Duration of each clip in seconds
         slide_interval: Sliding window interval in seconds
         output_file: Output JSON file path (optional)
-        batch_size: Number of clips to process in parallel (default: 4)
+        batch_size: Number of clips to process per batch
+        max_concurrent: Max concurrent requests to vLLM (should match VLLM_MAX_NUM_SEQS)
+        on_progress: Optional callback(clips_done, total_clips)
 
     Returns:
         List of ClipResult objects
@@ -396,82 +399,99 @@ def process_video(
 
     total_duration = get_video_duration(video_path)
 
+    print(f"\n{'─' * 70}")
     print(f"Video: {video_path}")
     print(f"Duration: {format_time(int(total_duration))} | Clip: {clip_duration}s | Interval: {slide_interval}s | Batch: {batch_size}")
 
     clip_specs = build_clip_specs(total_duration, clip_duration, slide_interval)
     total_clips = len(clip_specs)
-    num_batches = (total_clips + batch_size - 1) // batch_size
 
     results: list[ClipResult] = []
     total_inference_time = 0.0
 
     # Use directory next to video file for temp clips (for vLLM local file access)
     video_dir = os.path.dirname(video_path)
-    with tempfile.TemporaryDirectory(dir=video_dir) as tmpdir:
-        # Process clips in batches with progress bar
-        pbar = tqdm(total=total_clips, desc="Processing", unit="clip")
 
-        for batch_start in range(0, total_clips, batch_size):
-            batch_end = min(batch_start + batch_size, total_clips)
-            batch_specs = clip_specs[batch_start:batch_end]
+    # Single event loop + session for all batches (prevents resource leaks)
+    loop = asyncio.new_event_loop()
 
-            # Step 1: Extract all clips in this batch
-            batch_clips: list[tuple[str, int, float, float]] = []
-            for idx, start_time, end_time in batch_specs:
-                clip_path = os.path.join(tmpdir, f"clip_{idx}.mp4")
-                try:
-                    extract_clip(video_path, start_time, clip_duration, clip_path)
-                    batch_clips.append((clip_path, idx, start_time, end_time))
-                except FFmpegError:
-                    pass
+    async def _create_session():
+        connector = aiohttp.TCPConnector(limit=max_concurrent)
+        return aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=120), connector=connector
+        )
 
-            if not batch_clips:
+    session = loop.run_until_complete(_create_session())
+
+    try:
+        with tempfile.TemporaryDirectory(dir=video_dir) as tmpdir:
+            pbar = tqdm(total=total_clips, desc="Processing", unit="clip")
+
+            for batch_start in range(0, total_clips, batch_size):
+                batch_specs = clip_specs[batch_start:batch_start + batch_size]
+
+                # Step 1: Extract all clips in this batch
+                batch_clips: list[tuple[str, int, float, float]] = []
+                for idx, start_time, end_time in batch_specs:
+                    clip_path = os.path.join(tmpdir, f"clip_{idx}.mp4")
+                    try:
+                        extract_clip(video_path, start_time, clip_duration, clip_path)
+                        batch_clips.append((clip_path, idx, start_time, end_time))
+                    except FFmpegError:
+                        pass
+
+                if not batch_clips:
+                    pbar.update(len(batch_specs))
+                    continue
+
+                # Step 2: Analyze all clips in parallel (reuse session)
+                inference_start = time.time()
+                batch_results = loop.run_until_complete(
+                    process_batch_async(batch_clips, server_url, model, session)
+                )
+                total_inference_time += time.time() - inference_start
+
+                # Step 3: Collect results (maintaining order)
+                batch_successes = 0
+                for clip_idx, clip_result in batch_results:
+                    if clip_result:
+                        results.append(clip_result)
+                        batch_successes += 1
+
+                # If entire batch failed, server likely crashed
+                if batch_successes == 0 and len(batch_clips) > 0:
+                    print("\nERROR: Entire batch failed. Checking server health...")
+                    check_server(server_url)  # raises SystemExit if down
+
+                # Step 4: Save results after each batch
+                if output_file:
+                    save_results(output_file, video_path, clip_duration, slide_interval, results)
+
+                # Update progress bar
                 pbar.update(len(batch_specs))
-                continue
 
-            # Step 2: Analyze all clips in parallel
-            inference_start = time.time()
-            batch_results = asyncio.run(
-                process_batch_async(batch_clips, server_url, model)
-            )
-            total_inference_time += time.time() - inference_start
+                # Report progress via callback
+                if on_progress:
+                    on_progress(pbar.n, total_clips)
 
-            # Step 3: Collect results (maintaining order)
-            batch_successes = 0
-            for clip_idx, clip_result in batch_results:
-                if clip_result:
-                    results.append(clip_result)
-                    batch_successes += 1
+                # Clean up batch clips to free disk space
+                for clip_path, _, _, _ in batch_clips:
+                    try:
+                        os.remove(clip_path)
+                    except OSError:
+                        pass
 
-            # If entire batch failed, server likely crashed
-            if batch_successes == 0 and len(batch_clips) > 0:
-                print("\nERROR: Entire batch failed. Checking server health...")
-                check_server(server_url)  # raises SystemExit if down
-
-            # Step 4: Save results after each batch
-            if output_file:
-                save_results(output_file, video_path, clip_duration, slide_interval, results)
-
-            # Update progress bar
-            pbar.update(len(batch_specs))
-
-            # Report progress via callback
-            if on_progress:
-                on_progress(pbar.n, total_clips)
-
-            # Clean up batch clips to free disk space
-            for clip_path, _, _, _ in batch_clips:
-                try:
-                    os.remove(clip_path)
-                except OSError:
-                    pass
-
-        pbar.close()
+            pbar.close()
+    finally:
+        try:
+            loop.run_until_complete(session.close())
+        except Exception:
+            pass
+        loop.close()
 
     # Summary
     rally_clips = [r for r in results if r.in_rally]
-    print(f"\nAnalyzed: {len(results)} clips | Rally: {len(rally_clips)} | Inference time: {total_inference_time:.1f}s")
+    print(f"Analyzed: {len(results)} clips | Rally: {len(rally_clips)} | Inference time: {total_inference_time:.1f}s")
 
     if output_file:
         print(f"Saved to: {output_file}")
@@ -523,11 +543,12 @@ def main():
         default=None,
         help="Output JSONL file for results"
     )
+    _default_max_seqs = int(_VLLM_CONFIG.get("VLLM_MAX_NUM_SEQS", "16"))
     parser.add_argument(
         "--batch-size", "-b",
         type=int,
-        default=32,
-        help="Number of clips to process in parallel (default: 4)"
+        default=_default_max_seqs,
+        help=f"Number of clips to process per batch (default: {_default_max_seqs})"
     )
 
     args = parser.parse_args()
@@ -548,7 +569,8 @@ def main():
         clip_duration=args.clip_duration,
         slide_interval=args.slide_interval,
         output_file=args.output,
-        batch_size=args.batch_size
+        batch_size=args.batch_size,
+        max_concurrent=_default_max_seqs,
     )
 
     return 0

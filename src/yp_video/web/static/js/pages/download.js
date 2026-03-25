@@ -61,10 +61,8 @@ export function render(container) {
   document.getElementById('dl-deselect-all').addEventListener('click', () => toggleAll(false));
 }
 
-export function destroy() {
-  if (sseClient) { sseClient.stop(); sseClient = null; }
-  state = { videos: [], sessionId: null, downloading: false };
-}
+export function activate() {}
+export function deactivate() {}
 
 async function fetchPlaylist() {
   const url = document.getElementById('dl-url').value.trim();

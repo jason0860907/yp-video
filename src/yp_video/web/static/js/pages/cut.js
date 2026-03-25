@@ -59,12 +59,16 @@ export function render(container) {
   videoEl = document.getElementById('cut-player');
   loadVideos();
   bindEvents();
+  activate();
 }
 
-export function destroy() {
+export function activate() {
+  document.addEventListener('keydown', handleKeydown);
+}
+
+export function deactivate() {
   document.removeEventListener('keydown', handleKeydown);
-  state = { videos: [], segments: [], markStart: null };
-  videoEl = null;
+  if (videoEl && !videoEl.paused) videoEl.pause();
 }
 
 function bindEvents() {
@@ -72,7 +76,6 @@ function bindEvents() {
   document.getElementById('cut-mark-start').addEventListener('click', markStart);
   document.getElementById('cut-mark-end').addEventListener('click', markEnd);
   document.getElementById('cut-export').addEventListener('click', exportAll);
-  document.addEventListener('keydown', handleKeydown);
 
   videoEl.addEventListener('timeupdate', () => {
     document.getElementById('cut-time').textContent = formatTimePrecise(videoEl.currentTime);
@@ -126,7 +129,7 @@ function markEnd() {
 
   const idx = state.segments.length + 1;
   state.segments.push({
-    name: `segment_${String(idx).padStart(3, '0')}`,
+    name: `set${idx}`,
     start: state.markStart,
     end: end,
   });
@@ -147,10 +150,12 @@ function renderSegments() {
     return;
   }
 
+  const videoStem = (document.getElementById('cut-video-select').value || '').replace(/\.[^.]+$/, '');
+
   el.innerHTML = state.segments.map((s, i) => `
     <div class="flex items-center gap-3 px-3.5 py-2.5 rounded-xl bg-white/[0.03] border border-white/5 group hover:bg-white/[0.06] hover:border-white/[0.08] transition-all duration-200">
       <span class="w-6 h-6 rounded-md bg-surface-200 border border-border flex items-center justify-center text-[10px] font-heading text-text-muted flex-shrink-0">${i + 1}</span>
-      <input type="text" value="${s.name}" data-idx="${i}" class="seg-name ${inputCls} !bg-transparent !border-transparent !px-0 !py-0 !rounded-none !ring-0 focus:!border-b focus:!border-primary-light w-32 font-heading text-sm transition-colors duration-200">
+      <input type="text" value="${videoStem}_${s.name}" data-idx="${i}" class="seg-name ${inputCls} !bg-transparent !border-transparent !px-0 !py-0 !rounded-none !ring-0 focus:!border-b focus:!border-primary-light flex-1 min-w-0 font-heading text-sm transition-colors duration-200">
       <div class="flex items-center gap-2 ml-auto">
         <span class="text-xs text-text-muted font-heading tabular-nums">${formatTimePrecise(s.start)}</span>
         <span class="text-text-muted/40">&rarr;</span>

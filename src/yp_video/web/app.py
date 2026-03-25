@@ -1,5 +1,6 @@
 """Unified web application for volleyball video analysis."""
 
+import logging
 import signal
 import sys
 from contextlib import asynccontextmanager
@@ -7,6 +8,19 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+
+
+class _QuietPollFilter(logging.Filter):
+    """Suppress uvicorn access logs for high-frequency polling endpoints."""
+
+    _QUIET_PATHS = ("/api/system/stats", "/api/jobs/active-count", "/api/system/vllm/status")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        return not any(p in msg for p in self._QUIET_PATHS)
+
+
+logging.getLogger("uvicorn.access").addFilter(_QuietPollFilter())
 
 from yp_video.config import STATIC_DIR
 from yp_video.web.routers import download, cut, annotate, detect, train, predict, jobs, system

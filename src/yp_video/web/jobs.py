@@ -19,6 +19,7 @@ class JobStatus(str, Enum):
 class Job:
     id: str
     type: str
+    name: str = ""
     status: JobStatus = JobStatus.PENDING
     progress: float = 0.0
     message: str = ""
@@ -32,6 +33,7 @@ class Job:
         return {
             "id": self.id,
             "type": self.type,
+            "name": self.name,
             "status": self.status.value,
             "progress": self.progress,
             "message": self.message,
@@ -49,10 +51,11 @@ class JobManager:
         self.gpu_lock = asyncio.Lock()
         self._vllm_using_gpu = False
 
-    def create_job(self, job_type: str, params: dict | None = None) -> Job:
+    def create_job(self, job_type: str, params: dict | None = None, name: str = "") -> Job:
         job = Job(
             id=str(uuid.uuid4())[:8],
             type=job_type,
+            name=name,
             params=params or {},
         )
         self.jobs[job.id] = job
