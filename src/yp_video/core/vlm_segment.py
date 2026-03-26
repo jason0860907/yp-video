@@ -333,7 +333,7 @@ async def process_batch_async(
 
 
 def build_clip_specs(
-    total_duration: float, clip_duration: float = 6.0, slide_interval: float = 3.0
+    total_duration: float, clip_duration: float = 6.0, slide_interval: float = 2.0
 ) -> list[tuple[int, float, float]]:
     """Build list of (clip_index, start_time, end_time) for a video.
 
@@ -359,7 +359,7 @@ def build_clip_specs(
     return specs
 
 
-def count_clips(video_path: str, clip_duration: float = 6.0, slide_interval: float = 3.0) -> int:
+def count_clips(video_path: str, clip_duration: float = 6.0, slide_interval: float = 2.0) -> int:
     """Count how many clips a video will produce without processing it."""
     total_duration = get_video_duration(os.path.abspath(video_path))
     return len(build_clip_specs(total_duration, clip_duration, slide_interval))
@@ -370,7 +370,7 @@ def process_video(
     server_url: str = "http://localhost:8000",
     model: str = "Qwen/Qwen3-VL-8B-Instruct",
     clip_duration: float = 6.0,
-    slide_interval: float = 3.0,
+    slide_interval: float = 2.0,
     output_file: str | None = None,
     batch_size: int = 16,
     max_concurrent: int = 16,

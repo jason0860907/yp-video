@@ -18,7 +18,8 @@ router = APIRouter()
 
 @router.get("/vllm/status")
 async def vllm_status():
-    """Get vLLM server status."""
+    """Get vLLM server status with live health check."""
+    await vllm_manager.sync_status()
     return vllm_manager.get_status_dict()
 
 

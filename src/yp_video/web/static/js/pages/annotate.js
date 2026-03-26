@@ -122,6 +122,7 @@ function bindEvents() {
       if (!videoEl.paused && videoEl.currentTime >= a.end) {
         videoEl.pause();
         videoEl.currentTime = a.end;
+        _selectedIdx = -1;
       }
     }
   });

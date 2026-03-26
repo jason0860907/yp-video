@@ -17,6 +17,7 @@ from yp_video.config import (
     TAD_CHECKPOINTS_DIR,
 )
 from yp_video.web.jobs import job_manager
+from yp_video.web.r2_client import sync_to_r2, sync_directory_to_r2
 
 router = APIRouter()
 
@@ -120,6 +121,11 @@ async def start_prediction(req: PredictRequest):
                 ),
             )
 
+            # Auto-sync to R2
+            sync_to_r2(output_path, "tad-predictions")
+            if cut_dir and cut_dir.exists():
+                sync_directory_to_r2(cut_dir, f"rally_clips/{video_path.stem}", "*.mp4")
+
             await job_manager.update_job(
                 job.id, status="completed", progress=1.0,
                 message=f"Inference complete: {output_path.name}",
@@ -130,6 +136,6 @@ async def start_prediction(req: PredictRequest):
             await job_manager.update_job(job.id, status="failed", error=str(e))
 
     task = asyncio.create_task(run_prediction())
-    job._task = task
+    job_manager.attach_task(job, task)
 
     return job.to_dict()

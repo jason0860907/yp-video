@@ -85,6 +85,7 @@ function bindEvents() {
 function handleKeydown(e) {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
   switch (e.key) {
+    case ' ': e.preventDefault(); videoEl.paused ? videoEl.play() : videoEl.pause(); break;
     case '[': e.preventDefault(); markStart(); break;
     case ']': e.preventDefault(); markEnd(); break;
     case 'ArrowLeft': e.preventDefault(); videoEl.currentTime = Math.max(0, videoEl.currentTime - 5); break;
@@ -111,6 +112,10 @@ async function loadVideos() {
 function onVideoChange(e) {
   const name = e.target.value;
   if (!name) return;
+  state.segments = [];
+  state.markStart = null;
+  document.getElementById('cut-mark-info').classList.add('hidden');
+  renderSegments();
   videoEl.src = `/api/cut/video/${encodeURIComponent(name)}`;
   videoEl.load();
 }
@@ -127,9 +132,10 @@ function markEnd() {
   const end = videoEl.currentTime;
   if (end <= state.markStart) return showToast('End must be after start', 'warning');
 
+  const videoStem = (document.getElementById('cut-video-select').value || '').replace(/\.[^.]+$/, '');
   const idx = state.segments.length + 1;
   state.segments.push({
-    name: `set${idx}`,
+    name: `${videoStem}_set${idx}`,
     start: state.markStart,
     end: end,
   });
@@ -150,12 +156,10 @@ function renderSegments() {
     return;
   }
 
-  const videoStem = (document.getElementById('cut-video-select').value || '').replace(/\.[^.]+$/, '');
-
   el.innerHTML = state.segments.map((s, i) => `
     <div class="flex items-center gap-3 px-3.5 py-2.5 rounded-xl bg-white/[0.03] border border-white/5 group hover:bg-white/[0.06] hover:border-white/[0.08] transition-all duration-200">
       <span class="w-6 h-6 rounded-md bg-surface-200 border border-border flex items-center justify-center text-[10px] font-heading text-text-muted flex-shrink-0">${i + 1}</span>
-      <input type="text" value="${videoStem}_${s.name}" data-idx="${i}" class="seg-name ${inputCls} !bg-transparent !border-transparent !px-0 !py-0 !rounded-none !ring-0 focus:!border-b focus:!border-primary-light flex-1 min-w-0 font-heading text-sm transition-colors duration-200">
+      <input type="text" value="${s.name}" data-idx="${i}" class="seg-name ${inputCls} !bg-transparent !border-transparent !px-0 !py-0 !rounded-none !ring-0 focus:!border-b focus:!border-primary-light flex-1 min-w-0 font-heading text-sm transition-colors duration-200">
       <div class="flex items-center gap-2 ml-auto">
         <span class="text-xs text-text-muted font-heading tabular-nums">${formatTimePrecise(s.start)}</span>
         <span class="text-text-muted/40">&rarr;</span>

@@ -40,7 +40,7 @@ export function render(container) {
             </div>
             <div>
               <label class="block text-[11px] text-text-muted mb-1.5 uppercase tracking-wider">Slide Interval</label>
-              <input id="det-slide" type="number" value="3" min="0.5" step="0.5" class="w-full ${inputCls}">
+              <input id="det-slide" type="number" value="2" min="0.5" step="0.5" class="w-full ${inputCls}">
             </div>
           </div>
           <div class="ml-10 flex items-center gap-3 pt-1">
@@ -89,7 +89,10 @@ export function render(container) {
 }
 
 export function activate() {}
-export function deactivate() {}
+export function deactivate() {
+  sseClients.forEach(c => c.stop());
+  sseClients = [];
+}
 
 function bindEvents() {
   document.getElementById('det-start').addEventListener('click', startDetection);

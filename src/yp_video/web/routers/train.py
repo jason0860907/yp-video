@@ -102,7 +102,7 @@ async def extract_features(req: ExtractFeaturesRequest):
 
     async with job_manager.gpu_lock:
         task = asyncio.create_task(run_extraction())
-        job._task = task
+        job_manager.attach_task(job, task)
 
     return job.to_dict()
 
@@ -209,7 +209,7 @@ async def start_training(req: TrainRequest):
             await job_manager.update_job(job.id, status="failed", error=str(e))
 
     task = asyncio.create_task(run_training())
-    job._task = task
+    job_manager.attach_task(job, task)
 
     return job.to_dict()
 

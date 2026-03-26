@@ -5,6 +5,7 @@ Path(__file__).parent.parent chains throughout the codebase (DIP).
 """
 
 from pathlib import Path
+from typing import NamedTuple
 
 
 def _find_project_root() -> Path:
@@ -24,6 +25,7 @@ PROJECT_ROOT = _find_project_root()
 OPENTAD_DIR = PROJECT_ROOT / "OpenTAD"
 PROMPTS_DIR = PROJECT_ROOT / "prompts"
 VLLM_ENV_PATH = PROJECT_ROOT / "vllm.env"
+R2_ENV_PATH = PROJECT_ROOT / "r2.env"
 VENV_PYTHON = PROJECT_ROOT / ".venv" / "bin" / "python"
 
 # ── TAD paths ─────────────────────────────────────────────────────
@@ -42,16 +44,32 @@ SEG_ANNOTATIONS_DIR = VIDEOS_DIR / "seg-annotations"
 PRE_ANNOTATIONS_DIR = VIDEOS_DIR / "rally-pre-annotations"
 ANNOTATIONS_DIR = VIDEOS_DIR / "rally-annotations"
 PREDICTIONS_DIR = VIDEOS_DIR / "tad-predictions"
+RALLY_CLIPS_DIR = VIDEOS_DIR / "rally_clips"
+
+# R2 category → local directory + glob pattern mapping
+class R2Category(NamedTuple):
+    local_dir: Path
+    glob_pattern: str
+
+R2_CATEGORIES: dict[str, R2Category] = {
+    "videos": R2Category(VIDEOS_DIR, "*.mp4"),
+    "cuts": R2Category(CUTS_DIR, "*.mp4"),
+    "seg-annotations": R2Category(SEG_ANNOTATIONS_DIR, "*.jsonl"),
+    "rally-pre-annotations": R2Category(PRE_ANNOTATIONS_DIR, "*.jsonl"),
+    "rally-annotations": R2Category(ANNOTATIONS_DIR, "*.jsonl"),
+    "tad-predictions": R2Category(PREDICTIONS_DIR, "*.jsonl"),
+    "rally_clips": R2Category(RALLY_CLIPS_DIR, "*.mp4"),
+}
 
 # ── Web static assets ────────────────────────────────────────────
 STATIC_DIR = Path(__file__).resolve().parent / "web" / "static"
 
 
-def load_vllm_env() -> dict[str, str]:
-    """Load key=value pairs from vllm.env."""
+def _load_env_file(path: Path) -> dict[str, str]:
+    """Load key=value pairs from an env file."""
     config: dict[str, str] = {}
     try:
-        with open(VLLM_ENV_PATH) as f:
+        with open(path) as f:
             for line in f:
                 line = line.strip()
                 if line and not line.startswith("#") and "=" in line:
@@ -60,6 +78,16 @@ def load_vllm_env() -> dict[str, str]:
     except FileNotFoundError:
         pass
     return config
+
+
+def load_vllm_env() -> dict[str, str]:
+    """Load key=value pairs from vllm.env."""
+    return _load_env_file(VLLM_ENV_PATH)
+
+
+def load_r2_env() -> dict[str, str]:
+    """Load key=value pairs from r2.env."""
+    return _load_env_file(R2_ENV_PATH)
 
 
 def load_prompt(filename: str) -> str:

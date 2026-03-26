@@ -389,6 +389,34 @@ wheels = [
 ]
 
 [[package]]
+name = "boto3"
+version = "1.42.75"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "botocore" },
+    { name = "jmespath" },
+    { name = "s3transfer" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/78/1c/f836f5e52095a3374eee9317f980a22d9139477fe6277498ebf4406e35b4/boto3-1.42.75.tar.gz", hash = "sha256:3c7fd95a50c69271bd7707b7eda07dcfddb30e961a392613010f7ee81d91acb3", size = 112812, upload-time = "2026-03-24T21:14:00.529Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6b/31/c04caef287a0ea507ba634f2280dbe8314d89c1d8da1aef648b661ad1201/boto3-1.42.75-py3-none-any.whl", hash = "sha256:16bc657d16403ee8e11c8b6920c245629e37a36ea60352b919da566f82b4cb4c", size = 140556, upload-time = "2026-03-24T21:13:58.004Z" },
+]
+
+[[package]]
+name = "botocore"
+version = "1.42.75"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "jmespath" },
+    { name = "python-dateutil" },
+    { name = "urllib3" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9d/05/b16d6ac5eea465d42e65941436eab7d2e6f6ebef01ba4d70b6f5d0b992ce/botocore-1.42.75.tar.gz", hash = "sha256:95c8e716b6be903ee1601531caa4f50217400aa877c18fe9a2c3047d2945d477", size = 15016308, upload-time = "2026-03-24T21:13:48.802Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/04/21/22148ff8d37d8706fc63cdc8ec292f4abbbd18b500d9970f6172f7f3bb30/botocore-1.42.75-py3-none-any.whl", hash = "sha256:915e43b7ac8f50cf3dbc937ba713de5acb999ea48ad8fecd1589d92ad415f787", size = 14689910, upload-time = "2026-03-24T21:13:43.939Z" },
+]
+
+[[package]]
 name = "cachetools"
 version = "6.2.4"
 source = { registry = "https://pypi.org/simple" }
@@ -4684,6 +4712,18 @@ wheels = [
 ]
 
 [[package]]
+name = "s3transfer"
+version = "0.16.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "botocore" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/05/04/74127fc843314818edfa81b5540e26dd537353b123a4edc563109d8f17dd/s3transfer-0.16.0.tar.gz", hash = "sha256:8e990f13268025792229cd52fa10cb7163744bf56e719e0b9cb925ab79abf920", size = 153827, upload-time = "2025-12-01T02:30:59.114Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fc/51/727abb13f44c1fcf6d145979e1535a35794db0f6e450a0cb46aa24732fe2/s3transfer-0.16.0-py3-none-any.whl", hash = "sha256:18e25d66fed509e3868dc1572b3f427ff947dd2c56f844a5bf09481ad3f3b2fe", size = 86830, upload-time = "2025-12-01T02:30:57.729Z" },
+]
+
+[[package]]
 name = "safetensors"
 version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
@@ -6069,6 +6109,7 @@ source = { editable = "." }
 dependencies = [
     { name = "accelerate" },
     { name = "aiohttp" },
+    { name = "boto3" },
     { name = "decord" },
     { name = "einops" },
     { name = "fastapi" },
@@ -6104,6 +6145,7 @@ dev = [
 requires-dist = [
     { name = "accelerate", specifier = ">=0.25.0" },
     { name = "aiohttp", specifier = ">=3.9.0" },
+    { name = "boto3", specifier = ">=1.34.0" },
     { name = "decord", specifier = ">=0.6.0" },
     { name = "einops", specifier = ">=0.7.0" },
     { name = "fastapi", specifier = ">=0.110.0" },

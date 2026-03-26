@@ -29,6 +29,10 @@ class Job:
     _task: asyncio.Task | None = field(default=None, repr=False)
     _subscribers: list[asyncio.Queue] = field(default_factory=list, repr=False)
 
+    def set_task(self, task: asyncio.Task) -> None:
+        """Attach an asyncio task so the job can be cancelled."""
+        self._task = task
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
@@ -121,6 +125,13 @@ class JobManager:
                 pass
         return True
 
+    def attach_task(self, jobs: "list[Job] | Job", task: asyncio.Task) -> None:
+        """Attach a cancellable task to one or more jobs."""
+        if isinstance(jobs, Job):
+            jobs = [jobs]
+        for job in jobs:
+            job.set_task(task)
+
     @property
     def vllm_using_gpu(self) -> bool:
         return self._vllm_using_gpu
@@ -130,5 +141,5 @@ class JobManager:
         self._vllm_using_gpu = value
 
 
-# Singleton
+# Module-level instance
 job_manager = JobManager()

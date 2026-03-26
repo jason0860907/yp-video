@@ -23,6 +23,9 @@ ENV/
 # OS
 .DS_Store
 
+# Secrets
+r2.env
+
 # Project specific
 *.json
 !package.json

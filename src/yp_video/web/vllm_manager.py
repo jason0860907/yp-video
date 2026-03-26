@@ -136,12 +136,25 @@ class VLLMManager:
 
         return {"ok": True, "message": "vLLM server stopped"}
 
-    async def initial_check(self):
-        """Run on startup to detect existing vLLM instances."""
-        if await self._detect_existing():
+    async def sync_status(self):
+        """Sync internal status with actual vLLM health.
+
+        Detects externally started/stopped vLLM instances (e.g., via tmux).
+        """
+        healthy = await self.check_health()
+        if healthy and self._status != "running":
+            self._status = "running"
             from yp_video.web.jobs import job_manager
             job_manager.vllm_using_gpu = True
+        elif not healthy and self._status == "running":
+            self._status = "stopped"
+            from yp_video.web.jobs import job_manager
+            job_manager.vllm_using_gpu = False
+
+    async def initial_check(self):
+        """Run on startup to detect existing vLLM instances."""
+        await self.sync_status()
 
 
-# Singleton
+# Module-level instance
 vllm_manager = VLLMManager()

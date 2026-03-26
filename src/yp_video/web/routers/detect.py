@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from yp_video.config import CUTS_DIR, SEG_ANNOTATIONS_DIR, PRE_ANNOTATIONS_DIR
 from yp_video.web.jobs import job_manager, JobStatus
+from yp_video.web.r2_client import sync_to_r2, sync_directory_to_r2
 from yp_video.web.vllm_manager import vllm_manager
 
 router = APIRouter()
@@ -17,7 +18,7 @@ class DetectRequest(BaseModel):
     videos: list[str]
     batch_size: int = 16
     clip_duration: float = 6.0
-    slide_interval: float = 3.0
+    slide_interval: float = 2.0
 
 
 class ConvertRequest(BaseModel):
@@ -104,6 +105,9 @@ async def start_detection(req: DetectRequest):
                     ),
                 )
 
+                # Auto-sync to R2
+                sync_to_r2(Path(output_file), "seg-annotations")
+
                 await job_manager.update_job(
                     job.id, status="completed", progress=1.0,
                     message="Detection complete",
@@ -122,9 +126,7 @@ async def start_detection(req: DetectRequest):
             await asyncio.sleep(2)
 
     task = asyncio.create_task(run_all())
-    # Attach task to all jobs so any can be cancelled
-    for job in jobs:
-        job._task = task
+    job_manager.attach_task(jobs, task)
 
     return [job.to_dict() for job in jobs]
 
@@ -142,6 +144,9 @@ async def convert_to_rally(req: ConvertRequest):
             req.min_duration, req.min_score,
         ),
     )
+
+    # Auto-sync to R2
+    sync_directory_to_r2(PRE_ANNOTATIONS_DIR, "rally-pre-annotations")
 
     # Count output files
     count = len(list(PRE_ANNOTATIONS_DIR.glob("*.jsonl"))) if PRE_ANNOTATIONS_DIR.exists() else 0

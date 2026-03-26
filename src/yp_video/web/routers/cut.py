@@ -1,11 +1,11 @@
 """Video cutter router."""
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from yp_video.config import CUTS_DIR, VIDEOS_DIR
 from yp_video.core.ffmpeg import FFmpegError, export_segment
+from yp_video.web.r2_client import serve_video_or_r2_redirect, sync_to_r2
 
 router = APIRouter()
 
@@ -35,10 +35,10 @@ def list_videos() -> list[str]:
 
 @router.get("/video/{name}")
 def stream_video(name: str):
-    path = VIDEOS_DIR / name
-    if not path.exists() or not path.is_file():
-        raise HTTPException(404, "Video not found")
-    return FileResponse(path, media_type="video/mp4")
+    response = serve_video_or_r2_redirect(VIDEOS_DIR / name, ("videos",))
+    if response:
+        return response
+    raise HTTPException(404, "Video not found")
 
 
 @router.post("/export")
@@ -49,16 +49,16 @@ def export_segments(req: ExportRequest) -> ExportResult:
 
     CUTS_DIR.mkdir(exist_ok=True)
 
-    stem = source_path.stem
     success = []
     failed = []
 
     for seg in req.segments:
-        output_name = f"{stem}_{seg.name}.mp4"
+        output_name = f"{seg.name}.mp4"
         output_path = CUTS_DIR / output_name
 
         try:
             export_segment(source_path, seg.start, seg.end, output_path, copy=True)
+            sync_to_r2(output_path, "cuts")
             success.append(output_name)
         except FFmpegError:
             failed.append(output_name)

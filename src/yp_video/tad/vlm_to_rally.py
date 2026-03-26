@@ -43,7 +43,7 @@ def read_vlm_jsonl(path: Path) -> tuple[dict, list[dict]]:
 def detect_rallies(
     clips: list[dict],
     clip_duration: float = 6.0,
-    slide_interval: float = 3.0,
+    slide_interval: float = 2.0,
     min_duration: float = 3.0,
     min_score: float = 0.5,
     require_full_court: bool = True,
@@ -183,7 +183,7 @@ def convert_vlm_to_rally(
 
     # Detect rallies using sliding window params from VLM metadata
     clip_duration = meta.get("clip_duration", 6.0)
-    slide_interval = meta.get("slide_interval", 3.0)
+    slide_interval = meta.get("slide_interval", 2.0)
     rallies = detect_rallies(clips, clip_duration, slide_interval, min_duration, min_score)
 
     # Write output
