@@ -1,7 +1,7 @@
 """ActionFormer configuration for volleyball rally detection.
 
 This config uses:
-- R3D-18 features (512-dimensional)
+- V-JEPA 2.1 ViT-L features (1024-dimensional)
 - Single class: "rally"
 - OpenTAD framework
 """
@@ -13,7 +13,7 @@ _base_ = [
 # Override model settings for volleyball
 model = dict(
     projection=dict(
-        in_channels=512,  # R3D-18 feature dimension
+        in_channels=768,  # V-JEPA 2.1 ViT-B feature dimension
         out_channels=256,
         arch=(2, 2, 5),
         input_pdrop=0.2,

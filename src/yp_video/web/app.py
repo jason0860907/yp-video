@@ -71,7 +71,7 @@ async def index():
     return FileResponse(STATIC_DIR / "index.html")
 
 
-def run_server(host: str = "0.0.0.0", port: int = 8080):
+def run_server(host: str = "0.0.0.0", port: int = 8077):
     """Run the unified app server."""
     import uvicorn
     uvicorn.run(app, host=host, port=port)

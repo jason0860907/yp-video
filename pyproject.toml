@@ -28,13 +28,10 @@ dependencies = [
     "fastapi>=0.110.0",
     "uvicorn>=0.27.0",
     "vllm>=0.17.0",
-    # TAD dependencies
     "scipy>=1.10.0",
-    "mmengine>=0.10.0",
-    "mmcv>=2.0.0,<2.2.0",
-    "mmaction2>=1.2.0",
     "pandas>=2.0.0",
 ]
+
 
 [project.scripts]
 # Web Dashboard
@@ -43,8 +40,9 @@ yp-app = "yp_video.web.app:run_server"
 yp-download = "yp_video.youtube.download:main"
 yp-vlm-segment = "yp_video.core.vlm_segment:main"
 yp-vlm-to-rally = "yp_video.tad.vlm_to_rally:main"
-yp-tad-convert = "yp_video.tad.convert_annotations:main"
+yp-vlm-refine = "yp_video.core.vlm_refine:main"
 yp-tad-extract = "yp_video.tad.extract_features:main"
+yp-tad-convert = "yp_video.tad.convert_annotations:main"
 yp-tad-train = "yp_video.tad.train:main"
 yp-tad-infer = "yp_video.tad.infer:main"
 

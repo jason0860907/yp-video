@@ -42,6 +42,7 @@ VIDEOS_DIR = Path.home() / "videos"
 CUTS_DIR = VIDEOS_DIR / "cuts"
 SEG_ANNOTATIONS_DIR = VIDEOS_DIR / "seg-annotations"
 PRE_ANNOTATIONS_DIR = VIDEOS_DIR / "rally-pre-annotations"
+REFINE_ANNOTATIONS_DIR = VIDEOS_DIR / "rally-refine-annotations"
 ANNOTATIONS_DIR = VIDEOS_DIR / "rally-annotations"
 PREDICTIONS_DIR = VIDEOS_DIR / "tad-predictions"
 RALLY_CLIPS_DIR = VIDEOS_DIR / "rally_clips"
@@ -56,6 +57,7 @@ R2_CATEGORIES: dict[str, R2Category] = {
     "cuts": R2Category(CUTS_DIR, "*.mp4"),
     "seg-annotations": R2Category(SEG_ANNOTATIONS_DIR, "*.jsonl"),
     "rally-pre-annotations": R2Category(PRE_ANNOTATIONS_DIR, "*.jsonl"),
+    "rally-refine-annotations": R2Category(REFINE_ANNOTATIONS_DIR, "*.jsonl"),
     "rally-annotations": R2Category(ANNOTATIONS_DIR, "*.jsonl"),
     "tad-predictions": R2Category(PREDICTIONS_DIR, "*.jsonl"),
     "rally_clips": R2Category(RALLY_CLIPS_DIR, "*.mp4"),

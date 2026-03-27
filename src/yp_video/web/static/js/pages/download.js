@@ -59,9 +59,15 @@ export function render(container) {
   document.getElementById('dl-url').addEventListener('keydown', e => { if (e.key === 'Enter') fetchPlaylist(); });
   document.getElementById('dl-select-all').addEventListener('click', () => toggleAll(true));
   document.getElementById('dl-deselect-all').addEventListener('click', () => toggleAll(false));
+
 }
 
-export function activate() {}
+export function activate() {
+  // Reconnect SSE if connection dropped during a long download
+  if (state.sessionId && (!sseClient || !sseClient.source)) {
+    reconnectSSE(state.sessionId);
+  }
+}
 export function deactivate() {}
 
 async function fetchPlaylist() {
@@ -148,6 +154,32 @@ function renderActionBtns() {
   }
 }
 
+function reconnectSSE(sessionId) {
+  sseClient?.stop();
+  sseClient = new SSEClient(`/api/download/${sessionId}/progress`, {
+    onMessage: (data) => {
+      if (data.video_id) {
+        const v = state.videos.find(x => x.id === data.video_id);
+        if (v) {
+          v.status = data.status || v.status;
+          v.progress = data;
+        }
+      }
+      if (data.status === 'complete') {
+        state.downloading = false;
+        sseClient?.stop();
+        showToast('Download complete!', 'success');
+        renderActionBtns();
+      }
+      renderVideoList();
+    },
+    onError: () => {
+      state.downloading = false;
+      renderActionBtns();
+    },
+  }).start();
+}
+
 async function startDownload() {
   const selected = state.videos.filter(v => v.selected && v.status !== 'completed');
   if (selected.length === 0) return showToast('No videos selected', 'warning');
@@ -163,28 +195,7 @@ async function startDownload() {
     });
 
     state.sessionId = res.session_id;
-    sseClient = new SSEClient(`/api/download/${res.session_id}/progress`, {
-      onMessage: (data) => {
-        if (data.video_id) {
-          const v = state.videos.find(x => x.id === data.video_id);
-          if (v) {
-            v.status = data.status || v.status;
-            v.progress = data;
-          }
-        }
-        if (data.status === 'complete') {
-          state.downloading = false;
-          sseClient?.stop();
-          showToast('Download complete!', 'success');
-          renderActionBtns();
-        }
-        renderVideoList();
-      },
-      onError: () => {
-        state.downloading = false;
-        renderActionBtns();
-      },
-    }).start();
+    reconnectSSE(res.session_id);
   } catch (e) {
     state.downloading = false;
     showToast(`Download failed: ${e.message}`, 'error');

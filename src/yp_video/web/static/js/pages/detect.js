@@ -4,7 +4,7 @@
 import { api, SSEClient, card, pageHeader, sectionTitle, stepBadge, btnPrimary, btnSecondary, btnSmall, createProgressBar, showToast, emptyState, inputCls } from '../shared.js';
 
 let sseClients = [];
-let state = { videos: [], jobs: [] };
+let state = { videos: [], jobs: [], refineJobs: [] };
 
 export function render(container) {
   container.innerHTML = `
@@ -17,6 +17,7 @@ export function render(container) {
             'Videos',
             '',
             `${btnSmall('Select All', 'id="det-select-all"')}
+             ${btnSmall('Deselect All', 'id="det-deselect-all"')}
              ${btnSmall('Undetected', 'id="det-select-undetected"', 'primary')}`
           )}
           <div id="det-videos" class="space-y-0.5 max-h-72 overflow-y-auto pr-1"></div>
@@ -57,6 +58,9 @@ export function render(container) {
               <h3 class="text-sm font-heading font-semibold text-text-primary">Progress</h3>
             </div>
             <div id="det-jobs-progress" class="space-y-3"></div>
+            <div id="det-retry-wrap" class="hidden pt-1">
+              ${btnSmall('Retry Failed', 'id="det-retry-failed"', 'primary')}
+            </div>
           </div>
         `)}
       </div>
@@ -82,6 +86,36 @@ export function render(container) {
           </div>
         </div>
       `)}
+
+      ${card(`
+        <div class="space-y-5">
+          <div class="flex items-center gap-3">
+            ${stepBadge(3, 'accent')}
+            ${sectionTitle('Refine Boundaries', 'Fine-tune rally start/end times using 1s-stride VLM detection')}
+          </div>
+          <div class="ml-10 grid grid-cols-1 gap-4">
+            <div>
+              <label class="block text-[11px] text-text-muted mb-1.5 uppercase tracking-wider">Window (s)</label>
+              <input id="det-refine-window" type="number" value="5" min="1" max="15" step="1" class="w-28 ${inputCls}">
+            </div>
+          </div>
+          <div class="ml-10 flex items-center gap-3 pt-1">
+            ${btnSecondary('Refine Boundaries', 'id="det-refine"')}
+          </div>
+        </div>
+      `)}
+
+      <div id="det-refine-progress" class="hidden">
+        ${card(`
+          <div class="space-y-3">
+            <div class="flex items-center gap-2.5 mb-3">
+              <span class="w-2 h-2 rounded-full bg-primary-light animate-pulse-dot"></span>
+              <h3 class="text-sm font-heading font-semibold text-text-primary">Refine Progress</h3>
+            </div>
+            <div id="det-refine-jobs" class="space-y-3"></div>
+          </div>
+        `)}
+      </div>
     </div>`;
 
   loadVideos();
@@ -96,9 +130,15 @@ export function deactivate() {
 
 function bindEvents() {
   document.getElementById('det-start').addEventListener('click', startDetection);
+  document.getElementById('det-retry-failed').addEventListener('click', retryFailed);
   document.getElementById('det-convert').addEventListener('click', convertDetections);
+  document.getElementById('det-refine').addEventListener('click', refineDetections);
   document.getElementById('det-select-all').addEventListener('click', () => {
     state.videos.forEach(v => v.selected = true);
+    renderVideos();
+  });
+  document.getElementById('det-deselect-all').addEventListener('click', () => {
+    state.videos.forEach(v => v.selected = false);
     renderVideos();
   });
   document.getElementById('det-select-undetected').addEventListener('click', () => {
@@ -151,6 +191,7 @@ async function startDetection() {
 
   const btn = document.getElementById('det-start');
   btn.disabled = true;
+  document.getElementById('det-retry-wrap').classList.add('hidden');
 
   // Stop any existing SSE clients
   sseClients.forEach(c => c.stop());
@@ -190,7 +231,10 @@ async function startDetection() {
             if (doneCount >= total) {
               const failed = state.jobs.filter(j => j.status === 'failed').length;
               if (failed === 0) showToast('All detections complete!', 'success');
-              else showToast(`${total - failed}/${total} completed, ${failed} failed`, 'warning');
+              else {
+                showToast(`${total - failed}/${total} completed, ${failed} failed`, 'warning');
+                document.getElementById('det-retry-wrap').classList.remove('hidden');
+              }
               btn.disabled = false;
               loadVideos();
             }
@@ -209,11 +253,105 @@ async function startDetection() {
   }
 }
 
+function retryFailed() {
+  const failedNames = new Set(state.jobs.filter(j => j.status === 'failed').map(j => j.name));
+  state.videos.forEach(v => v.selected = failedNames.has(v.name));
+  renderVideos();
+  startDetection();
+}
+
 function renderJobsProgress() {
   const el = document.getElementById('det-jobs-progress');
   if (!el) return;
 
   el.innerHTML = state.jobs.map(job => {
+    const pct = Math.round((job.progress || 0) * 100);
+    const isRunning = job.status === 'running';
+    const isDone = job.status === 'completed';
+    const isFailed = job.status === 'failed';
+    const isCancelled = job.status === 'cancelled';
+
+    let statusColor = 'text-text-muted';
+    if (isRunning) statusColor = 'text-primary-light';
+    else if (isDone) statusColor = 'text-emerald-400';
+    else if (isFailed) statusColor = 'text-red-400';
+    else if (isCancelled) statusColor = 'text-amber-400';
+
+    return `
+      <div class="space-y-1.5">
+        <div class="flex items-center justify-between">
+          <span class="text-xs text-text-primary font-medium truncate">${job.name}</span>
+          <span class="text-[11px] ${statusColor} tabular-nums font-medium">${isDone ? 'done' : isFailed ? 'failed' : isCancelled ? 'cancelled' : pct + '%'}</span>
+        </div>
+        ${createProgressBar(job.progress)}
+        ${job.message && isRunning ? `<p class="text-[10px] text-text-muted truncate">${job.message}</p>` : ''}
+        ${job.error ? `<p class="text-[10px] text-red-400/80 truncate">${job.error}</p>` : ''}
+      </div>`;
+  }).join('');
+}
+
+async function refineDetections() {
+  const selected = state.videos.filter(v => v.selected).map(v => v.name);
+  if (selected.length === 0) return showToast('No videos selected', 'warning');
+
+  const btn = document.getElementById('det-refine');
+  btn.disabled = true;
+
+  try {
+    const jobs = await api('/detect/refine', {
+      method: 'POST',
+      body: {
+        videos: selected,
+        window: parseFloat(document.getElementById('det-refine-window').value),
+      },
+    });
+
+    state.refineJobs = jobs.map(j => ({ ...j }));
+    document.getElementById('det-refine-progress').classList.remove('hidden');
+    renderRefineProgress();
+
+    let doneCount = 0;
+    const total = jobs.length;
+
+    for (const job of jobs) {
+      const client = new SSEClient(`/api/jobs/${job.id}/events`, {
+        onMessage: (data) => {
+          const idx = state.refineJobs.findIndex(j => j.id === data.id);
+          if (idx >= 0) state.refineJobs[idx] = data;
+          renderRefineProgress();
+
+          if (data.status === 'completed' || data.status === 'failed' || data.status === 'cancelled') {
+            client.stop();
+            doneCount++;
+            if (data.status === 'failed') {
+              showToast(`${job.name} failed: ${data.error || 'Unknown error'}`, 'error');
+            }
+            if (doneCount >= total) {
+              const failed = state.refineJobs.filter(j => j.status === 'failed').length;
+              if (failed === 0) showToast('Refinement complete!', 'success');
+              else showToast(`${total - failed}/${total} refined, ${failed} failed`, 'warning');
+              btn.disabled = false;
+            }
+          }
+        },
+        onError: () => {
+          doneCount++;
+          if (doneCount >= total) btn.disabled = false;
+        },
+      }).start();
+      sseClients.push(client);
+    }
+  } catch (e) {
+    showToast(`Refinement failed: ${e.message}`, 'error');
+    btn.disabled = false;
+  }
+}
+
+function renderRefineProgress() {
+  const el = document.getElementById('det-refine-jobs');
+  if (!el) return;
+
+  el.innerHTML = (state.refineJobs || []).map(job => {
     const pct = Math.round((job.progress || 0) * 100);
     const isRunning = job.status === 'running';
     const isDone = job.status === 'completed';

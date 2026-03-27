@@ -26,7 +26,7 @@ router = APIRouter()
 
 class ExtractFeaturesRequest(BaseModel):
     videos: list[str] | None = None
-    batch_size: int = 64
+    batch_size: int = 16
 
 
 class ConvertAnnotationsRequest(BaseModel):

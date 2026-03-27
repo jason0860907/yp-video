@@ -12,11 +12,34 @@ export function render(container) {
 
       <div id="train-status-card"></div>
 
-      <!-- Step 1: Convert Annotations -->
+      <!-- Step 1: Extract Features -->
       ${card(`
         <div class="space-y-5">
           <div class="flex items-center gap-3">
             ${stepBadge(1, 'primary')}
+            <div>
+              ${sectionTitle('Extract Features', 'V-JEPA 2.1 video features for TAD')}
+            </div>
+          </div>
+          <div class="ml-10 flex items-center gap-4">
+            <div>
+              <label class="block text-[11px] text-text-muted mb-1.5 uppercase tracking-wider font-medium">Batch Size</label>
+              <input id="train-feat-batch" type="number" value="16" min="1" max="64" class="w-28 ${inputCls}">
+            </div>
+            ${btnSecondary('Extract', 'id="train-extract"')}
+          </div>
+          <div id="train-extract-progress" class="ml-10 hidden space-y-2">
+            <div id="train-extract-bar"></div>
+            <p id="train-extract-msg" class="text-xs text-text-muted"></p>
+          </div>
+        </div>
+      `)}
+
+      <!-- Step 2: Convert Annotations -->
+      ${card(`
+        <div class="space-y-5">
+          <div class="flex items-center gap-3">
+            ${stepBadge(2, 'primary')}
             <div>
               ${sectionTitle('Convert Annotations', 'JSONL rally annotations → OpenTAD format')}
             </div>
@@ -37,29 +60,6 @@ export function render(container) {
           <div class="ml-10 flex items-center gap-3">
             ${btnSecondary('Convert', 'id="train-convert"')}
             <span id="train-convert-status" class="text-xs text-text-muted"></span>
-          </div>
-        </div>
-      `)}
-
-      <!-- Step 2: Extract Features -->
-      ${card(`
-        <div class="space-y-5">
-          <div class="flex items-center gap-3">
-            ${stepBadge(2, 'primary')}
-            <div>
-              ${sectionTitle('Extract Features', 'R3D-18 video features for TAD')}
-            </div>
-          </div>
-          <div class="ml-10 flex items-center gap-4">
-            <div>
-              <label class="block text-[11px] text-text-muted mb-1.5 uppercase tracking-wider font-medium">Batch Size</label>
-              <input id="train-feat-batch" type="number" value="64" min="1" max="256" class="w-28 ${inputCls}">
-            </div>
-            ${btnSecondary('Extract', 'id="train-extract"')}
-          </div>
-          <div id="train-extract-progress" class="ml-10 hidden space-y-2">
-            <div id="train-extract-bar"></div>
-            <p id="train-extract-msg" class="text-xs text-text-muted"></p>
           </div>
         </div>
       `)}
