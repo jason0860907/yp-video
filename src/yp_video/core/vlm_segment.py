@@ -14,6 +14,7 @@ import argparse
 import asyncio
 import concurrent.futures
 import json
+import logging
 import os
 from pathlib import Path
 import re
@@ -381,6 +382,7 @@ def process_video(
     max_concurrent: int = 16,
     on_progress: "Callable[[int, int], None] | None" = None,
     fps: float = 4.0,
+    total_duration: float | None = None,
 ) -> list[ClipResult]:
     """Process video with sliding window approach using parallel batch processing.
 
@@ -395,6 +397,7 @@ def process_video(
         max_concurrent: Max concurrent requests to vLLM (should match VLLM_MAX_NUM_SEQS)
         on_progress: Optional callback(clips_done, total_clips)
         fps: Frames per second for VLM processing
+        total_duration: Pre-computed duration (skips ffprobe if provided)
 
     Returns:
         List of ClipResult objects
@@ -404,7 +407,8 @@ def process_video(
     # Verify server is up before starting
     check_server(server_url)
 
-    total_duration = get_video_duration(video_path)
+    if total_duration is None:
+        total_duration = get_video_duration(video_path)
 
     print(f"\n{'─' * 70}")
     print(f"Video: {video_path}")
@@ -434,73 +438,75 @@ def process_video(
         with tempfile.TemporaryDirectory(dir=video_dir) as tmpdir:
             pbar = tqdm(total=total_clips, desc="Processing", unit="clip")
 
-            for batch_start in range(0, total_clips, batch_size):
-                batch_specs = clip_specs[batch_start:batch_start + batch_size]
+            try:
+                for batch_start in range(0, total_clips, batch_size):
+                    batch_specs = clip_specs[batch_start:batch_start + batch_size]
 
-                # Step 1: Extract all clips in this batch (parallel)
-                batch_clips: list[tuple[str, int, float, float]] = []
-                extract_tasks = {}
-                with concurrent.futures.ThreadPoolExecutor(max_workers=min(batch_size, 8)) as executor:
-                    for idx, start_time, end_time in batch_specs:
-                        clip_path = os.path.join(tmpdir, f"clip_{idx}.mp4")
-                        future = executor.submit(extract_clip, video_path, start_time, clip_duration, clip_path)
-                        extract_tasks[future] = (clip_path, idx, start_time, end_time)
+                    # Step 1: Extract all clips in this batch (parallel)
+                    batch_clips: list[tuple[str, int, float, float]] = []
+                    extract_tasks = {}
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=min(batch_size, 8)) as executor:
+                        for idx, start_time, end_time in batch_specs:
+                            clip_path = os.path.join(tmpdir, f"clip_{idx}.mp4")
+                            future = executor.submit(extract_clip, video_path, start_time, clip_duration, clip_path)
+                            extract_tasks[future] = (clip_path, idx, start_time, end_time)
 
-                    for future in concurrent.futures.as_completed(extract_tasks):
-                        clip_path, idx, start_time, end_time = extract_tasks[future]
+                        for future in concurrent.futures.as_completed(extract_tasks):
+                            clip_path, idx, start_time, end_time = extract_tasks[future]
+                            try:
+                                future.result()
+                                batch_clips.append((clip_path, idx, start_time, end_time))
+                            except FFmpegError:
+                                pass
+
+                    if not batch_clips:
+                        pbar.update(len(batch_specs))
+                        continue
+
+                    # Step 2: Analyze all clips in parallel (reuse session)
+                    inference_start = time.time()
+                    batch_results = loop.run_until_complete(
+                        process_batch_async(batch_clips, server_url, model, session, fps=fps)
+                    )
+                    total_inference_time += time.time() - inference_start
+
+                    # Step 3: Collect results (maintaining order)
+                    batch_successes = 0
+                    for clip_idx, clip_result in batch_results:
+                        if clip_result:
+                            results.append(clip_result)
+                            batch_successes += 1
+
+                    # If entire batch failed, server likely crashed
+                    if batch_successes == 0 and len(batch_clips) > 0:
+                        print("\nERROR: Entire batch failed. Checking server health...")
+                        check_server(server_url)  # raises SystemExit if down
+
+                    # Step 4: Save results after each batch
+                    if output_file:
+                        save_results(output_file, video_path, clip_duration, slide_interval, results)
+
+                    # Update progress bar
+                    pbar.update(len(batch_specs))
+
+                    # Report progress via callback
+                    if on_progress:
+                        on_progress(pbar.n, total_clips)
+
+                    # Clean up batch clips to free disk space
+                    for clip_path, _, _, _ in batch_clips:
                         try:
-                            future.result()
-                            batch_clips.append((clip_path, idx, start_time, end_time))
-                        except FFmpegError:
+                            os.remove(clip_path)
+                        except OSError:
                             pass
 
-                if not batch_clips:
-                    pbar.update(len(batch_specs))
-                    continue
-
-                # Step 2: Analyze all clips in parallel (reuse session)
-                inference_start = time.time()
-                batch_results = loop.run_until_complete(
-                    process_batch_async(batch_clips, server_url, model, session, fps=fps)
-                )
-                total_inference_time += time.time() - inference_start
-
-                # Step 3: Collect results (maintaining order)
-                batch_successes = 0
-                for clip_idx, clip_result in batch_results:
-                    if clip_result:
-                        results.append(clip_result)
-                        batch_successes += 1
-
-                # If entire batch failed, server likely crashed
-                if batch_successes == 0 and len(batch_clips) > 0:
-                    print("\nERROR: Entire batch failed. Checking server health...")
-                    check_server(server_url)  # raises SystemExit if down
-
-                # Step 4: Save results after each batch
-                if output_file:
-                    save_results(output_file, video_path, clip_duration, slide_interval, results)
-
-                # Update progress bar
-                pbar.update(len(batch_specs))
-
-                # Report progress via callback
-                if on_progress:
-                    on_progress(pbar.n, total_clips)
-
-                # Clean up batch clips to free disk space
-                for clip_path, _, _, _ in batch_clips:
-                    try:
-                        os.remove(clip_path)
-                    except OSError:
-                        pass
-
-            pbar.close()
+            finally:
+                pbar.close()
     finally:
         try:
             loop.run_until_complete(session.close())
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Error closing aiohttp session", exc_info=True)
         loop.close()
 
     # Summary
