@@ -42,6 +42,7 @@ class VLLMManager:
             "model": self._model,
             "port": self._port,
             "pid": None,
+            "max_num_seqs": int(self.config.get("VLLM_MAX_NUM_SEQS", "16")),
         }
 
     async def check_health(self) -> bool:

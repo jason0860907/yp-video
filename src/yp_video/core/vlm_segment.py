@@ -12,6 +12,7 @@ Usage:
 
 import argparse
 import asyncio
+import concurrent.futures
 import json
 import os
 from pathlib import Path
@@ -127,7 +128,8 @@ def save_results(output_file: str, video_path: str, clip_duration: float,
 def analyze_clip_with_vllm(
     video_path: str,
     server_url: str,
-    model: str
+    model: str,
+    fps: float = 4.0,
 ) -> dict:
     """Send video clip to vLLM server for analysis."""
 
@@ -158,7 +160,7 @@ def analyze_clip_with_vllm(
         "max_tokens": 256,
         "temperature": 0.1,
         "chat_template_kwargs": {"enable_thinking": False},
-        "mm_processor_kwargs": {"fps": 4.0}
+        "mm_processor_kwargs": {"fps": fps}
     }
 
     response = requests.post(
@@ -179,7 +181,8 @@ async def analyze_clip_async(
     session: aiohttp.ClientSession,
     video_path: str,
     server_url: str,
-    model: str
+    model: str,
+    fps: float = 4.0,
 ) -> dict:
     """Async version of analyze_clip_with_vllm."""
     video_url = f"file://{video_path}"
@@ -208,7 +211,7 @@ async def analyze_clip_async(
         "max_tokens": 256,
         "temperature": 0.1,
         "chat_template_kwargs": {"enable_thinking": False},
-        "mm_processor_kwargs": {"fps": 4.0}
+        "mm_processor_kwargs": {"fps": fps}
     }
 
     url = f"{server_url}/v1/chat/completions"
@@ -294,6 +297,7 @@ async def process_batch_async(
     server_url: str,
     model: str,
     session: aiohttp.ClientSession,
+    fps: float = 4.0,
 ) -> list[tuple[int, ClipResult | None]]:
     """Process a batch of clips concurrently using a shared session.
 
@@ -302,19 +306,20 @@ async def process_batch_async(
         server_url: vLLM server URL
         model: Model name
         session: Shared aiohttp session (reused across batches)
+        fps: Frames per second for VLM processing
 
     Returns:
         List of (clip_index, ClipResult or None) tuples
     """
     tasks = [
-        analyze_clip_async(session, clip_path, server_url, model)
+        analyze_clip_async(session, clip_path, server_url, model, fps=fps)
         for clip_path, _, _, _ in batch_clips
     ]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     output = []
     for (clip_path, clip_index, start_time, end_time), result in zip(batch_clips, results):
-        if isinstance(result, (aiohttp.ClientError, OSError)):
+        if isinstance(result, (aiohttp.ClientError, OSError)) and not isinstance(result, TimeoutError):
             raise ConnectionError(
                 f"vLLM server unreachable: {result}"
             ) from result
@@ -375,6 +380,7 @@ def process_video(
     batch_size: int = 16,
     max_concurrent: int = 16,
     on_progress: "Callable[[int, int], None] | None" = None,
+    fps: float = 4.0,
 ) -> list[ClipResult]:
     """Process video with sliding window approach using parallel batch processing.
 
@@ -388,6 +394,7 @@ def process_video(
         batch_size: Number of clips to process per batch
         max_concurrent: Max concurrent requests to vLLM (should match VLLM_MAX_NUM_SEQS)
         on_progress: Optional callback(clips_done, total_clips)
+        fps: Frames per second for VLM processing
 
     Returns:
         List of ClipResult objects
@@ -430,15 +437,22 @@ def process_video(
             for batch_start in range(0, total_clips, batch_size):
                 batch_specs = clip_specs[batch_start:batch_start + batch_size]
 
-                # Step 1: Extract all clips in this batch
+                # Step 1: Extract all clips in this batch (parallel)
                 batch_clips: list[tuple[str, int, float, float]] = []
-                for idx, start_time, end_time in batch_specs:
-                    clip_path = os.path.join(tmpdir, f"clip_{idx}.mp4")
-                    try:
-                        extract_clip(video_path, start_time, clip_duration, clip_path)
-                        batch_clips.append((clip_path, idx, start_time, end_time))
-                    except FFmpegError:
-                        pass
+                extract_tasks = {}
+                with concurrent.futures.ThreadPoolExecutor(max_workers=min(batch_size, 8)) as executor:
+                    for idx, start_time, end_time in batch_specs:
+                        clip_path = os.path.join(tmpdir, f"clip_{idx}.mp4")
+                        future = executor.submit(extract_clip, video_path, start_time, clip_duration, clip_path)
+                        extract_tasks[future] = (clip_path, idx, start_time, end_time)
+
+                    for future in concurrent.futures.as_completed(extract_tasks):
+                        clip_path, idx, start_time, end_time = extract_tasks[future]
+                        try:
+                            future.result()
+                            batch_clips.append((clip_path, idx, start_time, end_time))
+                        except FFmpegError:
+                            pass
 
                 if not batch_clips:
                     pbar.update(len(batch_specs))
@@ -447,7 +461,7 @@ def process_video(
                 # Step 2: Analyze all clips in parallel (reuse session)
                 inference_start = time.time()
                 batch_results = loop.run_until_complete(
-                    process_batch_async(batch_clips, server_url, model, session)
+                    process_batch_async(batch_clips, server_url, model, session, fps=fps)
                 )
                 total_inference_time += time.time() - inference_start
 
@@ -543,6 +557,12 @@ def main():
         default=None,
         help="Output JSONL file for results"
     )
+    parser.add_argument(
+        "--fps",
+        type=float,
+        default=4.0,
+        help="Frames per second for VLM processing (default: 4.0)"
+    )
     _default_max_seqs = int(_VLLM_CONFIG.get("VLLM_MAX_NUM_SEQS", "16"))
     parser.add_argument(
         "--batch-size", "-b",
@@ -571,6 +591,7 @@ def main():
         output_file=args.output,
         batch_size=args.batch_size,
         max_concurrent=_default_max_seqs,
+        fps=args.fps,
     )
 
     return 0

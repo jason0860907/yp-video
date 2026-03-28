@@ -10,13 +10,16 @@ from yp_video.config import CUTS_DIR, SEG_ANNOTATIONS_DIR, PRE_ANNOTATIONS_DIR, 
 from yp_video.web.jobs import job_manager, JobStatus
 from yp_video.web.r2_client import sync_to_r2, sync_directory_to_r2
 from yp_video.web.vllm_manager import vllm_manager
+from yp_video.config import load_vllm_env
 
 router = APIRouter()
+
+_default_max_seqs = int(load_vllm_env().get("VLLM_MAX_NUM_SEQS", "16"))
 
 
 class DetectRequest(BaseModel):
     videos: list[str]
-    batch_size: int = 16
+    batch_size: int = _default_max_seqs
     clip_duration: float = 6.0
     slide_interval: float = 2.0
 
@@ -29,7 +32,7 @@ class ConvertRequest(BaseModel):
 class RefineRequest(BaseModel):
     videos: list[str]
     window: float = 5.0
-    batch_size: int = 16
+    batch_size: int = _default_max_seqs
 
 
 @router.get("/videos")

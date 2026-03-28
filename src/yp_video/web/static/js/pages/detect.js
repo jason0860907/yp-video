@@ -149,9 +149,15 @@ function bindEvents() {
 
 async function loadVideos() {
   try {
-    const videos = await api('/detect/videos');
+    const [videos, vllmStatus] = await Promise.all([
+      api('/detect/videos'),
+      api('/system/vllm/status').catch(() => null),
+    ]);
     state.videos = videos.map(v => ({ ...v, selected: !v.has_detection }));
     renderVideos();
+    if (vllmStatus?.max_num_seqs) {
+      document.getElementById('det-batch').value = vllmStatus.max_num_seqs;
+    }
   } catch (e) {
     showToast(`Failed to load videos: ${e.message}`, 'error');
   }
