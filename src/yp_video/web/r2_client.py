@@ -87,11 +87,15 @@ class R2Client:
 
     def object_exists(self, key: str) -> bool:
         """Check if an object exists in R2."""
+        from botocore.exceptions import ClientError
+
         try:
             self._get_client().head_object(Bucket=self.bucket, Key=key)
             return True
-        except Exception:
-            return False
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "404":
+                return False
+            raise
 
     def upload_file(
         self,
@@ -198,21 +202,27 @@ def serve_video_or_r2_redirect(
     local_path: Path,
     r2_categories: Sequence[str] = ("cuts", "videos"),
 ):
-    """Serve a local video file, or redirect to an R2 presigned URL.
+    """Serve a video via R2 presigned URL (preferred) or local file fallback.
 
-    Returns a FastAPI response if the file is found locally or on R2,
+    Prefers R2 when configured so that users close to the R2 region get
+    lower latency than streaming through the VM.
+
+    Returns a FastAPI response if the file is found on R2 or locally,
     or None if not found anywhere.
     """
     from fastapi.responses import FileResponse, RedirectResponse
 
-    if local_path.exists() and local_path.is_file():
-        return FileResponse(local_path, media_type="video/mp4")
+    # Prefer R2 presigned URL — video is served directly from the edge
     if r2_client.configured:
         for category in r2_categories:
             r2_key = f"{category}/{local_path.name}"
             if r2_client.object_exists(r2_key):
                 url = r2_client.generate_presigned_url(r2_key)
                 return RedirectResponse(url)
+
+    # Fallback: serve from local disk
+    if local_path.exists() and local_path.is_file():
+        return FileResponse(local_path, media_type="video/mp4")
     return None
 
 
@@ -242,7 +252,7 @@ def sync_to_r2(local_path: Path, category: str) -> None:
         loop = asyncio.get_running_loop()
         loop.create_task(_upload())
     except RuntimeError:
-        pass  # No event loop — skip
+        log.debug("sync_to_r2 skipped (no running event loop) for %s", local_path.name)
 
 
 def sync_directory_to_r2(directory: Path, category: str, pattern: str = "*.jsonl") -> None:

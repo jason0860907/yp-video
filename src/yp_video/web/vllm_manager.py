@@ -1,13 +1,14 @@
 """vLLM process lifecycle manager."""
 
 import asyncio
-import os
-import subprocess
+import logging
 from pathlib import Path
 
 import aiohttp
 
 from yp_video.config import load_vllm_env, PROJECT_ROOT
+
+log = logging.getLogger(__name__)
 
 
 class VLLMManager:
@@ -54,6 +55,7 @@ class VLLMManager:
                 ) as resp:
                     return resp.status == 200
         except Exception:
+            log.debug("vLLM health check failed", exc_info=True)
             return False
 
     async def _detect_existing(self) -> bool:
@@ -108,12 +110,18 @@ class VLLMManager:
             if await self.check_health():
                 self._status = "running"
                 return
-            # Check if tmux session is still alive
-            result = subprocess.run(
-                ["tmux", "has-session", "-t", "vllm"],
-                capture_output=True, timeout=5,
-            )
-            if result.returncode != 0:
+            # Check if tmux session is still alive (non-blocking)
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "tmux", "has-session", "-t", "vllm",
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                await asyncio.wait_for(proc.wait(), timeout=5)
+                if proc.returncode != 0:
+                    self._status = "error"
+                    return
+            except (asyncio.TimeoutError, OSError):
                 self._status = "error"
                 return
         self._status = "error"
@@ -121,10 +129,14 @@ class VLLMManager:
     async def stop(self) -> dict:
         """Stop vLLM server by killing the tmux session."""
         try:
-            subprocess.run(["tmux", "kill-session", "-t", "vllm"],
-                           capture_output=True, timeout=5)
-        except Exception:
-            pass
+            proc = await asyncio.create_subprocess_exec(
+                "tmux", "kill-session", "-t", "vllm",
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await asyncio.wait_for(proc.wait(), timeout=5)
+        except (asyncio.TimeoutError, OSError, Exception) as e:
+            log.warning("Failed to kill vllm tmux session: %s", e)
 
         if self._health_task:
             self._health_task.cancel()
