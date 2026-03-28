@@ -19,25 +19,7 @@ import argparse
 import json
 from pathlib import Path
 
-
-def read_vlm_jsonl(path: Path) -> tuple[dict, list[dict]]:
-    """Read VLM detection JSONL file."""
-    with open(path, "r", encoding="utf-8") as f:
-        lines = f.readlines()
-
-    if not lines:
-        return {}, []
-
-    meta = json.loads(lines[0])
-    meta.pop("_meta", None)
-
-    clips = []
-    for line in lines[1:]:
-        line = line.strip()
-        if line:
-            clips.append(json.loads(line))
-
-    return meta, clips
+from yp_video.core.jsonl import read_jsonl
 
 
 def detect_rallies(
@@ -167,7 +149,7 @@ def convert_vlm_to_rally(
     Returns:
         Number of rallies detected
     """
-    meta, clips = read_vlm_jsonl(input_path)
+    meta, clips = read_jsonl(input_path)
 
     if not clips:
         print(f"No clips found in {input_path.name}")

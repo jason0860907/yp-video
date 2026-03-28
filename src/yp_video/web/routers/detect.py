@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from yp_video.config import CUTS_DIR, SEG_ANNOTATIONS_DIR, PRE_ANNOTATIONS_DIR, REFINE_ANNOTATIONS_DIR
-from yp_video.web.jobs import job_manager, JobStatus
+from yp_video.web.jobs import job_manager, JobStatus, make_progress_callback
 from yp_video.web.r2_client import sync_to_r2, sync_directory_to_r2
 from yp_video.web.vllm_manager import vllm_manager
 from yp_video.config import load_vllm_env
@@ -68,7 +68,8 @@ async def start_detection(req: DetectRequest):
         jobs.append(job)
 
     async def run_all():
-        from yp_video.core.vlm_segment import process_video, count_clips
+        from yp_video.core.vlm_segment import process_video, build_clip_specs
+        from yp_video.core.ffmpeg import get_video_duration
         from yp_video.web.vllm_manager import vllm_manager
 
         loop = asyncio.get_event_loop()
@@ -81,28 +82,20 @@ async def start_detection(req: DetectRequest):
             try:
                 await job_manager.update_job(job.id, status="running", message="Counting clips...")
 
-                total_clips = await loop.run_in_executor(
-                    None,
-                    lambda p=video_path: count_clips(p, req.clip_duration, req.slide_interval),
+                duration = await loop.run_in_executor(
+                    None, lambda p=video_path: get_video_duration(p),
                 )
-
-                def make_callback(jid, total):
-                    def on_progress(done, _total):
-                        loop.call_soon_threadsafe(
-                            lambda: asyncio.ensure_future(job_manager.update_job(
-                                jid,
-                                progress=done / total if total else 0,
-                                message=f"Processing clips ({done}/{total})",
-                            ))
-                        )
-                    return on_progress
+                total_clips = len(build_clip_specs(duration, req.clip_duration, req.slide_interval))
 
                 await job_manager.update_job(job.id, message=f"Processing {video_name}")
 
+                progress_cb = make_progress_callback(
+                    job.id, loop, "Processing clips ({done}/{total})",
+                )
                 max_concurrent = int(vllm_manager.config.get("VLLM_MAX_NUM_SEQS", "16"))
                 await loop.run_in_executor(
                     None,
-                    lambda vp=video_path, of=output_file, cb=make_callback(job.id, total_clips), mc=max_concurrent: process_video(
+                    lambda vp=video_path, of=output_file, cb=progress_cb, mc=max_concurrent, dur=duration: process_video(
                         video_path=vp,
                         server_url=vllm_manager.server_url,
                         model=vllm_manager.model,
@@ -112,6 +105,7 @@ async def start_detection(req: DetectRequest):
                         batch_size=req.batch_size,
                         max_concurrent=mc,
                         on_progress=cb,
+                        total_duration=dur,
                     ),
                 )
 
@@ -199,17 +193,9 @@ async def refine_boundaries(req: RefineRequest):
             try:
                 await job_manager.update_job(job.id, status="running", message="Refining boundaries...")
 
-                def make_callback(jid):
-                    def on_progress(done, total):
-                        loop.call_soon_threadsafe(
-                            lambda: asyncio.ensure_future(job_manager.update_job(
-                                jid,
-                                progress=done / total if total else 0,
-                                message=f"Clips processed ({done}/{total})",
-                            ))
-                        )
-                    return on_progress
-
+                progress_cb = make_progress_callback(
+                    job.id, loop, "Clips processed ({done}/{total})",
+                )
                 count = await loop.run_in_executor(
                     None,
                     lambda vp=video_path, pp=pre_path, op=output_path: refine_video(
@@ -218,7 +204,7 @@ async def refine_boundaries(req: RefineRequest):
                         vllm_manager.model,
                         window=req.window,
                         batch_size=req.batch_size,
-                        on_progress=make_callback(job.id),
+                        on_progress=progress_cb,
                     ),
                 )
 

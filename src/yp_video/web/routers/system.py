@@ -9,6 +9,7 @@ from yp_video.config import (
     PRE_ANNOTATIONS_DIR,
     SEG_ANNOTATIONS_DIR,
     VIDEOS_DIR,
+    count_files,
 )
 from yp_video.web.jobs import job_manager
 from yp_video.web.vllm_manager import vllm_manager
@@ -46,11 +47,11 @@ async def vllm_health():
 def get_stats():
     """Get pipeline statistics."""
     return {
-        "videos": len(list(VIDEOS_DIR.glob("*.mp4"))) if VIDEOS_DIR.exists() else 0,
-        "cuts": len(list(CUTS_DIR.glob("*.mp4"))) if CUTS_DIR.exists() else 0,
-        "detections": len(list(SEG_ANNOTATIONS_DIR.glob("*.jsonl"))) if SEG_ANNOTATIONS_DIR.exists() else 0,
-        "pre_annotations": len(list(PRE_ANNOTATIONS_DIR.glob("*.jsonl"))) if PRE_ANNOTATIONS_DIR.exists() else 0,
-        "annotations": len(list(ANNOTATIONS_DIR.glob("*.jsonl"))) if ANNOTATIONS_DIR.exists() else 0,
-        "predictions": len(list(PREDICTIONS_DIR.glob("*.jsonl"))) if PREDICTIONS_DIR.exists() else 0,
+        "videos": count_files(VIDEOS_DIR, "*.mp4"),
+        "cuts": count_files(CUTS_DIR, "*.mp4"),
+        "detections": count_files(SEG_ANNOTATIONS_DIR, "*.jsonl"),
+        "pre_annotations": count_files(PRE_ANNOTATIONS_DIR, "*.jsonl"),
+        "annotations": count_files(ANNOTATIONS_DIR, "*.jsonl"),
+        "predictions": count_files(PREDICTIONS_DIR, "*.jsonl"),
         "active_jobs": job_manager.active_count(),
     }

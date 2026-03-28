@@ -27,30 +27,7 @@ from pathlib import Path
 import numpy as np
 
 from yp_video.config import TAD_ANNOTATIONS_FILE, TAD_FEATURES_DIR
-
-
-def read_jsonl(path: Path) -> tuple[dict, list[dict]]:
-    """Read annotator JSONL file.
-
-    Returns:
-        Tuple of (metadata dict, list of annotation dicts)
-    """
-    with open(path, "r", encoding="utf-8") as f:
-        lines = f.readlines()
-
-    if not lines:
-        return {}, []
-
-    meta = json.loads(lines[0])
-    meta.pop("_meta", None)
-
-    annotations = []
-    for line in lines[1:]:
-        line = line.strip()
-        if line:
-            annotations.append(json.loads(line))
-
-    return meta, annotations
+from yp_video.core.jsonl import read_jsonl
 
 
 def get_video_fps(video_path: Path) -> float:

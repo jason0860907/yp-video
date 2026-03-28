@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from yp_video.config import R2_CATEGORIES
-from yp_video.web.jobs import job_manager
+from yp_video.web.jobs import job_manager, make_progress_callback
 from yp_video.web.r2_client import r2_client
 
 router = APIRouter()
@@ -142,21 +142,12 @@ async def _run_transfer_jobs(
                 message=f"{verb}ing {file_path.name}...",
             )
 
-            def make_callback(jid):
-                def on_progress(transferred, total):
-                    loop.call_soon_threadsafe(
-                        lambda t=transferred, tot=total: asyncio.ensure_future(
-                            job_manager.update_job(
-                                jid,
-                                progress=t / tot if tot else 0,
-                            )
-                        )
-                    )
-                return on_progress
-
+            progress_cb = make_progress_callback(
+                job.id, loop, f"{verb}ing {{done}}/{{total}} bytes",
+            )
             await loop.run_in_executor(
                 None,
-                lambda fp=file_path, k=r2_key, cb=make_callback(job.id):
+                lambda fp=file_path, k=r2_key, cb=progress_cb:
                     transfer_fn(fp, k, cb),
             )
 
@@ -254,15 +245,25 @@ def delete_local_files(req: DeleteLocalRequest):
     deleted = []
     skipped = []
 
+    # Pre-fetch R2 keys once instead of checking each file individually (N+1 → 1)
+    r2_keys: set[str] = set()
+    needs_r2_check = not req.force and not is_local_only and r2_client.configured
+    if needs_r2_check:
+        try:
+            for obj in r2_client.list_objects(prefix=f"{req.category}/"):
+                r2_keys.add(obj["key"])
+        except Exception:
+            pass
+
     for file_path in req.files:
         local_path = base_dir / file_path
         if not local_path.exists():
             continue
 
         # Safety check: only delete if already on R2 (unless force or local-only category)
-        if not req.force and not is_local_only:
+        if needs_r2_check:
             r2_key = f"{req.category}/{file_path}"
-            if not r2_client.configured or not r2_client.object_exists(r2_key):
+            if r2_key not in r2_keys:
                 skipped.append(file_path)
                 continue
 

@@ -56,27 +56,14 @@ def list_results() -> list[str]:
 @router.get("/results/{name}")
 def get_result(name: str) -> dict:
     """Get prediction result contents."""
-    import json
+    from yp_video.core.jsonl import read_jsonl
+
     path = PREDICTIONS_DIR / name
     if not path.exists():
         raise HTTPException(404, "Result not found")
 
-    with open(path, "r", encoding="utf-8") as f:
-        lines = f.readlines()
-
-    if not lines:
-        return {"results": []}
-
-    meta = json.loads(lines[0])
-    meta.pop("_meta", None)
-
-    results = []
-    for line in lines[1:]:
-        line = line.strip()
-        if line:
-            results.append(json.loads(line))
-
-    meta["results"] = results
+    meta, records = read_jsonl(path)
+    meta["results"] = records
     return meta
 
 

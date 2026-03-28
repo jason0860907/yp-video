@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from yp_video.config import ANNOTATIONS_DIR, PRE_ANNOTATIONS_DIR, VIDEOS_DIR
+from yp_video.core.jsonl import read_jsonl
 from yp_video.web.r2_client import r2_client, serve_video_or_r2_redirect, sync_to_r2
 
 router = APIRouter()
@@ -25,23 +26,10 @@ class SaveAnnotationsRequest(BaseModel):
     annotations: list[Annotation]
 
 
-def read_jsonl(path: Path) -> dict:
-    with open(path, "r", encoding="utf-8") as f:
-        lines = f.readlines()
-
-    if not lines:
-        return {"results": []}
-
-    meta = json.loads(lines[0])
-    meta.pop("_meta", None)
-
-    results = []
-    for line in lines[1:]:
-        line = line.strip()
-        if line:
-            results.append(json.loads(line))
-
-    meta["results"] = results
+def _read_jsonl_as_dict(path: Path) -> dict:
+    """Read JSONL and return as {**meta, results: [...]}."""
+    meta, records = read_jsonl(path)
+    meta["results"] = records
     return meta
 
 
@@ -76,7 +64,7 @@ def get_result(name: str) -> dict:
         source = "rally-pre-annotations"
     if path.exists() and path.is_file():
         try:
-            data = read_jsonl(path)
+            data = _read_jsonl_as_dict(path)
             data["source"] = source
             return data
         except json.JSONDecodeError:
@@ -91,7 +79,7 @@ def get_result(name: str) -> dict:
                 local_dir.mkdir(parents=True, exist_ok=True)
                 local_path = local_dir / name
                 r2_client.download_file(r2_key, local_path)
-                data = read_jsonl(local_path)
+                data = _read_jsonl_as_dict(local_path)
                 data["source"] = category
                 return data
 

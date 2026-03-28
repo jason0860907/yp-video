@@ -1,10 +1,14 @@
 """Background job manager with GPU lock."""
 
 import asyncio
+import logging
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
+
+log = logging.getLogger(__name__)
 
 
 class JobStatus(str, Enum):
@@ -91,7 +95,7 @@ class JobManager:
             try:
                 q.put_nowait(event)
             except asyncio.QueueFull:
-                pass
+                log.debug("SSE queue full for job %s, dropping event", job.id)
 
     def subscribe(self, job_id: str) -> asyncio.Queue | None:
         job = self.jobs.get(job_id)
@@ -122,7 +126,7 @@ class JobManager:
             try:
                 q.put_nowait(event)
             except asyncio.QueueFull:
-                pass
+                log.debug("SSE queue full for job %s, dropping event", job.id)
         return True
 
     def attach_task(self, jobs: "list[Job] | Job", task: asyncio.Task) -> None:
@@ -139,6 +143,34 @@ class JobManager:
     @vllm_using_gpu.setter
     def vllm_using_gpu(self, value: bool):
         self._vllm_using_gpu = value
+
+
+def make_progress_callback(
+    job_id: str,
+    loop: asyncio.AbstractEventLoop,
+    message_template: str = "Progress ({done}/{total})",
+) -> Callable[[int, int], None]:
+    """Create a thread-safe progress callback for executor-based tasks.
+
+    Args:
+        job_id: Job to update.
+        loop: The running event loop (from the async caller).
+        message_template: Format string with {done} and {total} placeholders.
+
+    Returns:
+        A callback ``(done, total) -> None`` safe to call from any thread.
+    """
+    def callback(done: int, total: int) -> None:
+        loop.call_soon_threadsafe(
+            lambda d=done, t=total: asyncio.ensure_future(
+                job_manager.update_job(
+                    job_id,
+                    progress=d / t if t else 0,
+                    message=message_template.format(done=d, total=t),
+                )
+            )
+        )
+    return callback
 
 
 # Module-level instance
