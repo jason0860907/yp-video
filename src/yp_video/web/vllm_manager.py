@@ -4,8 +4,6 @@ import asyncio
 import logging
 from pathlib import Path
 
-import aiohttp
-
 from yp_video.config import load_vllm_env, PROJECT_ROOT
 
 log = logging.getLogger(__name__)
@@ -18,8 +16,8 @@ class VLLMManager:
         self.config = load_vllm_env()
         self._health_task: asyncio.Task | None = None
         self._status = "stopped"  # stopped, starting, running, error
-        self._model = self.config.get("VLLM_MODEL", "")
-        self._port = int(self.config.get("VLLM_PORT", "8000"))
+        self._model = self.config["VLLM_MODEL"]
+        self._port = int(self.config["VLLM_PORT"])
 
     @property
     def status(self) -> str:
@@ -43,17 +41,18 @@ class VLLMManager:
             "model": self._model,
             "port": self._port,
             "pid": None,
-            "max_num_seqs": int(self.config.get("VLLM_MAX_NUM_SEQS", "16")),
+            "max_num_seqs": int(self.config["VLLM_MAX_NUM_SEQS"]),
         }
 
     async def check_health(self) -> bool:
-        """Ping vLLM /v1/models endpoint."""
+        """Check if vLLM is accepting connections via TCP connect."""
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    f"{self.server_url}/v1/models", timeout=aiohttp.ClientTimeout(total=5)
-                ) as resp:
-                    return resp.status == 200
+            _, writer = await asyncio.wait_for(
+                asyncio.open_connection("localhost", self._port), timeout=2
+            )
+            writer.close()
+            await writer.wait_closed()
+            return True
         except Exception:
             log.debug("vLLM health check failed", exc_info=True)
             return False

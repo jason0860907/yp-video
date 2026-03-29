@@ -14,7 +14,7 @@ from yp_video.config import load_vllm_env
 
 router = APIRouter()
 
-_default_max_seqs = int(load_vllm_env().get("VLLM_MAX_NUM_SEQS", "16"))
+_default_max_seqs = int(load_vllm_env()["VLLM_MAX_NUM_SEQS"])
 
 
 class DetectRequest(BaseModel):
@@ -34,21 +34,6 @@ class RefineRequest(BaseModel):
     window: float = 5.0
     batch_size: int = _default_max_seqs
 
-
-@router.get("/videos")
-def list_videos() -> list[dict]:
-    """List cut videos available for detection."""
-    if not CUTS_DIR.exists():
-        return []
-    results = []
-    for f in sorted(CUTS_DIR.glob("*.mp4")):
-        # Check if detection already exists
-        seg_path = SEG_ANNOTATIONS_DIR / f"{f.stem}.jsonl"
-        results.append({
-            "name": f.name,
-            "has_detection": seg_path.exists(),
-        })
-    return results
 
 
 @router.post("/start")
@@ -92,7 +77,7 @@ async def start_detection(req: DetectRequest):
                 progress_cb = make_progress_callback(
                     job.id, loop, "Processing clips ({done}/{total})",
                 )
-                max_concurrent = int(vllm_manager.config.get("VLLM_MAX_NUM_SEQS", "16"))
+                max_concurrent = int(vllm_manager.config["VLLM_MAX_NUM_SEQS"])
                 await loop.run_in_executor(
                     None,
                     lambda vp=video_path, of=output_file, cb=progress_cb, mc=max_concurrent, dur=duration: process_video(

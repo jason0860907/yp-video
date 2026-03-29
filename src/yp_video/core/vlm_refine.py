@@ -219,8 +219,9 @@ def main():
     parser.add_argument("--video", type=str, default=None, help="Video stem (default: all)")
     parser.add_argument("--window", type=float, default=5.0, help="Boundary window in seconds")
     parser.add_argument("--batch-size", type=int, default=16)
-    parser.add_argument("--server", type=str, default=_cfg.get("VLLM_SERVER_URL", "http://localhost:8000"))
-    parser.add_argument("--model", type=str, default=_cfg.get("MODEL_NAME", "Qwen/Qwen3-VL-8B-Instruct"))
+    _default_port = _cfg["VLLM_PORT"]
+    parser.add_argument("--server", type=str, default=f"http://localhost:{_default_port}")
+    parser.add_argument("--model", type=str, default=_cfg["VLLM_MODEL"])
     args = parser.parse_args()
 
     check_server(args.server)

@@ -169,8 +169,9 @@ async function loadResults() {
     const sel = document.getElementById('ann-results');
     results.forEach(r => {
       const opt = document.createElement('option');
-      opt.value = r;
-      opt.textContent = r;
+      opt.value = r.name;
+      const tag = r.source.includes('annotation') ? '✅' : '⚡';
+      opt.textContent = `${tag} ${r.name}`;
       sel.appendChild(opt);
     });
   } catch (e) {

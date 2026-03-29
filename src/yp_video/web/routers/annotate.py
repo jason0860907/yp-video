@@ -34,24 +34,27 @@ def _read_jsonl_as_dict(path: Path) -> dict:
 
 
 @router.get("/results")
-def list_results() -> list[str]:
-    files: set[str] = set()
+def list_results() -> list[dict]:
+    files: dict[str, set[str]] = {}  # name -> set of sources
     if PRE_ANNOTATIONS_DIR.exists():
         for f in PRE_ANNOTATIONS_DIR.glob("*.jsonl"):
-            files.add(f.name)
+            files.setdefault(f.name, set()).add("pre-annotation")
     if ANNOTATIONS_DIR.exists():
         for f in ANNOTATIONS_DIR.glob("*.jsonl"):
-            files.add(f.name)
+            files.setdefault(f.name, set()).add("annotation")
     # Include R2-only files
     if r2_client.configured:
         try:
             for obj in r2_client.list_objects(prefix="rally-annotations/"):
-                files.add(Path(obj["key"]).name)
+                files.setdefault(Path(obj["key"]).name, set()).add("annotation")
             for obj in r2_client.list_objects(prefix="rally-pre-annotations/"):
-                files.add(Path(obj["key"]).name)
+                files.setdefault(Path(obj["key"]).name, set()).add("pre-annotation")
         except Exception:
             pass
-    return sorted(files)
+    return sorted(
+        [{"name": k, "source": sorted(v)} for k, v in files.items()],
+        key=lambda x: x["name"],
+    )
 
 
 @router.get("/results/{name}")

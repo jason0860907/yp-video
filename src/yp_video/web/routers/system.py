@@ -8,6 +8,7 @@ from yp_video.config import (
     PREDICTIONS_DIR,
     PRE_ANNOTATIONS_DIR,
     SEG_ANNOTATIONS_DIR,
+    TAD_FEATURES_DIR,
     VIDEOS_DIR,
     count_files,
 )
@@ -41,6 +42,23 @@ async def vllm_health():
     """Check vLLM health."""
     healthy = await vllm_manager.check_health()
     return {"healthy": healthy}
+
+
+@router.get("/videos")
+def list_videos() -> list[dict]:
+    """List cut videos with full pipeline status."""
+    results = []
+    if CUTS_DIR.exists():
+        for f in sorted(CUTS_DIR.glob("*.mp4")):
+            stem = f.stem
+            results.append({
+                "name": f.name,
+                "has_detection": (SEG_ANNOTATIONS_DIR / f"{stem}.jsonl").exists(),
+                "has_pre_annotation": (PRE_ANNOTATIONS_DIR / f"{stem}_annotations.jsonl").exists(),
+                "has_annotation": (ANNOTATIONS_DIR / f"{stem}_annotations.jsonl").exists(),
+                "has_features": (TAD_FEATURES_DIR / f"{stem}.npy").exists(),
+            })
+    return results
 
 
 @router.get("/stats")

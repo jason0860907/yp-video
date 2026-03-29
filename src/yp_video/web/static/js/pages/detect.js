@@ -150,7 +150,7 @@ function bindEvents() {
 async function loadVideos() {
   try {
     const [videos, vllmStatus] = await Promise.all([
-      api('/detect/videos'),
+      api('/system/videos'),
       api('/system/vllm/status').catch(() => null),
     ]);
     state.videos = videos.map(v => ({ ...v, selected: !v.has_detection }));

@@ -1,0 +1,3 @@
+[submodule "actionformer_release"]
+	path = actionformer_release
+	url = https://github.com/happyharrycn/actionformer_release.git

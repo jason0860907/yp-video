@@ -529,8 +529,8 @@ def main():
         required=True,
         help="Path to video file"
     )
-    _default_port = _VLLM_CONFIG.get("VLLM_PORT", "8000")
-    _default_model = _VLLM_CONFIG.get("VLLM_MODEL", "Qwen/Qwen3-VL-8B-Instruct")
+    _default_port = _VLLM_CONFIG["VLLM_PORT"]
+    _default_model = _VLLM_CONFIG["VLLM_MODEL"]
     _default_server = f"http://localhost:{_default_port}"
 
     parser.add_argument(
@@ -569,7 +569,7 @@ def main():
         default=4.0,
         help="Frames per second for VLM processing (default: 4.0)"
     )
-    _default_max_seqs = int(_VLLM_CONFIG.get("VLLM_MAX_NUM_SEQS", "16"))
+    _default_max_seqs = int(_VLLM_CONFIG["VLLM_MAX_NUM_SEQS"])
     parser.add_argument(
         "--batch-size", "-b",
         type=int,
