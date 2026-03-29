@@ -8,16 +8,14 @@ from pydantic import BaseModel
 
 from yp_video.config import (
     PROJECT_ROOT,
-    OPENTAD_DIR,
     CUTS_DIR,
     PREDICTIONS_DIR,
     VIDEOS_DIR,
-    TAD_PKG_DIR,
     TAD_CONFIGS_DIR,
     TAD_CHECKPOINTS_DIR,
 )
 from yp_video.web.jobs import job_manager
-from yp_video.web.r2_client import sync_to_r2, sync_directory_to_r2
+from yp_video.web.r2_client import serve_video_or_r2_redirect, sync_to_r2, sync_directory_to_r2
 
 router = APIRouter()
 
@@ -67,12 +65,22 @@ def get_result(name: str) -> dict:
     return meta
 
 
+@router.get("/video/{video_name:path}")
+def stream_video(video_name: str):
+    """Serve a video file for playback."""
+    from urllib.parse import unquote
+
+    decoded = unquote(video_name)
+    video_path = CUTS_DIR / decoded
+    response = serve_video_or_r2_redirect(video_path, ("cuts",))
+    if response:
+        return response
+    raise HTTPException(404, f"Video not found: {decoded}")
+
+
 @router.post("/start")
 async def start_prediction(req: PredictRequest):
     """Start TAD prediction job."""
-    if job_manager.vllm_using_gpu:
-        raise HTTPException(400, "GPU is in use by vLLM. Stop vLLM first.")
-
     video_path = CUTS_DIR / req.video
     if not video_path.exists():
         raise HTTPException(404, f"Video not found: {req.video}")
@@ -92,7 +100,7 @@ async def start_prediction(req: PredictRequest):
 
             from yp_video.tad.infer import run_inference
 
-            config_path = TAD_CONFIGS_DIR / "volleyball_actionformer.py"
+            config_path = TAD_CONFIGS_DIR / "volleyball_actionformer.yaml"
             output_path = PREDICTIONS_DIR / f"{video_path.stem}_annotations.jsonl"
 
             cut_dir = None
