@@ -1,35 +1,27 @@
-"""Run TAD inference on new videos using OpenTAD.
+"""Run TAD inference on new videos using ActionFormer.
 
 Pipeline:
-1. Extract R3D features from video
-2. Run OpenTAD inference
+1. Extract V-JEPA 2.1 features from video
+2. Run ActionFormer inference
 3. Convert output to annotator JSONL format
 """
 
 import argparse
-import json
-import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 import numpy as np
 import torch
 
 from yp_video.config import (
-    OPENTAD_DIR,
+    ACTIONFORMER_DIR,
     TAD_CHECKPOINTS_DIR,
     TAD_CONFIGS_DIR,
     TAD_FEATURES_DIR,
 )
 
-from .extract_features import extract_features_from_video, load_model, get_video_info
+from .extract_features import extract_features_from_video, load_model, open_video
 from .output_converter import convert_tad_output_to_jsonl
-
-
-def get_opentad_path() -> Path:
-    """Get path to OpenTAD repository."""
-    return OPENTAD_DIR
 
 
 def run_inference(
@@ -55,7 +47,12 @@ def run_inference(
     print(f"Processing: {video_path.name}")
 
     # Get video info
-    num_frames, fps = get_video_info(video_path)
+    reader = open_video(video_path)
+    num_frames = len(reader)
+    import cv2
+    cap = cv2.VideoCapture(str(video_path))
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    cap.release()
     duration = num_frames / fps if fps > 0 else 0
 
     # Step 1: Extract features (or load from cache)
@@ -64,52 +61,42 @@ def run_inference(
         print(f"Step 1: Loading cached features from {feature_cache}")
         features = np.load(feature_cache)
     else:
-        print("Step 1: Extracting R3D features...")
+        print("Step 1: Extracting V-JEPA 2.1 features...")
         torch_device = torch.device(device)
         model = load_model(torch_device)
         features = extract_features_from_video(
-            video_path, model, torch_device, clip_len=16, stride=16
+            video_path, model, torch_device,
         )
         feature_cache.parent.mkdir(parents=True, exist_ok=True)
         np.save(feature_cache, features)
     print(f"  Features shape: {features.shape}")
 
-    feature_fps = features.shape[0] / duration if duration > 0 else 1.0
+    # Step 2: Run ActionFormer inference
+    print("Step 2: Running TAD inference...")
+    if not checkpoint_path.exists():
+        print("Warning: Checkpoint not found, using simple detection")
+        detections = simple_inference(features, fps, confidence_threshold)
+    else:
+        detections = actionformer_inference(
+            features,
+            checkpoint_path,
+            config_path,
+            device,
+            confidence_threshold,
+            duration,
+            fps,
+        )
 
-    # Save features to temp file for OpenTAD
-    with tempfile.TemporaryDirectory() as tmpdir:
-        temp_feature_path = Path(tmpdir) / f"{video_path.stem}.npy"
-        np.save(temp_feature_path, features)
-
-        # Step 2: Run OpenTAD inference
-        print("Step 2: Running TAD inference...")
-        opentad_path = get_opentad_path()
-
-        if not opentad_path.exists() or not checkpoint_path.exists():
-            print("Warning: OpenTAD or checkpoint not found, using simple detection")
-            detections = simple_inference(features, fps, confidence_threshold)
-        else:
-            detections = opentad_inference(
-                temp_feature_path,
-                checkpoint_path,
-                config_path,
-                opentad_path,
-                device,
-                confidence_threshold,
-                duration,
-                feature_fps,
-                fps,
-            )
-
-        print(f"  Found {len(detections)} detections")
+    print(f"  Found {len(detections)} detections")
 
     # Step 3: Convert to JSONL
+    # ActionFormer returns segments already in seconds, so feature_fps=1.0
     print("Step 3: Converting to JSONL...")
     convert_tad_output_to_jsonl(
         detections=detections,
         video_path=video_path,
         duration=duration,
-        feature_fps=feature_fps,
+        feature_fps=1.0,
         output_path=output_path,
     )
 
@@ -146,7 +133,7 @@ def simple_inference(
     fps: float,
     confidence_threshold: float = 0.3,
 ) -> list[dict]:
-    """Simple inference without OpenTAD (for testing).
+    """Simple inference without ActionFormer (for testing).
 
     Uses feature magnitude changes to detect potential action boundaries.
     """
@@ -192,105 +179,82 @@ def simple_inference(
     return detections
 
 
-def opentad_inference(
-    feature_path: Path,
+def _setup_actionformer():
+    """Add ActionFormer to sys.path for imports."""
+    af_dir = str(ACTIONFORMER_DIR)
+    af_utils = str(ACTIONFORMER_DIR / "libs" / "utils")
+    if af_dir not in sys.path:
+        sys.path.insert(0, af_dir)
+    if af_utils not in sys.path:
+        sys.path.insert(0, af_utils)
+
+
+def actionformer_inference(
+    features: np.ndarray,
     checkpoint_path: Path,
     config_path: Path,
-    opentad_path: Path,
     device: str,
     confidence_threshold: float,
     duration: float,
-    feature_fps: float,
     video_fps: float = 60.0,
 ) -> list[dict]:
-    """Run OpenTAD inference by loading model directly."""
-    import sys
-    sys.path.insert(0, str(opentad_path))
+    """Run ActionFormer inference on extracted features."""
+    _setup_actionformer()
 
-    from mmengine.config import Config
-    from opentad.models import build_detector
+    from libs.core import load_config
+    from libs.modeling import make_meta_arch
 
     # Load config
-    cfg = Config.fromfile(str(config_path))
+    cfg = load_config(str(config_path))
 
-    # Build model
-    model = build_detector(cfg.model)
-    model = model.to(device)
+    # Build model and wrap in DataParallel (ActionFormer checkpoints expect this)
+    model = make_meta_arch(cfg["model_name"], **cfg["model"])
+    model = torch.nn.DataParallel(model, device_ids=[0])
 
-    # Load checkpoint
+    # Load checkpoint (prefer EMA weights)
     checkpoint = torch.load(checkpoint_path, map_location=device)
     if "state_dict_ema" in checkpoint:
-        state_dict = checkpoint["state_dict_ema"]
+        model.load_state_dict(checkpoint["state_dict_ema"])
     elif "state_dict" in checkpoint:
-        state_dict = checkpoint["state_dict"]
+        model.load_state_dict(checkpoint["state_dict"])
     else:
-        state_dict = checkpoint
-    # Strip "module." prefix from DataParallel/DDP training
-    state_dict = {k.removeprefix("module."): v for k, v in state_dict.items()}
-    model.load_state_dict(state_dict)
+        model.load_state_dict(checkpoint)
     model.eval()
 
-    # Load features
-    features = np.load(feature_path)
-    features_tensor = torch.from_numpy(features).float().to(device)
-    features_tensor = features_tensor.unsqueeze(0).permute(0, 2, 1)  # [1, C, T]
+    # Prepare input: features are (T, C), ActionFormer expects (C, T)
+    feats = torch.from_numpy(features).float().permute(1, 0)  # (C, T)
 
-    # Create masks
-    seq_len = features_tensor.shape[2]
-    masks = torch.ones(1, 1, seq_len, device=device)
+    feat_stride = cfg["dataset"]["feat_stride"]
+    num_frames = cfg["dataset"]["num_frames"]
 
-    # Create metas for post-processing
-    # Use padding mode (like ThumosPaddingDataset used in training)
-    feature_stride = cfg.dataset["train"]["feature_stride"]
-    sample_stride = cfg.dataset["train"].get("sample_stride", 1)
-    offset_frames = cfg.dataset["train"].get("offset_frames", 0)
-    snippet_stride = feature_stride * sample_stride
-
-    metas = [{
-        "video_name": feature_path.stem,
-        "duration": duration,
+    video_item = {
+        "video_id": "inference",
+        "feats": feats,
+        "segments": None,
+        "labels": None,
         "fps": video_fps,
-        "snippet_stride": snippet_stride,
-        "offset_frames": offset_frames,
-        "feat_stride": feature_stride,
-        "feat_num_frames": 16,
-    }]
+        "duration": duration,
+        "feat_stride": feat_stride,
+        "feat_num_frames": num_frames,
+    }
 
-    # Create post_cfg from config
-    class PostCfg:
-        def __init__(self, cfg_dict):
-            self.sliding_window = False
-            self.nms = None
-            if "nms" in cfg_dict:
-                self.nms = dict(cfg_dict["nms"])
-
-    post_cfg = PostCfg(cfg.post_processing)
-
-    # Create infer_cfg
-    class InferCfg:
-        load_from_raw_predictions = False
-        save_raw_prediction = False
-
-    infer_cfg = InferCfg()
-
-    # Run inference using forward_test
+    # Run inference
     with torch.no_grad():
-        predictions = model.forward_test(features_tensor, masks, metas, infer_cfg)
+        results = model([video_item])
 
-    # Post-processing using model's method
-    ext_cls = ["rally"]  # Single class
-    results = model.post_processing(predictions, metas, post_cfg, ext_cls)
-
-    # Convert to detection format
+    # Convert results to detection format
+    # ActionFormer postprocessing already converts to seconds
     detections = []
-    for video_id, video_results in results.items():
-        for result in video_results:
-            score = result["score"]
+    for result in results:
+        segs = result["segments"]
+        scores = result["scores"]
+        labels = result["labels"]
+
+        for i in range(len(segs)):
+            score = scores[i].item()
             if score >= confidence_threshold:
-                segment = result["segment"]
-                # Clamp to video duration
-                start_time = max(0, min(segment[0], duration))
-                end_time = max(0, min(segment[1], duration))
+                start_time = max(0, min(segs[i][0].item(), duration))
+                end_time = max(0, min(segs[i][1].item(), duration))
 
                 if end_time > start_time:
                     detections.append({
@@ -319,7 +283,7 @@ def main():
     parser.add_argument(
         "--config",
         type=Path,
-        default=TAD_CONFIGS_DIR / "volleyball_actionformer.py",
+        default=TAD_CONFIGS_DIR / "volleyball_actionformer.yaml",
         help="Config file path",
     )
     parser.add_argument(

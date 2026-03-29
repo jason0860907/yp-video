@@ -22,7 +22,7 @@ def _find_project_root() -> Path:
 PROJECT_ROOT = _find_project_root()
 
 # ── External dependencies (at project root) ──────────────────────
-OPENTAD_DIR = PROJECT_ROOT / "OpenTAD"
+ACTIONFORMER_DIR = PROJECT_ROOT / "actionformer_release"
 PROMPTS_DIR = PROJECT_ROOT / "prompts"
 VLLM_ENV_PATH = PROJECT_ROOT / "vllm.env"
 R2_ENV_PATH = PROJECT_ROOT / "r2.env"
@@ -32,7 +32,6 @@ VENV_PYTHON = PROJECT_ROOT / ".venv" / "bin" / "python"
 TAD_PKG_DIR = Path(__file__).resolve().parent / "tad"
 TAD_CONFIGS_DIR = TAD_PKG_DIR / "configs"
 TAD_DATA_DIR = TAD_PKG_DIR / "data"
-TAD_FEATURES_DIR = TAD_DATA_DIR / "features"
 TAD_ANNOTATIONS_DIR = TAD_DATA_DIR / "annotations"
 TAD_ANNOTATIONS_FILE = TAD_ANNOTATIONS_DIR / "volleyball_anno.json"
 TAD_CHECKPOINTS_DIR = TAD_PKG_DIR / "checkpoints"
@@ -46,6 +45,8 @@ REFINE_ANNOTATIONS_DIR = VIDEOS_DIR / "rally-refine-annotations"
 ANNOTATIONS_DIR = VIDEOS_DIR / "rally-annotations"
 PREDICTIONS_DIR = VIDEOS_DIR / "tad-predictions"
 RALLY_CLIPS_DIR = VIDEOS_DIR / "rally_clips"
+FEATURES_DIR = VIDEOS_DIR / "features"
+TAD_FEATURES_DIR = FEATURES_DIR / "vjepa-b"
 
 # R2 category → local directory + glob pattern mapping
 class R2Category(NamedTuple):

@@ -9,8 +9,9 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from yp_video.config import (
+    ANNOTATIONS_DIR,
+    PRE_ANNOTATIONS_DIR,
     PROJECT_ROOT,
-    OPENTAD_DIR,
     CUTS_DIR,
     VIDEOS_DIR,
     TAD_PKG_DIR,
@@ -26,18 +27,19 @@ router = APIRouter()
 
 class ExtractFeaturesRequest(BaseModel):
     videos: list[str] | None = None
-    batch_size: int = 16
+    batch_size: int = 32
 
 
 class ConvertAnnotationsRequest(BaseModel):
-    source: str = "rally-annotations"  # or "rally-pre-annotations"
     train_ratio: float = 0.8
+    videos: list[str] | None = None
 
 
 class TrainRequest(BaseModel):
     gpu: int = 0
     seed: int = 42
     resume: str | None = None
+
 
 
 @router.get("/status")
@@ -61,16 +63,14 @@ def get_status():
         "features_count": features_count,
         "annotations_exist": annotations_exist,
         "checkpoints": checkpoints,
-        "gpu_available": not job_manager.vllm_using_gpu,
+        "gpu_available": True,
+        "vllm_running": job_manager.vllm_using_gpu,
     }
 
 
 @router.post("/extract-features")
 async def extract_features(req: ExtractFeaturesRequest):
     """Start feature extraction job."""
-    if job_manager.vllm_using_gpu:
-        raise HTTPException(400, "GPU is in use by vLLM. Stop vLLM first.")
-
     job = job_manager.create_job("feature_extract", {"videos": req.videos}, name="Feature extraction")
 
     async def run_extraction():
@@ -109,17 +109,18 @@ async def extract_features(req: ExtractFeaturesRequest):
 
 @router.post("/convert-annotations")
 async def convert_annotations(req: ConvertAnnotationsRequest):
-    """Convert JSONL annotations to OpenTAD format."""
+    """Convert JSONL annotations to ActionFormer format."""
     from yp_video.tad.convert_annotations import convert_annotations as do_convert
 
-    annotations_dir = VIDEOS_DIR / req.source
-    if not annotations_dir.exists():
-        raise HTTPException(404, f"Annotations directory not found: {req.source}")
-
+    # Prefer manual annotations over pre-annotations per video
     loop = asyncio.get_event_loop()
     result = await loop.run_in_executor(
         None,
-        lambda: do_convert(annotations_dir, TAD_FEATURES_DIR, TAD_ANNOTATIONS_FILE, req.train_ratio),
+        lambda: do_convert(
+            [ANNOTATIONS_DIR, PRE_ANNOTATIONS_DIR],
+            TAD_FEATURES_DIR, TAD_ANNOTATIONS_FILE,
+            req.train_ratio, videos=req.videos,
+        ),
     )
 
     video_count = len(result.get("database", {})) if result else 0
@@ -129,52 +130,40 @@ async def convert_annotations(req: ConvertAnnotationsRequest):
 @router.post("/start")
 async def start_training(req: TrainRequest):
     """Start TAD model training."""
-    if job_manager.vllm_using_gpu:
-        raise HTTPException(400, "GPU is in use by vLLM. Stop vLLM first.")
-
     if not TAD_ANNOTATIONS_FILE.exists():
         raise HTTPException(400, "No annotations file found. Run convert-annotations first.")
 
     job = job_manager.create_job("train", {"gpu": req.gpu, "seed": req.seed}, name="ActionFormer training")
 
     async def run_training():
+        process = None
         try:
             await job_manager.update_job(job.id, status="running", message="Starting training...")
 
             import os
             from datetime import date
 
-            config_path = TAD_CONFIGS_DIR / "volleyball_actionformer.py"
-            train_script = OPENTAD_DIR / "tools" / "train.py"
+            config_path = TAD_CONFIGS_DIR / "volleyball_actionformer.yaml"
 
             today = date.today().strftime("%Y-%m%d")
             work_dir = TAD_CHECKPOINTS_DIR / "actionformer" / today
 
             cmd = [
-                sys.executable, str(train_script),
-                str(config_path.absolute()),
+                sys.executable, "-m", "yp_video.tad.train",
+                "--config", str(config_path.absolute()),
                 "--seed", str(req.seed),
-                "--cfg-options", f"work_dir={work_dir.absolute()}",
+                "--gpu", str(req.gpu),
+                "--work-dir", str(work_dir.absolute()),
             ]
 
             if req.resume:
                 cmd.extend(["--resume", req.resume])
-
-            env = os.environ.copy()
-            env["CUDA_VISIBLE_DEVICES"] = str(req.gpu)
-            env["PYTHONPATH"] = str(OPENTAD_DIR)
-            env["LOCAL_RANK"] = "0"
-            env["WORLD_SIZE"] = "1"
-            env["RANK"] = "0"
-            env["MASTER_ADDR"] = "localhost"
-            env["MASTER_PORT"] = "29500"
 
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 cwd=str(PROJECT_ROOT),
-                env=env,
             )
 
             # Stream output for progress updates
@@ -186,9 +175,7 @@ async def start_training(req: TrainRequest):
                 text = line.decode().strip()
                 if text:
                     last_msg = text
-                    # Try to parse epoch progress
-                    if "Epoch" in text:
-                        await job_manager.update_job(job.id, message=text)
+                    await job_manager.update_job(job.id, message=text)
 
             returncode = await process.wait()
             if returncode == 0:

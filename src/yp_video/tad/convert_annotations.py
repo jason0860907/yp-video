@@ -1,10 +1,10 @@
-"""Convert annotator JSONL annotations to OpenTAD format.
+"""Convert annotator JSONL annotations to ActionFormer format.
 
 Annotator JSONL format:
     Line 1: {"_meta": true, "video": "path/to/video.mp4", "duration": 1800.5}
     Line 2+: {"start": 10.5, "end": 25.3, "label": "rally"}
 
-OpenTAD format (JSON):
+ActionFormer format (JSON):
 {
     "database": {
         "video_name": {
@@ -44,27 +44,51 @@ def get_video_fps(video_path: Path) -> float:
 
 
 def convert_annotations(
-    annotations_dir: Path,
+    annotations_dirs: list[Path] | Path,
     features_dir: Path,
     output_path: Path,
     train_ratio: float = 0.8,
+    videos: list[str] | None = None,
 ) -> dict:
-    """Convert all JSONL annotations to OpenTAD format.
+    """Convert JSONL annotations to ActionFormer format.
 
     Args:
-        annotations_dir: Directory containing *_annotations.jsonl files
+        annotations_dirs: Directory or list of directories containing
+            *_annotations.jsonl files.  When multiple directories are given,
+            earlier directories take priority (per video stem).
         features_dir: Directory containing extracted features (.npy)
-        output_path: Output path for OpenTAD JSON
+        output_path: Output path for ActionFormer JSON
         train_ratio: Ratio of videos to use for training
+        videos: Optional list of video filenames to include (None = all)
 
     Returns:
-        OpenTAD format dictionary
+        ActionFormer format dictionary
     """
+    if isinstance(annotations_dirs, Path):
+        annotations_dirs = [annotations_dirs]
+
+    # Collect annotation files, earlier dirs take priority per video stem
+    seen_stems: set[str] = set()
+    jsonl_files: list[Path] = []
+    video_set = {Path(v).stem for v in videos} if videos else None
+
+    for d in annotations_dirs:
+        if not d.exists():
+            continue
+        for f in sorted(d.glob("*_annotations.jsonl")):
+            stem = f.stem.removesuffix("_annotations")
+            if stem in seen_stems:
+                continue
+            if video_set and stem not in video_set:
+                continue
+            seen_stems.add(stem)
+            jsonl_files.append(f)
+
+    jsonl_files.sort(key=lambda f: f.name)
+    print(f"Found {len(jsonl_files)} annotation files")
+
     database = {}
     label_set = set()
-
-    jsonl_files = sorted(annotations_dir.glob("*_annotations.jsonl"))
-    print(f"Found {len(jsonl_files)} annotation files")
 
     for jsonl_path in jsonl_files:
         meta, annotations = read_jsonl(jsonl_path)
@@ -100,15 +124,15 @@ def convert_annotations(
             video_fps = 30.0
 
         # Convert annotations
-        opentad_annotations = []
+        anno_list = []
         for ann in annotations:
             label = ann.get("label", "rally")
             label_set.add(label)
-            opentad_annotations.append(
+            anno_list.append(
                 {"segment": [ann["start"], ann["end"]], "label": label, "label_id": 0}
             )
 
-        # Calculate frame count (required by OpenTAD)
+        # Calculate frame count (required by ActionFormer)
         frame_count = int(duration * video_fps)
 
         database[video_name] = {
@@ -118,7 +142,7 @@ def convert_annotations(
             "frame": frame_count,
             "feature_fps": feature_fps,
             "feature_frame": num_features,
-            "annotations": opentad_annotations,
+            "annotations": anno_list,
         }
 
     # Split into train/validation
@@ -130,12 +154,12 @@ def convert_annotations(
         database[name]["subset"] = "training" if name in train_videos else "validation"
 
     # Create final structure
-    opentad_data = {"database": database}
+    anno_data = {"database": database}
 
     # Save annotation JSON
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(opentad_data, f, indent=2, ensure_ascii=False)
+        json.dump(anno_data, f, indent=2, ensure_ascii=False)
 
     # Save category index file (one class per line, order determines class ID)
     category_path = output_path.parent / "category_idx.txt"
@@ -149,12 +173,12 @@ def convert_annotations(
     print(f"Saved to: {output_path}")
     print(f"Category map: {category_path}")
 
-    return opentad_data
+    return anno_data
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Convert annotator JSONL to OpenTAD format"
+        description="Convert annotator JSONL to ActionFormer format"
     )
     parser.add_argument(
         "--annotations",
@@ -172,7 +196,7 @@ def main():
         "--output",
         type=Path,
         default=TAD_ANNOTATIONS_FILE,
-        help="Output OpenTAD JSON path",
+        help="Output ActionFormer JSON path",
     )
     parser.add_argument(
         "--train-ratio",

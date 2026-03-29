@@ -1,9 +1,11 @@
 /**
  * Train page — Feature extraction + annotation conversion + TAD training.
  */
-import { api, SSEClient, card, pageHeader, stepBadge, statCard, sectionTitle, btnPrimary, btnSecondary, createProgressBar, showToast, inputCls, selectCls } from '../shared.js';
+import { api, SSEClient, card, pageHeader, stepBadge, statCard, sectionTitle, btnPrimary, btnSecondary, btnSmall, createProgressBar, showToast, emptyState, inputCls } from '../shared.js';
 
 let sseClient = null;
+let videos = [];
+let convVideos = [];
 
 export function render(container) {
   container.innerHTML = `
@@ -21,12 +23,26 @@ export function render(container) {
               ${sectionTitle('Extract Features', 'V-JEPA 2.1 video features for TAD')}
             </div>
           </div>
-          <div class="ml-10 flex items-center gap-4">
-            <div>
-              <label class="block text-[11px] text-text-muted mb-1.5 uppercase tracking-wider font-medium">Batch Size</label>
-              <input id="train-feat-batch" type="number" value="16" min="1" max="64" class="w-28 ${inputCls}">
+          <div class="ml-10 space-y-4">
+            <div class="space-y-2">
+              ${sectionTitle(
+                'Videos',
+                '',
+                btnSmall('Select All', 'id="train-select-all"') + ' ' +
+                btnSmall('Deselect All', 'id="train-deselect-all"') + ' ' +
+                btnSmall('Unprocessed', 'id="train-select-unprocessed"', 'primary') + ' ' +
+                btnSmall('✅ Annotated', 'id="train-select-annotated"') + ' ' +
+                btnSmall('⚡ Pre-annotated', 'id="train-select-pre-annotated"')
+              )}
+              <div id="train-videos" class="space-y-0.5 max-h-72 overflow-y-auto pr-1"></div>
             </div>
-            ${btnSecondary('Extract', 'id="train-extract"')}
+            <div class="flex items-end gap-4">
+              <div>
+                <label class="block text-[11px] text-text-muted mb-1.5 uppercase tracking-wider font-medium">Batch Size</label>
+                <input id="train-feat-batch" type="number" value="32" min="1" max="64" class="w-28 ${inputCls}">
+              </div>
+              ${btnSecondary('Extract', 'id="train-extract"')}
+            </div>
           </div>
           <div id="train-extract-progress" class="ml-10 hidden space-y-2">
             <div id="train-extract-bar"></div>
@@ -41,25 +57,29 @@ export function render(container) {
           <div class="flex items-center gap-3">
             ${stepBadge(2, 'primary')}
             <div>
-              ${sectionTitle('Convert Annotations', 'JSONL rally annotations → OpenTAD format')}
+              ${sectionTitle('Convert Annotations', 'JSONL rally annotations → ActionFormer format')}
             </div>
           </div>
-          <div class="ml-10 grid grid-cols-2 gap-4">
-            <div>
-              <label class="block text-[11px] text-text-muted mb-1.5 uppercase tracking-wider font-medium">Source</label>
-              <select id="train-source" class="w-full ${selectCls}">
-                <option value="rally-annotations">rally-annotations</option>
-                <option value="rally-pre-annotations">rally-pre-annotations</option>
-              </select>
+          <div class="ml-10 space-y-4">
+            <div class="space-y-2">
+              ${sectionTitle(
+                'Videos',
+                '',
+                btnSmall('Select All', 'id="conv-select-all"') + ' ' +
+                btnSmall('Deselect All', 'id="conv-deselect-all"') + ' ' +
+                btnSmall('✅ Annotated', 'id="conv-select-annotated"', 'primary') + ' ' +
+                btnSmall('⚡ Pre-annotated', 'id="conv-select-pre-annotated"')
+              )}
+              <div id="conv-videos" class="space-y-0.5 max-h-72 overflow-y-auto pr-1"></div>
             </div>
-            <div>
-              <label class="block text-[11px] text-text-muted mb-1.5 uppercase tracking-wider font-medium">Train Ratio</label>
-              <input id="train-ratio" type="number" value="0.8" min="0.1" max="0.99" step="0.05" class="w-full ${inputCls}">
+            <div class="flex items-end gap-4">
+              <div>
+                <label class="block text-[11px] text-text-muted mb-1.5 uppercase tracking-wider font-medium">Train Ratio</label>
+                <input id="train-ratio" type="number" value="0.8" min="0.1" max="0.99" step="0.05" class="w-28 ${inputCls}">
+              </div>
+              ${btnSecondary('Convert', 'id="train-convert"')}
+              <span id="train-convert-status" class="text-xs text-text-muted self-center"></span>
             </div>
-          </div>
-          <div class="ml-10 flex items-center gap-3">
-            ${btnSecondary('Convert', 'id="train-convert"')}
-            <span id="train-convert-status" class="text-xs text-text-muted"></span>
           </div>
         </div>
       `)}
@@ -95,6 +115,7 @@ export function render(container) {
     </div>`;
 
   loadStatus();
+  loadVideos();
   bindEvents();
 }
 
@@ -105,6 +126,42 @@ function bindEvents() {
   document.getElementById('train-convert').addEventListener('click', convertAnnotations);
   document.getElementById('train-extract').addEventListener('click', extractFeatures);
   document.getElementById('train-start').addEventListener('click', startTraining);
+  document.getElementById('train-select-all').addEventListener('click', () => {
+    videos.forEach(v => v.selected = true);
+    renderVideos();
+  });
+  document.getElementById('train-deselect-all').addEventListener('click', () => {
+    videos.forEach(v => v.selected = false);
+    renderVideos();
+  });
+  document.getElementById('train-select-unprocessed').addEventListener('click', () => {
+    videos.forEach(v => v.selected = !v.has_features);
+    renderVideos();
+  });
+  document.getElementById('train-select-annotated').addEventListener('click', () => {
+    videos.forEach(v => v.selected = v.has_annotation);
+    renderVideos();
+  });
+  document.getElementById('train-select-pre-annotated').addEventListener('click', () => {
+    videos.forEach(v => v.selected = v.has_pre_annotation);
+    renderVideos();
+  });
+  document.getElementById('conv-select-all').addEventListener('click', () => {
+    convVideos.forEach(v => v.selected = true);
+    renderConvVideos();
+  });
+  document.getElementById('conv-deselect-all').addEventListener('click', () => {
+    convVideos.forEach(v => v.selected = false);
+    renderConvVideos();
+  });
+  document.getElementById('conv-select-annotated').addEventListener('click', () => {
+    convVideos.forEach(v => v.selected = v.has_annotation);
+    renderConvVideos();
+  });
+  document.getElementById('conv-select-pre-annotated').addEventListener('click', () => {
+    convVideos.forEach(v => v.selected = v.has_pre_annotation);
+    renderConvVideos();
+  });
 }
 
 async function loadStatus() {
@@ -115,7 +172,7 @@ async function loadStatus() {
         ${statCard('Cuts', s.cuts_count, s.cuts_count > 0)}
         ${statCard('Features', s.features_count, s.features_count > 0)}
         ${statCard('Annotations', s.annotations_exist ? 'ready' : 'missing', s.annotations_exist)}
-        ${statCard('GPU', s.gpu_available ? 'available' : 'busy', s.gpu_available)}
+        ${statCard('GPU', s.vllm_running ? 'shared' : 'available', true)}
       </div>
     `);
 
@@ -137,7 +194,82 @@ async function loadStatus() {
   } catch { /* silently fail */ }
 }
 
+async function loadVideos() {
+  try {
+    const list = await api('/system/videos');
+    videos = list.map(v => ({ ...v, selected: !v.has_features }));
+    convVideos = list.map(v => ({ ...v, selected: v.has_annotation || v.has_pre_annotation }));
+    renderVideos();
+    renderConvVideos();
+  } catch (e) {
+    showToast(`Failed to load videos: ${e.message}`, 'error');
+  }
+}
+
+function videoBadges(v) {
+  const b = [];
+  if (v.has_annotation) b.push('<span title="Annotated">✅</span>');
+  else if (v.has_pre_annotation) b.push('<span title="Pre-annotation">⚡</span>');
+  if (v.has_features) b.push('<span class="inline-flex items-center gap-1.5 text-[11px] text-emerald-400 bg-emerald-500/10 ring-1 ring-emerald-500/20 px-2.5 py-0.5 rounded-full font-medium"><span class="w-1.5 h-1.5 rounded-full bg-current"></span>features</span>');
+  return b.join(' ');
+}
+
+function renderVideos() {
+  const el = document.getElementById('train-videos');
+  if (videos.length === 0) {
+    el.innerHTML = emptyState(
+      '<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>',
+      'No cut videos found',
+      'Cut some videos first'
+    );
+    return;
+  }
+
+  el.innerHTML = videos.map((v, i) => `
+    <div class="group flex items-center gap-3 p-2.5 rounded-xl border border-transparent hover:bg-white/[0.03] hover:border-white/5 transition-all duration-200">
+      <input type="checkbox" data-idx="${i}" class="train-check cursor-pointer accent-primary w-3.5 h-3.5" ${v.selected ? 'checked' : ''}>
+      <span class="text-sm text-text-primary flex-1 truncate group-hover:text-white transition-colors duration-200">${v.name}</span>
+      ${videoBadges(v)}
+    </div>
+  `).join('');
+
+  el.querySelectorAll('.train-check').forEach(cb => {
+    cb.addEventListener('change', (e) => {
+      videos[parseInt(e.target.dataset.idx)].selected = e.target.checked;
+    });
+  });
+}
+
+function renderConvVideos() {
+  const el = document.getElementById('conv-videos');
+  if (convVideos.length === 0) {
+    el.innerHTML = emptyState(
+      '<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>',
+      'No cut videos found',
+      'Cut some videos first'
+    );
+    return;
+  }
+
+  el.innerHTML = convVideos.map((v, i) => `
+    <div class="group flex items-center gap-3 p-2.5 rounded-xl border border-transparent hover:bg-white/[0.03] hover:border-white/5 transition-all duration-200">
+      <input type="checkbox" data-idx="${i}" class="conv-check cursor-pointer accent-primary w-3.5 h-3.5" ${v.selected ? 'checked' : ''}>
+      <span class="text-sm text-text-primary flex-1 truncate group-hover:text-white transition-colors duration-200">${v.name}</span>
+      ${videoBadges(v)}
+    </div>
+  `).join('');
+
+  el.querySelectorAll('.conv-check').forEach(cb => {
+    cb.addEventListener('change', (e) => {
+      convVideos[parseInt(e.target.dataset.idx)].selected = e.target.checked;
+    });
+  });
+}
+
 async function convertAnnotations() {
+  const selected = convVideos.filter(v => v.selected).map(v => v.name);
+  if (selected.length === 0) return showToast('No videos selected', 'warning');
+
   const btn = document.getElementById('train-convert');
   const status = document.getElementById('train-convert-status');
   btn.disabled = true;
@@ -145,8 +277,8 @@ async function convertAnnotations() {
     const res = await api('/train/convert-annotations', {
       method: 'POST',
       body: {
-        source: document.getElementById('train-source').value,
         train_ratio: parseFloat(document.getElementById('train-ratio').value),
+        videos: selected,
       },
     });
     status.textContent = `${res.video_count} videos converted`;
@@ -161,12 +293,18 @@ async function convertAnnotations() {
 }
 
 async function extractFeatures() {
+  const selected = videos.filter(v => v.selected).map(v => v.name);
+  if (selected.length === 0) return showToast('No videos selected', 'warning');
+
   const btn = document.getElementById('train-extract');
   btn.disabled = true;
   try {
     const res = await api('/train/extract-features', {
       method: 'POST',
-      body: { batch_size: parseInt(document.getElementById('train-feat-batch').value) },
+      body: {
+        videos: selected,
+        batch_size: parseInt(document.getElementById('train-feat-batch').value),
+      },
     });
     document.getElementById('train-extract-progress').classList.remove('hidden');
     sseClient = new SSEClient(`/api/jobs/${res.id}/events`, {
@@ -178,6 +316,7 @@ async function extractFeatures() {
           btn.disabled = false;
           showToast(data.status === 'completed' ? 'Features extracted!' : `Failed: ${data.error}`, data.status === 'completed' ? 'success' : 'error');
           loadStatus();
+          loadVideos();
         }
       },
       onError: () => { btn.disabled = false; },

@@ -30,6 +30,9 @@ dependencies = [
     "vllm>=0.17.0",
     "scipy>=1.10.0",
     "pandas>=2.0.0",
+    "pyyaml>=6.0",
+    "joblib>=1.0",
+    "h5py>=3.0",
 ]
 
 
