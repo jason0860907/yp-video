@@ -29,6 +29,7 @@ class Job:
     message: str = ""
     params: dict = field(default_factory=dict)
     error: str | None = None
+    logs: list[str] = field(default_factory=list)
     created_at: float = field(default_factory=time.time)
     _task: asyncio.Task | None = field(default=None, repr=False)
     _subscribers: list[asyncio.Queue] = field(default_factory=list, repr=False)
@@ -47,6 +48,7 @@ class Job:
             "message": self.message,
             "params": self.params,
             "error": self.error,
+            "logs": self.logs,
             "created_at": self.created_at,
         }
 
@@ -101,7 +103,7 @@ class JobManager:
         job = self.jobs.get(job_id)
         if not job:
             return None
-        q: asyncio.Queue = asyncio.Queue(maxsize=100)
+        q: asyncio.Queue = asyncio.Queue(maxsize=500)
         job._subscribers.append(q)
         # Send current state immediately
         q.put_nowait(job.to_dict())

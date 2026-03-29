@@ -35,6 +35,3 @@ InternVideo/
 OpenTAD/
 
 # TAD data and checkpoints
-src/yp_video/tad/checkpoints/
-src/yp_video/tad/data/features/*.npy
-src/yp_video/tad/data/annotations/*.json

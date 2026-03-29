@@ -2,7 +2,7 @@ dataset_name: thumos
 train_split: ['training']
 val_split: ['validation']
 dataset: {
-  json_file: src/yp_video/tad/data/annotations/volleyball_anno.json,
+  json_file: ~/videos/tad-annotations/volleyball_anno.json,
   feat_folder: ~/videos/features/vjepa-b/,
   file_prefix: ~,
   file_ext: .npy,
@@ -31,7 +31,7 @@ opt: {
   learning_rate: 1.0e-3,
   epochs: 600,
   warmup: True,
-  warmup_epochs: 5,
+  warmup_epochs: 60,
   weight_decay: 0.05,
   schedule_type: cosine,
 }
@@ -59,4 +59,4 @@ test_cfg: {
   multiclass_nms: False,
   duration_thresh: 0.05,
 }
-output_folder: src/yp_video/tad/checkpoints/actionformer/
+output_folder: ~/videos/tad-checkpoints/actionformer/

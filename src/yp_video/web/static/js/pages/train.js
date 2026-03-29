@@ -93,7 +93,7 @@ export function render(container) {
               ${sectionTitle('Train Model', 'TAD model training with extracted features')}
             </div>
           </div>
-          <div class="ml-10 flex items-center gap-4">
+          <div class="ml-10 flex items-end gap-4">
             <div>
               <label class="block text-[11px] text-text-muted mb-1.5 uppercase tracking-wider font-medium">GPU</label>
               <input id="train-gpu" type="number" value="0" min="0" max="7" class="w-20 ${inputCls}">
@@ -107,15 +107,17 @@ export function render(container) {
           <div id="train-progress" class="ml-10 hidden space-y-2">
             <div id="train-bar"></div>
             <p id="train-msg" class="text-xs text-text-muted"></p>
+            <div id="train-logs" class="max-h-64 overflow-y-auto rounded-lg bg-black/30 border border-white/5 p-3 font-mono text-[11px] text-text-muted leading-relaxed hidden"></div>
           </div>
         </div>
       `)}
 
-      <div id="train-checkpoints"></div>
+      <div id="train-performance"></div>
     </div>`;
 
   loadStatus();
   loadVideos();
+  loadPerformance();
   bindEvents();
 }
 
@@ -176,20 +178,12 @@ async function loadStatus() {
       </div>
     `);
 
-    if (s.checkpoints?.length > 0) {
-      document.getElementById('train-checkpoints').innerHTML = card(`
-        <div class="space-y-3">
-          ${sectionTitle('Checkpoints')}
-          <div class="space-y-1.5">
-            ${s.checkpoints.map(cp => `
-              <div class="flex items-center gap-3 p-2.5 rounded-xl bg-surface-50/50 border border-border text-sm transition-colors duration-150 hover:bg-surface-100/50">
-                <svg class="w-4 h-4 text-emerald-400 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4"/></svg>
-                <span class="text-text-primary font-heading text-xs truncate">${cp}</span>
-              </div>
-            `).join('')}
-          </div>
-        </div>
-      `);
+    // Reconnect to active training job
+    if (s.active_train_job) {
+      const btn = document.getElementById('train-start');
+      btn.disabled = true;
+      showTrainingUI(s.active_train_job);
+      subscribeTrainingJob(s.active_train_job.id, btn);
     }
   } catch { /* silently fail */ }
 }
@@ -266,6 +260,123 @@ function renderConvVideos() {
   });
 }
 
+const TIOU_COLORS = {
+  '0.30': '#22d3ee', // cyan
+  '0.40': '#34d399', // emerald
+  '0.50': '#facc15', // yellow
+  '0.60': '#fb923c', // orange
+  '0.70': '#f87171', // red
+};
+
+async function loadPerformance() {
+  try {
+    const data = await api('/train/performance');
+    const el = document.getElementById('train-performance');
+    if (!data.entries?.length) {
+      el.innerHTML = '';
+      return;
+    }
+
+    // Extract tIoU keys from first entry that has tiou data
+    const sample = data.entries.find(e => e.tiou && Object.keys(e.tiou).length > 0);
+    if (!sample) {
+      el.innerHTML = '';
+      return;
+    }
+    const tiouKeys = Object.keys(sample.tiou).sort();
+    const epochs = data.entries.filter(e => e.tiou).map(e => e.epoch);
+
+    // Find max recall for Y axis
+    let maxVal = 0;
+    for (const e of data.entries) {
+      if (!e.tiou) continue;
+      for (const k of tiouKeys) {
+        if (e.tiou[k]?.recall > maxVal) maxVal = e.tiou[k].recall;
+      }
+    }
+    maxVal = Math.min(Math.ceil(maxVal * 10) / 10 + 0.1, 1.0);
+
+    // SVG chart dimensions
+    const W = 700, H = 260, pad = { t: 20, r: 20, b: 40, l: 50 };
+    const cw = W - pad.l - pad.r, ch = H - pad.t - pad.b;
+
+    const xMin = Math.min(...epochs), xMax = Math.max(...epochs);
+    const xRange = xMax - xMin || 1;
+    const x = ep => pad.l + ((ep - xMin) / xRange) * cw;
+    const y = val => pad.t + (1 - val / maxVal) * ch;
+
+    // Build lines
+    let lines = '';
+    let dots = '';
+    let legend = '';
+    for (const tiou of tiouKeys) {
+      const color = TIOU_COLORS[tiou] || '#888';
+      const points = data.entries.filter(e => e.tiou?.[tiou]).map(e => ({
+        x: x(e.epoch), y: y(e.tiou[tiou].recall),
+        epoch: e.epoch, recall: e.tiou[tiou].recall,
+      }));
+      if (points.length === 0) continue;
+
+      const pathD = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x},${p.y}`).join(' ');
+      lines += `<path d="${pathD}" fill="none" stroke="${color}" stroke-width="2" opacity="0.85"/>`;
+      for (const p of points) {
+        dots += `<circle cx="${p.x}" cy="${p.y}" r="3" fill="${color}" opacity="0.9"><title>Epoch ${p.epoch} | tIoU ${tiou} | Recall ${(p.recall * 100).toFixed(1)}%</title></circle>`;
+      }
+      legend += `<span class="inline-flex items-center gap-1.5 text-[11px]"><span class="w-3 h-0.5 rounded" style="background:${color}"></span><span class="text-text-muted">tIoU ${tiou}</span></span>`;
+    }
+
+    // Y axis ticks
+    let yAxis = '';
+    const ySteps = 5;
+    for (let i = 0; i <= ySteps; i++) {
+      const val = (maxVal / ySteps) * i;
+      const yy = y(val);
+      yAxis += `<line x1="${pad.l}" x2="${pad.l + cw}" y1="${yy}" y2="${yy}" stroke="white" stroke-opacity="0.06"/>`;
+      yAxis += `<text x="${pad.l - 8}" y="${yy + 3}" text-anchor="end" fill="#888" font-size="10">${(val * 100).toFixed(0)}%</text>`;
+    }
+
+    // X axis ticks (show ~6 labels)
+    let xAxis = '';
+    const step = Math.max(1, Math.floor(epochs.length / 6));
+    for (let i = 0; i < epochs.length; i += step) {
+      const xx = x(epochs[i]);
+      xAxis += `<text x="${xx}" y="${H - 8}" text-anchor="middle" fill="#888" font-size="10">${epochs[i]}</text>`;
+    }
+
+    // Right-side info panel
+    let rightPanel = '';
+    for (const tiou of tiouKeys) {
+      const color = TIOU_COLORS[tiou] || '#888';
+      const label = parseFloat(tiou);
+      let best = 0, bestEp = 0;
+      for (const e of data.entries) {
+        if (e.tiou?.[tiou]?.recall > best) { best = e.tiou[tiou].recall; bestEp = e.epoch; }
+      }
+      rightPanel += `
+        <div class="flex items-center gap-2 whitespace-nowrap">
+          <span class="w-2 h-2 rounded-full flex-shrink-0" style="background:${color}"></span>
+          <span class="text-text-muted text-[11px]">tIoU=${label}</span>
+          <span class="text-text-primary text-xs font-medium tabular-nums">${(best * 100).toFixed(1)}%</span>
+          <span class="text-text-muted text-[10px]">ep${bestEp}</span>
+        </div>`;
+    }
+
+    el.innerHTML = card(`
+      <div class="space-y-4">
+        ${sectionTitle('Performance', data.name || '')}
+        <div class="grid grid-cols-[3fr_1fr] gap-8 items-center">
+          <svg viewBox="0 0 ${W} ${H}" class="w-full" style="max-height:280px">
+            ${yAxis}${xAxis}${lines}${dots}
+            <text x="${pad.l + cw / 2}" y="${H}" text-anchor="middle" fill="#666" font-size="10">Epoch</text>
+            <text x="12" y="${pad.t + ch / 2}" text-anchor="middle" fill="#666" font-size="10" transform="rotate(-90, 12, ${pad.t + ch / 2})">Recall@1x</text>
+          </svg>
+          <div class="space-y-2.5">${rightPanel}</div>
+        </div>
+      </div>
+    `);
+  } catch { /* silently fail */ }
+}
+
 async function convertAnnotations() {
   const selected = convVideos.filter(v => v.selected).map(v => v.name);
   if (selected.length === 0) return showToast('No videos selected', 'warning');
@@ -327,6 +438,39 @@ async function extractFeatures() {
   }
 }
 
+function showTrainingUI(data) {
+  document.getElementById('train-progress').classList.remove('hidden');
+  document.getElementById('train-bar').innerHTML = createProgressBar(data.progress, 'accent');
+  document.getElementById('train-msg').textContent = data.message || '';
+  const logsEl = document.getElementById('train-logs');
+  if (data.logs?.length > 0) {
+    logsEl.classList.remove('hidden');
+    logsEl.innerHTML = data.logs.map(l => `<div>${l.replace(/</g, '&lt;')}</div>`).join('');
+    logsEl.scrollTop = logsEl.scrollHeight;
+  }
+}
+
+function subscribeTrainingJob(jobId, btn) {
+  sseClient?.stop();
+  sseClient = new SSEClient(`/api/jobs/${jobId}/events`, {
+    onMessage: (data) => {
+      showTrainingUI(data);
+      // Refresh performance chart on validation results
+      if (data.message?.includes('mAP')) {
+        loadPerformance();
+      }
+      if (data.status === 'completed' || data.status === 'failed') {
+        sseClient?.stop();
+        btn.disabled = false;
+        showToast(data.status === 'completed' ? 'Training complete!' : `Failed: ${data.error}`, data.status === 'completed' ? 'success' : 'error');
+        loadStatus();
+        loadPerformance();
+      }
+    },
+    onError: () => { btn.disabled = false; },
+  }).start();
+}
+
 async function startTraining() {
   const btn = document.getElementById('train-start');
   btn.disabled = true;
@@ -338,20 +482,8 @@ async function startTraining() {
         seed: parseInt(document.getElementById('train-seed').value),
       },
     });
-    document.getElementById('train-progress').classList.remove('hidden');
-    sseClient = new SSEClient(`/api/jobs/${res.id}/events`, {
-      onMessage: (data) => {
-        document.getElementById('train-bar').innerHTML = createProgressBar(data.progress, 'accent');
-        document.getElementById('train-msg').textContent = data.message || '';
-        if (data.status === 'completed' || data.status === 'failed') {
-          sseClient?.stop();
-          btn.disabled = false;
-          showToast(data.status === 'completed' ? 'Training complete!' : `Failed: ${data.error}`, data.status === 'completed' ? 'success' : 'error');
-          loadStatus();
-        }
-      },
-      onError: () => { btn.disabled = false; },
-    }).start();
+    showTrainingUI(res);
+    subscribeTrainingJob(res.id, btn);
   } catch (e) {
     showToast(`Failed: ${e.message}`, 'error');
     btn.disabled = false;

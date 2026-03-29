@@ -15,7 +15,7 @@ let _duration = 0;
 export function render(container) {
   container.innerHTML = `
     <div class="max-w-screen-2xl mx-auto space-y-6">
-      ${pageHeader('Predict', 'Run TAD inference on videos')}
+      ${pageHeader('TAD Predict', 'Run TAD inference on videos')}
 
       ${card(`
         <div class="space-y-5">

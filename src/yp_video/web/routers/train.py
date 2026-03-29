@@ -55,8 +55,15 @@ def get_status():
     if ckpt_base.exists():
         for d in sorted(ckpt_base.iterdir(), reverse=True):
             if d.is_dir():
-                for f in d.glob("*.pth"):
-                    checkpoints.append(str(f.relative_to(PROJECT_ROOT)))
+                for f in d.glob("*.pth*"):
+                    checkpoints.append(str(f))
+
+    # Find active training job
+    active_train_job = None
+    for j in job_manager.jobs.values():
+        if j.type == "train" and j.status == JobStatus.RUNNING:
+            active_train_job = j.to_dict()
+            break
 
     return {
         "cuts_count": cuts_count,
@@ -65,6 +72,7 @@ def get_status():
         "checkpoints": checkpoints,
         "gpu_available": True,
         "vllm_running": job_manager.vllm_using_gpu,
+        "active_train_job": active_train_job,
     }
 
 
@@ -159,23 +167,53 @@ async def start_training(req: TrainRequest):
             if req.resume:
                 cmd.extend(["--resume", req.resume])
 
+            env = {**os.environ, "PYTHONUNBUFFERED": "1"}
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 cwd=str(PROJECT_ROOT),
+                env=env,
             )
 
-            # Stream output for progress updates
+            # Stream output and parse epoch progress
+            import re
+            import time as _time
             last_msg = ""
+            max_epochs = 0
+            current_progress = 0.0
+            job_obj = job_manager.get_job(job.id)
+            last_push = 0.0
+            push_interval = 1.0  # send SSE update at most once per second
+
             while True:
                 line = await process.stdout.readline()
                 if not line:
                     break
                 text = line.decode().strip()
-                if text:
-                    last_msg = text
-                    await job_manager.update_job(job.id, message=text)
+                if not text:
+                    continue
+                last_msg = text
+                job_obj.logs.append(text)
+
+                # Parse total epochs: "Start training ActionFormer for 605 epochs ..."
+                m = re.search(r"for (\d+) epochs", text)
+                if m:
+                    max_epochs = int(m.group(1))
+
+                # Parse epoch progress: "[Train]: Epoch 42 finished"
+                m = re.search(r"\[Train\]: Epoch (\d+) finished", text)
+                if m and max_epochs > 0:
+                    current_progress = min((int(m.group(1)) + 1) / max_epochs, 0.99)
+
+                # Throttle SSE updates; always push epoch/mAP lines immediately
+                now = _time.monotonic()
+                is_key_line = "[Train]: Epoch" in text and "finished" in text or "mAP" in text
+                if is_key_line or now - last_push >= push_interval:
+                    last_push = now
+                    await job_manager.update_job(
+                        job.id, message=text, progress=current_progress,
+                    )
 
             returncode = await process.wait()
             if returncode == 0:
@@ -209,10 +247,30 @@ def list_checkpoints() -> list[dict]:
     if ckpt_base.exists():
         for d in sorted(ckpt_base.iterdir(), reverse=True):
             if d.is_dir():
-                for f in sorted(d.glob("*.pth"), reverse=True):
+                for f in sorted(d.glob("*.pth*"), reverse=True):
                     checkpoints.append({
-                        "path": str(f.relative_to(PROJECT_ROOT)),
+                        "path": str(f),
                         "name": f"{d.name}/{f.name}",
                         "size_mb": round(f.stat().st_size / 1024 / 1024, 1),
                     })
     return checkpoints
+
+
+@router.get("/performance")
+def get_performance():
+    """Return training performance log from the latest experiment."""
+    import json as _json
+
+    ckpt_base = TAD_CHECKPOINTS_DIR / "actionformer"
+    if not ckpt_base.exists():
+        return {"entries": []}
+
+    # Find latest experiment dir with a train_log.json
+    for d in sorted(ckpt_base.iterdir(), reverse=True):
+        log_file = d / "train_log.json"
+        if log_file.exists():
+            with open(log_file) as f:
+                entries = _json.load(f)
+            return {"name": d.name, "entries": entries}
+
+    return {"entries": []}

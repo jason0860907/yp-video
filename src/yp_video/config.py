@@ -31,22 +31,20 @@ VENV_PYTHON = PROJECT_ROOT / ".venv" / "bin" / "python"
 # ── TAD paths ─────────────────────────────────────────────────────
 TAD_PKG_DIR = Path(__file__).resolve().parent / "tad"
 TAD_CONFIGS_DIR = TAD_PKG_DIR / "configs"
-TAD_DATA_DIR = TAD_PKG_DIR / "data"
-TAD_ANNOTATIONS_DIR = TAD_DATA_DIR / "annotations"
-TAD_ANNOTATIONS_FILE = TAD_ANNOTATIONS_DIR / "volleyball_anno.json"
-TAD_CHECKPOINTS_DIR = TAD_PKG_DIR / "checkpoints"
 
 # ── User data directories (~/videos) ─────────────────────────────
 VIDEOS_DIR = Path.home() / "videos"
 CUTS_DIR = VIDEOS_DIR / "cuts"
 SEG_ANNOTATIONS_DIR = VIDEOS_DIR / "seg-annotations"
 PRE_ANNOTATIONS_DIR = VIDEOS_DIR / "rally-pre-annotations"
-REFINE_ANNOTATIONS_DIR = VIDEOS_DIR / "rally-refine-annotations"
 ANNOTATIONS_DIR = VIDEOS_DIR / "rally-annotations"
 PREDICTIONS_DIR = VIDEOS_DIR / "tad-predictions"
 RALLY_CLIPS_DIR = VIDEOS_DIR / "rally_clips"
 FEATURES_DIR = VIDEOS_DIR / "features"
 TAD_FEATURES_DIR = FEATURES_DIR / "vjepa-b"
+TAD_CHECKPOINTS_DIR = VIDEOS_DIR / "tad-checkpoints"
+TAD_ANNOTATIONS_DIR = VIDEOS_DIR / "tad-annotations"
+TAD_ANNOTATIONS_FILE = TAD_ANNOTATIONS_DIR / "volleyball_anno.json"
 
 # R2 category → local directory + glob pattern mapping
 class R2Category(NamedTuple):
@@ -58,7 +56,6 @@ R2_CATEGORIES: dict[str, R2Category] = {
     "cuts": R2Category(CUTS_DIR, "*.mp4"),
     "seg-annotations": R2Category(SEG_ANNOTATIONS_DIR, "*.jsonl"),
     "rally-pre-annotations": R2Category(PRE_ANNOTATIONS_DIR, "*.jsonl"),
-    "rally-refine-annotations": R2Category(REFINE_ANNOTATIONS_DIR, "*.jsonl"),
     "rally-annotations": R2Category(ANNOTATIONS_DIR, "*.jsonl"),
     "tad-predictions": R2Category(PREDICTIONS_DIR, "*.jsonl"),
     "rally_clips": R2Category(RALLY_CLIPS_DIR, "*.mp4"),
