@@ -41,7 +41,7 @@ ANNOTATIONS_DIR = VIDEOS_DIR / "rally-annotations"
 PREDICTIONS_DIR = VIDEOS_DIR / "tad-predictions"
 RALLY_CLIPS_DIR = VIDEOS_DIR / "rally_clips"
 FEATURES_DIR = VIDEOS_DIR / "features"
-TAD_FEATURES_DIR = FEATURES_DIR / "vjepa-b"
+TAD_FEATURES_DIR = FEATURES_DIR / "vjepa-b"  # default (ViT-B); use tad_features_dir() for other sizes
 TAD_CHECKPOINTS_DIR = VIDEOS_DIR / "tad-checkpoints"
 TAD_ANNOTATIONS_DIR = VIDEOS_DIR / "tad-annotations"
 TAD_ANNOTATIONS_FILE = TAD_ANNOTATIONS_DIR / "volleyball_anno.json"
@@ -59,6 +59,7 @@ R2_CATEGORIES: dict[str, R2Category] = {
     "rally-annotations": R2Category(ANNOTATIONS_DIR, "*.jsonl"),
     "tad-predictions": R2Category(PREDICTIONS_DIR, "*.jsonl"),
     "rally_clips": R2Category(RALLY_CLIPS_DIR, "*.mp4"),
+    "tad-checkpoints": R2Category(TAD_CHECKPOINTS_DIR, "**/*"),
 }
 
 # ── Web static assets ────────────────────────────────────────────

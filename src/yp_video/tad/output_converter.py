@@ -23,6 +23,8 @@ def convert_tad_output_to_jsonl(
     feature_fps: float,
     output_path: Path,
     min_duration: float = 1.0,
+    checkpoint: str | None = None,
+    model: str | None = None,
 ):
     """Convert TAD detections to annotator JSONL format.
 
@@ -33,12 +35,18 @@ def convert_tad_output_to_jsonl(
         feature_fps: Features per second (for frame->time conversion)
         output_path: Output JSONL path
         min_duration: Minimum detection duration in seconds
+        checkpoint: Checkpoint path used for inference
+        model: V-JEPA model name (base/large/giant/gigantic)
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     with open(output_path, "w", encoding="utf-8") as f:
         # Write metadata
         meta = {"_meta": True, "video": str(video_path), "duration": duration}
+        if checkpoint:
+            meta["checkpoint"] = checkpoint
+        if model:
+            meta["model"] = model
         f.write(json.dumps(meta, ensure_ascii=False) + "\n")
 
         # Write detections

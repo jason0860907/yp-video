@@ -13,6 +13,7 @@ import torch.nn as nn
 
 from yp_video.config import (
     ACTIONFORMER_DIR,
+    FEATURES_DIR,
     PROJECT_ROOT,
     TAD_CHECKPOINTS_DIR,
     TAD_CONFIGS_DIR,
@@ -53,6 +54,12 @@ def main():
         type=Path,
         default=None,
         help="Resume from checkpoint",
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default=None,
+        help="V-JEPA model size (base/large/giant/gigantic) — overrides feat_folder & input_dim in config",
     )
     parser.add_argument(
         "--gpu",
@@ -123,10 +130,21 @@ def main():
         if key in cfg["dataset"]:
             cfg["dataset"][key] = os.path.expanduser(cfg["dataset"][key])
 
+    # Override feature folder & input_dim when --model is specified
+    from yp_video.tad.extract_features import MODEL_CONFIGS
+    model_name = args.model or "base"
+    mcfg = MODEL_CONFIGS[model_name]
+    if args.model:
+        feat_folder = str(FEATURES_DIR / mcfg.dir_suffix)
+        cfg["dataset"]["feat_folder"] = feat_folder
+        cfg["dataset"]["input_dim"] = mcfg.feat_dim
+        cfg["model"]["input_dim"] = mcfg.feat_dim
+        print(f"Model override: feat_folder={feat_folder}, input_dim={mcfg.feat_dim}")
+
     # Override output folder
     if not args.work_dir:
         today = date.today().strftime("%Y-%m%d")
-        args.work_dir = TAD_CHECKPOINTS_DIR / "actionformer" / today
+        args.work_dir = TAD_CHECKPOINTS_DIR / "actionformer" / mcfg.dir_suffix / today
 
     ckpt_folder = str(args.work_dir)
     os.makedirs(ckpt_folder, exist_ok=True)
@@ -196,9 +214,8 @@ def main():
     with open(os.path.join(ckpt_folder, "config.txt"), "w") as fid:
         pprint(cfg, stream=fid)
 
-    # Training log
-    log_path = os.path.join(ckpt_folder, "train_log.json")
-    log_entries: list[dict] = []
+    # Training log (JSONL — one JSON object per line)
+    log_path = os.path.join(ckpt_folder, "train_log.jsonl")
 
     # Training loop
     max_epochs = cfg["opt"].get(
@@ -248,13 +265,13 @@ def main():
                         "recall": round(float(mRecall[i][0]), 4),
                     }
 
-            log_entries.append({
+            entry = {
                 "epoch": epoch + 1,
                 "mAP": round(float(avg_mAP), 4),
                 "tiou": tiou_metrics,
-            })
-            with open(log_path, "w") as f:
-                json.dump(log_entries, f, indent=2)
+            }
+            with open(log_path, "a") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
             print(f"[Epoch {epoch + 1}] mAP = {avg_mAP:.4f}  best = {best_mAP:.4f}")
 

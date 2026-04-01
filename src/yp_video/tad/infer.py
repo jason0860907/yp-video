@@ -15,12 +15,13 @@ import torch
 
 from yp_video.config import (
     ACTIONFORMER_DIR,
+    FEATURES_DIR,
     TAD_CHECKPOINTS_DIR,
     TAD_CONFIGS_DIR,
     TAD_FEATURES_DIR,
 )
 
-from .extract_features import extract_features_from_video, load_model, open_video
+from .extract_features import MODEL_CONFIGS, extract_features_from_video, load_model, open_video
 from .output_converter import convert_tad_output_to_jsonl
 
 
@@ -32,6 +33,8 @@ def run_inference(
     device: str = "cuda",
     confidence_threshold: float = 0.3,
     cut_dir: Path | None = None,
+    model_name: str = "base",
+    on_message: "Callable[[str], None] | None" = None,
 ):
     """Run full inference pipeline on a video.
 
@@ -43,8 +46,18 @@ def run_inference(
         device: Device to use
         confidence_threshold: Minimum confidence for detections
         cut_dir: If set, export rally clips to this directory
+        model_name: V-JEPA model size (base/large/giant/gigantic)
+        on_message: Optional callback for step-level status updates
     """
-    print(f"Processing: {video_path.name}")
+    def _msg(text: str):
+        print(text)
+        if on_message:
+            on_message(text)
+
+    _msg(f"Processing: {video_path.name}")
+
+    mcfg = MODEL_CONFIGS[model_name]
+    feat_dir = FEATURES_DIR / mcfg.dir_suffix
 
     # Get video info
     reader = open_video(video_path)
@@ -56,23 +69,24 @@ def run_inference(
     duration = num_frames / fps if fps > 0 else 0
 
     # Step 1: Extract features (or load from cache)
-    feature_cache = TAD_FEATURES_DIR / f"{video_path.stem}.npy"
+    feature_cache = feat_dir / f"{video_path.stem}.npy"
     if feature_cache.exists():
-        print(f"Step 1: Loading cached features from {feature_cache}")
+        _msg("Step 1/3: Loading cached features")
         features = np.load(feature_cache)
     else:
-        print("Step 1: Extracting V-JEPA 2.1 features...")
+        _msg(f"Step 1/3: Extracting V-JEPA 2.1 {model_name} features...")
         torch_device = torch.device(device)
-        model = load_model(torch_device)
+        model = load_model(torch_device, model_name)
         features = extract_features_from_video(
             video_path, model, torch_device,
+            feat_dim=mcfg.feat_dim,
         )
         feature_cache.parent.mkdir(parents=True, exist_ok=True)
         np.save(feature_cache, features)
     print(f"  Features shape: {features.shape}")
 
     # Step 2: Run ActionFormer inference
-    print("Step 2: Running TAD inference...")
+    _msg("Step 2/3: Running TAD inference...")
     if not checkpoint_path.exists():
         print("Warning: Checkpoint not found, using simple detection")
         detections = simple_inference(features, fps, confidence_threshold)
@@ -85,19 +99,21 @@ def run_inference(
             confidence_threshold,
             duration,
             fps,
+            model_name,
         )
 
     print(f"  Found {len(detections)} detections")
 
     # Step 3: Convert to JSONL
-    # ActionFormer returns segments already in seconds, so feature_fps=1.0
-    print("Step 3: Converting to JSONL...")
+    _msg(f"Step 3/3: Saving {len(detections)} detections...")
     convert_tad_output_to_jsonl(
         detections=detections,
         video_path=video_path,
         duration=duration,
         feature_fps=1.0,
         output_path=output_path,
+        checkpoint=str(checkpoint_path),
+        model=model_name,
     )
 
     print(f"  Saved to: {output_path}")
@@ -197,6 +213,7 @@ def actionformer_inference(
     confidence_threshold: float,
     duration: float,
     video_fps: float = 60.0,
+    model_name: str = "base",
 ) -> list[dict]:
     """Run ActionFormer inference on extracted features."""
     _setup_actionformer()
@@ -206,6 +223,11 @@ def actionformer_inference(
 
     # Load config
     cfg = load_config(str(config_path))
+
+    # Override input_dim to match the feature model
+    mcfg = MODEL_CONFIGS[model_name]
+    cfg["dataset"]["input_dim"] = mcfg.feat_dim
+    cfg["model"]["input_dim"] = mcfg.feat_dim
 
     # Build model and wrap in DataParallel (ActionFormer checkpoints expect this)
     model = make_meta_arch(cfg["model_name"], **cfg["model"])
@@ -305,6 +327,13 @@ def main():
         help="Confidence threshold",
     )
     parser.add_argument(
+        "--model",
+        type=str,
+        default="base",
+        choices=list(MODEL_CONFIGS.keys()),
+        help="V-JEPA model size (must match the features used for training)",
+    )
+    parser.add_argument(
         "--cut",
         action="store_true",
         help="Export detected rallies as individual video clips",
@@ -334,6 +363,7 @@ def main():
         args.device,
         args.threshold,
         cut_dir,
+        args.model,
     )
 
 
