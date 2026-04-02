@@ -9,10 +9,11 @@ const CATEGORIES = [
   { key: 'videos', label: 'Videos', localOnly: true },
   { key: 'cuts', label: 'Cuts' },
   { key: 'seg-annotations', label: 'Seg Annotations' },
-  { key: 'rally-pre-annotations', label: 'Pre-Annotations' },
+  { key: 'rally-pre-annotations', label: 'VLM-Predictions' },
   { key: 'rally-annotations', label: 'Annotations' },
-  { key: 'tad-predictions', label: 'Predictions' },
+  { key: 'tad-predictions', label: 'TAD-Predictions' },
   { key: 'rally_clips', label: 'Rally Clips' },
+  { key: 'tad-checkpoints', label: 'TAD-Checkpoints' },
 ];
 
 function isLocalOnly() {

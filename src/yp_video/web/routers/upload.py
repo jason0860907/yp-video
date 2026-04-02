@@ -60,7 +60,23 @@ def list_local_files(category: str = "cuts") -> list[dict]:
             pass  # R2 unavailable, show all as un-synced
 
     files = []
-    if category == "rally_clips":
+    if category == "tad-checkpoints":
+        # Nested: actionformer/{model}/{date}/{file} — only sync key files
+        SYNC_FILES = {"best.pth.tar", "config.txt", "train_log.jsonl", "train_log.json"}
+        for f in sorted(base_dir.rglob("*")):
+            if f.is_file() and f.name in SYNC_FILES:
+                rel = str(f.relative_to(base_dir))
+                r2_key = f"{category}/{rel}"
+                group = str(f.parent.relative_to(base_dir))
+                files.append({
+                    "name": f.name,
+                    "path": rel,
+                    "group": group,
+                    "size": f.stat().st_size,
+                    "r2_key": r2_key,
+                    "uploaded": r2_key in r2_keys,
+                })
+    elif category == "rally_clips":
         # Nested: rally_clips/{video_stem}/clip.mp4
         for video_dir in sorted(base_dir.iterdir()):
             if video_dir.is_dir():

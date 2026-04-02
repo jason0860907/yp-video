@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from yp_video.config import (
     ANNOTATIONS_DIR,
     CUTS_DIR,
+    FEATURES_DIR,
     PREDICTIONS_DIR,
     PRE_ANNOTATIONS_DIR,
     SEG_ANNOTATIONS_DIR,
@@ -45,8 +46,13 @@ async def vllm_health():
 
 
 @router.get("/videos")
-def list_videos() -> list[dict]:
+def list_videos(model: str = "base") -> list[dict]:
     """List cut videos with full pipeline status."""
+    from yp_video.tad.extract_features import MODEL_CONFIGS
+
+    cfg = MODEL_CONFIGS.get(model, MODEL_CONFIGS["base"])
+    feat_dir = FEATURES_DIR / cfg.dir_suffix
+
     results = []
     if CUTS_DIR.exists():
         for f in sorted(CUTS_DIR.glob("*.mp4")):
@@ -56,7 +62,7 @@ def list_videos() -> list[dict]:
                 "has_detection": (SEG_ANNOTATIONS_DIR / f"{stem}.jsonl").exists(),
                 "has_pre_annotation": (PRE_ANNOTATIONS_DIR / f"{stem}_annotations.jsonl").exists(),
                 "has_annotation": (ANNOTATIONS_DIR / f"{stem}_annotations.jsonl").exists(),
-                "has_features": (TAD_FEATURES_DIR / f"{stem}.npy").exists(),
+                "has_features": (feat_dir / f"{stem}.npy").exists(),
             })
     return results
 

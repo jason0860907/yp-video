@@ -255,6 +255,39 @@ def sync_to_r2(local_path: Path, category: str) -> None:
         log.debug("sync_to_r2 skipped (no running event loop) for %s", local_path.name)
 
 
+def sync_to_r2_nested(local_path: Path, category: str, base_dir: Path) -> None:
+    """Fire-and-forget upload preserving directory structure relative to base_dir.
+
+    Example: sync_to_r2_nested(
+        .../tad-checkpoints/actionformer/vjepa-b/2026-0401/best.pth.tar,
+        "tad-checkpoints",
+        .../tad-checkpoints/
+    ) → R2 key: tad-checkpoints/actionformer/vjepa-b/2026-0401/best.pth.tar
+    """
+    if not r2_client.configured:
+        return
+
+    rel = local_path.relative_to(base_dir)
+    r2_key = f"{category}/{rel}"
+
+    async def _upload():
+        loop = asyncio.get_running_loop()
+        try:
+            await loop.run_in_executor(
+                None,
+                lambda: r2_client.upload_file(local_path, r2_key),
+            )
+            log.info("R2 sync: %s -> %s", rel, r2_key)
+        except Exception as e:
+            log.warning("R2 sync failed for %s: %s", rel, e)
+
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(_upload())
+    except RuntimeError:
+        log.debug("sync_to_r2_nested skipped (no running event loop) for %s", rel)
+
+
 def sync_directory_to_r2(directory: Path, category: str, pattern: str = "*.jsonl") -> None:
     """Fire-and-forget background upload of all matching files in a directory."""
     if not r2_client.configured or not directory.exists():
