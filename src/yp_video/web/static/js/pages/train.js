@@ -1,11 +1,12 @@
 /**
  * Train page — Feature extraction + annotation conversion + TAD training.
  */
-import { api, SSEClient, card, pageHeader, stepBadge, statCard, sectionTitle, btnPrimary, btnSecondary, btnSmall, createProgressBar, showToast, emptyState, inputCls } from '../shared.js';
+import { api, SSEClient, card, pageHeader, stepBadge, statCard, sectionTitle, btnPrimary, btnSecondary, btnSmall, createProgressBar, showToast, emptyState, inputCls, selectCls } from '../shared.js';
 
 let sseClient = null;
 let videos = [];
 let convVideos = [];
+let selectedModel = 'base';
 
 export function render(container) {
   container.innerHTML = `
@@ -37,6 +38,15 @@ export function render(container) {
               <div id="train-videos" class="space-y-0.5 max-h-72 overflow-y-auto pr-1"></div>
             </div>
             <div class="flex items-end gap-4">
+              <div>
+                <label class="block text-[11px] text-text-muted mb-1.5 uppercase tracking-wider font-medium">Model</label>
+                <select id="train-feat-model" class="w-44 ${selectCls}">
+                  <option value="base">ViT-B (768d, 80M)</option>
+                  <option value="large">ViT-L (1024d, 300M)</option>
+                  <option value="giant">ViT-g (1408d, 1B)</option>
+                  <option value="gigantic">ViT-G (1664d, 2B)</option>
+                </select>
+              </div>
               <div>
                 <label class="block text-[11px] text-text-muted mb-1.5 uppercase tracking-wider font-medium">Batch Size</label>
                 <input id="train-feat-batch" type="number" value="32" min="1" max="64" class="w-28 ${inputCls}">
@@ -102,6 +112,9 @@ export function render(container) {
               <label class="block text-[11px] text-text-muted mb-1.5 uppercase tracking-wider font-medium">Seed</label>
               <input id="train-seed" type="number" value="42" class="w-20 ${inputCls}">
             </div>
+            <div>
+              <span id="train-model-label" class="text-[11px] text-text-muted">Features: <span class="text-text-primary font-medium">ViT-B</span></span>
+            </div>
             ${btnPrimary('Start Training', 'id="train-start"')}
           </div>
           <div id="train-progress" class="ml-10 hidden space-y-2">
@@ -128,6 +141,14 @@ function bindEvents() {
   document.getElementById('train-convert').addEventListener('click', convertAnnotations);
   document.getElementById('train-extract').addEventListener('click', extractFeatures);
   document.getElementById('train-start').addEventListener('click', startTraining);
+  document.getElementById('train-feat-model').addEventListener('change', (e) => {
+    selectedModel = e.target.value;
+    loadVideos();
+    loadStatus();
+    const names = { base: 'ViT-B', large: 'ViT-L', giant: 'ViT-g', gigantic: 'ViT-G' };
+    document.getElementById('train-model-label').innerHTML =
+      `Features: <span class="text-text-primary font-medium">${names[selectedModel] || selectedModel}</span>`;
+  });
   document.getElementById('train-select-all').addEventListener('click', () => {
     videos.forEach(v => v.selected = true);
     renderVideos();
@@ -168,7 +189,7 @@ function bindEvents() {
 
 async function loadStatus() {
   try {
-    const s = await api('/train/status');
+    const s = await api(`/train/status?model=${selectedModel}`);
     document.getElementById('train-status-card').innerHTML = card(`
       <div class="grid grid-cols-4 gap-3">
         ${statCard('Cuts', s.cuts_count, s.cuts_count > 0)}
@@ -190,7 +211,7 @@ async function loadStatus() {
 
 async function loadVideos() {
   try {
-    const list = await api('/system/videos');
+    const list = await api(`/system/videos?model=${selectedModel}`);
     videos = list.map(v => ({ ...v, selected: !v.has_features }));
     convVideos = list.map(v => ({ ...v, selected: v.has_annotation || v.has_pre_annotation }));
     renderVideos();
@@ -270,7 +291,7 @@ const TIOU_COLORS = {
 
 async function loadPerformance() {
   try {
-    const data = await api('/train/performance');
+    const data = await api(`/train/performance?model=${selectedModel}`);
     const el = document.getElementById('train-performance');
     if (!data.entries?.length) {
       el.innerHTML = '';
@@ -390,6 +411,7 @@ async function convertAnnotations() {
       body: {
         train_ratio: parseFloat(document.getElementById('train-ratio').value),
         videos: selected,
+        model: selectedModel,
       },
     });
     status.textContent = `${res.video_count} videos converted`;
@@ -415,6 +437,7 @@ async function extractFeatures() {
       body: {
         videos: selected,
         batch_size: parseInt(document.getElementById('train-feat-batch').value),
+        model: selectedModel,
       },
     });
     document.getElementById('train-extract-progress').classList.remove('hidden');
@@ -480,6 +503,7 @@ async function startTraining() {
       body: {
         gpu: parseInt(document.getElementById('train-gpu').value),
         seed: parseInt(document.getElementById('train-seed').value),
+        model: selectedModel,
       },
     });
     showTrainingUI(res);
