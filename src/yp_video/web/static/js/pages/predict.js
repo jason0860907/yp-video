@@ -1,10 +1,10 @@
 /**
- * Predict page — TAD inference with result visualization and video review.
+ * Predict page — TAD inference with multi-video selection and result visualization.
  */
 import { api, SSEClient, formatTime, card, pageHeader, sectionTitle, stepBadge, btnPrimary, btnSmall, createProgressBar, showToast, emptyState, inputCls, selectCls } from '../shared.js';
 
-let sseClient = null;
-let state = { videos: [], checkpoints: [], results: [] };
+let sseClients = [];
+let state = { videos: [], checkpoints: [], results: [], jobs: [] };
 let videoEl = null;
 let timelineCanvas = null;
 let animFrame = null;
@@ -18,32 +18,48 @@ export function render(container) {
       ${pageHeader('TAD Predict', 'Run TAD inference on videos')}
 
       ${card(`
+        <div class="space-y-4">
+          ${sectionTitle(
+            'Videos',
+            '',
+            `${btnSmall('Select All', 'id="pred-select-all"')}
+             ${btnSmall('Deselect All', 'id="pred-deselect-all"')}
+             ${btnSmall('Unpredicted', 'id="pred-select-unpredicted"', 'primary')}`
+          )}
+          <div id="pred-videos" class="space-y-0.5 max-h-72 overflow-y-auto pr-1"></div>
+        </div>
+      `)}
+
+      ${card(`
         <div class="space-y-5">
           <div class="flex items-center gap-3">
             ${stepBadge(1, 'accent')}
             <div>
-              ${sectionTitle('Run Prediction', 'Select a video and checkpoint to run TAD inference')}
+              ${sectionTitle('Prediction Settings', 'Select checkpoint and configure inference parameters')}
             </div>
           </div>
-          <div class="ml-10 grid grid-cols-2 gap-4">
-            <div>
-              <label class="block text-[11px] text-text-muted mb-1.5 uppercase tracking-wider font-medium">Video</label>
-              <select id="pred-video" class="w-full ${selectCls}">
-                <option value="">Select video...</option>
-              </select>
-            </div>
+          <div class="ml-10 grid grid-cols-3 gap-4">
             <div>
               <label class="block text-[11px] text-text-muted mb-1.5 uppercase tracking-wider font-medium">Checkpoint</label>
               <select id="pred-checkpoint" class="w-full ${selectCls}">
                 <option value="">Select checkpoint...</option>
               </select>
             </div>
-          </div>
-          <div class="ml-10 grid grid-cols-3 gap-4">
+            <div>
+              <label class="block text-[11px] text-text-muted mb-1.5 uppercase tracking-wider font-medium">Feature Model</label>
+              <select id="pred-model" class="w-full ${selectCls}">
+                <option value="base">ViT-B (768d)</option>
+                <option value="large">ViT-L (1024d)</option>
+                <option value="giant">ViT-g (1408d)</option>
+                <option value="gigantic">ViT-G (1664d)</option>
+              </select>
+            </div>
             <div>
               <label class="block text-[11px] text-text-muted mb-1.5 uppercase tracking-wider font-medium">Threshold</label>
               <input id="pred-threshold" type="number" value="0.3" min="0" max="1" step="0.05" class="w-full ${inputCls}">
             </div>
+          </div>
+          <div class="ml-10 grid grid-cols-3 gap-4">
             <div>
               <label class="block text-[11px] text-text-muted mb-1.5 uppercase tracking-wider font-medium">Device</label>
               <select id="pred-device" class="w-full ${selectCls}">
@@ -61,18 +77,23 @@ export function render(container) {
           <div class="ml-10 flex items-center gap-3 pt-1">
             ${btnPrimary('Start Prediction', 'id="pred-start"')}
           </div>
-          <div id="pred-progress" class="ml-10 hidden space-y-3">
-            <div class="flex items-center justify-between">
-              <div class="flex items-center gap-2.5">
-                <span class="w-2 h-2 rounded-full bg-primary-light animate-pulse-dot"></span>
-                <span class="text-xs font-heading text-text-secondary">Running inference</span>
-              </div>
-            </div>
-            <div id="pred-bar"></div>
-            <p id="pred-msg" class="text-xs text-text-muted"></p>
-          </div>
         </div>
       `)}
+
+      <div id="pred-progress" class="hidden">
+        ${card(`
+          <div class="space-y-3">
+            <div class="flex items-center gap-2.5 mb-3">
+              <span class="w-2 h-2 rounded-full bg-primary-light animate-pulse-dot"></span>
+              <h3 class="text-sm font-heading font-semibold text-text-primary">Progress</h3>
+            </div>
+            <div id="pred-jobs-progress" class="space-y-3"></div>
+            <div id="pred-retry-wrap" class="hidden pt-1">
+              ${btnSmall('Retry Failed', 'id="pred-retry-failed"', 'primary')}
+            </div>
+          </div>
+        `)}
+      </div>
 
       ${card(`
         <div class="space-y-4">
@@ -103,6 +124,8 @@ export function deactivate() {
   window.removeEventListener('resize', resizeTimeline);
   if (animFrame) { cancelAnimationFrame(animFrame); animFrame = null; }
   if (videoEl && !videoEl.paused) videoEl.pause();
+  sseClients.forEach(c => c.stop());
+  sseClients = [];
 }
 
 function handleKeydown(e) {
@@ -123,7 +146,6 @@ function jumpDetection(dir) {
   videoEl.currentTime = d.start;
   videoEl.play();
   renderDetections();
-  // Scroll selected into view
   const el = document.querySelector(`.det-item[data-idx="${_selectedIdx}"]`);
   if (el) el.scrollIntoView({ block: 'nearest' });
 }
@@ -131,6 +153,19 @@ function jumpDetection(dir) {
 function bindEvents() {
   document.getElementById('pred-start').addEventListener('click', startPrediction);
   document.getElementById('pred-refresh').addEventListener('click', loadResults);
+  document.getElementById('pred-retry-failed').addEventListener('click', retryFailed);
+  document.getElementById('pred-select-all').addEventListener('click', () => {
+    state.videos.forEach(v => v.selected = true);
+    renderVideos();
+  });
+  document.getElementById('pred-deselect-all').addEventListener('click', () => {
+    state.videos.forEach(v => v.selected = false);
+    renderVideos();
+  });
+  document.getElementById('pred-select-unpredicted').addEventListener('click', () => {
+    state.videos.forEach(v => v.selected = !v.has_prediction);
+    renderVideos();
+  });
 }
 
 async function loadData() {
@@ -139,16 +174,10 @@ async function loadData() {
       api('/predict/videos'),
       api('/train/checkpoints'),
     ]);
-    state.videos = videos;
+    state.videos = videos.map(v => ({ ...v, selected: !v.has_prediction }));
     state.checkpoints = checkpoints;
 
-    const vidSel = document.getElementById('pred-video');
-    videos.forEach(v => {
-      const opt = document.createElement('option');
-      opt.value = v.name;
-      opt.textContent = `${v.name}${v.has_prediction ? ' (done)' : ''}`;
-      vidSel.appendChild(opt);
-    });
+    renderVideos();
 
     const cpSel = document.getElementById('pred-checkpoint');
     checkpoints.forEach(cp => {
@@ -162,6 +191,34 @@ async function loadData() {
   } catch (e) {
     showToast(`Failed to load: ${e.message}`, 'error');
   }
+}
+
+function renderVideos() {
+  const el = document.getElementById('pred-videos');
+  if (state.videos.length === 0) {
+    el.innerHTML = emptyState(
+      '<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>',
+      'No cut videos found',
+      'Cut some videos first'
+    );
+    return;
+  }
+
+  el.innerHTML = state.videos.map((v, i) => `
+    <div class="group flex items-center gap-3 p-2.5 rounded-xl border border-transparent hover:bg-white/[0.03] hover:border-white/5 transition-all duration-200">
+      <input type="checkbox" data-idx="${i}" class="pred-check cursor-pointer accent-primary w-3.5 h-3.5" ${v.selected ? 'checked' : ''}>
+      <span class="text-sm text-text-primary flex-1 truncate group-hover:text-white transition-colors duration-200">${v.name}</span>
+      ${v.has_prediction
+        ? '<span class="inline-flex items-center gap-1.5 text-[11px] text-emerald-400 bg-emerald-500/10 ring-1 ring-emerald-500/20 px-2.5 py-0.5 rounded-full font-medium"><span class="w-1.5 h-1.5 rounded-full bg-current"></span>predicted</span>'
+        : '<span class="inline-flex items-center gap-1.5 text-[11px] text-text-muted bg-white/5 ring-1 ring-white/10 px-2.5 py-0.5 rounded-full font-medium"><span class="w-1.5 h-1.5 rounded-full bg-current"></span>pending</span>'}
+    </div>
+  `).join('');
+
+  el.querySelectorAll('.pred-check').forEach(cb => {
+    cb.addEventListener('change', (e) => {
+      state.videos[parseInt(e.target.dataset.idx)].selected = e.target.checked;
+    });
+  });
 }
 
 async function loadResults() {
@@ -195,6 +252,124 @@ function renderResults() {
   el.querySelectorAll('[data-name]').forEach(item => {
     item.addEventListener('click', () => viewResult(item.dataset.name));
   });
+}
+
+async function startPrediction() {
+  const selected = state.videos.filter(v => v.selected).map(v => v.name);
+  if (selected.length === 0) return showToast('No videos selected', 'warning');
+
+  const checkpoint = document.getElementById('pred-checkpoint').value;
+  if (!checkpoint) return showToast('Select a checkpoint', 'warning');
+
+  const btn = document.getElementById('pred-start');
+  btn.disabled = true;
+  document.getElementById('pred-retry-wrap').classList.add('hidden');
+
+  // Stop any existing SSE clients
+  sseClients.forEach(c => c.stop());
+  sseClients = [];
+
+  try {
+    const jobs = await api('/predict/start', {
+      method: 'POST',
+      body: {
+        videos: selected,
+        checkpoint,
+        threshold: parseFloat(document.getElementById('pred-threshold').value),
+        device: document.getElementById('pred-device').value,
+        cut_rallies: document.getElementById('pred-cut').checked,
+        model: document.getElementById('pred-model').value,
+      },
+    });
+
+    state.jobs = jobs.map(j => ({ ...j }));
+    document.getElementById('pred-progress').classList.remove('hidden');
+    renderJobsProgress();
+
+    let doneCount = 0;
+    const total = jobs.length;
+
+    for (const job of jobs) {
+      const client = new SSEClient(`/api/jobs/${job.id}/events`, {
+        onMessage: (data) => {
+          const idx = state.jobs.findIndex(j => j.id === data.id);
+          if (idx >= 0) state.jobs[idx] = data;
+          renderJobsProgress();
+
+          if (data.status === 'completed' || data.status === 'failed' || data.status === 'cancelled') {
+            client.stop();
+            doneCount++;
+            if (data.status === 'failed') {
+              showToast(`${job.name} failed: ${data.error || 'Unknown error'}`, 'error');
+            }
+            if (doneCount >= total) {
+              const failed = state.jobs.filter(j => j.status === 'failed').length;
+              if (failed === 0) showToast('All predictions complete!', 'success');
+              else {
+                showToast(`${total - failed}/${total} completed, ${failed} failed`, 'warning');
+                document.getElementById('pred-retry-wrap').classList.remove('hidden');
+              }
+              btn.disabled = false;
+              loadVideos();
+            }
+          }
+        },
+        onError: () => {
+          doneCount++;
+          if (doneCount >= total) btn.disabled = false;
+        },
+      }).start();
+      sseClients.push(client);
+    }
+  } catch (e) {
+    showToast(`Failed to start prediction: ${e.message}`, 'error');
+    btn.disabled = false;
+  }
+}
+
+function retryFailed() {
+  const failedNames = new Set(state.jobs.filter(j => j.status === 'failed').map(j => j.name));
+  state.videos.forEach(v => v.selected = failedNames.has(v.name));
+  renderVideos();
+  startPrediction();
+}
+
+async function loadVideos() {
+  try {
+    const videos = await api('/predict/videos');
+    state.videos = videos.map(v => ({ ...v, selected: !v.has_prediction }));
+    renderVideos();
+  } catch { /* silently fail */ }
+}
+
+function renderJobsProgress() {
+  const el = document.getElementById('pred-jobs-progress');
+  if (!el) return;
+
+  el.innerHTML = state.jobs.map(job => {
+    const pct = Math.round((job.progress || 0) * 100);
+    const isRunning = job.status === 'running';
+    const isDone = job.status === 'completed';
+    const isFailed = job.status === 'failed';
+    const isCancelled = job.status === 'cancelled';
+
+    let statusColor = 'text-text-muted';
+    if (isRunning) statusColor = 'text-primary-light';
+    else if (isDone) statusColor = 'text-emerald-400';
+    else if (isFailed) statusColor = 'text-red-400';
+    else if (isCancelled) statusColor = 'text-amber-400';
+
+    return `
+      <div class="space-y-1.5">
+        <div class="flex items-center justify-between">
+          <span class="text-xs text-text-primary font-medium truncate">${job.name}</span>
+          <span class="text-[11px] ${statusColor} tabular-nums font-medium">${isDone ? 'done' : isFailed ? 'failed' : isCancelled ? 'cancelled' : pct + '%'}</span>
+        </div>
+        ${createProgressBar(job.progress)}
+        ${job.message && isRunning ? `<p class="text-[10px] text-text-muted truncate">${job.message}</p>` : ''}
+        ${job.error ? `<p class="text-[10px] text-red-400/80 truncate">${job.error}</p>` : ''}
+      </div>`;
+  }).join('');
 }
 
 async function viewResult(name) {
@@ -339,7 +514,7 @@ function renderDetections() {
       </div>`;
   }).join('');
 
-  // Click row → seek to start and play
+  // Click row -> seek to start and play
   el.querySelectorAll('.det-item').forEach(item => {
     item.addEventListener('click', (e) => {
       if (e.target.closest('.det-preview')) return;
@@ -351,7 +526,7 @@ function renderDetections() {
       renderDetections();
     });
   });
-  // >> button → jump to last 5s of rally
+  // >> button -> jump to last 5s of rally
   el.querySelectorAll('.det-preview').forEach(btn => {
     btn.addEventListener('click', (e) => {
       const idx = parseInt(e.currentTarget.dataset.idx);
@@ -364,7 +539,7 @@ function renderDetections() {
   });
 }
 
-// ── Timeline ──
+// -- Timeline --
 function resizeTimeline() {
   if (!timelineCanvas) return;
   const rect = timelineCanvas.getBoundingClientRect();
@@ -417,44 +592,4 @@ function startTimelineLoop() {
     }
   }
   draw();
-}
-
-async function startPrediction() {
-  const video = document.getElementById('pred-video').value;
-  const checkpoint = document.getElementById('pred-checkpoint').value;
-  if (!video || !checkpoint) return showToast('Select video and checkpoint', 'warning');
-
-  const btn = document.getElementById('pred-start');
-  btn.disabled = true;
-
-  try {
-    const res = await api('/predict/start', {
-      method: 'POST',
-      body: {
-        video,
-        checkpoint,
-        threshold: parseFloat(document.getElementById('pred-threshold').value),
-        device: document.getElementById('pred-device').value,
-        cut_rallies: document.getElementById('pred-cut').checked,
-      },
-    });
-
-    document.getElementById('pred-progress').classList.remove('hidden');
-    sseClient = new SSEClient(`/api/jobs/${res.id}/events`, {
-      onMessage: (data) => {
-        document.getElementById('pred-bar').innerHTML = createProgressBar(data.progress);
-        document.getElementById('pred-msg').textContent = data.message || '';
-        if (data.status === 'completed' || data.status === 'failed') {
-          sseClient?.stop();
-          btn.disabled = false;
-          showToast(data.status === 'completed' ? 'Prediction complete!' : `Failed: ${data.error}`, data.status === 'completed' ? 'success' : 'error');
-          loadResults();
-        }
-      },
-      onError: () => { btn.disabled = false; },
-    }).start();
-  } catch (e) {
-    showToast(`Failed: ${e.message}`, 'error');
-    btn.disabled = false;
-  }
 }
