@@ -129,13 +129,18 @@ def list_r2_files(category: str = "cuts") -> list[dict]:
         # Strip category prefix to get relative path
         rel = obj["key"][len(category) + 1:]
         local_path = base_dir / rel
-        result.append({
+        entry: dict = {
             "name": Path(rel).name,
             "path": rel,
             "r2_key": obj["key"],
             "size": obj["size"],
             "local": local_path.exists(),
-        })
+        }
+        # Add group for nested categories
+        rel_path = Path(rel)
+        if len(rel_path.parts) > 1:
+            entry["group"] = str(rel_path.parent)
+        result.append(entry)
     return result
 
 
