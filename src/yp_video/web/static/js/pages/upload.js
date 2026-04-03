@@ -10,10 +10,11 @@ const CATEGORIES = [
   { key: 'cuts', label: 'Cuts' },
   { key: 'seg-annotations', label: 'Seg Annotations' },
   { key: 'rally-pre-annotations', label: 'VLM-Predictions' },
-  { key: 'rally-annotations', label: 'Annotations' },
   { key: 'tad-predictions', label: 'TAD-Predictions' },
-  { key: 'rally_clips', label: 'Rally Clips' },
+  { key: 'tad-features', label: 'TAD-Features' },
   { key: 'tad-checkpoints', label: 'TAD-Checkpoints' },
+  { key: 'rally-annotations', label: 'Annotations' },
+  { key: 'rally_clips', label: 'Rally Clips' },
 ];
 
 function isLocalOnly() {

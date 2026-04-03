@@ -91,6 +91,21 @@ def list_local_files(category: str = "cuts") -> list[dict]:
                         "r2_key": r2_key,
                         "uploaded": r2_key in r2_keys,
                     })
+    elif category == "tad-features":
+        # Nested: tad-features/{model}/*.npy
+        for f in sorted(base_dir.glob("**/*.npy")):
+            if f.is_file():
+                rel = str(f.relative_to(base_dir))
+                r2_key = f"{category}/{rel}"
+                group = str(f.parent.relative_to(base_dir))
+                files.append({
+                    "name": f.name,
+                    "path": rel,
+                    "group": group,
+                    "size": f.stat().st_size,
+                    "r2_key": r2_key,
+                    "uploaded": r2_key in r2_keys,
+                })
     else:
         pattern = R2_CATEGORIES[category].glob_pattern
         # For videos dir, only list .mp4 at top level (not subdirectories)

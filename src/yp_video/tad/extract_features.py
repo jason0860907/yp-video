@@ -45,7 +45,7 @@ CROP_SIZE = 384
 class ModelConfig(NamedTuple):
     hub_name: str
     feat_dim: int
-    dir_suffix: str  # subdirectory under ~/videos/features/
+    dir_suffix: str  # subdirectory under ~/videos/tad-features/
 
 
 MODEL_CONFIGS: dict[str, ModelConfig] = {
