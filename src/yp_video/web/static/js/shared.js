@@ -346,7 +346,10 @@ async function pollSidebar() {
       const items = [
         ['Videos', stats.videos],
         ['Cuts', stats.cuts],
+        ['Seg-Ann', stats.detections],
+        ['VLM-Pred', stats.pre_annotations],
         ['Annotations', stats.annotations],
+        ['TAD-Pred', stats.predictions],
       ];
       statsEl.innerHTML = items.map(([k, v]) => `
         <div class="flex justify-between items-center">
