@@ -23,16 +23,21 @@ if tmux has-session -t "${SESSION_NAME}" 2>/dev/null; then
     tmux kill-session -t "${SESSION_NAME}"
 fi
 
+mkdir -p "${SCRIPT_DIR}/logs"
+LOG_FILE="${SCRIPT_DIR}/logs/vllm.log"
+
 echo "----------------------------------------"
 echo "Starting vLLM server in tmux session '${SESSION_NAME}'..."
 echo "Model: ${MODEL_NAME}"
 echo "Port: ${PORT}"
+echo "Log: ${LOG_FILE}"
 echo "----------------------------------------"
 echo "Attach with: tmux attach -t ${SESSION_NAME}"
+echo "Tail log with: tail -f ${LOG_FILE}"
 
 # Start vLLM server in a new tmux session
 tmux new-session -d -s "${SESSION_NAME}" \
-    "cd ${SCRIPT_DIR} && source .venv/bin/activate && python -m vllm.entrypoints.openai.api_server \
+    "cd ${SCRIPT_DIR} && source .venv/bin/activate && export GLOO_SOCKET_IFNAME=lo && python -m vllm.entrypoints.openai.api_server \
     --model '${MODEL_NAME}' \
     --port '${PORT}' \
     --max-model-len '${VLLM_MAX_MODEL_LEN}' \
@@ -41,4 +46,5 @@ tmux new-session -d -s "${SESSION_NAME}" \
     --enable-prefix-caching \
     --reasoning-parser qwen3 \
     --no-enable-log-requests \
-    --allowed-local-media-path /home/jason_yp_wang"
+    --allowed-local-media-path /home/jason_yp_wang \
+    2>&1 | tee '${LOG_FILE}'"
