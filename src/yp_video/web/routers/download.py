@@ -19,6 +19,11 @@ router = APIRouter()
 # Store active download sessions
 download_sessions: dict[str, dict[str, Any]] = {}
 
+# Global cap on concurrent yt-dlp downloads across all users.
+# yt-dlp does demux/remux which is CPU-heavy, and multiple
+# simultaneous downloads also saturate the VM's outbound bandwidth.
+_DOWNLOAD_SEMAPHORE = asyncio.Semaphore(2)
+
 
 class VideoInfo(BaseModel):
     id: str
@@ -191,8 +196,11 @@ async def download_videos(session_id: str, videos: list[VideoInfo], quality: str
         }
 
         try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                await loop.run_in_executor(None, ydl.download, [video.url])
+            # Limit how many yt-dlp downloads run at once. Queued users
+            # still see their session as "pending" rather than timing out.
+            async with _DOWNLOAD_SEMAPHORE:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    await loop.run_in_executor(None, ydl.download, [video.url])
 
             await queue.put({"type": "complete", "video_id": video_id})
         except Exception as e:

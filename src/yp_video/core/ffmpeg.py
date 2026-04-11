@@ -1,5 +1,6 @@
 """FFmpeg utilities for video processing."""
 
+import asyncio
 import subprocess
 from pathlib import Path
 
@@ -69,8 +70,8 @@ def extract_clip(video_path: str, start_time: float, duration: float, output_pat
         raise FFmpegTimeoutError(output_path, FFMPEG_TIMEOUT) from e
 
 
-def export_segment(source: Path | str, start: float, end: float, output: Path | str, *, copy: bool = False) -> bool:
-    """Export a single video segment.
+async def export_segment(source: Path | str, start: float, end: float, output: Path | str, *, copy: bool = False) -> bool:
+    """Export a single video segment. Does not block the event loop.
 
     Args:
         source: Source video path
@@ -79,9 +80,6 @@ def export_segment(source: Path | str, start: float, end: float, output: Path | 
         output: Output file path
         copy: If True, use stream copy (fast, not frame-accurate).
               If False (default), re-encode with libx264 (slower, frame-accurate).
-
-    Returns:
-        True if export succeeded, False otherwise
 
     Raises:
         FFmpegTimeoutError: If FFmpeg operation times out
@@ -98,10 +96,18 @@ def export_segment(source: Path | str, start: float, end: float, output: Path | 
     else:
         cmd += ["-c:v", "libx264", "-preset", "fast", "-crf", "18", "-c:a", "aac"]
     cmd += ["-movflags", "+faststart", str(output)]
+
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
     try:
-        result = subprocess.run(cmd, capture_output=True, timeout=FFMPEG_TIMEOUT)
-        if result.returncode != 0:
-            raise FFmpegError(f"FFmpeg failed with code {result.returncode}: {result.stderr.decode()[:200]}")
-        return True
-    except subprocess.TimeoutExpired as e:
+        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=FFMPEG_TIMEOUT)
+    except asyncio.TimeoutError as e:
+        proc.kill()
+        await proc.wait()
         raise FFmpegTimeoutError(str(output), FFMPEG_TIMEOUT) from e
+    if proc.returncode != 0:
+        raise FFmpegError(f"FFmpeg failed with code {proc.returncode}: {stderr.decode()[:200]}")
+    return True

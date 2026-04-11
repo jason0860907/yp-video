@@ -120,16 +120,22 @@ def run_inference(
 
     # Step 4 (optional): Cut rally clips
     if cut_dir is not None:
+        import asyncio
+
         from yp_video.core.ffmpeg import export_segment
 
         print("Step 4: Exporting rally clips...")
         cut_dir.mkdir(parents=True, exist_ok=True)
 
         sorted_dets = sorted(detections, key=lambda d: d["segment"][0])
-        for i, det in enumerate(sorted_dets, 1):
-            start, end = det["segment"]
-            clip_path = cut_dir / f"rally_{i:03d}.mp4"
-            export_segment(video_path, start, end, clip_path)
+
+        async def _export_all():
+            for i, det in enumerate(sorted_dets, 1):
+                start, end = det["segment"]
+                clip_path = cut_dir / f"rally_{i:03d}.mp4"
+                await export_segment(video_path, start, end, clip_path)
+
+        asyncio.run(_export_all())
 
         # Print summary table
         print(f"\n{'Clip':<16} {'Start':>8} {'End':>8} {'Duration':>8} {'Conf':>6}")

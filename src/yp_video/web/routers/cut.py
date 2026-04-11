@@ -1,5 +1,7 @@
 """Video cutter router."""
 
+import asyncio
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -8,6 +10,11 @@ from yp_video.core.ffmpeg import FFmpegError, export_segment
 from yp_video.web.r2_client import serve_video_or_r2_redirect, sync_to_r2
 
 router = APIRouter()
+
+# Global cap on concurrent FFmpeg export operations across all users.
+# Each FFmpeg process is CPU-heavy; letting more than 2 run at once
+# on a single VM will just thrash and slow everyone down.
+_EXPORT_SEMAPHORE = asyncio.Semaphore(2)
 
 
 class Segment(BaseModel):
@@ -42,7 +49,7 @@ def stream_video(name: str):
 
 
 @router.post("/export")
-def export_segments(req: ExportRequest) -> ExportResult:
+async def export_segments(req: ExportRequest) -> ExportResult:
     source_path = VIDEOS_DIR / req.source
     if not source_path.exists():
         raise HTTPException(404, "Source video not found")
@@ -56,11 +63,14 @@ def export_segments(req: ExportRequest) -> ExportResult:
         output_name = f"{seg.name}.mp4"
         output_path = CUTS_DIR / output_name
 
-        try:
-            export_segment(source_path, seg.start, seg.end, output_path, copy=True)
-            sync_to_r2(output_path, "cuts")
-            success.append(output_name)
-        except FFmpegError:
-            failed.append(output_name)
+        # Acquire per-segment so multiple users' exports interleave fairly
+        # instead of one user holding a slot for all their segments.
+        async with _EXPORT_SEMAPHORE:
+            try:
+                await export_segment(source_path, seg.start, seg.end, output_path, copy=True)
+                sync_to_r2(output_path, "cuts")
+                success.append(output_name)
+            except FFmpegError:
+                failed.append(output_name)
 
     return ExportResult(success=success, failed=failed)
