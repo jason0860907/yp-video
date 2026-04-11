@@ -249,8 +249,15 @@ def clear_model_cache() -> list[str]:
 # ── Preprocessing ──────────────────────────────────────────────────────
 
 
+# Chunk size for preprocess — caps the peak float32 spike. Converting all
+# frames to float at once would allocate ~24 GB for a 1056-frame 1080p batch.
+# Chunking is numerically identical because bilinear resize and normalization
+# are per-pixel with no cross-frame dependency.
+_PREPROCESS_CHUNK = 64
+
+
 def preprocess_frames_batch(frames_np: np.ndarray) -> torch.Tensor:
-    """Resize, crop, and normalize all unique frames at once.
+    """Resize, crop, and normalize all unique frames.
 
     Args:
         frames_np: (N, H, W, C) uint8 numpy array
@@ -259,24 +266,31 @@ def preprocess_frames_batch(frames_np: np.ndarray) -> torch.Tensor:
         (N, C, CROP_SIZE, CROP_SIZE) float32 tensor (CPU)
     """
     N, H, W, _ = frames_np.shape
-    frames = torch.from_numpy(frames_np).float().div_(255.0)
-    frames = frames.permute(0, 3, 1, 2)  # (N, C, H, W)
 
     short_side = min(H, W)
     if short_side != CROP_SIZE:
         scale = CROP_SIZE / short_side
         new_h = int(H * scale + 0.5)
         new_w = int(W * scale + 0.5)
-        frames = F.interpolate(frames, size=(new_h, new_w), mode="bilinear", align_corners=False)
+        needs_resize = True
     else:
         new_h, new_w = H, W
+        needs_resize = False
 
     top = (new_h - CROP_SIZE) // 2
     left = (new_w - CROP_SIZE) // 2
-    frames = frames[:, :, top:top + CROP_SIZE, left:left + CROP_SIZE]
 
-    frames.sub_(_MEAN).div_(_STD)
-    return frames
+    out = torch.empty((N, 3, CROP_SIZE, CROP_SIZE), dtype=torch.float32)
+    for i in range(0, N, _PREPROCESS_CHUNK):
+        chunk = torch.from_numpy(frames_np[i:i + _PREPROCESS_CHUNK]).float().div_(255.0)
+        chunk = chunk.permute(0, 3, 1, 2)  # (n, C, H, W)
+        if needs_resize:
+            chunk = F.interpolate(chunk, size=(new_h, new_w), mode="bilinear", align_corners=False)
+        chunk = chunk[:, :, top:top + CROP_SIZE, left:left + CROP_SIZE]
+        chunk = chunk.sub_(_MEAN).div_(_STD)
+        out[i:i + chunk.shape[0]] = chunk
+
+    return out
 
 
 # ── Feature extraction ─────────────────────────────────────────────────
