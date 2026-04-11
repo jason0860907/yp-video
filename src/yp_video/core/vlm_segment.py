@@ -34,14 +34,26 @@ _VLLM_CONFIG = load_vllm_env()
 VOLLEYBALL_SEGMENT_PROMPT = load_prompt("volleyball_segment.txt")
 
 
-def check_server(server_url: str) -> None:
-    """Check if vLLM server is reachable. Raises SystemExit if not."""
-    try:
-        resp = requests.get(f"{server_url}/v1/models", timeout=5)
-        resp.raise_for_status()
-    except requests.exceptions.RequestException as e:
-        print(f"ERROR: vLLM server not reachable at {server_url}: {e}")
-        raise SystemExit(1)
+class VLLMServerError(RuntimeError):
+    """Raised when the vLLM server is unreachable after retries."""
+
+
+def check_server(server_url: str, retries: int = 5, backoff: float = 3.0) -> None:
+    """Check if vLLM server is reachable, with retries and exponential backoff."""
+    for attempt in range(1, retries + 1):
+        try:
+            resp = requests.get(f"{server_url}/v1/models", timeout=10)
+            resp.raise_for_status()
+            return
+        except requests.exceptions.RequestException as e:
+            if attempt < retries:
+                wait = backoff * (2 ** (attempt - 1))  # 3, 6, 12, 24s
+                print(f"WARNING: vLLM server not reachable (attempt {attempt}/{retries}), retrying in {wait:.0f}s... ({e})")
+                time.sleep(wait)
+            else:
+                raise VLLMServerError(
+                    f"vLLM server not reachable at {server_url} after {retries} attempts: {e}"
+                ) from e
 
 
 def format_time(seconds: float) -> str:
@@ -184,8 +196,9 @@ async def analyze_clip_async(
     server_url: str,
     model: str,
     fps: float = 4.0,
+    max_retries: int = 3,
 ) -> dict:
-    """Async version of analyze_clip_with_vllm."""
+    """Async version of analyze_clip_with_vllm with retry on transient errors."""
     video_url = f"file://{video_path}"
 
     prompt = VOLLEYBALL_SEGMENT_PROMPT
@@ -216,11 +229,23 @@ async def analyze_clip_async(
     }
 
     url = f"{server_url}/v1/chat/completions"
-    async with session.post(url, json=payload) as response:
-        response.raise_for_status()
-        result = await response.json()
-        content = result["choices"][0]["message"]["content"]
-        return extract_json_from_response(content)
+    last_error = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            async with session.post(url, json=payload) as response:
+                response.raise_for_status()
+                result = await response.json()
+                content = result["choices"][0]["message"]["content"]
+                return extract_json_from_response(content)
+        except (asyncio.TimeoutError, aiohttp.ServerTimeoutError, aiohttp.ServerDisconnectedError) as e:
+            last_error = e
+            if attempt < max_retries:
+                wait = 2 * attempt  # 2, 4s
+                logging.getLogger(__name__).warning(
+                    "vLLM request timeout (attempt %d/%d), retrying in %ds...", attempt, max_retries, wait
+                )
+                await asyncio.sleep(wait)
+    raise last_error
 
 
 def _parse_shot_type(value: str | ShotType) -> ShotType:
@@ -477,10 +502,10 @@ def process_video(
                             results.append(clip_result)
                             batch_successes += 1
 
-                    # If entire batch failed, server likely crashed
+                    # If entire batch failed, server likely crashed — retry with backoff
                     if batch_successes == 0 and len(batch_clips) > 0:
-                        print("\nERROR: Entire batch failed. Checking server health...")
-                        check_server(server_url)  # raises SystemExit if down
+                        print("\nWARNING: Entire batch failed. Checking server health...")
+                        check_server(server_url)  # raises VLLMServerError if still down after retries
 
                     # Step 4: Save results after each batch
                     if output_file:
