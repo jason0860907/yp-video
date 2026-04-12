@@ -53,12 +53,34 @@ class Job:
         }
 
 
+class _GpuLock:
+    """Async lock that auto-releases GPU memory on exit."""
+
+    def __init__(self):
+        self._lock = asyncio.Lock()
+
+    async def __aenter__(self):
+        await self._lock.acquire()
+        return self
+
+    async def __aexit__(self, *exc):
+        self._lock.release()
+        import gc
+        gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except ImportError:
+            pass
+
+
 class JobManager:
     """In-memory job manager with GPU lock for mutual exclusion."""
 
     def __init__(self):
         self.jobs: dict[str, Job] = {}
-        self.gpu_lock = asyncio.Lock()
+        self.gpu_lock = _GpuLock()
         self._vllm_using_gpu = False
 
     def create_job(self, job_type: str, params: dict | None = None, name: str = "") -> Job:

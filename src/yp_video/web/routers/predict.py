@@ -160,11 +160,6 @@ async def start_prediction(req: PredictRequest):
                 except Exception as e:
                     await job_manager.update_job(job.id, status="failed", error=str(e))
 
-            # Free GPU memory after all inference jobs finish
-            import gc, torch
-            gc.collect()
-            torch.cuda.empty_cache()
-
     task = asyncio.create_task(run_all())
     job_manager.attach_task(jobs, task)
 

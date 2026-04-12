@@ -136,12 +136,9 @@ async def extract_features(req: ExtractFeaturesRequest):
                     ),
                 )
 
-                # Free GPU memory — model + CUDAGraphs stay resident otherwise
+                # V-JEPA model is cached at module level — clear before gpu_lock exits
                 from yp_video.tad.extract_features import clear_model_cache
-                import gc
                 clear_model_cache()
-                gc.collect()
-                torch.cuda.empty_cache()
 
                 count = len(list(output_dir.glob("*.npy")))
                 await job_manager.update_job(
