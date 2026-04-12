@@ -24,6 +24,8 @@ from tqdm import tqdm
 
 try:
     from decord import VideoReader, cpu
+    import decord.logging as _decord_logging
+    _decord_logging.set_level(_decord_logging.QUIET)  # suppress FFmpeg mmco errors on stderr
     HAS_DECORD = True
 except ImportError:
     HAS_DECORD = False
@@ -357,11 +359,20 @@ def extract_features_from_video(
             if not clips:
                 continue  # all clips in this batch were incomplete
 
+            actual_count = len(clips)
             clips = torch.stack(clips, dim=0).to(device=device, dtype=torch.bfloat16)
+
+            # Pad to fixed batch_size so CUDAGraph only records one graph
+            if actual_count < batch_size:
+                pad = torch.zeros(
+                    (batch_size - actual_count, *clips.shape[1:]),
+                    device=device, dtype=clips.dtype,
+                )
+                clips = torch.cat([clips, pad], dim=0)
 
             with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
                 patch_feats = model(clips)
-                feats = patch_feats.mean(dim=1)
+                feats = patch_feats.mean(dim=1)[:actual_count]  # trim padding
                 features.append(feats.float().cpu().numpy())
 
     return np.concatenate(features, axis=0)
