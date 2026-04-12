@@ -426,6 +426,17 @@ def process_directory(
     decoder = "NVDEC (GPU)" if HAS_NVDEC else ("decord" if HAS_DECORD else "OpenCV")
     print(f"Using {decoder} for video loading")
 
+    # Warmup: trigger AUTOTUNE + CUDAGraph with real batch_size so the
+    # cost doesn't land inside the first video's tqdm.
+    print("Warming up (AUTOTUNE + CUDAGraph)...")
+    dummy = torch.zeros(batch_size, 3, VJEPA_CLIP_FRAMES, CROP_SIZE, CROP_SIZE,
+                        device=device, dtype=torch.bfloat16)
+    with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
+        model(dummy)
+    del dummy
+    torch.cuda.empty_cache()
+    print("Warmup done.")
+
     for i, video_path in enumerate(tqdm(video_files, desc="Processing videos")):
         output_path = output_dir / f"{video_path.stem}.npy"
         if output_path.exists():
