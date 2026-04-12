@@ -8,7 +8,9 @@ Each clip samples 64 frames at stride 2 (128 actual video frames per window).
 
 import argparse
 import threading
+import traceback
 import warnings
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import NamedTuple
@@ -56,9 +58,6 @@ MODEL_CONFIGS: dict[str, ModelConfig] = {
     "giant":    ModelConfig("vjepa2_1_vit_giant_384",     1408, "vjepa-g"),
     "gigantic": ModelConfig("vjepa2_1_vit_gigantic_384",  1664, "vjepa-gg"),
 }
-
-# Default for backward compatibility
-FEAT_DIM = 768
 
 _MEAN = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
 _STD = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
@@ -251,21 +250,21 @@ def clear_model_cache() -> list[str]:
 # ── Preprocessing ──────────────────────────────────────────────────────
 
 
-# Chunk size for preprocess — caps the peak float32 spike. Converting all
-# frames to float at once would allocate ~24 GB for a 1056-frame 1080p batch.
+# Chunk size for preprocess — caps the peak GPU/CPU memory spike.
 # Chunking is numerically identical because bilinear resize and normalization
 # are per-pixel with no cross-frame dependency.
 _PREPROCESS_CHUNK = 64
 
 
-def preprocess_frames_batch(frames_np: np.ndarray) -> torch.Tensor:
-    """Resize, crop, and normalize all unique frames.
+def preprocess_frames_batch(frames_np: np.ndarray, device: torch.device) -> torch.Tensor:
+    """Resize, crop, and normalize all unique frames on *device*.
 
     Args:
         frames_np: (N, H, W, C) uint8 numpy array
+        device: Target device (CUDA recommended — GPU resize is ~10x faster).
 
     Returns:
-        (N, C, CROP_SIZE, CROP_SIZE) float32 tensor (CPU)
+        (N, C, CROP_SIZE, CROP_SIZE) float32 tensor on *device*
     """
     N, H, W, _ = frames_np.shape
 
@@ -282,15 +281,18 @@ def preprocess_frames_batch(frames_np: np.ndarray) -> torch.Tensor:
     top = (new_h - CROP_SIZE) // 2
     left = (new_w - CROP_SIZE) // 2
 
-    out = torch.empty((N, 3, CROP_SIZE, CROP_SIZE), dtype=torch.float32)
+    mean = _MEAN.to(device)
+    std = _STD.to(device)
+    out = torch.empty((N, 3, CROP_SIZE, CROP_SIZE), dtype=torch.float32, device=device)
+
     for i in range(0, N, _PREPROCESS_CHUNK):
-        chunk = torch.from_numpy(frames_np[i:i + _PREPROCESS_CHUNK]).float().div_(255.0)
-        chunk = chunk.permute(0, 3, 1, 2)  # (n, C, H, W)
+        # Transfer uint8 first (4x less PCIe bandwidth than float32)
+        chunk = torch.from_numpy(frames_np[i:i + _PREPROCESS_CHUNK]).to(device)
+        chunk = chunk.float().div_(255.0).permute(0, 3, 1, 2)  # (n, C, H, W)
         if needs_resize:
             chunk = F.interpolate(chunk, size=(new_h, new_w), mode="bilinear", align_corners=False)
         chunk = chunk[:, :, top:top + CROP_SIZE, left:left + CROP_SIZE]
-        chunk = chunk.sub_(_MEAN).div_(_STD)
-        out[i:i + chunk.shape[0]] = chunk
+        out[i:i + chunk.shape[0]] = chunk.sub_(mean).div_(std)
 
     return out
 
@@ -304,7 +306,7 @@ def extract_features_from_video(
     device: torch.device,
     stride: int = 64,
     batch_size: int = 32,
-    feat_dim: int = FEAT_DIM,
+    feat_dim: int = 768,
 ) -> np.ndarray:
     """Extract V-JEPA 2.1 features from a video file."""
     reader = open_video(video_path, use_gpu=device.type == "cuda")
@@ -345,22 +347,32 @@ def extract_features_from_video(
             # Truncate indices to match actual decoded frames (video may be shorter than metadata)
             actual_indices = all_indices[:len(frames)]
 
-            # Preprocess unique frames, then assemble clips
-            processed = preprocess_frames_batch(frames)
-            proc_dict = {idx: processed[i] for i, idx in enumerate(actual_indices)}
+            # Preprocess unique frames on GPU, then assemble clips via indexing
+            processed = preprocess_frames_batch(frames, device=device)
+            # processed: (N_unique, C, H, W) on device
 
-            clips = []
+            # Build index map: frame index → position in processed tensor
+            idx_to_pos = {idx: pos for pos, idx in enumerate(actual_indices)}
+
+            # Build gather indices for all valid clips at once
+            gather_rows = []  # list of (clip_idx, [64 positions in processed])
             for start_idx in batch_clip_starts:
                 clip_indices = [start_idx + i * VJEPA_FRAME_STRIDE for i in range(VJEPA_CLIP_FRAMES)]
-                if not all(i in proc_dict for i in clip_indices):
-                    continue  # skip incomplete clips at video end
-                clips.append(torch.stack([proc_dict[i] for i in clip_indices], dim=1))
+                if not all(i in idx_to_pos for i in clip_indices):
+                    continue
+                gather_rows.append([idx_to_pos[i] for i in clip_indices])
 
-            if not clips:
+            if not gather_rows:
                 continue  # all clips in this batch were incomplete
 
-            actual_count = len(clips)
-            clips = torch.stack(clips, dim=0).to(device=device, dtype=torch.bfloat16)
+            # Single advanced-index gather: (num_clips, 64, C, H, W) → permute to (num_clips, C, 64, H, W)
+            gather_idx = torch.tensor(gather_rows, device=processed.device)  # (num_clips, 64)
+            clips = processed[gather_idx.flatten()].view(
+                len(gather_rows), VJEPA_CLIP_FRAMES, 3, CROP_SIZE, CROP_SIZE,
+            ).permute(0, 2, 1, 3, 4).to(dtype=torch.bfloat16)
+
+            actual_count = clips.shape[0]
+            del processed  # free preprocessing memory before inference
 
             # Pad to fixed batch_size so CUDAGraph only records one graph
             if actual_count < batch_size:
@@ -389,7 +401,7 @@ def process_directory(
     videos: list[str] | None = None,
     batch_size: int = 32,
     model_name: str = "base",
-    on_progress: "Callable[[int, int], None] | None" = None,
+    on_progress: Callable[[int, int], None] | None = None,
 ):
     """Process all videos in a directory.
 
@@ -431,7 +443,6 @@ def process_directory(
             print(f"Saved {output_path.name}: {features.shape}")
         except Exception as e:
             print(f"Error processing {video_path.name}: {e}")
-            import traceback
             traceback.print_exc()
 
         if on_progress:
