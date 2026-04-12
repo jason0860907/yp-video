@@ -243,13 +243,17 @@ def main():
             and ((epoch + 1) % args.eval_freq == 0 or (epoch + 1) == max_epochs)
         ):
             print(f"\n[Validation] Epoch {epoch + 1}")
-            avg_mAP, mAP_per_tiou, mRecall, tiou_thresholds = valid_one_epoch(
+            avg_mAP = valid_one_epoch(
                 val_loader,
                 model_ema.module,
                 epoch,
                 evaluator=det_eval,
                 print_freq=args.print_freq,
             )
+            # Detailed per-tIoU metrics are stored on the evaluator
+            mAP_per_tiou = det_eval.ap.mean(axis=1) if det_eval.ap is not None else None
+            mRecall = det_eval.recall.mean(axis=2) if hasattr(det_eval, 'recall') and det_eval.recall is not None else None
+            tiou_thresholds = det_eval.tiou_thresholds
 
             is_best = avg_mAP > best_mAP
             if is_best:

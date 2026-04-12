@@ -145,8 +145,10 @@ def convert_annotations(
             "annotations": anno_list,
         }
 
-    # Split into train/validation
+    # Split into train/validation (shuffled so each league appears in both)
+    import random
     video_names = list(database.keys())
+    random.Random(42).shuffle(video_names)
     n_train = max(1, int(len(video_names) * train_ratio))
     train_videos = set(video_names[:n_train])
 
