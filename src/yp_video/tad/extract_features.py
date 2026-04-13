@@ -24,6 +24,7 @@ import numpy as np
 from yp_video.config import FEATURES_DIR
 import torch
 import torch.nn.functional as F
+from torch.nn.attention import SDPBackend, sdpa_kernel
 from tqdm import tqdm
 
 # Inference-time perf flags — bit-exact for our bf16 model (TF32 only kicks in
@@ -245,7 +246,8 @@ def load_model(device: torch.device, model_name: str = "base") -> torch.nn.Modul
             trust_repo=True,
             verbose=False,
         )
-        encoder = encoder.to(device=device, dtype=torch.bfloat16)
+        encoder = encoder.to(device=device, dtype=torch.bfloat16,
+                             memory_format=torch.channels_last_3d)
         encoder.eval()
         print("Compiling model (first time ~30-60s, cached thereafter)...")
         encoder = torch.compile(encoder, mode="max-autotune")
@@ -405,9 +407,16 @@ def extract_features_from_video(
                     device=device, dtype=clips.dtype,
                 )
                 clips = torch.cat([clips, pad], dim=0)
+            clips = clips.contiguous(memory_format=torch.channels_last_3d)
             t3 = _now()
 
-            with torch.inference_mode():
+            # autocast is load-bearing: V-JEPA's attention has fp32 Q/K (RoPE)
+            # with bf16 V — autocast coerces them all to bf16 before SDPA.
+            # Forcing FlashAttention prevents fallback to math backend (saves
+            # ~20% peak VRAM with no throughput change).
+            with torch.inference_mode(), \
+                 torch.autocast("cuda", dtype=torch.bfloat16), \
+                 sdpa_kernel([SDPBackend.FLASH_ATTENTION]):
                 patch_feats = model(clips)
                 feats = patch_feats.mean(dim=1)[:actual_count]  # trim padding
                 features.append(feats.float().cpu().numpy())
@@ -470,8 +479,11 @@ def process_directory(
     # cost doesn't land inside the first video's tqdm.
     print("Warming up (AUTOTUNE + CUDAGraph)...")
     dummy = torch.zeros(batch_size, 3, VJEPA_CLIP_FRAMES, CROP_SIZE, CROP_SIZE,
-                        device=device, dtype=torch.bfloat16)
-    with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
+                        device=device, dtype=torch.bfloat16).contiguous(
+        memory_format=torch.channels_last_3d)
+    with torch.no_grad(), \
+         torch.autocast("cuda", dtype=torch.bfloat16), \
+         sdpa_kernel([SDPBackend.FLASH_ATTENTION]):
         model(dummy)
     del dummy
     torch.cuda.empty_cache()
