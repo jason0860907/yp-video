@@ -240,7 +240,12 @@ function renderFiles() {
          ${btnSmall('Un-synced', 'id="upl-select-unsynced"', 'primary')}`
   );
 
-  // Group files if rally_clips
+  // Pre-count files per group for the group header
+  const groupCounts = {};
+  for (const f of state.files) {
+    if (f.group) groupCounts[f.group] = (groupCounts[f.group] || 0) + 1;
+  }
+
   let currentGroup = null;
   let html = '';
 
@@ -248,10 +253,13 @@ function renderFiles() {
     const f = state.files[i];
     const isSynced = isUpload ? f.uploaded : f.local;
 
-    // Group header for rally clips
+    // Group header (shown for nested categories like rally_clips, tad-features)
     if (f.group && f.group !== currentGroup) {
       currentGroup = f.group;
-      html += `<div class="pt-3 pb-1 px-2.5 text-[11px] font-heading font-medium text-text-muted uppercase tracking-wider">${f.group}</div>`;
+      html += `<div class="pt-3 pb-1 px-2.5 text-[11px] font-heading font-medium text-text-muted uppercase tracking-wider flex items-center gap-2">
+        <span>${f.group}</span>
+        <span class="text-text-muted/70 normal-case tracking-normal tabular-nums">(${groupCounts[f.group]} files)</span>
+      </div>`;
     }
 
     const syncBadge = localOnly ? '' : (isSynced

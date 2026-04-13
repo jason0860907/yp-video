@@ -54,6 +54,14 @@ def get_status(model: str = "base"):
     cfg = MODEL_CONFIGS.get(model, MODEL_CONFIGS["base"])
     feat_dir = FEATURES_DIR / cfg.dir_suffix
     features_count = len(list(feat_dir.glob("*.npy"))) if feat_dir.exists() else 0
+
+    # Per-model feature counts (for at-a-glance UI display)
+    features_by_model = {
+        name: len(list((FEATURES_DIR / c.dir_suffix).glob("*.npy")))
+        if (FEATURES_DIR / c.dir_suffix).exists() else 0
+        for name, c in MODEL_CONFIGS.items()
+    }
+
     cuts_count = len(list(CUTS_DIR.glob("*.mp4"))) if CUTS_DIR.exists() else 0
     annotations_exist = TAD_ANNOTATIONS_FILE.exists()
 
@@ -74,6 +82,7 @@ def get_status(model: str = "base"):
     return {
         "cuts_count": cuts_count,
         "features_count": features_count,
+        "features_by_model": features_by_model,
         "annotations_exist": annotations_exist,
         "checkpoints": checkpoints,
         "gpu_available": True,

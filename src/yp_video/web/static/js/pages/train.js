@@ -190,10 +190,13 @@ function bindEvents() {
 async function loadStatus() {
   try {
     const s = await api(`/train/status?model=${selectedModel}`);
+    const featB = s.features_by_model?.base ?? 0;
+    const featL = s.features_by_model?.large ?? 0;
     document.getElementById('train-status-card').innerHTML = card(`
-      <div class="grid grid-cols-4 gap-3">
+      <div class="grid grid-cols-5 gap-3">
         ${statCard('Cuts', s.cuts_count, s.cuts_count > 0)}
-        ${statCard('Features', s.features_count, s.features_count > 0)}
+        ${statCard('Features (B)', featB, featB > 0)}
+        ${statCard('Features (L)', featL, featL > 0)}
         ${statCard('Annotations', s.annotations_exist ? 'ready' : 'missing', s.annotations_exist)}
         ${statCard('GPU', s.vllm_running ? 'shared' : 'available', true)}
       </div>
