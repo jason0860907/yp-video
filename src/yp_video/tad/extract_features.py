@@ -7,7 +7,9 @@ Each clip samples 64 frames at stride 2 (128 actual video frames per window).
 """
 
 import argparse
+import os
 import threading
+import time
 import traceback
 import warnings
 from collections.abc import Callable
@@ -23,6 +25,18 @@ from yp_video.config import FEATURES_DIR
 import torch
 import torch.nn.functional as F
 from tqdm import tqdm
+
+# Inference-time perf flags — bit-exact for our bf16 model (TF32 only kicks in
+# on any residual fp32 ops; cudnn.benchmark picks the fastest algo but output
+# is identical). No effect on training correctness since this module is
+# inference-only.
+torch.backends.cudnn.benchmark = True
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+
+# Per-batch timing breakdown when TAD_PROFILE=1. Prints decode / preprocess /
+# gather / inference split after each video.
+_PROFILE = os.environ.get("TAD_PROFILE") == "1"
 
 try:
     from decord import VideoReader, cpu
@@ -332,12 +346,21 @@ def extract_features_from_video(
         batch_infos.append((batch_clip_starts, all_indices))
 
     features = []
+    timings = {"decode_wait": 0.0, "preprocess": 0.0, "gather": 0.0, "inference": 0.0}
+    n_timed = 0
+
+    def _now() -> float:
+        if _PROFILE:
+            torch.cuda.synchronize()
+        return time.perf_counter()
 
     with ThreadPoolExecutor(max_workers=1) as pool:
         future = pool.submit(reader.get_batch, batch_infos[0][1])
 
         for bi in tqdm(range(len(batch_infos)), desc=f"  {video_path.name}", leave=False):
+            t0 = _now()
             frames = future.result()
+            t1 = _now()
 
             if bi + 1 < len(batch_infos):
                 future = pool.submit(reader.get_batch, batch_infos[bi + 1][1])
@@ -350,12 +373,13 @@ def extract_features_from_video(
             # Preprocess unique frames on GPU, then assemble clips via indexing
             processed = preprocess_frames_batch(frames, device=device)
             # processed: (N_unique, C, H, W) on device
+            t2 = _now()
 
             # Build index map: frame index → position in processed tensor
             idx_to_pos = {idx: pos for pos, idx in enumerate(actual_indices)}
 
             # Build gather indices for all valid clips at once
-            gather_rows = []  # list of (clip_idx, [64 positions in processed])
+            gather_rows = []  # list of [64 positions in processed] per valid clip
             for start_idx in batch_clip_starts:
                 clip_indices = [start_idx + i * VJEPA_FRAME_STRIDE for i in range(VJEPA_CLIP_FRAMES)]
                 if not all(i in idx_to_pos for i in clip_indices):
@@ -381,11 +405,27 @@ def extract_features_from_video(
                     device=device, dtype=clips.dtype,
                 )
                 clips = torch.cat([clips, pad], dim=0)
+            t3 = _now()
 
-            with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
+            with torch.inference_mode():
                 patch_feats = model(clips)
                 feats = patch_feats.mean(dim=1)[:actual_count]  # trim padding
                 features.append(feats.float().cpu().numpy())
+            t4 = _now()
+
+            if _PROFILE:
+                timings["decode_wait"] += t1 - t0
+                timings["preprocess"]  += t2 - t1
+                timings["gather"]      += t3 - t2
+                timings["inference"]   += t4 - t3
+                n_timed += 1
+
+    if _PROFILE and n_timed > 0:
+        total = sum(timings.values())
+        print(f"  [profile] {video_path.name} ({n_timed} batches, {total:.2f}s total)")
+        for k, v in timings.items():
+            pct = v / total * 100 if total else 0
+            print(f"    {k:12s} {v:6.2f}s  avg {v / n_timed * 1000:6.1f}ms  ({pct:5.1f}%)")
 
     return np.concatenate(features, axis=0)
 
