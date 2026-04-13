@@ -29,6 +29,11 @@ class DeleteLocalRequest(BaseModel):
     files: list[str]
     force: bool = False  # If False, only delete files that exist on R2
 
+
+class DeleteR2Request(BaseModel):
+    category: str
+    files: list[str]  # paths relative to the category prefix
+
 # Categories that skip R2 upload (local-only)
 LOCAL_ONLY_CATEGORIES = {"videos"}
 
@@ -312,6 +317,30 @@ def delete_local_files(req: DeleteLocalRequest):
             parent.rmdir()
 
     return {"deleted": deleted, "skipped": skipped}
+
+
+@router.post("/delete-r2")
+def delete_r2_files(req: DeleteR2Request):
+    """Delete selected objects from R2. Does not touch local files."""
+    if not r2_client.configured:
+        raise HTTPException(400, "R2 not configured")
+    if req.category not in R2_CATEGORIES:
+        raise HTTPException(400, f"Unknown category: {req.category}")
+    if req.category in LOCAL_ONLY_CATEGORIES:
+        raise HTTPException(400, f"Category {req.category} has no R2 prefix")
+    if not req.files:
+        return {"deleted": 0}
+
+    client = r2_client._get_client()
+    deleted = 0
+    # S3 delete_objects accepts up to 1000 keys per call
+    CHUNK = 1000
+    for i in range(0, len(req.files), CHUNK):
+        batch = req.files[i:i + CHUNK]
+        keys = [{"Key": f"{req.category}/{p}"} for p in batch]
+        resp = client.delete_objects(Bucket=r2_client.bucket, Delete={"Objects": keys})
+        deleted += len(resp.get("Deleted", []))
+    return {"deleted": deleted}
 
 
 @router.get("/presign")

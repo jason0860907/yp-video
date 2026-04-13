@@ -24,7 +24,8 @@ export function render(container) {
             '',
             `${btnSmall('Select All', 'id="pred-select-all"')}
              ${btnSmall('Deselect All', 'id="pred-deselect-all"')}
-             ${btnSmall('Unpredicted', 'id="pred-select-unpredicted"', 'primary')}`
+             ${btnSmall('Unpredicted', 'id="pred-select-unpredicted"', 'primary')}
+             ${btnSmall('✅ Annotated', 'id="pred-select-annotated"')}`
           )}
           <div id="pred-videos" class="space-y-0.5 max-h-72 overflow-y-auto pr-1"></div>
         </div>
@@ -166,6 +167,10 @@ function bindEvents() {
     state.videos.forEach(v => v.selected = !v.has_prediction);
     renderVideos();
   });
+  document.getElementById('pred-select-annotated').addEventListener('click', () => {
+    state.videos.forEach(v => v.selected = v.has_annotation);
+    renderVideos();
+  });
 }
 
 async function loadData() {
@@ -204,15 +209,21 @@ function renderVideos() {
     return;
   }
 
-  el.innerHTML = state.videos.map((v, i) => `
+  el.innerHTML = state.videos.map((v, i) => {
+    const annBadge = v.has_annotation
+      ? '<span title="Annotated">✅</span>'
+      : (v.has_pre_annotation ? '<span title="Pre-annotation">⚡</span>' : '');
+    const predBadge = v.has_prediction
+      ? '<span class="inline-flex items-center gap-1.5 text-[11px] text-emerald-400 bg-emerald-500/10 ring-1 ring-emerald-500/20 px-2.5 py-0.5 rounded-full font-medium"><span class="w-1.5 h-1.5 rounded-full bg-current"></span>predicted</span>'
+      : '<span class="inline-flex items-center gap-1.5 text-[11px] text-text-muted bg-white/5 ring-1 ring-white/10 px-2.5 py-0.5 rounded-full font-medium"><span class="w-1.5 h-1.5 rounded-full bg-current"></span>pending</span>';
+    return `
     <div class="group flex items-center gap-3 p-2.5 rounded-xl border border-transparent hover:bg-white/[0.03] hover:border-white/5 transition-all duration-200">
       <input type="checkbox" data-idx="${i}" class="pred-check cursor-pointer accent-primary w-3.5 h-3.5" ${v.selected ? 'checked' : ''}>
       <span class="text-sm text-text-primary flex-1 truncate group-hover:text-white transition-colors duration-200">${v.name}</span>
-      ${v.has_prediction
-        ? '<span class="inline-flex items-center gap-1.5 text-[11px] text-emerald-400 bg-emerald-500/10 ring-1 ring-emerald-500/20 px-2.5 py-0.5 rounded-full font-medium"><span class="w-1.5 h-1.5 rounded-full bg-current"></span>predicted</span>'
-        : '<span class="inline-flex items-center gap-1.5 text-[11px] text-text-muted bg-white/5 ring-1 ring-white/10 px-2.5 py-0.5 rounded-full font-medium"><span class="w-1.5 h-1.5 rounded-full bg-current"></span>pending</span>'}
-    </div>
-  `).join('');
+      ${annBadge}
+      ${predBadge}
+    </div>`;
+  }).join('');
 
   el.querySelectorAll('.pred-check').forEach(cb => {
     cb.addEventListener('change', (e) => {

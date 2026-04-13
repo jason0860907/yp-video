@@ -14,6 +14,13 @@ export function render(container) {
   container.innerHTML = `
     <div class="max-w-screen-2xl mx-auto space-y-5">
       ${pageHeader('Review', 'Review TAD predictions and correct annotations', `
+        <select id="rev-filter" class="${selectCls}" title="Filter by split / quality">
+          <option value="all">All files</option>
+          <option value="val">Validation only</option>
+          <option value="train">Training only</option>
+          <option value="failing">Failing (R@.5 &lt; 50%)</option>
+          <option value="val-failing">Val + failing</option>
+        </select>
         <select id="rev-results" class="${selectCls}">
           <option value="">Select result file...</option>
         </select>
@@ -162,27 +169,59 @@ function handleKeydown(e) {
 
 async function loadResults() {
   try {
-    const results = await api('/review/results');
-    state.results = results;
-    const sel = document.getElementById('rev-results');
-    results.forEach(r => {
-      const opt = document.createElement('option');
-      opt.value = r.name;
-      const tag = r.source.includes('annotation') ? '\u2705' : '\ud83e\udd16';
-      opt.textContent = `${tag} ${r.name}`;
-      sel.appendChild(opt);
-    });
+    state.results = await api('/review/results');
+    renderResultsDropdown();
+    document.getElementById('rev-filter').addEventListener('change', renderResultsDropdown);
   } catch (e) {
     showToast(`Failed to load results: ${e.message}`, 'error');
   }
 }
 
+function renderResultsDropdown() {
+  const sel = document.getElementById('rev-results');
+  const filter = document.getElementById('rev-filter')?.value || 'all';
+
+  // Clear except the placeholder (first <option>)
+  while (sel.options.length > 1) sel.remove(1);
+
+  let kept = 0;
+  state.results.forEach(r => {
+    // Filtering
+    const isVal = r.subset === 'validation';
+    const isTrain = r.subset === 'training';
+    const isFailing = typeof r.recall === 'number' && r.recall < 0.5;
+    if (filter === 'val' && !isVal) return;
+    if (filter === 'train' && !isTrain) return;
+    if (filter === 'failing' && !isFailing) return;
+    if (filter === 'val-failing' && !(isVal && isFailing)) return;
+
+    const opt = document.createElement('option');
+    opt.value = `${r.source}::${r.name}`;
+    const srcTag = r.source === 'annotation' ? '\u2705' : '\ud83e\udd16';
+    const valTag = isVal ? ' [VAL]' : '';
+    // Recall describes the model's prediction vs ground truth — only meaningful
+    // on the prediction entry. Annotation entries are the GT itself.
+    const recTag = (r.source === 'tad-prediction' && typeof r.recall === 'number')
+      ? ` (R=${(r.recall * 100).toFixed(0)}%)` : '';
+    opt.textContent = `${srcTag}${valTag} ${r.name}${recTag}`;
+    sel.appendChild(opt);
+    kept++;
+  });
+
+  // Placeholder reflects filter state
+  sel.options[0].textContent = kept ? `Select result file... (${kept})` : 'No matches';
+}
+
 async function loadFile() {
-  const name = document.getElementById('rev-results').value;
-  if (!name) return;
+  const raw = document.getElementById('rev-results').value;
+  if (!raw) return;
+  const sep = raw.indexOf('::');
+  const source = sep >= 0 ? raw.slice(0, sep) : '';
+  const name = sep >= 0 ? raw.slice(sep + 2) : raw;
 
   try {
-    const data = await api(`/review/results/${encodeURIComponent(name)}`);
+    const qs = source ? `?source=${encodeURIComponent(source)}` : '';
+    const data = await api(`/review/results/${encodeURIComponent(name)}${qs}`);
     const videoPath = data.video || data.source_video || data.metadata?.video || '';
     state.videoName = videoPath;
     if (videoPath) {

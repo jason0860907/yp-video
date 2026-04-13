@@ -1,21 +1,22 @@
 """TAD inference router."""
 
 import asyncio
-from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from yp_video.config import (
+    ANNOTATIONS_DIR,
     PROJECT_ROOT,
     CUTS_DIR,
     PREDICTIONS_DIR,
+    PRE_ANNOTATIONS_DIR,
     VIDEOS_DIR,
     TAD_CONFIGS_DIR,
     TAD_CHECKPOINTS_DIR,
 )
 from yp_video.web.jobs import job_manager, JobStatus
-from yp_video.web.r2_client import serve_video_or_r2_redirect, sync_to_r2, sync_directory_to_r2
+from yp_video.web.r2_client import serve_video_or_r2_redirect
 
 router = APIRouter()
 
@@ -36,10 +37,12 @@ def list_videos() -> list[dict]:
         return []
     results = []
     for f in sorted(CUTS_DIR.glob("*.mp4")):
-        pred_path = PREDICTIONS_DIR / f"{f.stem}_annotations.jsonl"
+        stem = f.stem
         results.append({
             "name": f.name,
-            "has_prediction": pred_path.exists(),
+            "has_prediction":     (PREDICTIONS_DIR / f"{stem}_annotations.jsonl").exists(),
+            "has_annotation":     (ANNOTATIONS_DIR / f"{stem}_annotations.jsonl").exists(),
+            "has_pre_annotation": (PRE_ANNOTATIONS_DIR / f"{stem}_annotations.jsonl").exists(),
         })
     return results
 
@@ -140,11 +143,6 @@ async def start_prediction(req: PredictRequest):
                             on_message=mcb,
                         ),
                     )
-
-                    # Auto-sync to R2
-                    sync_to_r2(output_path, "tad-predictions")
-                    if cut_dir and cut_dir.exists():
-                        sync_directory_to_r2(cut_dir, f"rally_clips/{video_path.stem}", "*.mp4")
 
                     await job_manager.update_job(
                         job.id, status="completed", progress=1.0,

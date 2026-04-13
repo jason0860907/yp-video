@@ -325,9 +325,11 @@ function renderFiles() {
   } else {
     actionsEl.innerHTML = `
       ${btnSecondary('Download Selected', 'id="upl-start-dl"')}
+      ${btnDanger('Delete Selected on R2', 'id="upl-delete-r2"')}
       <span id="upl-count" class="text-xs text-text-muted font-heading tabular-nums ml-auto"></span>
     `;
     document.getElementById('upl-start-dl').addEventListener('click', startDownload);
+    document.getElementById('upl-delete-r2').addEventListener('click', deleteR2);
   }
 
   updateSelectedCount();
@@ -396,38 +398,61 @@ async function startDownload() {
   }
 }
 
+async function deleteR2() {
+  const selected = state.files.filter(f => f.selected);
+  if (selected.length === 0) return showToast('No files selected', 'warning');
+
+  const msg = `Delete ${selected.length} selected files from R2?\n\n` +
+              `This only removes them from cloud storage — local copies are not touched.`;
+  if (!confirm(msg)) return;
+
+  const btn = document.getElementById('upl-delete-r2');
+  btn.disabled = true;
+  try {
+    const res = await api('/upload/delete-r2', {
+      method: 'POST',
+      body: { category: state.category, files: selected.map(f => f.path) },
+    });
+    showToast(`Deleted ${res.deleted} files from R2`, 'success');
+    loadFiles();
+  } catch (e) {
+    showToast(`Delete failed: ${e.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 async function deleteLocal() {
   const selected = state.files.filter(f => f.selected);
   if (selected.length === 0) return showToast('No files selected', 'warning');
 
   const localOnly = isLocalOnly();
-  let msg;
+  const notUploaded = localOnly ? [] : selected.filter(f => !f.uploaded);
 
+  let msg;
   if (localOnly) {
     msg = `Delete ${selected.length} local files?`;
+  } else if (notUploaded.length === 0) {
+    msg = `Delete ${selected.length} local files? They are already on R2.`;
   } else {
-    const uploaded = selected.filter(f => f.uploaded);
-    const notUploaded = selected.filter(f => !f.uploaded);
-
-    if (uploaded.length === 0 && notUploaded.length > 0) {
-      return showToast('Selected files are not on R2 yet. Upload first before deleting local copies.', 'warning');
-    }
-
-    msg = notUploaded.length > 0
-      ? `Delete ${uploaded.length} local files (already on R2)?\n\n${notUploaded.length} files not on R2 will be skipped.`
-      : `Delete ${uploaded.length} local files? They are already on R2.`;
+    msg = `Delete ${selected.length} local files?\n\n` +
+          `⚠️ ${notUploaded.length} of them are NOT on R2 and will be lost permanently.`;
   }
 
   if (!confirm(msg)) return;
 
+  // force=true when user has confirmed despite the R2-safety warning, so the
+  // backend doesn't silently skip the not-on-R2 files.
+  const force = localOnly || notUploaded.length > 0;
+
   try {
     const res = await api('/upload/delete-local', {
       method: 'POST',
-      body: { category: state.category, files: selected.map(f => f.path), force: localOnly },
+      body: { category: state.category, files: selected.map(f => f.path), force },
     });
     const count = res.deleted?.length || 0;
     const skipped = res.skipped?.length || 0;
-    if (count > 0) showToast(`Deleted ${count} local files${skipped ? `, ${skipped} skipped (not on R2)` : ''}`, 'success');
+    if (count > 0) showToast(`Deleted ${count} local files${skipped ? `, ${skipped} skipped` : ''}`, 'success');
     else showToast('No files deleted', 'info');
     loadFiles();
   } catch (e) {
