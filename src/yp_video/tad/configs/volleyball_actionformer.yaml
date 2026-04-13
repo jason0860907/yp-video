@@ -8,12 +8,12 @@ dataset: {
   file_ext: .npy,
   num_classes: 1,
   input_dim: 768,
-  feat_stride: 64,
+  feat_stride: 48,
   num_frames: 16,
   default_fps: 60.0,
   trunc_thresh: 0.5,
   crop_ratio: [0.9, 1.0],
-  max_seq_len: 2304,
+  max_seq_len: 3456,
 }
 model: {
   fpn_type: identity,

@@ -318,7 +318,7 @@ def extract_features_from_video(
     video_path: Path,
     model: torch.nn.Module,
     device: torch.device,
-    stride: int = 64,
+    stride: int = 48,
     batch_size: int = 32,
     feat_dim: int = 768,
 ) -> np.ndarray:
@@ -437,7 +437,7 @@ def process_directory(
     input_dir: Path,
     output_dir: Path,
     device: torch.device,
-    stride: int = 64,
+    stride: int = 48,
     videos: list[str] | None = None,
     batch_size: int = 32,
     model_name: str = "base",
@@ -508,7 +508,7 @@ def main():
     parser.add_argument("--input", type=Path, default=Path.home() / "videos" / "cuts")
     parser.add_argument("--output", type=Path, default=None,
                         help="Output dir (default: ~/videos/features/vjepa-{size}/)")
-    parser.add_argument("--stride", type=int, default=64)
+    parser.add_argument("--stride", type=int, default=48)
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--videos", type=str, nargs="*", default=None)
