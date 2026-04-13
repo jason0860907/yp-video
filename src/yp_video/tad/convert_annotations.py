@@ -22,12 +22,84 @@ ActionFormer format (JSON):
 
 import argparse
 import json
+import random
+import re
+from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
 
 from yp_video.config import TAD_ANNOTATIONS_FILE, TAD_FEATURES_DIR
 from yp_video.core.jsonl import read_jsonl
+
+
+# ── Stratified split helpers ───────────────────────────────────────────
+
+
+def _match_key(video_name: str) -> str:
+    """Strip _setN suffix so sets of the same match stay together (no leakage)."""
+    return re.sub(r"_set\d+$", "", video_name)
+
+
+def _source_key(name: str) -> str:
+    """Bucket videos by broadcast source so each style appears in train and val."""
+    n_lower = name.lower()
+    if "排島本館" in name:
+        return "custom_venue"
+    if "vnl" in n_lower or "world champs" in n_lower or "u19" in n_lower:
+        return "international"
+    if any(k in n_lower for k in (
+        "sv league", "svl", "sv.league", "suntory", "bluteon", "stings",
+        "wolfdogs", "sunbirds", "jtekt", "toray", "phitsanulok", "sakai",
+        "champions crowned", "final - stings",
+    )):
+        return "svl_japan"
+    if "企業" in name or "甲級" in name:
+        return "enterprise"
+    if "tpvl" in n_lower or name.startswith("2025-") or any(
+        team in name for team in ("臺北伊斯特", "臺中連莊", "桃園雲豹飛將", "台鋼天鷹", "台中連莊")
+    ):
+        return "tpvl"
+    return "other"
+
+
+def _stratified_split(video_names: list[str], train_ratio: float, seed: int = 42) -> set[str]:
+    """Group videos by match, then split matches stratified by source.
+
+    Guarantees:
+    1. All sets of one match end up in the same subset (no info leakage)
+    2. Each broadcast source has both training and validation representation
+
+    Returns the set of training video names.
+    """
+    matches: dict[str, list[str]] = defaultdict(list)
+    for v in video_names:
+        matches[_match_key(v)].append(v)
+
+    by_source: dict[str, list[str]] = defaultdict(list)
+    for mkey, vids in matches.items():
+        by_source[_source_key(vids[0])].append(mkey)
+
+    rng = random.Random(seed)
+    train: set[str] = set()
+    summary: list[tuple[str, int, int, int, int]] = []
+    for src, mkeys in sorted(by_source.items()):
+        mkeys = sorted(mkeys)
+        rng.shuffle(mkeys)
+        n_train = max(1, int(len(mkeys) * train_ratio)) if len(mkeys) > 1 else len(mkeys)
+        train_matches = mkeys[:n_train]
+        val_matches = mkeys[n_train:]
+        train_vids = sum((matches[m] for m in train_matches), [])
+        val_vids = sum((matches[m] for m in val_matches), [])
+        train.update(train_vids)
+        summary.append((src, len(train_matches), len(val_matches), len(train_vids), len(val_vids)))
+
+    print("Stratified split per source (matches | videos):")
+    print(f"  {'source':<14s} {'train M':>8s} {'val M':>6s}  {'train V':>8s} {'val V':>6s}")
+    for src, tm, vm, tv, vv in summary:
+        print(f"  {src:<14s} {tm:>8d} {vm:>6d}  {tv:>8d} {vv:>6d}")
+
+    return train
 
 
 def get_video_fps(video_path: Path) -> float:
@@ -145,12 +217,9 @@ def convert_annotations(
             "annotations": anno_list,
         }
 
-    # Split into train/validation (shuffled so each league appears in both)
-    import random
-    video_names = list(database.keys())
-    random.Random(42).shuffle(video_names)
-    n_train = max(1, int(len(video_names) * train_ratio))
-    train_videos = set(video_names[:n_train])
+    # Stratified split: group by match (all sets together), stratify by source
+    train_videos = _stratified_split(list(database.keys()), train_ratio, seed=42)
+    n_train = len(train_videos)
 
     for name in database:
         database[name]["subset"] = "training" if name in train_videos else "validation"
@@ -171,7 +240,7 @@ def convert_annotations(
 
     print(f"Converted {len(database)} videos")
     print(f"Labels found: {sorted(label_set)}")
-    print(f"Train: {n_train}, Val: {len(video_names) - n_train}")
+    print(f"Train: {n_train}, Val: {len(database) - n_train}")
     print(f"Saved to: {output_path}")
     print(f"Category map: {category_path}")
 
