@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from yp_video.config import R2_CATEGORIES
-from yp_video.web.jobs import job_manager, make_progress_callback
+from yp_video.web.jobs import job_manager
 from yp_video.web.r2_client import r2_client
 
 router = APIRouter()
@@ -184,17 +184,14 @@ async def _run_batch_transfer(
 
         try:
             await job_manager.update_job(
-                job.id, status="running", progress=0.0,
+                job.id, status="running", progress=i / total,
                 message=f"{prefix} {verb}ing {Path(file_path).name}...",
             )
 
-            progress_cb = make_progress_callback(
-                job.id, loop, prefix + f" {verb}ing {{done}}/{{total}} bytes",
-            )
             await loop.run_in_executor(
                 None,
-                lambda fp=local_path, k=r2_key, cb=progress_cb:
-                    transfer_fn(fp, k, cb),
+                lambda fp=local_path, k=r2_key:
+                    transfer_fn(fp, k, None),
             )
         except asyncio.CancelledError:
             await job_manager.update_job(job.id, status="cancelled", message="Cancelled")
