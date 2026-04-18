@@ -22,7 +22,13 @@ export function render(container) {
           ${sectionTitle(
             'Videos',
             '',
-            `${btnSmall('Select All', 'id="pred-select-all"')}
+            `<select id="pred-model" class="${selectCls}" title="Feature model — affects which videos have features available">
+               <option value="base">ViT-B (768d)</option>
+               <option value="large" selected>ViT-L (1024d)</option>
+               <option value="giant">ViT-g (1408d)</option>
+               <option value="gigantic">ViT-G (1664d)</option>
+             </select>
+             ${btnSmall('Select All', 'id="pred-select-all"')}
              ${btnSmall('Deselect All', 'id="pred-deselect-all"')}
              ${btnSmall('Unpredicted', 'id="pred-select-unpredicted"', 'primary')}
              ${btnSmall('✅ Annotated', 'id="pred-select-annotated"')}`
@@ -39,20 +45,11 @@ export function render(container) {
               ${sectionTitle('Prediction Settings', 'Select checkpoint and configure inference parameters')}
             </div>
           </div>
-          <div class="ml-10 grid grid-cols-3 gap-4">
+          <div class="ml-10 grid grid-cols-2 gap-4">
             <div>
               <label class="block text-[11px] text-text-muted mb-1.5 uppercase tracking-wider font-medium">Checkpoint</label>
               <select id="pred-checkpoint" class="w-full ${selectCls}">
                 <option value="">Select checkpoint...</option>
-              </select>
-            </div>
-            <div>
-              <label class="block text-[11px] text-text-muted mb-1.5 uppercase tracking-wider font-medium">Feature Model</label>
-              <select id="pred-model" class="w-full ${selectCls}">
-                <option value="base">ViT-B (768d)</option>
-                <option value="large">ViT-L (1024d)</option>
-                <option value="giant">ViT-g (1408d)</option>
-                <option value="gigantic">ViT-G (1664d)</option>
               </select>
             </div>
             <div>
@@ -171,6 +168,7 @@ function bindEvents() {
     state.videos.forEach(v => v.selected = v.has_annotation);
     renderVideos();
   });
+  document.getElementById('pred-model').addEventListener('change', renderVideos);
 }
 
 async function loadData() {
@@ -209,18 +207,25 @@ function renderVideos() {
     return;
   }
 
+  const model = document.getElementById('pred-model')?.value || 'large';
   el.innerHTML = state.videos.map((v, i) => {
     const annBadge = v.has_annotation
       ? '<span title="Annotated">✅</span>'
       : (v.has_pre_annotation ? '<span title="Pre-annotation">⚡</span>' : '');
+    const hasFeat = v.features?.[model];
+    const featBadge = hasFeat
+      ? '<span title="Features extracted" class="inline-flex items-center gap-1.5 text-[11px] text-indigo-400 bg-indigo-500/10 ring-1 ring-indigo-500/20 px-2.5 py-0.5 rounded-full font-medium"><span class="w-1.5 h-1.5 rounded-full bg-current"></span>features</span>'
+      : '<span title="No features for selected model" class="inline-flex items-center gap-1.5 text-[11px] text-amber-400/80 bg-amber-500/10 ring-1 ring-amber-500/20 px-2.5 py-0.5 rounded-full font-medium"><span class="w-1.5 h-1.5 rounded-full bg-current"></span>no features</span>';
     const predBadge = v.has_prediction
       ? '<span class="inline-flex items-center gap-1.5 text-[11px] text-emerald-400 bg-emerald-500/10 ring-1 ring-emerald-500/20 px-2.5 py-0.5 rounded-full font-medium"><span class="w-1.5 h-1.5 rounded-full bg-current"></span>predicted</span>'
       : '<span class="inline-flex items-center gap-1.5 text-[11px] text-text-muted bg-white/5 ring-1 ring-white/10 px-2.5 py-0.5 rounded-full font-medium"><span class="w-1.5 h-1.5 rounded-full bg-current"></span>pending</span>';
+    const rowDim = hasFeat ? '' : ' opacity-60';
     return `
-    <div class="group flex items-center gap-3 p-2.5 rounded-xl border border-transparent hover:bg-white/[0.03] hover:border-white/5 transition-all duration-200">
+    <div class="group flex items-center gap-3 p-2.5 rounded-xl border border-transparent hover:bg-white/[0.03] hover:border-white/5 transition-all duration-200${rowDim}">
       <input type="checkbox" data-idx="${i}" class="pred-check cursor-pointer accent-primary w-3.5 h-3.5" ${v.selected ? 'checked' : ''}>
       <span class="text-sm text-text-primary flex-1 truncate group-hover:text-white transition-colors duration-200">${v.name}</span>
       ${annBadge}
+      ${featBadge}
       ${predBadge}
     </div>`;
   }).join('');

@@ -6,7 +6,7 @@ import { api, SSEClient, card, pageHeader, stepBadge, statCard, sectionTitle, bt
 let sseClient = null;
 let videos = [];
 let convVideos = [];
-let selectedModel = 'base';
+let selectedModel = 'large';
 
 export function render(container) {
   container.innerHTML = `
@@ -42,7 +42,7 @@ export function render(container) {
                 <label class="block text-[11px] text-text-muted mb-1.5 uppercase tracking-wider font-medium">Model</label>
                 <select id="train-feat-model" class="w-44 ${selectCls}">
                   <option value="base">ViT-B (768d, 80M)</option>
-                  <option value="large">ViT-L (1024d, 300M)</option>
+                  <option value="large" selected>ViT-L (1024d, 300M)</option>
                   <option value="giant">ViT-g (1408d, 1B)</option>
                   <option value="gigantic">ViT-G (1664d, 2B)</option>
                 </select>
@@ -113,7 +113,7 @@ export function render(container) {
               <input id="train-seed" type="number" value="42" class="w-20 ${inputCls}">
             </div>
             <div>
-              <span id="train-model-label" class="text-[11px] text-text-muted">Features: <span class="text-text-primary font-medium">ViT-B</span></span>
+              <span id="train-model-label" class="text-[11px] text-text-muted">Features: <span class="text-text-primary font-medium">ViT-L</span></span>
             </div>
             ${btnPrimary('Start Training', 'id="train-start"')}
           </div>

@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from yp_video.config import (
     ANNOTATIONS_DIR,
+    FEATURES_DIR,
     PROJECT_ROOT,
     CUTS_DIR,
     PREDICTIONS_DIR,
@@ -15,6 +16,7 @@ from yp_video.config import (
     TAD_CONFIGS_DIR,
     TAD_CHECKPOINTS_DIR,
 )
+from yp_video.tad.extract_features import MODEL_CONFIGS
 from yp_video.web.jobs import job_manager, JobStatus
 from yp_video.web.r2_client import serve_video_or_r2_redirect
 
@@ -32,9 +34,21 @@ class PredictRequest(BaseModel):
 
 @router.get("/videos")
 def list_videos() -> list[dict]:
-    """List videos available for prediction."""
+    """List videos available for prediction.
+
+    `features` maps each V-JEPA size to whether the corresponding feature
+    file has already been extracted — lets the UI grey-out videos that
+    would otherwise silently fail at inference time.
+    """
     if not CUTS_DIR.exists():
         return []
+
+    feat_stems: dict[str, set[str]] = {
+        name: {p.stem for p in (FEATURES_DIR / cfg.dir_suffix).glob("*.npy")}
+        if (FEATURES_DIR / cfg.dir_suffix).exists() else set()
+        for name, cfg in MODEL_CONFIGS.items()
+    }
+
     results = []
     for f in sorted(CUTS_DIR.glob("*.mp4")):
         stem = f.stem
@@ -43,6 +57,7 @@ def list_videos() -> list[dict]:
             "has_prediction":     (PREDICTIONS_DIR / f"{stem}_annotations.jsonl").exists(),
             "has_annotation":     (ANNOTATIONS_DIR / f"{stem}_annotations.jsonl").exists(),
             "has_pre_annotation": (PRE_ANNOTATIONS_DIR / f"{stem}_annotations.jsonl").exists(),
+            "features":           {name: stem in stems for name, stems in feat_stems.items()},
         })
     return results
 

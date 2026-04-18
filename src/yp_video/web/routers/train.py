@@ -312,7 +312,7 @@ def list_checkpoints() -> list[dict]:
     ckpt_base = TAD_CHECKPOINTS_DIR / "actionformer"
     checkpoints = []
     if ckpt_base.exists():
-        for f in sorted(ckpt_base.rglob("*.pth*"), reverse=True):
+        for f in sorted(ckpt_base.rglob("best.pth*"), reverse=True):
             rel = f.relative_to(ckpt_base)
             checkpoints.append({
                 "path": str(f),
