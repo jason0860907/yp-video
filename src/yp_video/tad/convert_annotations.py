@@ -46,8 +46,10 @@ def _source_key(name: str) -> str:
     n_lower = name.lower()
     if "排島本館" in name:
         return "custom_venue"
-    if "vnl" in n_lower or "world champs" in n_lower or "u19" in n_lower:
-        return "international"
+    if "vnl" in n_lower:
+        return "vnl"
+    if "world champs" in n_lower or "u19" in n_lower:
+        return "u19"
     if any(k in n_lower for k in (
         "sv league", "svl", "sv.league", "suntory", "bluteon", "stings",
         "wolfdogs", "sunbirds", "jtekt", "toray", "phitsanulok", "sakai",
