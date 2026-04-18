@@ -18,7 +18,8 @@ export function render(container) {
           <option value="all">All files</option>
           <option value="val">Validation only</option>
           <option value="train">Training only</option>
-          <option value="failing">Failing (R@.5 &lt; 50%)</option>
+          <option value="predict-only">Predict only (no annotation)</option>
+          <option value="failing">Failing (mAP &lt; 30%)</option>
           <option value="val-failing">Val + failing</option>
         </select>
         <select id="rev-results" class="${selectCls}">
@@ -105,7 +106,11 @@ export function deactivate() {
   document.removeEventListener('keydown', handleKeydown);
   window.removeEventListener('resize', resizeTimeline);
   if (animFrame) { cancelAnimationFrame(animFrame); animFrame = null; }
-  if (videoEl && !videoEl.paused) videoEl.pause();
+  if (videoEl) {
+    videoEl.pause();
+    videoEl.removeAttribute('src');
+    videoEl.load();
+  }
 }
 
 function bindEvents() {
@@ -184,14 +189,20 @@ function renderResultsDropdown() {
   // Clear except the placeholder (first <option>)
   while (sel.options.length > 1) sel.remove(1);
 
+  const annotatedNames = new Set(
+    state.results.filter(r => r.source === 'annotation').map(r => r.name)
+  );
+
   let kept = 0;
   state.results.forEach(r => {
     // Filtering
     const isVal = r.subset === 'validation';
     const isTrain = r.subset === 'training';
-    const isFailing = typeof r.recall === 'number' && r.recall < 0.5;
+    const isFailing = typeof r.map === 'number' && r.map < 0.3;
+    const isPredictOnly = r.source === 'tad-prediction' && !annotatedNames.has(r.name);
     if (filter === 'val' && !isVal) return;
     if (filter === 'train' && !isTrain) return;
+    if (filter === 'predict-only' && !isPredictOnly) return;
     if (filter === 'failing' && !isFailing) return;
     if (filter === 'val-failing' && !(isVal && isFailing)) return;
 
@@ -199,11 +210,11 @@ function renderResultsDropdown() {
     opt.value = `${r.source}::${r.name}`;
     const srcTag = r.source === 'annotation' ? '\u2705' : '\ud83e\udd16';
     const valTag = isVal ? ' [VAL]' : '';
-    // Recall describes the model's prediction vs ground truth — only meaningful
+    // mAP describes the model's prediction vs ground truth — only meaningful
     // on the prediction entry. Annotation entries are the GT itself.
-    const recTag = (r.source === 'tad-prediction' && typeof r.recall === 'number')
-      ? ` (R=${(r.recall * 100).toFixed(0)}%)` : '';
-    opt.textContent = `${srcTag}${valTag} ${r.name}${recTag}`;
+    const mapTag = (r.source === 'tad-prediction' && typeof r.map === 'number')
+      ? ` (mAP=${(r.map * 100).toFixed(0)}%)` : '';
+    opt.textContent = `${srcTag}${valTag} ${r.name}${mapTag}`;
     sel.appendChild(opt);
     kept++;
   });
@@ -225,6 +236,9 @@ async function loadFile() {
     const videoPath = data.video || data.source_video || data.metadata?.video || '';
     state.videoName = videoPath;
     if (videoPath) {
+      videoEl.pause();
+      videoEl.removeAttribute('src');
+      videoEl.load();
       videoEl.src = `/api/review/video/${encodeURIComponent(videoPath)}`;
       videoEl.load();
     }
@@ -233,6 +247,7 @@ async function loadFile() {
       start: r.start ?? r.start_time ?? r.segment?.[0] ?? 0,
       end: r.end ?? r.end_time ?? r.segment?.[1] ?? 0,
       label: r.label || 'rally',
+      score: r.confidence ?? r.score ?? null,
     }));
     state.annotations.sort((a, b) => a.start - b.start);
     renderAnnotations();
@@ -294,6 +309,8 @@ function renderAnnotations() {
       ? 'bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/25'
       : 'bg-white/[0.06] text-text-muted ring-1 ring-white/10';
     const durationSec = (a.end - a.start).toFixed(1);
+    const scoreColor = a.score > 0.7 ? 'text-emerald-400' : a.score > 0.4 ? 'text-amber-400' : 'text-text-muted';
+    const scoreBg = a.score > 0.7 ? 'bg-emerald-500/10 ring-emerald-500/20' : a.score > 0.4 ? 'bg-amber-500/10 ring-amber-500/20' : 'bg-white/5 ring-white/10';
 
     return `
       <div class="rev-item flex items-center gap-2.5 px-3 py-2.5 rounded-xl border ${rowCls} cursor-pointer transition-all duration-200 group" data-idx="${i}">
@@ -305,6 +322,7 @@ function renderAnnotations() {
           <input type="text" value="${formatTime(a.end)}" class="rev-end bg-transparent border-b border-white/10 text-text-primary text-[11px] w-14 text-center font-heading focus:border-primary-light outline-none transition-colors duration-200 tabular-nums" data-idx="${i}">
         </div>
         <span class="text-[10px] text-text-muted font-heading tabular-nums bg-surface-200/40 px-1.5 py-0.5 rounded">${durationSec}s</span>
+        ${a.score != null ? `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-heading font-medium tabular-nums ring-1 ${scoreColor} ${scoreBg}">${(a.score * 100).toFixed(0)}%</span>` : ''}
         <button class="rev-preview text-primary-light hover:text-white cursor-pointer transition-colors duration-200" data-idx="${i}" title="Jump to end">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 5l7 7-7 7M5 5l7 7-7 7"/></svg>
         </button>

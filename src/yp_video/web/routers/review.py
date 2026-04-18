@@ -28,65 +28,111 @@ router = APIRouter()
 # ── Per-video subset + model performance ─────────────────────────────────
 
 
-def _load_eval_context() -> tuple[dict[str, str], dict[str, float]]:
-    """Return ({stem: subset}, {stem: recall@0.5}).
+_TIOU_THRESHOLDS = (0.3, 0.4, 0.5, 0.6, 0.7)
 
-    Subset comes from volleyball_anno.json (the train/val split). Recall is
+
+def _segment_iou(a: tuple[float, float], b: tuple[float, float]) -> float:
+    inter = max(0.0, min(a[1], b[1]) - max(a[0], b[0]))
+    union = (a[1] - a[0]) + (b[1] - b[0]) - inter
+    return inter / union if union > 0 else 0.0
+
+
+def _ap_at_tiou(
+    preds: list[tuple[float, float, float]],  # (start, end, conf) sorted by conf desc
+    gts: list[tuple[float, float]],
+    tiou: float,
+) -> float:
+    """VOC-style all-points AP at a single tIoU threshold."""
+    if not gts:
+        return 0.0
+    matched = [False] * len(gts)
+    tp = [0] * len(preds)
+    fp = [0] * len(preds)
+    for i, (ps, pe, _) in enumerate(preds):
+        best_j, best_iou = -1, tiou
+        for j, g in enumerate(gts):
+            if matched[j]:
+                continue
+            iou = _segment_iou((ps, pe), g)
+            if iou >= best_iou:
+                best_iou, best_j = iou, j
+        if best_j >= 0:
+            tp[i] = 1
+            matched[best_j] = True
+        else:
+            fp[i] = 1
+
+    tp_cum = 0
+    fp_cum = 0
+    recalls, precisions = [], []
+    for i in range(len(preds)):
+        tp_cum += tp[i]
+        fp_cum += fp[i]
+        recalls.append(tp_cum / len(gts))
+        precisions.append(tp_cum / (tp_cum + fp_cum))
+
+    # All-points AP: for each rank, take max precision over the tail
+    ap = 0.0
+    for i in range(len(recalls)):
+        p = max(precisions[i:])
+        dr = recalls[i] - (recalls[i - 1] if i > 0 else 0.0)
+        ap += p * dr
+    return ap
+
+
+def _load_eval_context() -> tuple[dict[str, str], dict[str, float]]:
+    """Return ({stem: subset}, {stem: mAP averaged over tIoU [.3,.4,.5,.6,.7]}).
+
+    Subset comes from volleyball_anno.json (the train/val split). mAP is
     computed directly from each tad-predictions/*.jsonl file vs GT — no
-    intermediate pkl needed. The recall value therefore exactly describes
-    the same predictions a user loads when clicking the 🤖 entry.
+    intermediate pkl needed. The number therefore exactly describes the same
+    predictions a user loads when clicking the 🤖 entry.
+
+    Unlike recall, mAP penalises false positives, so it matches what you see
+    in the training eval log.
 
     Restricted to validation videos so the number reflects generalization,
     not memorization.
     """
     subset: dict[str, str] = {}
-    recall: dict[str, float] = {}
+    m_ap: dict[str, float] = {}
 
     if not TAD_ANNOTATIONS_FILE.exists():
-        return subset, recall
+        return subset, m_ap
     try:
         gt_data = json.loads(TAD_ANNOTATIONS_FILE.read_text())["database"]
     except Exception:
-        return subset, recall
+        return subset, m_ap
 
     for stem, meta in gt_data.items():
         subset[stem] = meta.get("subset", "")
 
     if not PREDICTIONS_DIR.exists():
-        return subset, recall
+        return subset, m_ap
 
     for pred_file in PREDICTIONS_DIR.glob("*_annotations.jsonl"):
         stem = pred_file.stem.removesuffix("_annotations")
         meta = gt_data.get(stem)
         if not meta or meta.get("subset") != "validation":
             continue
-        gt_segs = [(a["segment"][0], a["segment"][1]) for a in meta.get("annotations", [])]
-        if not gt_segs:
+        gts = [(a["segment"][0], a["segment"][1]) for a in meta.get("annotations", [])]
+        if not gts:
             continue
 
         try:
-            lines = pred_file.read_text().splitlines()
-            preds = []
-            for line in lines[1:]:  # skip _meta line
+            preds: list[tuple[float, float, float]] = []
+            for line in pred_file.read_text().splitlines():
                 rec = json.loads(line)
                 if "start" in rec and "end" in rec:
-                    preds.append((rec["start"], rec["end"]))
+                    preds.append((rec["start"], rec["end"], rec.get("confidence", 0.0)))
         except Exception:
             continue
 
-        matched = 0
-        for gs, ge in gt_segs:
-            best = 0.0
-            for ps, pe in preds:
-                inter = max(0.0, min(ge, pe) - max(gs, ps))
-                union = (ge - gs) + (pe - ps) - inter
-                if union > 0 and inter / union > best:
-                    best = inter / union
-            if best >= 0.5:
-                matched += 1
-        recall[stem] = matched / len(gt_segs)
+        preds.sort(key=lambda p: p[2], reverse=True)
+        aps = [_ap_at_tiou(preds, gts, t) for t in _TIOU_THRESHOLDS]
+        m_ap[stem] = sum(aps) / len(aps)
 
-    return subset, recall
+    return subset, m_ap
 
 
 class Annotation(BaseModel):
@@ -124,7 +170,7 @@ def list_results() -> list[dict]:
         for f in ANNOTATIONS_DIR.glob("*.jsonl"):
             by_source["annotation"].add(f.name)
 
-    subset, recall = _load_eval_context()
+    subset, m_ap = _load_eval_context()
 
     def _stem(filename: str) -> str:
         return filename.removesuffix(".jsonl").removesuffix("_annotations")
@@ -136,8 +182,8 @@ def list_results() -> list[dict]:
             e: dict = {"name": n, "source": s}
             if stem in subset and subset[stem]:
                 e["subset"] = subset[stem]
-            if stem in recall:
-                e["recall"] = recall[stem]
+            if stem in m_ap:
+                e["map"] = m_ap[stem]
             entries.append(e)
 
     # Sort by filename, then source so the two variants of a file appear together
