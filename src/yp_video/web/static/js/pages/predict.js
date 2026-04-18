@@ -286,7 +286,7 @@ async function startPrediction() {
   sseClients = [];
 
   try {
-    const jobs = await api('/predict/start', {
+    const job = await api('/predict/start', {
       method: 'POST',
       body: {
         videos: selected,
@@ -298,45 +298,31 @@ async function startPrediction() {
       },
     });
 
-    state.jobs = jobs.map(j => ({ ...j }));
+    state.jobs = [job];
     document.getElementById('pred-progress').classList.remove('hidden');
     renderJobsProgress();
 
-    let doneCount = 0;
-    const total = jobs.length;
+    const client = new SSEClient(`/api/jobs/${job.id}/events`, {
+      onMessage: (data) => {
+        state.jobs = [data];
+        renderJobsProgress();
 
-    for (const job of jobs) {
-      const client = new SSEClient(`/api/jobs/${job.id}/events`, {
-        onMessage: (data) => {
-          const idx = state.jobs.findIndex(j => j.id === data.id);
-          if (idx >= 0) state.jobs[idx] = data;
-          renderJobsProgress();
-
-          if (data.status === 'completed' || data.status === 'failed' || data.status === 'cancelled') {
-            client.stop();
-            doneCount++;
-            if (data.status === 'failed') {
-              showToast(`${job.name} failed: ${data.error || 'Unknown error'}`, 'error');
-            }
-            if (doneCount >= total) {
-              const failed = state.jobs.filter(j => j.status === 'failed').length;
-              if (failed === 0) showToast('All predictions complete!', 'success');
-              else {
-                showToast(`${total - failed}/${total} completed, ${failed} failed`, 'warning');
-                document.getElementById('pred-retry-wrap').classList.remove('hidden');
-              }
-              btn.disabled = false;
-              loadVideos();
-            }
+        if (data.status === 'completed' || data.status === 'failed' || data.status === 'cancelled') {
+          client.stop();
+          if (data.status === 'failed') {
+            showToast(`Prediction failed: ${data.error || 'Unknown error'}`, 'error');
+          } else {
+            showToast(data.message || 'Prediction complete!', 'success');
           }
-        },
-        onError: () => {
-          doneCount++;
-          if (doneCount >= total) btn.disabled = false;
-        },
-      }).start();
-      sseClients.push(client);
-    }
+          btn.disabled = false;
+          loadVideos();
+        }
+      },
+      onError: () => {
+        btn.disabled = false;
+      },
+    }).start();
+    sseClients.push(client);
   } catch (e) {
     showToast(`Failed to start prediction: ${e.message}`, 'error');
     btn.disabled = false;
@@ -344,9 +330,6 @@ async function startPrediction() {
 }
 
 function retryFailed() {
-  const failedNames = new Set(state.jobs.filter(j => j.status === 'failed').map(j => j.name));
-  state.videos.forEach(v => v.selected = failedNames.has(v.name));
-  renderVideos();
   startPrediction();
 }
 

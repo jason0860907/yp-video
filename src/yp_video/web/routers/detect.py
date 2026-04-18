@@ -33,19 +33,16 @@ class ConvertRequest(BaseModel):
 
 @router.post("/start")
 async def start_detection(req: DetectRequest):
-    """Start VLM detection jobs — one job per video."""
+    """Start a single VLM detection job that processes all selected videos."""
     await vllm_manager.sync_status()
     if vllm_manager.status != "running":
         raise HTTPException(400, "vLLM server is not running. Start it first.")
 
-    # Create one job per video
-    jobs = []
-    for video_name in req.videos:
-        job = job_manager.create_job("vlm_detect", {
-            "video": video_name,
-            "batch_size": req.batch_size,
-        }, name=video_name)
-        jobs.append(job)
+    total = len(req.videos)
+    job = job_manager.create_job("vlm_detect", {
+        "videos": req.videos,
+        "batch_size": req.batch_size,
+    }, name=f"Detect ({total} videos)")
 
     async def run_all():
         from yp_video.core.vlm_segment import process_video, build_clip_specs
@@ -53,24 +50,25 @@ async def start_detection(req: DetectRequest):
         from yp_video.web.vllm_manager import vllm_manager
 
         loop = asyncio.get_event_loop()
+        failed = 0
 
-        for job in jobs:
-            video_name = job.params["video"]
+        for i, video_name in enumerate(req.videos):
             video_path = str(CUTS_DIR / video_name)
             output_file = str(SEG_ANNOTATIONS_DIR / f"{Path(video_name).stem}.jsonl")
+            prefix = f"({i + 1}/{total})"
 
             try:
-                await job_manager.update_job(job.id, status="running", message="Counting clips...")
+                await job_manager.update_job(
+                    job.id, status="running", progress=0.0,
+                    message=f"{prefix} Counting clips for {video_name}...",
+                )
 
                 duration = await loop.run_in_executor(
                     None, lambda p=video_path: get_video_duration(p),
                 )
-                total_clips = len(build_clip_specs(duration, req.clip_duration, req.slide_interval))
-
-                await job_manager.update_job(job.id, message=f"Processing {video_name}")
 
                 progress_cb = make_progress_callback(
-                    job.id, loop, "Processing clips ({done}/{total})",
+                    job.id, loop, prefix + " Processing clips ({done}/{total})",
                 )
                 max_concurrent = int(vllm_manager.config["VLLM_MAX_NUM_SEQS"])
                 await loop.run_in_executor(
@@ -89,30 +87,33 @@ async def start_detection(req: DetectRequest):
                     ),
                 )
 
-                # Auto-sync to R2
                 sync_to_r2(Path(output_file), "seg-annotations")
-
-                await job_manager.update_job(
-                    job.id, status="completed", progress=1.0,
-                    message="Detection complete",
-                )
             except asyncio.CancelledError:
                 await job_manager.update_job(job.id, status="cancelled", message="Cancelled")
-                # Skip remaining jobs
-                for remaining in jobs[jobs.index(job) + 1:]:
-                    if remaining.status == JobStatus.PENDING:
-                        await job_manager.update_job(remaining.id, status="cancelled", message="Cancelled")
                 return
             except Exception as e:
-                await job_manager.update_job(job.id, status="failed", error=str(e))
+                failed += 1
+                await job_manager.update_job(
+                    job.id, message=f"{prefix} Failed: {video_name} — {e}",
+                )
 
-            # Allow vLLM to release GPU memory between videos
             await asyncio.sleep(2)
 
-    task = asyncio.create_task(run_all())
-    job_manager.attach_task(jobs, task)
+        if failed == 0:
+            await job_manager.update_job(
+                job.id, status="completed", progress=1.0,
+                message=f"All {total} videos complete",
+            )
+        else:
+            await job_manager.update_job(
+                job.id, status="completed", progress=1.0,
+                message=f"{total - failed}/{total} completed, {failed} failed",
+            )
 
-    return [job.to_dict() for job in jobs]
+    task = asyncio.create_task(run_all())
+    job_manager.attach_task([job], task)
+
+    return job.to_dict()
 
 
 @router.post("/convert")

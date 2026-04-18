@@ -164,114 +164,110 @@ def list_r2_files(category: str = "cuts") -> list[dict]:
     return result
 
 
-async def _run_transfer_jobs(
-    jobs: list,
+async def _run_batch_transfer(
+    job,
+    files: list[str],
+    category: str,
     base_dir: Path,
     transfer_fn: Callable[[Path, str, Callable | None], None],
     verb: str,
 ):
-    """Run file transfer jobs (upload or download) sequentially with progress."""
+    """Run file transfers as a single job with per-file progress."""
     loop = asyncio.get_running_loop()
+    total = len(files)
+    failed = 0
 
-    for job in jobs:
-        file_path = base_dir / job.params["file"]
-        r2_key = job.params["r2_key"]
+    for i, file_path in enumerate(files):
+        local_path = base_dir / file_path
+        r2_key = f"{category}/{file_path}"
+        prefix = f"({i + 1}/{total})"
 
         try:
             await job_manager.update_job(
-                job.id, status="running",
-                message=f"{verb}ing {file_path.name}...",
+                job.id, status="running", progress=0.0,
+                message=f"{prefix} {verb}ing {Path(file_path).name}...",
             )
 
             progress_cb = make_progress_callback(
-                job.id, loop, f"{verb}ing {{done}}/{{total}} bytes",
+                job.id, loop, prefix + f" {verb}ing {{done}}/{{total}} bytes",
             )
             await loop.run_in_executor(
                 None,
-                lambda fp=file_path, k=r2_key, cb=progress_cb:
+                lambda fp=local_path, k=r2_key, cb=progress_cb:
                     transfer_fn(fp, k, cb),
-            )
-
-            await job_manager.update_job(
-                job.id, status="completed", progress=1.0,
-                message=f"{verb}ed {file_path.name}",
             )
         except asyncio.CancelledError:
             await job_manager.update_job(job.id, status="cancelled", message="Cancelled")
-            for remaining in jobs[jobs.index(job) + 1:]:
-                await job_manager.update_job(
-                    remaining.id, status="cancelled", message="Cancelled"
-                )
             return
         except Exception as e:
+            failed += 1
             await job_manager.update_job(
-                job.id, status="failed", error=str(e),
+                job.id, message=f"{prefix} Failed: {Path(file_path).name} — {e}",
             )
+
+    if failed == 0:
+        await job_manager.update_job(
+            job.id, status="completed", progress=1.0,
+            message=f"{verb}ed all {total} files",
+        )
+    else:
+        await job_manager.update_job(
+            job.id, status="completed", progress=1.0,
+            message=f"{total - failed}/{total} {verb.lower()}ed, {failed} failed",
+        )
 
 
 @router.post("/start")
 async def start_upload(req: UploadRequest):
-    """Start upload jobs — one job per file."""
+    """Start a single upload job for all selected files."""
     if not r2_client.configured:
         raise HTTPException(400, "R2 not configured. Fill in r2.env file.")
 
     base_dir = _get_base_dir(req.category)
-
-    jobs = []
-    for file_path in req.files:
-        local_path = base_dir / file_path
-        if not local_path.exists():
-            continue
-
-        r2_key = f"{req.category}/{file_path}"
-        job = job_manager.create_job("r2_upload", {
-            "file": file_path,
-            "category": req.category,
-            "r2_key": r2_key,
-            "size": local_path.stat().st_size,
-        }, name=local_path.name)
-        jobs.append(job)
-
-    if not jobs:
+    valid = [f for f in req.files if (base_dir / f).exists()]
+    if not valid:
         raise HTTPException(400, "No valid files to upload")
+
+    job = job_manager.create_job("r2_upload", {
+        "category": req.category,
+        "count": len(valid),
+    }, name=f"Upload ({len(valid)} files)")
 
     def transfer(local_path, r2_key, cb):
         r2_client.upload_file(local_path, r2_key, on_progress=cb)
 
-    task = asyncio.create_task(_run_transfer_jobs(jobs, base_dir, transfer, "Upload"))
-    job_manager.attach_task(jobs, task)
+    task = asyncio.create_task(
+        _run_batch_transfer(job, valid, req.category, base_dir, transfer, "Upload")
+    )
+    job_manager.attach_task([job], task)
 
-    return [job.to_dict() for job in jobs]
+    return job.to_dict()
 
 
 @router.post("/download")
 async def start_download(req: DownloadRequest):
-    """Download files from R2 to local — one job per file."""
+    """Start a single download job for all selected files."""
     if not r2_client.configured:
         raise HTTPException(400, "R2 not configured")
 
-    base_dir = _get_base_dir(req.category)
-
-    jobs = []
-    for file_path in req.files:
-        r2_key = f"{req.category}/{file_path}"
-        job = job_manager.create_job("r2_download", {
-            "file": file_path,
-            "category": req.category,
-            "r2_key": r2_key,
-        }, name=Path(file_path).name)
-        jobs.append(job)
-
-    if not jobs:
+    if not req.files:
         raise HTTPException(400, "No files to download")
+
+    base_dir = _get_base_dir(req.category)
+    job = job_manager.create_job("r2_download", {
+        "category": req.category,
+        "count": len(req.files),
+    }, name=f"Download ({len(req.files)} files)")
 
     def transfer(local_path, r2_key, cb):
         r2_client.download_file(r2_key, local_path, on_progress=cb)
 
-    task = asyncio.create_task(_run_transfer_jobs(jobs, base_dir, transfer, "Download"))
-    job_manager.attach_task(jobs, task)
+    task = asyncio.create_task(
+        _run_batch_transfer(job, req.files, req.category, base_dir, transfer, "Download")
+    )
+    job_manager.attach_task([job], task)
 
-    return [job.to_dict() for job in jobs]
+    return job.to_dict()
 
 
 @router.post("/delete-local")

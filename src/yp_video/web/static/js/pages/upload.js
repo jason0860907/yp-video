@@ -355,16 +355,16 @@ async function startUpload() {
   sseClients = [];
 
   try {
-    const jobs = await api('/upload/start', {
+    const job = await api('/upload/start', {
       method: 'POST',
       body: { category: state.category, files: selected },
     });
 
-    state.jobs = jobs.map(j => ({ ...j }));
+    state.jobs = [job];
     document.getElementById('upl-progress').classList.remove('hidden');
     renderJobsProgress();
 
-    trackJobs(jobs, btn, () => loadFiles());
+    trackJob(job, btn, () => loadFiles());
   } catch (e) {
     showToast(`Failed to start upload: ${e.message}`, 'error');
     btn.disabled = false;
@@ -382,16 +382,16 @@ async function startDownload() {
   sseClients = [];
 
   try {
-    const jobs = await api('/upload/download', {
+    const job = await api('/upload/download', {
       method: 'POST',
       body: { category: state.category, files: selected },
     });
 
-    state.jobs = jobs.map(j => ({ ...j }));
+    state.jobs = [job];
     document.getElementById('upl-progress').classList.remove('hidden');
     renderJobsProgress();
 
-    trackJobs(jobs, btn, () => loadFiles());
+    trackJob(job, btn, () => loadFiles());
   } catch (e) {
     showToast(`Failed to start download: ${e.message}`, 'error');
     btn.disabled = false;
@@ -460,39 +460,28 @@ async function deleteLocal() {
   }
 }
 
-function trackJobs(jobs, btn, onDone) {
-  let doneCount = 0;
-  const total = jobs.length;
+function trackJob(job, btn, onDone) {
+  const client = new SSEClient(`/api/jobs/${job.id}/events`, {
+    onMessage: (data) => {
+      state.jobs = [data];
+      renderJobsProgress();
 
-  for (const job of jobs) {
-    const client = new SSEClient(`/api/jobs/${job.id}/events`, {
-      onMessage: (data) => {
-        const idx = state.jobs.findIndex(j => j.id === data.id);
-        if (idx >= 0) state.jobs[idx] = data;
-        renderJobsProgress();
-
-        if (data.status === 'completed' || data.status === 'failed' || data.status === 'cancelled') {
-          client.stop();
-          doneCount++;
-          if (data.status === 'failed') {
-            showToast(`${job.name} failed: ${data.error || 'Unknown error'}`, 'error');
-          }
-          if (doneCount >= total) {
-            const failed = state.jobs.filter(j => j.status === 'failed').length;
-            if (failed === 0) showToast('All transfers complete!', 'success');
-            else showToast(`${total - failed}/${total} completed, ${failed} failed`, 'warning');
-            btn.disabled = false;
-            onDone();
-          }
+      if (data.status === 'completed' || data.status === 'failed' || data.status === 'cancelled') {
+        client.stop();
+        if (data.status === 'failed') {
+          showToast(`Transfer failed: ${data.error || 'Unknown error'}`, 'error');
+        } else {
+          showToast(data.message || 'Transfer complete!', 'success');
         }
-      },
-      onError: () => {
-        doneCount++;
-        if (doneCount >= total) btn.disabled = false;
-      },
-    }).start();
-    sseClients.push(client);
-  }
+        btn.disabled = false;
+        onDone();
+      }
+    },
+    onError: () => {
+      btn.disabled = false;
+    },
+  }).start();
+  sseClients.push(client);
 }
 
 function renderJobsProgress() {

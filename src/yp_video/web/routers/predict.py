@@ -99,81 +99,93 @@ def stream_video(video_name: str):
 
 @router.post("/start")
 async def start_prediction(req: PredictRequest):
-    """Start TAD prediction jobs — one job per video."""
+    """Start a single TAD prediction job that processes all selected videos."""
     checkpoint_path = PROJECT_ROOT / req.checkpoint
     if not checkpoint_path.exists():
         raise HTTPException(404, f"Checkpoint not found: {req.checkpoint}")
 
-    # Validate all videos exist
     for video_name in req.videos:
         if not (CUTS_DIR / video_name).exists():
             raise HTTPException(404, f"Video not found: {video_name}")
 
-    # Create one job per video
-    jobs = []
-    for video_name in req.videos:
-        job = job_manager.create_job("infer", {
-            "video": video_name,
-            "checkpoint": req.checkpoint,
-        }, name=video_name)
-        jobs.append(job)
+    total = len(req.videos)
+    job = job_manager.create_job("infer", {
+        "videos": req.videos,
+        "checkpoint": req.checkpoint,
+    }, name=f"Predict ({total} videos)")
 
     async def run_all():
         from yp_video.tad.infer import run_inference
 
-        await job_manager.update_job(jobs[0].id, status="running", message="Waiting for GPU...")
+        await job_manager.update_job(job.id, status="running", message="Waiting for GPU...")
         async with job_manager.gpu_lock:
             loop = asyncio.get_event_loop()
             config_path = TAD_CONFIGS_DIR / "volleyball_actionformer.yaml"
+            failed = 0
 
-            for job in jobs:
-                video_name = job.params["video"]
+            for i, video_name in enumerate(req.videos):
                 video_path = CUTS_DIR / video_name
+                prefix = f"({i + 1}/{total})"
+
+                def _make_cbs(pfx, jid):
+                    def msg_cb(text):
+                        loop.call_soon_threadsafe(
+                            lambda t=text: asyncio.ensure_future(
+                                job_manager.update_job(jid, message=f"{pfx} {t}")
+                            )
+                        )
+                    def prog_cb(frac):
+                        loop.call_soon_threadsafe(
+                            lambda f=frac: asyncio.ensure_future(
+                                job_manager.update_job(jid, progress=f)
+                            )
+                        )
+                    return msg_cb, prog_cb
+
+                msg_cb, prog_cb = _make_cbs(prefix, job.id)
 
                 try:
-                    await job_manager.update_job(job.id, status="running", message="Starting inference...")
-
-                    # Thread-safe callback to push step messages to SSE
-                    def _make_msg_cb(jid):
-                        def cb(text):
-                            loop.call_soon_threadsafe(
-                                lambda t=text: asyncio.ensure_future(
-                                    job_manager.update_job(jid, message=t)
-                                )
-                            )
-                        return cb
+                    await job_manager.update_job(
+                        job.id, progress=0.0,
+                        message=f"{prefix} Starting {video_name}...",
+                    )
 
                     output_path = PREDICTIONS_DIR / f"{video_path.stem}_annotations.jsonl"
-
                     cut_dir = None
                     if req.cut_rallies:
                         cut_dir = VIDEOS_DIR / "rally_clips" / video_path.stem
 
                     await loop.run_in_executor(
                         None,
-                        lambda vp=video_path, op=output_path, cd=cut_dir, mcb=_make_msg_cb(job.id): run_inference(
+                        lambda vp=video_path, op=output_path, cd=cut_dir, mc=msg_cb, pc=prog_cb: run_inference(
                             vp, checkpoint_path, config_path,
                             op, req.device, req.threshold, cd,
                             model_name=req.model,
-                            on_message=mcb,
+                            on_message=mc,
+                            on_progress=pc,
                         ),
-                    )
-
-                    await job_manager.update_job(
-                        job.id, status="completed", progress=1.0,
-                        message=f"Inference complete: {output_path.name}",
                     )
                 except asyncio.CancelledError:
                     await job_manager.update_job(job.id, status="cancelled", message="Cancelled")
-                    # Cancel remaining jobs
-                    for remaining in jobs[jobs.index(job) + 1:]:
-                        if remaining.status == JobStatus.PENDING:
-                            await job_manager.update_job(remaining.id, status="cancelled", message="Cancelled")
                     return
                 except Exception as e:
-                    await job_manager.update_job(job.id, status="failed", error=str(e))
+                    failed += 1
+                    await job_manager.update_job(
+                        job.id, message=f"{prefix} Failed: {video_name} — {e}",
+                    )
+
+            if failed == 0:
+                await job_manager.update_job(
+                    job.id, status="completed", progress=1.0,
+                    message=f"All {total} videos complete",
+                )
+            else:
+                await job_manager.update_job(
+                    job.id, status="completed", progress=1.0,
+                    message=f"{total - failed}/{total} completed, {failed} failed",
+                )
 
     task = asyncio.create_task(run_all())
-    job_manager.attach_task(jobs, task)
+    job_manager.attach_task([job], task)
 
-    return [job.to_dict() for job in jobs]
+    return job.to_dict()

@@ -35,6 +35,7 @@ def run_inference(
     cut_dir: Path | None = None,
     model_name: str = "base",
     on_message: "Callable[[str], None] | None" = None,
+    on_progress: "Callable[[float], None] | None" = None,
 ):
     """Run full inference pipeline on a video.
 
@@ -48,13 +49,19 @@ def run_inference(
         cut_dir: If set, export rally clips to this directory
         model_name: V-JEPA model size (base/large/giant/gigantic)
         on_message: Optional callback for step-level status updates
+        on_progress: Optional callback ``(fraction) -> None`` for progress bar
     """
     def _msg(text: str):
         print(text)
         if on_message:
             on_message(text)
 
+    def _prog(frac: float):
+        if on_progress:
+            on_progress(frac)
+
     _msg(f"Processing: {video_path.name}")
+    _prog(0.0)
 
     mcfg = MODEL_CONFIGS[model_name]
     feat_dir = FEATURES_DIR / mcfg.dir_suffix
@@ -84,6 +91,7 @@ def run_inference(
         feature_cache.parent.mkdir(parents=True, exist_ok=True)
         np.save(feature_cache, features)
     print(f"  Features shape: {features.shape}")
+    _prog(0.7)
 
     # Step 2: Run ActionFormer inference
     _msg("Step 2/3: Running TAD inference...")
@@ -103,6 +111,7 @@ def run_inference(
         )
 
     print(f"  Found {len(detections)} detections")
+    _prog(0.9)
 
     # Step 3: Convert to JSONL
     _msg(f"Step 3/3: Saving {len(detections)} detections...")
