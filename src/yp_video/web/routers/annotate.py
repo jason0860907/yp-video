@@ -9,7 +9,7 @@ from urllib.parse import unquote
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from yp_video.config import ANNOTATIONS_DIR, PRE_ANNOTATIONS_DIR, VIDEOS_DIR
+from yp_video.config import ANNOTATIONS_DIR, PRE_ANNOTATIONS_DIR, RAW_VIDEOS_DIR, VIDEOS_DIR
 from yp_video.core.jsonl import read_jsonl
 from yp_video.web.r2_client import r2_client, serve_video_or_r2_redirect, sync_to_r2
 
@@ -99,7 +99,13 @@ def stream_video(path: str):
     if decoded_path.startswith("/"):
         video_path = Path(decoded_path)
     else:
+        # Subpath like "cuts/foo.mp4" resolves under VIDEOS_DIR. A bare
+        # filename is a raw video → falls through to RAW_VIDEOS_DIR.
         video_path = VIDEOS_DIR / decoded_path
+        if not video_path.exists():
+            alt = RAW_VIDEOS_DIR / decoded_path
+            if alt.exists():
+                video_path = alt
     response = serve_video_or_r2_redirect(video_path, ("cuts", "videos"))
     if response:
         return response

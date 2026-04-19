@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from yp_video.config import VIDEOS_DIR
+from yp_video.config import RAW_VIDEOS_DIR
 
 router = APIRouter()
 
@@ -134,7 +134,7 @@ async def download_videos(session_id: str, videos: list[VideoInfo], quality: str
         return
 
     queue: asyncio.Queue = session["queue"]
-    VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
+    RAW_VIDEOS_DIR.mkdir(parents=True, exist_ok=True)
 
     for i, video in enumerate(videos):
         if session.get("cancelled"):
@@ -186,7 +186,7 @@ async def download_videos(session_id: str, videos: list[VideoInfo], quality: str
         ydl_opts = {
             "format": get_format_string(quality),
             "merge_output_format": "mp4",
-            "outtmpl": str(VIDEOS_DIR / "%(title)s.%(ext)s"),
+            "outtmpl": str(RAW_VIDEOS_DIR / "%(title)s.%(ext)s"),
             "progress_hooks": [make_progress_hook(video_id, queue, loop)],
             "postprocessor_args": {"ffmpeg": ["-movflags", "+faststart"]},
             "cookiefile": str(Path.home() / "cookies.txt"),

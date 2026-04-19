@@ -1,7 +1,7 @@
 /**
  * Train page — Feature extraction + annotation conversion + TAD training.
  */
-import { api, SSEClient, card, pageHeader, stepBadge, statCard, sectionTitle, btnPrimary, btnSecondary, btnSmall, createProgressBar, showToast, emptyState, inputCls, selectCls } from '../shared.js';
+import { api, SSEClient, card, pageHeader, stepBadge, statCard, sectionTitle, btnPrimary, btnSecondary, btnSmall, createProgressBar, showToast, showConfirm, emptyState, inputCls, selectCls } from '../shared.js';
 
 let sseClient = null;
 let videos = [];
@@ -52,6 +52,7 @@ export function render(container) {
                 <input id="train-feat-batch" type="number" value="32" min="1" max="64" class="w-28 ${inputCls}">
               </div>
               ${btnSecondary('Extract', 'id="train-extract"')}
+              <span id="train-extract-count" class="text-xs text-text-muted font-heading tabular-nums ml-auto self-center"></span>
             </div>
           </div>
           <div id="train-extract-progress" class="ml-10 hidden space-y-2">
@@ -89,6 +90,7 @@ export function render(container) {
               </div>
               ${btnSecondary('Convert', 'id="train-convert"')}
               <span id="train-convert-status" class="text-xs text-text-muted self-center"></span>
+              <span id="train-convert-count" class="text-xs text-text-muted font-heading tabular-nums ml-auto self-center"></span>
             </div>
           </div>
         </div>
@@ -136,6 +138,20 @@ export function render(container) {
 
 export function activate() {}
 export function deactivate() {}
+
+function updateExtractCount() {
+  const el = document.getElementById('train-extract-count');
+  if (!el) return;
+  const sel = videos.filter(v => v.selected).length;
+  el.textContent = videos.length ? `${sel} / ${videos.length} selected` : '';
+}
+
+function updateConvertCount() {
+  const el = document.getElementById('train-convert-count');
+  if (!el) return;
+  const sel = convVideos.filter(v => v.selected).length;
+  el.textContent = convVideos.length ? `${sel} / ${convVideos.length} selected` : '';
+}
 
 function bindEvents() {
   document.getElementById('train-convert').addEventListener('click', convertAnnotations);
@@ -254,8 +270,10 @@ function renderVideos() {
   el.querySelectorAll('.train-check').forEach(cb => {
     cb.addEventListener('change', (e) => {
       videos[parseInt(e.target.dataset.idx)].selected = e.target.checked;
+      updateExtractCount();
     });
   });
+  updateExtractCount();
 }
 
 function renderConvVideos() {
@@ -280,8 +298,10 @@ function renderConvVideos() {
   el.querySelectorAll('.conv-check').forEach(cb => {
     cb.addEventListener('change', (e) => {
       convVideos[parseInt(e.target.dataset.idx)].selected = e.target.checked;
+      updateConvertCount();
     });
   });
+  updateConvertCount();
 }
 
 const TIOU_COLORS = {
@@ -432,6 +452,23 @@ async function extractFeatures() {
   const selected = videos.filter(v => v.selected).map(v => v.name);
   if (selected.length === 0) return showToast('No videos selected', 'warning');
 
+  let stopVllm = false;
+  const vllmStatus = await api('/system/vllm/status').catch(() => null);
+  if (vllmStatus?.status === 'running') {
+    const ok = await showConfirm({
+      title: 'Stop vLLM for feature extraction?',
+      body:
+        'vLLM is running and holds most of the GPU VRAM.\n' +
+        'Feature extraction needs the GPU and would OOM otherwise.\n\n' +
+        'vLLM will be automatically restarted once extraction finishes.',
+      confirmText: 'Stop & Extract',
+      cancelText: 'Cancel',
+      variant: 'warning',
+    });
+    if (!ok) return;
+    stopVllm = true;
+  }
+
   const btn = document.getElementById('train-extract');
   btn.disabled = true;
   try {
@@ -441,6 +478,7 @@ async function extractFeatures() {
         videos: selected,
         batch_size: parseInt(document.getElementById('train-feat-batch').value),
         model: selectedModel,
+        stop_vllm: stopVllm,
       },
     });
     document.getElementById('train-extract-progress').classList.remove('hidden');

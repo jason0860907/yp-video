@@ -1,7 +1,7 @@
 /**
  * Cut page — Video segment cutter.
  */
-import { api, formatTimePrecise, card, pageHeader, sectionTitle, btnPrimary, btnSmall, selectCls, inputCls, showToast, emptyState, kbdHint } from '../shared.js';
+import { api, formatTimePrecise, card, pageHeader, sectionTitle, btnPrimary, btnDanger, btnSmall, selectCls, inputCls, showToast, showConfirm, emptyState, kbdHint } from '../shared.js';
 
 let state = { videos: [], segments: [], markStart: null };
 let videoEl = null;
@@ -53,6 +53,16 @@ export function render(container) {
         </div>
       `)}
 
+      ${card(`
+        <div class="flex items-center justify-between gap-4">
+          <div class="min-w-0">
+            <p class="text-sm font-heading font-medium text-text-primary">Delete source video</p>
+            <p class="text-[11px] text-text-muted mt-0.5">Permanently removes the raw file from local storage. Cut segments are kept.</p>
+          </div>
+          ${btnDanger('Delete Video', 'id="cut-delete-video"')}
+        </div>
+      `)}
+
       ${kbdHint([['[  ]', 'mark'], ['\u2190 \u2192', 'skip 5s']])}
     </div>`;
 
@@ -76,10 +86,53 @@ function bindEvents() {
   document.getElementById('cut-mark-start').addEventListener('click', markStart);
   document.getElementById('cut-mark-end').addEventListener('click', markEnd);
   document.getElementById('cut-export').addEventListener('click', exportAll);
+  document.getElementById('cut-delete-video').addEventListener('click', () => deleteSourceVideo());
 
   videoEl.addEventListener('timeupdate', () => {
     document.getElementById('cut-time').textContent = formatTimePrecise(videoEl.currentTime);
   });
+}
+
+async function deleteSourceVideo({ skipConfirm = false, contextMessage = '' } = {}) {
+  const name = document.getElementById('cut-video-select').value;
+  if (!name) {
+    showToast('No video selected', 'warning');
+    return false;
+  }
+
+  if (!skipConfirm) {
+    const ok = await showConfirm({
+      title: 'Delete source video?',
+      body: `${contextMessage ? contextMessage + '\n\n' : ''}This permanently removes the raw file from local storage:\n${name}\n\nCut segments already exported are not affected.`,
+      confirmText: 'Delete',
+      cancelText: 'Keep',
+      variant: 'danger',
+    });
+    if (!ok) return false;
+  }
+
+  try {
+    await api(`/cut/video/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    showToast(`Deleted ${name}`, 'success');
+
+    // Clear player + remove from dropdown
+    videoEl.pause();
+    videoEl.removeAttribute('src');
+    videoEl.load();
+    const sel = document.getElementById('cut-video-select');
+    const opt = sel.querySelector(`option[value="${CSS.escape(name)}"]`);
+    if (opt) opt.remove();
+    sel.value = '';
+    state.videos = state.videos.filter(v => v !== name);
+    state.segments = [];
+    state.markStart = null;
+    document.getElementById('cut-mark-info').classList.add('hidden');
+    renderSegments();
+    return true;
+  } catch (e) {
+    showToast(`Delete failed: ${e.message}`, 'error');
+    return false;
+  }
 }
 
 function handleKeydown(e) {
@@ -208,6 +261,13 @@ async function exportAll() {
       body: { source, segments: state.segments },
     });
     showToast(`Exported ${res.success.length} segments${res.failed.length ? `, ${res.failed.length} failed` : ''}`, res.failed.length ? 'warning' : 'success');
+
+    // Offer to delete the source video only if everything exported cleanly
+    if (res.failed.length === 0 && res.success.length > 0) {
+      await deleteSourceVideo({
+        contextMessage: `All ${res.success.length} segments exported successfully.`,
+      });
+    }
   } catch (e) {
     showToast(`Export failed: ${e.message}`, 'error');
   } finally {

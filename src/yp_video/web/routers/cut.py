@@ -5,7 +5,7 @@ import asyncio
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from yp_video.config import CUTS_DIR, VIDEOS_DIR
+from yp_video.config import CUTS_DIR, RAW_VIDEOS_DIR
 from yp_video.core.ffmpeg import FFmpegError, export_segment
 from yp_video.web.r2_client import serve_video_or_r2_redirect, sync_to_r2
 
@@ -35,22 +35,37 @@ class ExportResult(BaseModel):
 
 @router.get("/videos")
 def list_videos() -> list[str]:
-    if not VIDEOS_DIR.exists():
+    if not RAW_VIDEOS_DIR.exists():
         return []
-    return sorted(f.name for f in VIDEOS_DIR.glob("*.mp4"))
+    return sorted(f.name for f in RAW_VIDEOS_DIR.glob("*.mp4"))
 
 
 @router.get("/video/{name}")
 def stream_video(name: str):
-    response = serve_video_or_r2_redirect(VIDEOS_DIR / name, ("videos",))
+    response = serve_video_or_r2_redirect(RAW_VIDEOS_DIR / name, ("videos",))
     if response:
         return response
     raise HTTPException(404, "Video not found")
 
 
+@router.delete("/video/{name}")
+def delete_video(name: str) -> dict:
+    """Delete a raw source video from RAW_VIDEOS_DIR. Local-only, does not touch R2."""
+    path = RAW_VIDEOS_DIR / name
+    if not path.exists():
+        raise HTTPException(404, "Video not found")
+    # Guard against path traversal — must stay inside RAW_VIDEOS_DIR.
+    try:
+        path.resolve().relative_to(RAW_VIDEOS_DIR.resolve())
+    except ValueError:
+        raise HTTPException(400, "Invalid path")
+    path.unlink()
+    return {"ok": True, "deleted": name}
+
+
 @router.post("/export")
 async def export_segments(req: ExportRequest) -> ExportResult:
-    source_path = VIDEOS_DIR / req.source
+    source_path = RAW_VIDEOS_DIR / req.source
     if not source_path.exists():
         raise HTTPException(404, "Source video not found")
 

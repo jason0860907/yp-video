@@ -1,7 +1,7 @@
 /**
  * Predict page — TAD inference with multi-video selection and result visualization.
  */
-import { api, SSEClient, formatTime, card, pageHeader, sectionTitle, stepBadge, btnPrimary, btnSmall, createProgressBar, showToast, emptyState, inputCls, selectCls } from '../shared.js';
+import { api, SSEClient, formatTime, card, pageHeader, sectionTitle, stepBadge, btnPrimary, btnSmall, createProgressBar, showToast, showConfirm, emptyState, inputCls, selectCls } from '../shared.js';
 
 let sseClients = [];
 let state = { videos: [], checkpoints: [], results: [], jobs: [] };
@@ -74,6 +74,7 @@ export function render(container) {
           </div>
           <div class="ml-10 flex items-center gap-3 pt-1">
             ${btnPrimary('Start Prediction', 'id="pred-start"')}
+            <span id="pred-count" class="text-xs text-text-muted font-heading tabular-nums ml-auto"></span>
           </div>
         </div>
       `)}
@@ -233,8 +234,17 @@ function renderVideos() {
   el.querySelectorAll('.pred-check').forEach(cb => {
     cb.addEventListener('change', (e) => {
       state.videos[parseInt(e.target.dataset.idx)].selected = e.target.checked;
+      updatePredCount();
     });
   });
+  updatePredCount();
+}
+
+function updatePredCount() {
+  const el = document.getElementById('pred-count');
+  if (!el) return;
+  const sel = state.videos.filter(v => v.selected).length;
+  el.textContent = state.videos.length ? `${sel} / ${state.videos.length} selected` : '';
 }
 
 async function loadResults() {
@@ -277,6 +287,23 @@ async function startPrediction() {
   const checkpoint = document.getElementById('pred-checkpoint').value;
   if (!checkpoint) return showToast('Select a checkpoint', 'warning');
 
+  let stopVllm = false;
+  const vllmStatus = await api('/system/vllm/status').catch(() => null);
+  if (vllmStatus?.status === 'running') {
+    const ok = await showConfirm({
+      title: 'Stop vLLM for prediction?',
+      body:
+        'vLLM is running and holds most of the GPU VRAM.\n' +
+        'Prediction needs the GPU for V-JEPA and would OOM otherwise.\n\n' +
+        'vLLM will be automatically restarted once prediction finishes.',
+      confirmText: 'Stop & Predict',
+      cancelText: 'Cancel',
+      variant: 'warning',
+    });
+    if (!ok) return;
+    stopVllm = true;
+  }
+
   const btn = document.getElementById('pred-start');
   btn.disabled = true;
   document.getElementById('pred-retry-wrap').classList.add('hidden');
@@ -295,6 +322,7 @@ async function startPrediction() {
         device: document.getElementById('pred-device').value,
         cut_rallies: document.getElementById('pred-cut').checked,
         model: document.getElementById('pred-model').value,
+        stop_vllm: stopVllm,
       },
     });
 
@@ -358,15 +386,31 @@ function renderJobsProgress() {
     else if (isFailed) statusColor = 'text-red-400';
     else if (isCancelled) statusColor = 'text-amber-400';
 
+    // Summary label: show "X/Y failed" form when the message contains a failure count
+    let statusLabel = pct + '%';
+    if (isFailed) statusLabel = 'failed';
+    else if (isCancelled) statusLabel = 'cancelled';
+    else if (isDone) statusLabel = job.message?.includes('failed') ? 'partial' : 'done';
+
+    const hasLogs = Array.isArray(job.logs) && job.logs.length > 0;
+    const showMessage = job.message && (isRunning || isDone || isFailed);
+    const logsHtml = hasLogs && (isFailed || (isDone && job.message?.includes('failed')))
+      ? `<details class="mt-1">
+           <summary class="text-[10px] text-text-muted cursor-pointer hover:text-text-primary">Show logs (${job.logs.length} lines)</summary>
+           <pre class="mt-1 max-h-64 overflow-y-auto rounded-lg bg-black/40 border border-white/5 p-2 font-mono text-[10px] text-red-300/80 whitespace-pre-wrap break-words">${job.logs.map(l => l.replace(/</g, '&lt;')).join('\n')}</pre>
+         </details>`
+      : '';
+
     return `
       <div class="space-y-1.5">
         <div class="flex items-center justify-between">
           <span class="text-xs text-text-primary font-medium truncate">${job.name}</span>
-          <span class="text-[11px] ${statusColor} tabular-nums font-medium">${isDone ? 'done' : isFailed ? 'failed' : isCancelled ? 'cancelled' : pct + '%'}</span>
+          <span class="text-[11px] ${statusColor} tabular-nums font-medium">${statusLabel}</span>
         </div>
         ${createProgressBar(job.progress)}
-        ${job.message && isRunning ? `<p class="text-[10px] text-text-muted truncate">${job.message}</p>` : ''}
-        ${job.error ? `<p class="text-[10px] text-red-400/80 truncate">${job.error}</p>` : ''}
+        ${showMessage ? `<p class="text-[10px] text-text-muted">${(job.message || '').replace(/</g, '&lt;')}</p>` : ''}
+        ${job.error ? `<p class="text-[10px] text-red-400/80">${job.error.replace(/</g, '&lt;')}</p>` : ''}
+        ${logsHtml}
       </div>`;
   }).join('');
 }

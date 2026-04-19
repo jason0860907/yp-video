@@ -42,73 +42,88 @@ async def start_detection(req: DetectRequest):
     job = job_manager.create_job("vlm_detect", {
         "videos": req.videos,
         "batch_size": req.batch_size,
-    }, name=f"Detect ({total} videos)")
+    }, name=f"VLM Predict ({total} videos)")
 
     async def run_all():
         from yp_video.core.vlm_segment import process_video, build_clip_specs
         from yp_video.core.ffmpeg import get_video_duration
         from yp_video.web.vllm_manager import vllm_manager
 
-        loop = asyncio.get_event_loop()
-        failed = 0
+        await job_manager.update_job(
+            job.id, status="running", message="Waiting for GPU...",
+        )
 
-        for i, video_name in enumerate(req.videos):
-            video_path = str(CUTS_DIR / video_name)
-            output_file = str(SEG_ANNOTATIONS_DIR / f"{Path(video_name).stem}.jsonl")
-            prefix = f"({i + 1}/{total})"
+        async with job_manager.gpu_lock:
+            loop = asyncio.get_event_loop()
+            failed = 0
 
-            try:
+            for i, video_name in enumerate(req.videos):
+                video_path = str(CUTS_DIR / video_name)
+                output_file = str(SEG_ANNOTATIONS_DIR / f"{Path(video_name).stem}.jsonl")
+                prefix = f"({i + 1}/{total})"
+
+                try:
+                    await job_manager.update_job(
+                        job.id, status="running", progress=0.0,
+                        name=f"VLM Predict ({i + 1}/{total}) — {video_name}",
+                        message=f"{prefix} Counting clips for {video_name}...",
+                    )
+
+                    duration = await loop.run_in_executor(
+                        None, lambda p=video_path: get_video_duration(p),
+                    )
+
+                    progress_cb = make_progress_callback(
+                        job.id, loop, prefix + " Processing clips ({done}/{total})",
+                    )
+                    max_concurrent = int(vllm_manager.config["VLLM_MAX_NUM_SEQS"])
+                    await loop.run_in_executor(
+                        None,
+                        lambda vp=video_path, of=output_file, cb=progress_cb, mc=max_concurrent, dur=duration: process_video(
+                            video_path=vp,
+                            server_url=vllm_manager.server_url,
+                            model=vllm_manager.model,
+                            clip_duration=req.clip_duration,
+                            slide_interval=req.slide_interval,
+                            output_file=of,
+                            batch_size=req.batch_size,
+                            max_concurrent=mc,
+                            on_progress=cb,
+                            total_duration=dur,
+                        ),
+                    )
+
+                    sync_to_r2(Path(output_file), "seg-annotations")
+                except asyncio.CancelledError:
+                    await job_manager.update_job(job.id, status="cancelled", message="Cancelled")
+                    return
+                except Exception as e:
+                    failed += 1
+                    await job_manager.update_job(
+                        job.id, message=f"{prefix} Failed: {video_name} — {e}",
+                    )
+
+                await asyncio.sleep(2)
+
+            final_name = f"VLM Predict ({total} videos)"
+            if failed == 0:
                 await job_manager.update_job(
-                    job.id, status="running", progress=0.0,
-                    message=f"{prefix} Counting clips for {video_name}...",
+                    job.id, status="completed", progress=1.0,
+                    name=final_name,
+                    message=f"All {total} videos complete",
                 )
-
-                duration = await loop.run_in_executor(
-                    None, lambda p=video_path: get_video_duration(p),
-                )
-
-                progress_cb = make_progress_callback(
-                    job.id, loop, prefix + " Processing clips ({done}/{total})",
-                )
-                max_concurrent = int(vllm_manager.config["VLLM_MAX_NUM_SEQS"])
-                await loop.run_in_executor(
-                    None,
-                    lambda vp=video_path, of=output_file, cb=progress_cb, mc=max_concurrent, dur=duration: process_video(
-                        video_path=vp,
-                        server_url=vllm_manager.server_url,
-                        model=vllm_manager.model,
-                        clip_duration=req.clip_duration,
-                        slide_interval=req.slide_interval,
-                        output_file=of,
-                        batch_size=req.batch_size,
-                        max_concurrent=mc,
-                        on_progress=cb,
-                        total_duration=dur,
-                    ),
-                )
-
-                sync_to_r2(Path(output_file), "seg-annotations")
-            except asyncio.CancelledError:
-                await job_manager.update_job(job.id, status="cancelled", message="Cancelled")
-                return
-            except Exception as e:
-                failed += 1
+            elif failed == total:
                 await job_manager.update_job(
-                    job.id, message=f"{prefix} Failed: {video_name} — {e}",
+                    job.id, status="failed", progress=1.0,
+                    name=final_name,
+                    message=f"All {total} videos failed",
                 )
-
-            await asyncio.sleep(2)
-
-        if failed == 0:
-            await job_manager.update_job(
-                job.id, status="completed", progress=1.0,
-                message=f"All {total} videos complete",
-            )
-        else:
-            await job_manager.update_job(
-                job.id, status="completed", progress=1.0,
-                message=f"{total - failed}/{total} completed, {failed} failed",
-            )
+            else:
+                await job_manager.update_job(
+                    job.id, status="completed", progress=1.0,
+                    name=final_name,
+                    message=f"{total - failed}/{total} completed, {failed} failed",
+                )
 
     task = asyncio.create_task(run_all())
     job_manager.attach_task([job], task)

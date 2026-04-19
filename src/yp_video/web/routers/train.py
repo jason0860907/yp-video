@@ -1,12 +1,16 @@
 """TAD training pipeline router."""
 
 import asyncio
+import logging
 import subprocess
 import sys
+import traceback
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+
+log = logging.getLogger(__name__)
 
 from yp_video.config import (
     ANNOTATIONS_DIR,
@@ -30,6 +34,7 @@ class ExtractFeaturesRequest(BaseModel):
     videos: list[str] | None = None
     batch_size: int = 32
     model: str = "base"
+    stop_vllm: bool = False
 
 
 class ConvertAnnotationsRequest(BaseModel):
@@ -121,8 +126,14 @@ async def extract_features(req: ExtractFeaturesRequest):
     job = job_manager.create_job("feature_extract", {"videos": req.videos, "model": req.model}, name=label)
 
     async def run_extraction():
+        vllm_was_stopped = False
         try:
             await job_manager.update_job(job.id, status="running", message="Waiting for GPU...")
+            if req.stop_vllm and job_manager.vllm_using_gpu:
+                from yp_video.web.vllm_manager import vllm_manager
+                await job_manager.update_job(job.id, message="Stopping vLLM to free VRAM...")
+                await vllm_manager.stop()
+                vllm_was_stopped = True
             async with job_manager.gpu_lock:
                 await job_manager.update_job(job.id, message=f"Loading V-JEPA 2.1 {req.model}...")
 
@@ -157,7 +168,26 @@ async def extract_features(req: ExtractFeaturesRequest):
         except asyncio.CancelledError:
             await job_manager.update_job(job.id, status="cancelled")
         except Exception as e:
-            await job_manager.update_job(job.id, status="failed", error=str(e))
+            tb = traceback.format_exc()
+            print(f"\n[extract-features] Failed:\n{tb}", flush=True)
+            log.error("Feature extraction failed:\n%s", tb)
+            err_type = type(e).__name__
+            err_msg = str(e) or "<no message>"
+            job_obj = job_manager.get_job(job.id)
+            if job_obj:
+                job_obj.logs.append(f"{err_type}: {err_msg}")
+                for line in tb.splitlines():
+                    job_obj.logs.append(line)
+            await job_manager.update_job(
+                job.id, status="failed",
+                error=f"{err_type}: {err_msg}",
+                message=f"Failed: {err_type}: {err_msg}",
+            )
+        finally:
+            if vllm_was_stopped:
+                from yp_video.web.vllm_manager import vllm_manager
+                log.info("Auto-restarting vLLM after feature extraction job %s", job.id)
+                asyncio.create_task(vllm_manager.start())
 
     task = asyncio.create_task(run_extraction())
     job_manager.attach_task(job, task)

@@ -1,9 +1,13 @@
 """TAD inference router."""
 
 import asyncio
+import logging
+import traceback
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+
+log = logging.getLogger(__name__)
 
 from yp_video.config import (
     ANNOTATIONS_DIR,
@@ -30,6 +34,7 @@ class PredictRequest(BaseModel):
     device: str = "cuda"
     cut_rallies: bool = False
     model: str = "base"
+    stop_vllm: bool = False
 
 
 @router.get("/videos")
@@ -118,72 +123,107 @@ async def start_prediction(req: PredictRequest):
         from yp_video.tad.infer import run_inference
 
         await job_manager.update_job(job.id, status="running", message="Waiting for GPU...")
-        async with job_manager.gpu_lock:
-            loop = asyncio.get_event_loop()
-            config_path = TAD_CONFIGS_DIR / "volleyball_actionformer.yaml"
-            failed = 0
+        vllm_was_stopped = False
+        if req.stop_vllm and job_manager.vllm_using_gpu:
+            from yp_video.web.vllm_manager import vllm_manager
+            await job_manager.update_job(job.id, message="Stopping vLLM to free VRAM...")
+            await vllm_manager.stop()
+            vllm_was_stopped = True
+        try:
+            async with job_manager.gpu_lock:
+                loop = asyncio.get_event_loop()
+                config_path = TAD_CONFIGS_DIR / "volleyball_actionformer.yaml"
+                failed = 0
 
-            for i, video_name in enumerate(req.videos):
-                video_path = CUTS_DIR / video_name
-                prefix = f"({i + 1}/{total})"
+                for i, video_name in enumerate(req.videos):
+                    video_path = CUTS_DIR / video_name
+                    prefix = f"({i + 1}/{total})"
 
-                def _make_cbs(pfx, jid):
-                    def msg_cb(text):
-                        loop.call_soon_threadsafe(
-                            lambda t=text: asyncio.ensure_future(
-                                job_manager.update_job(jid, message=f"{pfx} {t}")
+                    def _make_cbs(pfx, jid):
+                        def msg_cb(text):
+                            loop.call_soon_threadsafe(
+                                lambda t=text: asyncio.ensure_future(
+                                    job_manager.update_job(jid, message=f"{pfx} {t}")
+                                )
                             )
-                        )
-                    def prog_cb(frac):
-                        loop.call_soon_threadsafe(
-                            lambda f=frac: asyncio.ensure_future(
-                                job_manager.update_job(jid, progress=f)
+                        def prog_cb(frac):
+                            loop.call_soon_threadsafe(
+                                lambda f=frac: asyncio.ensure_future(
+                                    job_manager.update_job(jid, progress=f)
+                                )
                             )
+                        return msg_cb, prog_cb
+
+                    msg_cb, prog_cb = _make_cbs(prefix, job.id)
+
+                    try:
+                        await job_manager.update_job(
+                            job.id, progress=0.0,
+                            name=f"Predict ({i + 1}/{total}) — {video_name}",
+                            message=f"{prefix} Starting {video_name}...",
                         )
-                    return msg_cb, prog_cb
 
-                msg_cb, prog_cb = _make_cbs(prefix, job.id)
+                        output_path = PREDICTIONS_DIR / f"{video_path.stem}_annotations.jsonl"
+                        cut_dir = None
+                        if req.cut_rallies:
+                            cut_dir = VIDEOS_DIR / "rally_clips" / video_path.stem
 
-                try:
+                        await loop.run_in_executor(
+                            None,
+                            lambda vp=video_path, op=output_path, cd=cut_dir, mc=msg_cb, pc=prog_cb: run_inference(
+                                vp, checkpoint_path, config_path,
+                                op, req.device, req.threshold, cd,
+                                model_name=req.model,
+                                on_message=mc,
+                                on_progress=pc,
+                            ),
+                        )
+                    except asyncio.CancelledError:
+                        await job_manager.update_job(job.id, status="cancelled", message="Cancelled")
+                        return
+                    except Exception as e:
+                        failed += 1
+                        tb = traceback.format_exc()
+                        # Ensure traceback lands in stderr so the tmux/api log shows it
+                        print(f"\n[predict] Prediction failed for {video_name}:\n{tb}", flush=True)
+                        log.error("Prediction failed for %s:\n%s", video_name, tb)
+                        err_type = type(e).__name__
+                        err_msg = str(e) or "<no message>"
+                        job_obj = job_manager.get_job(job.id)
+                        if job_obj:
+                            job_obj.logs.append(f"[{video_name}] {err_type}: {err_msg}")
+                            for line in tb.splitlines():
+                                job_obj.logs.append(line)
+                        await job_manager.update_job(
+                            job.id,
+                            message=f"{prefix} Failed: {video_name} — {err_type}: {err_msg}",
+                            error=f"{err_type}: {err_msg}",
+                        )
+
+                final_name = f"Predict ({total} videos)"
+                if failed == 0:
                     await job_manager.update_job(
-                        job.id, progress=0.0,
-                        message=f"{prefix} Starting {video_name}...",
+                        job.id, status="completed", progress=1.0,
+                        name=final_name,
+                        message=f"All {total} videos complete",
                     )
-
-                    output_path = PREDICTIONS_DIR / f"{video_path.stem}_annotations.jsonl"
-                    cut_dir = None
-                    if req.cut_rallies:
-                        cut_dir = VIDEOS_DIR / "rally_clips" / video_path.stem
-
-                    await loop.run_in_executor(
-                        None,
-                        lambda vp=video_path, op=output_path, cd=cut_dir, mc=msg_cb, pc=prog_cb: run_inference(
-                            vp, checkpoint_path, config_path,
-                            op, req.device, req.threshold, cd,
-                            model_name=req.model,
-                            on_message=mc,
-                            on_progress=pc,
-                        ),
-                    )
-                except asyncio.CancelledError:
-                    await job_manager.update_job(job.id, status="cancelled", message="Cancelled")
-                    return
-                except Exception as e:
-                    failed += 1
+                elif failed == total:
                     await job_manager.update_job(
-                        job.id, message=f"{prefix} Failed: {video_name} — {e}",
+                        job.id, status="failed", progress=1.0,
+                        name=final_name,
+                        message=f"All {total} videos failed — see logs",
                     )
-
-            if failed == 0:
-                await job_manager.update_job(
-                    job.id, status="completed", progress=1.0,
-                    message=f"All {total} videos complete",
-                )
-            else:
-                await job_manager.update_job(
-                    job.id, status="completed", progress=1.0,
-                    message=f"{total - failed}/{total} completed, {failed} failed",
-                )
+                else:
+                    await job_manager.update_job(
+                        job.id, status="completed", progress=1.0,
+                        name=final_name,
+                        message=f"{total - failed}/{total} completed, {failed} failed",
+                    )
+        finally:
+            if vllm_was_stopped:
+                from yp_video.web.vllm_manager import vllm_manager
+                log.info("Auto-restarting vLLM after prediction job %s", job.id)
+                asyncio.create_task(vllm_manager.start())
 
     task = asyncio.create_task(run_all())
     job_manager.attach_task([job], task)

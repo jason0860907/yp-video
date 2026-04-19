@@ -200,6 +200,81 @@ export function showToast(message, type = 'info') {
   setTimeout(dismiss, 3500);
 }
 
+// ── Modal dialog ──
+// showConfirm({ title, body, confirmText, cancelText, variant }) → Promise<boolean>
+// variant: 'warning' (amber) | 'danger' (red) | 'info' (indigo)
+export function showConfirm({
+  title = 'Confirm',
+  body = '',
+  confirmText = 'Confirm',
+  cancelText = 'Cancel',
+  variant = 'warning',
+} = {}) {
+  const variants = {
+    info:    { ring: 'ring-indigo-500/25', glow: 'rgba(99,102,241,0.12)', iconBg: 'bg-indigo-500/15 text-indigo-300 ring-indigo-500/25',
+               svg: '<path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>' },
+    warning: { ring: 'ring-amber-500/25', glow: 'rgba(251,191,36,0.10)', iconBg: 'bg-amber-500/15 text-amber-300 ring-amber-500/25',
+               svg: '<path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>' },
+    danger:  { ring: 'ring-red-500/25', glow: 'rgba(239,68,68,0.12)', iconBg: 'bg-red-500/15 text-red-300 ring-red-500/25',
+               svg: '<path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>' },
+  };
+  const v = variants[variant] || variants.warning;
+
+  return new Promise(resolve => {
+    const overlay = document.createElement('div');
+    overlay.className = 'fixed inset-0 z-[60] flex items-center justify-center p-4';
+    overlay.style.cssText = 'background: rgba(0,0,0,0.55); backdrop-filter: blur(8px); opacity: 0; transition: opacity 0.2s ease;';
+
+    overlay.innerHTML = `
+      <div class="relative w-full max-w-md rounded-2xl border border-white/10 ring-1 ${v.ring} p-6 shadow-2xl"
+           style="background: linear-gradient(180deg, rgba(20,20,26,0.98), rgba(12,12,16,0.98)); backdrop-filter: blur(20px); box-shadow: 0 24px 64px -12px ${v.glow}, 0 0 0 1px rgba(255,255,255,0.03); opacity: 0; transform: translateY(8px) scale(0.98); transition: all 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);">
+        <div class="flex items-start gap-4">
+          <div class="w-10 h-10 rounded-xl flex items-center justify-center ring-1 flex-shrink-0 ${v.iconBg}">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">${v.svg}</svg>
+          </div>
+          <div class="flex-1 min-w-0">
+            <h3 class="text-base font-heading font-semibold text-text-primary">${title}</h3>
+            <div class="mt-2 text-sm text-text-secondary leading-relaxed whitespace-pre-line">${body}</div>
+          </div>
+        </div>
+        <div class="mt-6 flex items-center justify-end gap-2.5">
+          <button data-act="cancel" class="inline-flex items-center justify-center gap-2 bg-white/[0.04] hover:bg-white/[0.08] text-text-secondary hover:text-text-primary border border-white/10 hover:border-white/20 px-4 py-2 rounded-xl font-medium text-sm cursor-pointer transition-all duration-200">${cancelText}</button>
+          <button data-act="confirm" class="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl font-semibold text-sm text-white cursor-pointer transition-all duration-200 hover:-translate-y-px active:translate-y-0 hover:shadow-lg"
+                  style="${variant === 'danger'
+                    ? 'background: linear-gradient(135deg, #EF4444, #DC2626); box-shadow: 0 2px 12px rgba(239,68,68,0.25)'
+                    : 'background: linear-gradient(135deg, #F97316, #EA580C); box-shadow: 0 2px 12px rgba(249,115,22,0.25)'}">${confirmText}</button>
+        </div>
+      </div>`;
+
+    document.body.appendChild(overlay);
+    const dialogEl = overlay.firstElementChild;
+
+    const close = (result) => {
+      dialogEl.style.opacity = '0';
+      dialogEl.style.transform = 'translateY(8px) scale(0.98)';
+      overlay.style.opacity = '0';
+      document.removeEventListener('keydown', onKey);
+      setTimeout(() => { overlay.remove(); resolve(result); }, 200);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); close(false); }
+      else if (e.key === 'Enter') { e.preventDefault(); close(true); }
+    };
+
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(false); });
+    overlay.querySelector('[data-act="cancel"]').addEventListener('click', () => close(false));
+    overlay.querySelector('[data-act="confirm"]').addEventListener('click', () => close(true));
+    document.addEventListener('keydown', onKey);
+
+    requestAnimationFrame(() => {
+      overlay.style.opacity = '1';
+      dialogEl.style.opacity = '1';
+      dialogEl.style.transform = 'translateY(0) scale(1)';
+      overlay.querySelector('[data-act="confirm"]').focus();
+    });
+  });
+}
+
 // ── Empty State ──
 export function emptyState(icon, title, subtitle = '') {
   return `

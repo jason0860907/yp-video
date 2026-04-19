@@ -10,7 +10,7 @@ from yp_video.config import (
     PRE_ANNOTATIONS_DIR,
     SEG_ANNOTATIONS_DIR,
     TAD_FEATURES_DIR,
-    VIDEOS_DIR,
+    RAW_VIDEOS_DIR,
     count_files,
 )
 from yp_video.web.jobs import job_manager
@@ -71,7 +71,7 @@ def list_videos(model: str = "base") -> list[dict]:
 def get_stats():
     """Get pipeline statistics."""
     return {
-        "videos": count_files(VIDEOS_DIR, "*.mp4"),
+        "videos": count_files(RAW_VIDEOS_DIR, "*.mp4"),
         "cuts": count_files(CUTS_DIR, "*.mp4"),
         "detections": count_files(SEG_ANNOTATIONS_DIR, "*.jsonl"),
         "pre_annotations": count_files(PRE_ANNOTATIONS_DIR, "*.jsonl"),

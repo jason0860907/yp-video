@@ -34,6 +34,7 @@ TAD_CONFIGS_DIR = TAD_PKG_DIR / "configs"
 
 # ── User data directories (~/videos) ─────────────────────────────
 VIDEOS_DIR = Path.home() / "videos"
+RAW_VIDEOS_DIR = VIDEOS_DIR / "raw-videos"
 CUTS_DIR = VIDEOS_DIR / "cuts"
 SEG_ANNOTATIONS_DIR = VIDEOS_DIR / "seg-annotations"
 PRE_ANNOTATIONS_DIR = VIDEOS_DIR / "rally-pre-annotations"
@@ -52,7 +53,7 @@ class R2Category(NamedTuple):
     glob_pattern: str
 
 R2_CATEGORIES: dict[str, R2Category] = {
-    "videos": R2Category(VIDEOS_DIR, "*.mp4"),
+    "videos": R2Category(RAW_VIDEOS_DIR, "*.mp4"),
     "cuts": R2Category(CUTS_DIR, "*.mp4"),
     "seg-annotations": R2Category(SEG_ANNOTATIONS_DIR, "*.jsonl"),
     "rally-pre-annotations": R2Category(PRE_ANNOTATIONS_DIR, "*.jsonl"),

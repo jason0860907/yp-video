@@ -46,6 +46,7 @@ export function render(container) {
           </div>
           <div class="ml-10 flex items-center gap-3 pt-1">
             ${btnPrimary('Start Detection', 'id="det-start"')}
+            <span id="det-count" class="text-xs text-text-muted font-heading tabular-nums ml-auto"></span>
           </div>
         </div>
       `)}
@@ -157,8 +158,17 @@ function renderVideos() {
   el.querySelectorAll('.det-check').forEach(cb => {
     cb.addEventListener('change', (e) => {
       state.videos[parseInt(e.target.dataset.idx)].selected = e.target.checked;
+      updateDetCount();
     });
   });
+  updateDetCount();
+}
+
+function updateDetCount() {
+  const el = document.getElementById('det-count');
+  if (!el) return;
+  const sel = state.videos.filter(v => v.selected).length;
+  el.textContent = state.videos.length ? `${sel} / ${state.videos.length} selected` : '';
 }
 
 async function startDetection() {
