@@ -191,6 +191,8 @@ async function startDetection() {
         batch_size: parseInt(document.getElementById('det-batch').value),
         clip_duration: parseFloat(document.getElementById('det-clip').value),
         slide_interval: parseFloat(document.getElementById('det-slide').value),
+        min_duration: parseFloat(document.getElementById('det-min-dur').value),
+        min_score: parseFloat(document.getElementById('det-min-score').value),
       },
     });
 

@@ -22,6 +22,9 @@ class DetectRequest(BaseModel):
     batch_size: int = _default_max_seqs
     clip_duration: float = 6.0
     slide_interval: float = 2.0
+    # Auto-convert-to-rally params applied per video after detection completes
+    min_duration: float = 3.0
+    min_score: float = 0.5
 
 
 class ConvertRequest(BaseModel):
@@ -94,6 +97,24 @@ async def start_detection(req: DetectRequest):
                     )
 
                     sync_to_r2(Path(output_file), "seg-annotations")
+
+                    # Auto convert-to-rally for this one video
+                    from yp_video.tad.vlm_to_rally import convert_vlm_to_rally
+                    await job_manager.update_job(
+                        job.id, message=f"{prefix} Converting {video_name} to rally...",
+                    )
+                    rally_path = PRE_ANNOTATIONS_DIR / f"{Path(video_name).stem}_annotations.jsonl"
+                    n_rallies = await loop.run_in_executor(
+                        None,
+                        lambda inp=Path(output_file), out=rally_path,
+                               md=req.min_duration, ms=req.min_score: convert_vlm_to_rally(
+                            inp, out, md, ms,
+                        ),
+                    )
+                    sync_to_r2(rally_path, "rally-pre-annotations")
+                    await job_manager.update_job(
+                        job.id, message=f"{prefix} {video_name}: {n_rallies} rallies",
+                    )
                 except asyncio.CancelledError:
                     await job_manager.update_job(job.id, status="cancelled", message="Cancelled")
                     return

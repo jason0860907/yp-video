@@ -9,6 +9,7 @@ let timelineCanvas = null;
 let animFrame = null;
 let _markStart = null;
 let _selectedIdx = -1;
+let _playingIdx = -1;
 
 export function render(container) {
   container.innerHTML = `
@@ -116,6 +117,7 @@ function bindEvents() {
   });
   videoEl.addEventListener('timeupdate', () => {
     document.getElementById('ann-time').textContent = formatTime(videoEl.currentTime);
+    refreshPlayingHighlight();
     // Auto-pause when reaching end of selected segment
     if (_selectedIdx >= 0 && _selectedIdx < state.annotations.length) {
       const a = state.annotations[_selectedIdx];
@@ -234,9 +236,46 @@ function addAnnotation(label) {
   renderAnnotations();
 }
 
+// Highlight the row whose [start, end) contains the playhead. Independent of
+// _selectedIdx; purely a visual cue so the user can find "where am I now" in
+// a long list and click the *next* rally to continue annotating.
+function refreshPlayingHighlight({ scroll = true } = {}) {
+  if (!videoEl) return;
+  const t = videoEl.currentTime;
+  const newIdx = state.annotations.findIndex(a => t >= a.start && t < a.end);
+  if (newIdx === _playingIdx) return;
+
+  const listEl = document.getElementById('ann-list');
+  if (!listEl) { _playingIdx = newIdx; return; }
+
+  const applyStyle = (idx, on) => {
+    const row = listEl.querySelector(`.ann-item[data-idx="${idx}"]`);
+    if (!row) return;
+    if (on) {
+      row.style.boxShadow = 'inset 3px 0 0 #F97316';
+      row.dataset.playing = '1';
+    } else {
+      row.style.boxShadow = '';
+      delete row.dataset.playing;
+    }
+  };
+
+  if (_playingIdx >= 0) applyStyle(_playingIdx, false);
+  if (newIdx >= 0) {
+    applyStyle(newIdx, true);
+    if (scroll) {
+      const row = listEl.querySelector(`.ann-item[data-idx="${newIdx}"]`);
+      row?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  }
+  _playingIdx = newIdx;
+}
+
 function renderAnnotations() {
   const el = document.getElementById('ann-list');
   document.getElementById('ann-count').textContent = `(${state.annotations.length})`;
+  // DOM was replaced; force the highlight to re-apply on the new nodes.
+  _playingIdx = -1;
 
   if (state.annotations.length === 0) {
     el.innerHTML = emptyState(
@@ -321,6 +360,8 @@ function renderAnnotations() {
       renderAnnotations();
     });
   });
+
+  refreshPlayingHighlight({ scroll: false });
 }
 
 async function saveAnnotations() {
