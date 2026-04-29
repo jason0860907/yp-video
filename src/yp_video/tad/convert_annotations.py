@@ -44,12 +44,12 @@ def _match_key(video_name: str) -> str:
 def _source_key(name: str) -> str:
     """Bucket videos by broadcast source so each style appears in train and val."""
     n_lower = name.lower()
-    if "排島本館" in name:
-        return "custom_venue"
     if "vnl" in n_lower:
         return "vnl"
     if "world champs" in n_lower or "u19" in n_lower:
         return "u19"
+    if "u22" in n_lower or "cev" in n_lower:
+        return "cev_u22"
     if any(k in n_lower for k in (
         "sv league", "svl", "sv.league", "suntory", "bluteon", "stings",
         "wolfdogs", "sunbirds", "jtekt", "toray", "phitsanulok", "sakai",
