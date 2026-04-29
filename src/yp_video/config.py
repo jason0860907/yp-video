@@ -47,6 +47,11 @@ TAD_CHECKPOINTS_DIR = VIDEOS_DIR / "tad-checkpoints"
 TAD_ANNOTATIONS_DIR = VIDEOS_DIR / "tad-annotations"
 TAD_ANNOTATIONS_FILE = TAD_ANNOTATIONS_DIR / "volleyball_anno.json"
 
+# ── VLM (Qwen3.5-VL fine-tune) paths ─────────────────────────────
+VLM_DIR = VIDEOS_DIR / "vlm"
+VLM_MANIFEST_FILE = VLM_DIR / "rally_windows.jsonl"
+VLM_CHECKPOINTS_DIR = VIDEOS_DIR / "vlm-checkpoints"
+
 # R2 category → local directory + glob pattern mapping
 class R2Category(NamedTuple):
     local_dir: Path
@@ -62,6 +67,7 @@ R2_CATEGORIES: dict[str, R2Category] = {
     "tad-features": R2Category(FEATURES_DIR, "**/*.npy"),
     "rally_clips": R2Category(RALLY_CLIPS_DIR, "*.mp4"),
     "tad-checkpoints": R2Category(TAD_CHECKPOINTS_DIR, "**/*"),
+    "vlm-checkpoints": R2Category(VLM_CHECKPOINTS_DIR, "**/*"),
 }
 
 # ── Web static assets ────────────────────────────────────────────

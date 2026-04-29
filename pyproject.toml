@@ -14,6 +14,7 @@ dependencies = [
     "numpy>=1.24.0",
     "pillow>=10.0.0",
     "accelerate>=0.25.0",
+    "peft>=0.19.0",
     "packaging>=23.0",
     "ninja>=1.11.0",
     "requests>=2.31.0",
@@ -48,6 +49,8 @@ yp-tad-extract = "yp_video.tad.extract_features:main"
 yp-tad-convert = "yp_video.tad.convert_annotations:main"
 yp-tad-train = "yp_video.tad.train:main"
 yp-tad-infer = "yp_video.tad.infer:main"
+yp-vlm-build-manifest = "yp_video.vlm.build_manifest:main"
+yp-vlm-train = "yp_video.vlm.train:main"
 
 [build-system]
 requires = ["hatchling"]

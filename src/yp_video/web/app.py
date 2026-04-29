@@ -23,7 +23,7 @@ class _QuietPollFilter(logging.Filter):
 logging.getLogger("uvicorn.access").addFilter(_QuietPollFilter())
 
 from yp_video.config import STATIC_DIR
-from yp_video.web.routers import download, cut, annotate, detect, train, predict, review, jobs, system, upload
+from yp_video.web.routers import download, cut, annotate, detect, train, predict, review, jobs, system, upload, vlm
 from yp_video.web.vllm_manager import vllm_manager
 
 
@@ -61,6 +61,7 @@ app.include_router(review.router, prefix="/api/review", tags=["review"])
 app.include_router(jobs.router, prefix="/api/jobs", tags=["jobs"])
 app.include_router(system.router, prefix="/api/system", tags=["system"])
 app.include_router(upload.router, prefix="/api/upload", tags=["upload"])
+app.include_router(vlm.router, prefix="/api/vlm", tags=["vlm"])
 
 # Mount static files
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
