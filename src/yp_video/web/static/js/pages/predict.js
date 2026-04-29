@@ -47,7 +47,13 @@ export function render(container) {
           </div>
           <div class="ml-10 grid grid-cols-2 gap-4">
             <div>
-              <label class="block text-[11px] text-text-muted mb-1.5 uppercase tracking-wider font-medium">Checkpoint</label>
+              <div class="flex items-center justify-between mb-1.5">
+                <label class="block text-[11px] text-text-muted uppercase tracking-wider font-medium">Checkpoint</label>
+                <label class="flex items-center gap-1.5 text-[11px] text-text-muted cursor-pointer">
+                  <input id="pred-show-all-ckpts" type="checkbox" class="accent-primary w-3 h-3">
+                  show all
+                </label>
+              </div>
               <select id="pred-checkpoint" class="w-full ${selectCls}">
                 <option value="">Select checkpoint...</option>
               </select>
@@ -172,24 +178,37 @@ function bindEvents() {
   document.getElementById('pred-model').addEventListener('change', renderVideos);
 }
 
-async function loadData() {
+async function loadCheckpoints() {
+  const showAll = document.getElementById('pred-show-all-ckpts')?.checked ?? false;
+  const cpSel = document.getElementById('pred-checkpoint');
+  const prev = cpSel.value;
   try {
-    const [videos, checkpoints] = await Promise.all([
-      api('/predict/videos'),
-      api('/train/checkpoints'),
-    ]);
-    state.videos = videos.map(v => ({ ...v, selected: !v.has_prediction }));
+    const checkpoints = await api(`/train/checkpoints?show_all=${showAll}`);
     state.checkpoints = checkpoints;
-
-    renderVideos();
-
-    const cpSel = document.getElementById('pred-checkpoint');
+    cpSel.innerHTML = '<option value="">Select checkpoint...</option>';
+    const KIND_TAG = { best: '⭐', last: '🆕', epoch: '' };
     checkpoints.forEach(cp => {
       const opt = document.createElement('option');
       opt.value = cp.path;
-      opt.textContent = `${cp.name} (${cp.size_mb.toFixed(1)} MB)`;
+      const tag = KIND_TAG[cp.kind] ?? '';
+      opt.textContent = `${tag} ${cp.name} (${cp.size_mb.toFixed(1)} MB)`.trim();
       cpSel.appendChild(opt);
     });
+    // Restore previous selection if still present
+    if (prev && checkpoints.some(c => c.path === prev)) cpSel.value = prev;
+  } catch (e) {
+    showToast(`Failed to load checkpoints: ${e.message}`, 'error');
+  }
+}
+
+async function loadData() {
+  try {
+    const videos = await api('/predict/videos');
+    state.videos = videos.map(v => ({ ...v, selected: !v.has_prediction }));
+    renderVideos();
+
+    await loadCheckpoints();
+    document.getElementById('pred-show-all-ckpts').addEventListener('change', loadCheckpoints);
 
     await loadResults();
   } catch (e) {

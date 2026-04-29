@@ -48,6 +48,15 @@ class TrainRequest(BaseModel):
     seed: int = 42
     resume: str | None = None
     model: str = "base"
+    # Optional overrides; when None we use the YAML config value
+    lr: float | None = None
+    epochs: int | None = None
+    warmup_epochs: int | None = None
+    schedule: str | None = None  # cosine | multistep | constant
+    batch_size: int | None = None
+    weight_decay: float | None = None
+    balanced_sampler: bool = True
+    sampler_alpha: float = 1.0
 
 
 
@@ -235,15 +244,15 @@ async def start_training(req: TrainRequest):
                 await job_manager.update_job(job.id, message="Starting training...")
 
                 import os
-                from datetime import date
+                from datetime import datetime
 
                 config_path = TAD_CONFIGS_DIR / "volleyball_actionformer.yaml"
 
                 from yp_video.tad.extract_features import MODEL_CONFIGS as _MC
                 _mcfg = _MC.get(req.model, _MC["base"])
 
-                today = date.today().strftime("%Y-%m%d")
-                work_dir = TAD_CHECKPOINTS_DIR / "actionformer" / _mcfg.dir_suffix / today
+                stamp = datetime.now().strftime("%Y-%m%d-%H%M")
+                work_dir = TAD_CHECKPOINTS_DIR / "actionformer" / _mcfg.dir_suffix / stamp
 
                 cmd = [
                     sys.executable, "-m", "yp_video.tad.train",
@@ -256,6 +265,21 @@ async def start_training(req: TrainRequest):
 
                 if req.resume:
                     cmd.extend(["--resume", req.resume])
+                if req.lr is not None:
+                    cmd.extend(["--lr", str(req.lr)])
+                if req.epochs is not None:
+                    cmd.extend(["--epochs", str(req.epochs)])
+                if req.warmup_epochs is not None:
+                    cmd.extend(["--warmup-epochs", str(req.warmup_epochs)])
+                if req.schedule:
+                    cmd.extend(["--schedule", req.schedule])
+                if req.batch_size is not None:
+                    cmd.extend(["--batch-size", str(req.batch_size)])
+                if req.weight_decay is not None:
+                    cmd.extend(["--weight-decay", str(req.weight_decay)])
+                if not req.balanced_sampler:
+                    cmd.append("--no-balanced-sampler")
+                cmd.extend(["--sampler-alpha", str(req.sampler_alpha)])
 
                 env = {**os.environ, "PYTHONUNBUFFERED": "1"}
                 process = await asyncio.create_subprocess_exec(
@@ -337,18 +361,58 @@ async def start_training(req: TrainRequest):
 
 
 @router.get("/checkpoints")
-def list_checkpoints() -> list[dict]:
-    """List available model checkpoints."""
+def list_checkpoints(show_all: bool = False) -> list[dict]:
+    """List available model checkpoints.
+
+    Default: best.pth.tar + last (highest-numbered) epoch checkpoint per run dir.
+    show_all=true: every *.pth.tar / *.pth file.
+    """
+    import re
     ckpt_base = TAD_CHECKPOINTS_DIR / "actionformer"
+    if not ckpt_base.exists():
+        return []
+
+    # Group by parent directory so we can pick best + last per run.
+    by_dir: dict[Path, list[Path]] = {}
+    for f in ckpt_base.rglob("*.pth*"):
+        if f.is_file():
+            by_dir.setdefault(f.parent, []).append(f)
+
+    epoch_re = re.compile(r"epoch_(\d+)\.pth")
+
     checkpoints = []
-    if ckpt_base.exists():
-        for f in sorted(ckpt_base.rglob("best.pth*"), reverse=True):
+    for d, files in by_dir.items():
+        best = next((f for f in files if f.name.startswith("best.pth")), None)
+        epochs = sorted(
+            [(int(m.group(1)), f) for f in files if (m := epoch_re.search(f.name))],
+            key=lambda x: x[0],
+        )
+        last = epochs[-1][1] if epochs else None
+
+        kept: list[tuple[Path, str]] = []
+        if best is not None:
+            kept.append((best, "best"))
+        if last is not None and last != best:
+            kept.append((last, "last"))
+        if show_all:
+            for _, f in epochs:
+                if f != last:
+                    kept.append((f, "epoch"))
+
+        for f, kind in kept:
             rel = f.relative_to(ckpt_base)
             checkpoints.append({
                 "path": str(f),
                 "name": str(rel),
+                "kind": kind,
                 "size_mb": round(f.stat().st_size / 1024 / 1024, 1),
             })
+
+    # Within each kind: newest run dir first (sort by name reverse).
+    # Across kinds: best → last → epoch. Two passes leverage Python's stable sort.
+    kind_order = {"best": 0, "last": 1, "epoch": 2}
+    checkpoints.sort(key=lambda c: c["name"], reverse=True)
+    checkpoints.sort(key=lambda c: kind_order.get(c["kind"], 3))
     return checkpoints
 
 
@@ -389,9 +453,11 @@ def get_performance(model: str = "base"):
         if log_file.exists():
             with open(log_file) as f:
                 if log_file.suffix == ".jsonl":
-                    entries = [_json.loads(line) for line in f if line.strip()]
+                    raw = [_json.loads(line) for line in f if line.strip()]
                 else:
-                    entries = _json.load(f)
-            return {"name": name, "entries": entries}
+                    raw = _json.load(f)
+            meta = next((e for e in raw if e.get("_meta")), None)
+            entries = [e for e in raw if not e.get("_meta")]
+            return {"name": name, "entries": entries, "meta": meta}
 
     return {"entries": []}

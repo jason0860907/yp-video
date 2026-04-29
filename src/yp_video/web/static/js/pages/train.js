@@ -8,6 +8,62 @@ let videos = [];
 let convVideos = [];
 let selectedModel = 'large';
 
+// Per-property tri-state filter for the Extract Features video list.
+// null = any, true = must have, false = must NOT have. AND across props.
+const filterState = {
+  annotated: null,
+  pre_annotated: null,
+  features: null,
+  prediction: null,
+};
+
+const FILTER_LABELS = {
+  annotated: 'Annotated',
+  pre_annotated: 'Pre-annotated',
+  features: 'Features',
+  prediction: 'Prediction',
+};
+
+const FILTER_PROP = {
+  annotated: 'has_annotation',
+  pre_annotated: 'has_pre_annotation',
+  features: 'has_features',
+  prediction: 'has_prediction',
+};
+
+function filterChips(prefix, props) {
+  // Each chip shares btnSmall's shell so it sits inline beside the Select All
+  // / Deselect All buttons in the section header without visual mismatch.
+  const chip = (p) => `
+    <span class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium bg-white/[0.06] border border-border text-text-secondary">
+      <span>${FILTER_LABELS[p]}</span>
+      <label class="inline-flex items-center gap-1 cursor-pointer hover:text-emerald-300 transition-colors">
+        <input type="checkbox" data-prefix="${prefix}" data-prop="${p}" data-val="yes"
+               class="filter-cb accent-emerald-400 w-3 h-3 cursor-pointer">
+        <span>yes</span>
+      </label>
+      <label class="inline-flex items-center gap-1 cursor-pointer hover:text-rose-300 transition-colors">
+        <input type="checkbox" data-prefix="${prefix}" data-prop="${p}" data-val="no"
+               class="filter-cb accent-rose-400 w-3 h-3 cursor-pointer">
+        <span>no</span>
+      </label>
+    </span>`;
+  return props.map(chip).join(' ');
+}
+
+function matchesFilter(v) {
+  for (const [prop, want] of Object.entries(filterState)) {
+    if (want === null) continue;
+    const has = !!v[FILTER_PROP[prop]];
+    if (has !== want) return false;
+  }
+  return true;
+}
+
+function visibleVideos() {
+  return videos.filter(matchesFilter);
+}
+
 export function render(container) {
   container.innerHTML = `
     <div class="max-w-screen-2xl mx-auto space-y-8">
@@ -31,9 +87,7 @@ export function render(container) {
                 '',
                 btnSmall('Select All', 'id="train-select-all"') + ' ' +
                 btnSmall('Deselect All', 'id="train-deselect-all"') + ' ' +
-                btnSmall('Unprocessed', 'id="train-select-unprocessed"', 'primary') + ' ' +
-                btnSmall('✅ Annotated', 'id="train-select-annotated"') + ' ' +
-                btnSmall('⚡ Pre-annotated', 'id="train-select-pre-annotated"')
+                filterChips('train', ['annotated', 'pre_annotated', 'features', 'prediction'])
               )}
               <div id="train-videos" class="space-y-0.5 max-h-72 overflow-y-auto pr-1"></div>
             </div>
@@ -117,7 +171,55 @@ export function render(container) {
             <div>
               <span id="train-model-label" class="text-[11px] text-text-muted">Features: <span class="text-text-primary font-medium">ViT-L</span></span>
             </div>
+            ${btnSmall('Advanced ▾', 'id="train-advanced-toggle"')}
             ${btnPrimary('Start Training', 'id="train-start"')}
+          </div>
+          <div id="train-advanced" class="ml-10 hidden">
+            <div class="rounded-xl border border-border bg-surface-50/30 p-4 space-y-3">
+              <div class="text-[11px] text-text-muted uppercase tracking-wider font-medium">Optimizer / Schedule (leave blank to use config)</div>
+              <div class="grid grid-cols-3 gap-3">
+                <div>
+                  <label class="block text-[11px] text-text-muted mb-1">Learning rate</label>
+                  <input id="train-lr" type="number" step="any" placeholder="5e-4" class="w-full ${inputCls}">
+                </div>
+                <div>
+                  <label class="block text-[11px] text-text-muted mb-1">Epochs (after warmup)</label>
+                  <input id="train-epochs" type="number" placeholder="140" class="w-full ${inputCls}">
+                </div>
+                <div>
+                  <label class="block text-[11px] text-text-muted mb-1">Warmup epochs</label>
+                  <input id="train-warmup" type="number" placeholder="10" class="w-full ${inputCls}">
+                </div>
+                <div>
+                  <label class="block text-[11px] text-text-muted mb-1">Schedule</label>
+                  <select id="train-schedule" class="w-full ${selectCls}">
+                    <option value="">(config default)</option>
+                    <option value="cosine">cosine</option>
+                    <option value="constant">constant (flat after warmup)</option>
+                    <option value="multistep">multistep</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="block text-[11px] text-text-muted mb-1">Batch size</label>
+                  <input id="train-batch" type="number" placeholder="16" class="w-full ${inputCls}">
+                </div>
+                <div>
+                  <label class="block text-[11px] text-text-muted mb-1">Weight decay</label>
+                  <input id="train-wd" type="number" step="any" placeholder="0.05" class="w-full ${inputCls}">
+                </div>
+              </div>
+              <div class="h-px bg-border"></div>
+              <div class="grid grid-cols-3 gap-3 items-end">
+                <label class="flex items-center gap-2 text-[12px] text-text-secondary">
+                  <input id="train-balanced" type="checkbox" checked class="accent-primary w-3.5 h-3.5">
+                  Balanced sampler (per source)
+                </label>
+                <div>
+                  <label class="block text-[11px] text-text-muted mb-1">Sampler alpha (0=uniform, 1=full balance)</label>
+                  <input id="train-alpha" type="number" step="0.1" min="0" max="1" value="1.0" class="w-full ${inputCls}">
+                </div>
+              </div>
+            </div>
           </div>
           <div id="train-progress" class="ml-10 hidden space-y-2">
             <div id="train-bar"></div>
@@ -142,8 +244,13 @@ export function deactivate() {}
 function updateExtractCount() {
   const el = document.getElementById('train-extract-count');
   if (!el) return;
-  const sel = videos.filter(v => v.selected).length;
-  el.textContent = videos.length ? `${sel} / ${videos.length} selected` : '';
+  const vis = visibleVideos();
+  const visSel = vis.filter(v => v.selected).length;
+  if (!videos.length) { el.textContent = ''; return; }
+  const filtered = vis.length !== videos.length;
+  el.textContent = filtered
+    ? `${visSel} / ${vis.length} selected (filtered from ${videos.length})`
+    : `${visSel} / ${videos.length} selected`;
 }
 
 function updateConvertCount() {
@@ -157,6 +264,12 @@ function bindEvents() {
   document.getElementById('train-convert').addEventListener('click', convertAnnotations);
   document.getElementById('train-extract').addEventListener('click', extractFeatures);
   document.getElementById('train-start').addEventListener('click', startTraining);
+  document.getElementById('train-advanced-toggle').addEventListener('click', () => {
+    const panel = document.getElementById('train-advanced');
+    const btn = document.getElementById('train-advanced-toggle');
+    const open = panel.classList.toggle('hidden');
+    btn.textContent = open ? 'Advanced ▾' : 'Advanced ▴';
+  });
   document.getElementById('train-feat-model').addEventListener('change', (e) => {
     selectedModel = e.target.value;
     loadVideos();
@@ -165,25 +278,32 @@ function bindEvents() {
     document.getElementById('train-model-label').innerHTML =
       `Features: <span class="text-text-primary font-medium">${names[selectedModel] || selectedModel}</span>`;
   });
-  document.getElementById('train-select-all').addEventListener('click', () => {
-    videos.forEach(v => v.selected = true);
+  // Bulk-select operates on the *visible* (filter-passing) subset so users can
+  // first narrow with filters and then "Select All" only the matching rows.
+  const setSelectionForVisible = (pred) => {
+    const visible = new Set(visibleVideos());
+    videos.forEach(v => { if (visible.has(v)) v.selected = pred(v); });
     renderVideos();
-  });
-  document.getElementById('train-deselect-all').addEventListener('click', () => {
-    videos.forEach(v => v.selected = false);
-    renderVideos();
-  });
-  document.getElementById('train-select-unprocessed').addEventListener('click', () => {
-    videos.forEach(v => v.selected = !v.has_features);
-    renderVideos();
-  });
-  document.getElementById('train-select-annotated').addEventListener('click', () => {
-    videos.forEach(v => v.selected = v.has_annotation);
-    renderVideos();
-  });
-  document.getElementById('train-select-pre-annotated').addEventListener('click', () => {
-    videos.forEach(v => v.selected = v.has_pre_annotation);
-    renderVideos();
+  };
+  document.getElementById('train-select-all').addEventListener('click',
+    () => setSelectionForVisible(() => true));
+  document.getElementById('train-deselect-all').addEventListener('click',
+    () => setSelectionForVisible(() => false));
+
+  // Filter checkboxes — yes/no per property are mutually exclusive.
+  document.querySelectorAll('.filter-cb[data-prefix="train"]').forEach(cb => {
+    cb.addEventListener('change', (e) => {
+      const { prop, val } = e.target.dataset;
+      if (e.target.checked) {
+        filterState[prop] = (val === 'yes');
+        const sibling = document.querySelector(
+          `.filter-cb[data-prefix="train"][data-prop="${prop}"][data-val="${val === 'yes' ? 'no' : 'yes'}"]`);
+        if (sibling) sibling.checked = false;
+      } else {
+        filterState[prop] = null;
+      }
+      renderVideos();
+    });
   });
   document.getElementById('conv-select-all').addEventListener('click', () => {
     convVideos.forEach(v => v.selected = true);
@@ -245,6 +365,7 @@ function videoBadges(v) {
   if (v.has_annotation) b.push('<span title="Annotated">✅</span>');
   else if (v.has_pre_annotation) b.push('<span title="Pre-annotation">⚡</span>');
   if (v.has_features) b.push('<span class="inline-flex items-center gap-1.5 text-[11px] text-emerald-400 bg-emerald-500/10 ring-1 ring-emerald-500/20 px-2.5 py-0.5 rounded-full font-medium"><span class="w-1.5 h-1.5 rounded-full bg-current"></span>features</span>');
+  if (v.has_prediction) b.push('<span title="Predicted">🤖</span>');
   return b.join(' ');
 }
 
@@ -259,13 +380,28 @@ function renderVideos() {
     return;
   }
 
-  el.innerHTML = videos.map((v, i) => `
+  const vis = visibleVideos();
+  if (vis.length === 0) {
+    el.innerHTML = emptyState(
+      '<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 4h18M3 12h18M3 20h18"/></svg>',
+      'No videos match the filter',
+      'Adjust the filter chips above'
+    );
+    updateExtractCount();
+    return;
+  }
+
+  // Index back into the master `videos` array so checkbox toggles still mutate
+  // the right entry after filtering.
+  el.innerHTML = vis.map(v => {
+    const i = videos.indexOf(v);
+    return `
     <div class="group flex items-center gap-3 p-2.5 rounded-xl border border-transparent hover:bg-white/[0.03] hover:border-white/5 transition-all duration-200">
       <input type="checkbox" data-idx="${i}" class="train-check cursor-pointer accent-primary w-3.5 h-3.5" ${v.selected ? 'checked' : ''}>
       <span class="text-sm text-text-primary flex-1 truncate group-hover:text-white transition-colors duration-200">${v.name}</span>
       ${videoBadges(v)}
-    </div>
-  `).join('');
+    </div>`;
+  }).join('');
 
   el.querySelectorAll('.train-check').forEach(cb => {
     cb.addEventListener('change', (e) => {
@@ -539,12 +675,28 @@ async function startTraining() {
   const btn = document.getElementById('train-start');
   btn.disabled = true;
   try {
+    const num = (id) => {
+      const v = document.getElementById(id).value.trim();
+      if (v === '') return null;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    };
+    const sched = document.getElementById('train-schedule').value || null;
+
     const res = await api('/train/start', {
       method: 'POST',
       body: {
         gpu: parseInt(document.getElementById('train-gpu').value),
         seed: parseInt(document.getElementById('train-seed').value),
         model: selectedModel,
+        lr: num('train-lr'),
+        epochs: num('train-epochs'),
+        warmup_epochs: num('train-warmup'),
+        schedule: sched,
+        batch_size: num('train-batch'),
+        weight_decay: num('train-wd'),
+        balanced_sampler: document.getElementById('train-balanced').checked,
+        sampler_alpha: parseFloat(document.getElementById('train-alpha').value) || 1.0,
       },
     });
     showTrainingUI(res);

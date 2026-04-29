@@ -63,6 +63,7 @@ def list_videos(model: str = "base") -> list[dict]:
                 "has_pre_annotation": (PRE_ANNOTATIONS_DIR / f"{stem}_annotations.jsonl").exists(),
                 "has_annotation": (ANNOTATIONS_DIR / f"{stem}_annotations.jsonl").exists(),
                 "has_features": (feat_dir / f"{stem}.npy").exists(),
+                "has_prediction": (PREDICTIONS_DIR / f"{stem}_annotations.jsonl").exists(),
             })
     return results
 
