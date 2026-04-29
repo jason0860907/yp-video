@@ -3,14 +3,16 @@
 import asyncio
 import json
 import os
+from collections import defaultdict
 from pathlib import Path
 from urllib.parse import unquote
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from yp_video.config import ANNOTATIONS_DIR, PRE_ANNOTATIONS_DIR, RAW_VIDEOS_DIR, VIDEOS_DIR
+from yp_video.config import ANNOTATIONS_DIR, CUTS_DIR, PRE_ANNOTATIONS_DIR, RAW_VIDEOS_DIR, VIDEOS_DIR
 from yp_video.core.jsonl import read_jsonl
+from yp_video.tad.convert_annotations import _match_key, _source_key
 from yp_video.web.r2_client import r2_client, serve_video_or_r2_redirect, sync_to_r2
 
 router = APIRouter()
@@ -57,6 +59,52 @@ def list_results() -> list[dict]:
         [{"name": k, "source": sorted(v)} for k, v in files.items()],
         key=lambda x: x["name"],
     )
+
+
+@router.get("/stats")
+def stats() -> dict:
+    """Annotation progress by broadcast source: how many cuts have a saved annotation."""
+    cuts: set[str] = set()  # video stems available as cuts (.mp4)
+    if CUTS_DIR.exists():
+        for f in CUTS_DIR.glob("*.mp4"):
+            cuts.add(f.stem)
+    if r2_client.configured:
+        try:
+            for obj in r2_client.list_objects(prefix="cuts/"):
+                stem = Path(obj["key"]).stem
+                if stem:
+                    cuts.add(stem)
+        except Exception:
+            pass
+
+    annotated: set[str] = set()  # video stems with a saved annotation
+    if ANNOTATIONS_DIR.exists():
+        for f in ANNOTATIONS_DIR.glob("*.jsonl"):
+            annotated.add(f.stem.removesuffix("_annotations"))
+    if r2_client.configured:
+        try:
+            for obj in r2_client.list_objects(prefix="rally-annotations/"):
+                stem = Path(obj["key"]).stem.removesuffix("_annotations")
+                if stem:
+                    annotated.add(stem)
+        except Exception:
+            pass
+
+    by_src: dict[str, dict] = defaultdict(lambda: {"cuts": 0, "annotated": 0})
+    for name in cuts:
+        by_src[_source_key(name)]["cuts"] += 1
+    for name in annotated & cuts:
+        by_src[_source_key(name)]["annotated"] += 1
+
+    items = [
+        {"source": src, "annotated": v["annotated"], "cuts": v["cuts"]}
+        for src, v in sorted(by_src.items())
+    ]
+    return {
+        "total_cuts": len(cuts),
+        "total_annotated": len(annotated & cuts),
+        "by_source": items,
+    }
 
 
 @router.get("/results/{name}")

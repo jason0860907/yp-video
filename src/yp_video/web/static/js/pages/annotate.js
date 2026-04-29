@@ -9,7 +9,7 @@ let timelineCanvas = null;
 let animFrame = null;
 let _markStart = null;
 let _selectedIdx = -1;
-let _playingIdx = -1;
+let _highlight = { inside: -1, prev: -1, next: -1 };
 
 export function render(container) {
   container.innerHTML = `
@@ -20,6 +20,9 @@ export function render(container) {
         </select>
         ${btnSmall('Load', 'id="ann-load"', 'primary')}
       `)}
+
+      <div id="ann-stats" class="hidden flex flex-wrap items-center gap-2 px-1"></div>
+
 
       <div class="flex flex-col lg:flex-row gap-5">
         <!-- Left: Video + Timeline -->
@@ -84,6 +87,7 @@ export function render(container) {
   videoEl = document.getElementById('ann-player');
   timelineCanvas = document.getElementById('ann-timeline');
   loadResults();
+  loadStats();
   bindEvents();
   activate();
 }
@@ -164,6 +168,42 @@ function handleKeydown(e) {
   }
 }
 
+const SOURCE_CHIP_CLS = {
+  vnl: 'bg-sky-500/10 text-sky-300 border-sky-500/20',
+  u19: 'bg-purple-500/10 text-purple-300 border-purple-500/20',
+  cev_u22: 'bg-pink-500/10 text-pink-300 border-pink-500/20',
+  svl_japan: 'bg-rose-500/10 text-rose-300 border-rose-500/20',
+  enterprise: 'bg-amber-500/10 text-amber-300 border-amber-500/20',
+  tpvl: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20',
+  other: 'bg-white/[0.06] text-text-muted border-border',
+};
+
+async function loadStats() {
+  const el = document.getElementById('ann-stats');
+  if (!el) return;
+  try {
+    const data = await api('/annotate/stats');
+    if (!data.by_source?.length) return;
+    const chips = data.by_source.map(s => {
+      const cls = SOURCE_CHIP_CLS[s.source] || SOURCE_CHIP_CLS.other;
+      const done = s.cuts > 0 && s.annotated >= s.cuts;
+      const mark = done ? '<span class="opacity-70">✓</span>' : '';
+      return `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] font-medium ${cls}" title="${s.annotated} annotated / ${s.cuts} cuts">
+        ${s.source}
+        <span class="font-heading tabular-nums opacity-80">${s.annotated}/${s.cuts}</span>
+        ${mark}
+      </span>`;
+    }).join('');
+    const total = `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-border bg-surface-50/30 text-[11px] text-text-secondary ml-auto" title="annotated sets / total cuts">
+      Total <span class="font-heading text-text-primary tabular-nums">${data.total_annotated}/${data.total_cuts}</span>
+    </span>`;
+    el.innerHTML = chips + total;
+    el.classList.remove('hidden');
+  } catch (e) {
+    // Stats are non-critical; stay silent on failure.
+  }
+}
+
 async function loadResults() {
   try {
     const results = await api('/annotate/results');
@@ -236,23 +276,40 @@ function addAnnotation(label) {
   renderAnnotations();
 }
 
-// Highlight the row whose [start, end) contains the playhead. Independent of
-// _selectedIdx; purely a visual cue so the user can find "where am I now" in
-// a long list and click the *next* rally to continue annotating.
+// Highlight rows around the playhead so the user can find "where am I now" in
+// a long list. Three states:
+//   inside a rally  → orange left border on that row
+//   between rallies → orange bottom on prev rally + orange top on next rally
+//                     (the two highlights touch, framing the current gap)
+//   before/after all → only one marker on the adjacent rally
 function refreshPlayingHighlight({ scroll = true } = {}) {
   if (!videoEl) return;
   const t = videoEl.currentTime;
-  const newIdx = state.annotations.findIndex(a => t >= a.start && t < a.end);
-  if (newIdx === _playingIdx) return;
+
+  let inside = -1, prev = -1, next = -1;
+  for (let i = 0; i < state.annotations.length; i++) {
+    const a = state.annotations[i];
+    if (t >= a.start && t < a.end) { inside = i; prev = -1; next = -1; break; }
+    if (a.end <= t) prev = i;
+    if (a.start > t && next === -1) next = i;
+  }
+
+  if (inside === _highlight.inside && prev === _highlight.prev && next === _highlight.next) return;
 
   const listEl = document.getElementById('ann-list');
-  if (!listEl) { _playingIdx = newIdx; return; }
+  if (!listEl) { _highlight = { inside, prev, next }; return; }
 
-  const applyStyle = (idx, on) => {
+  const STYLE = {
+    inside: 'inset 3px 0 0 #F97316',
+    prev:   'inset 3px 0 0 rgba(249, 115, 22, 0.4)',
+    next:   'inset 3px 0 0 rgba(249, 115, 22, 0.4)',
+  };
+  const applyStyle = (idx, kind) => {
+    if (idx < 0) return;
     const row = listEl.querySelector(`.ann-item[data-idx="${idx}"]`);
     if (!row) return;
-    if (on) {
-      row.style.boxShadow = 'inset 3px 0 0 #F97316';
+    if (kind) {
+      row.style.boxShadow = STYLE[kind];
       row.dataset.playing = '1';
     } else {
       row.style.boxShadow = '';
@@ -260,22 +317,29 @@ function refreshPlayingHighlight({ scroll = true } = {}) {
     }
   };
 
-  if (_playingIdx >= 0) applyStyle(_playingIdx, false);
-  if (newIdx >= 0) {
-    applyStyle(newIdx, true);
-    if (scroll) {
-      const row = listEl.querySelector(`.ann-item[data-idx="${newIdx}"]`);
+  applyStyle(_highlight.inside, null);
+  applyStyle(_highlight.prev, null);
+  applyStyle(_highlight.next, null);
+  applyStyle(inside, 'inside');
+  applyStyle(prev, 'prev');
+  applyStyle(next, 'next');
+
+  if (scroll) {
+    const target = inside >= 0 ? inside : (next >= 0 ? next : prev);
+    if (target >= 0) {
+      const row = listEl.querySelector(`.ann-item[data-idx="${target}"]`);
       row?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     }
   }
-  _playingIdx = newIdx;
+
+  _highlight = { inside, prev, next };
 }
 
 function renderAnnotations() {
   const el = document.getElementById('ann-list');
   document.getElementById('ann-count').textContent = `(${state.annotations.length})`;
   // DOM was replaced; force the highlight to re-apply on the new nodes.
-  _playingIdx = -1;
+  _highlight = { inside: -1, prev: -1, next: -1 };
 
   if (state.annotations.length === 0) {
     el.innerHTML = emptyState(
@@ -346,7 +410,7 @@ function renderAnnotations() {
       const idx = parseInt(e.currentTarget.dataset.idx);
       _selectedIdx = idx;
       const a = state.annotations[idx];
-      videoEl.currentTime = Math.max(a.start, a.end - 5);
+      videoEl.currentTime = Math.max(a.start, a.end - 3);
       videoEl.play();
       renderAnnotations();
     });
