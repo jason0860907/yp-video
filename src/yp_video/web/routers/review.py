@@ -89,10 +89,9 @@ def _load_eval_context() -> tuple[dict[str, str], dict[str, float]]:
     predictions a user loads when clicking the 🤖 entry.
 
     Unlike recall, mAP penalises false positives, so it matches what you see
-    in the training eval log.
-
-    Restricted to validation videos so the number reflects generalization,
-    not memorization.
+    in the training eval log. Computed for both training and validation
+    videos — training mAP is biased high (memorization) but useful for
+    spotting outlier failures even within the training set.
     """
     subset: dict[str, str] = {}
     m_ap: dict[str, float] = {}
@@ -113,7 +112,7 @@ def _load_eval_context() -> tuple[dict[str, str], dict[str, float]]:
     for pred_file in PREDICTIONS_DIR.glob("*_annotations.jsonl"):
         stem = pred_file.stem.removesuffix("_annotations")
         meta = gt_data.get(stem)
-        if not meta or meta.get("subset") != "validation":
+        if not meta:
             continue
         gts = [(a["segment"][0], a["segment"][1]) for a in meta.get("annotations", [])]
         if not gts:
