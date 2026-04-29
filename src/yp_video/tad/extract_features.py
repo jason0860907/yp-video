@@ -3,7 +3,9 @@
 Uses V-JEPA 2.1 pretrained models to extract BF16 RGB features.
 Supports ViT-B (768), ViT-L (1024), ViT-g (1408), ViT-G (1664).
 
-Each clip samples 64 frames at stride 2 (128 actual video frames per window).
+Each clip samples 64 frames evenly across ``clip_seconds`` of wall-clock time,
+and consecutive clip starts are spaced ``stride_seconds`` apart. This keeps the
+temporal scale of features consistent across videos with different fps.
 """
 
 import argparse
@@ -56,9 +58,15 @@ except ImportError:
 
 # V-JEPA 2.1 constants (fixed by model design)
 VJEPA_CLIP_FRAMES = 64   # frames per clip
-VJEPA_FRAME_STRIDE = 2   # stride between sampled frames within a clip
-VJEPA_WINDOW = VJEPA_CLIP_FRAMES * VJEPA_FRAME_STRIDE  # = 128 actual video frames
 CROP_SIZE = 384
+
+# Time-based sampling defaults — match the per-feature time scale that the
+# 60-fps "enterprise" source produced under the legacy frame-stride config
+# (window=128 frames @ 60fps = 2.13s; clip stride=48 frames @ 60fps = 0.80s).
+DEFAULT_CLIP_SECONDS = 2.13
+DEFAULT_STRIDE_SECONDS = 0.80
+# Upper bound for NvdecReader cache trim when the per-call window is unknown.
+_DEFAULT_CACHE_FRAMES = 256
 
 
 class ModelConfig(NamedTuple):
@@ -130,7 +138,7 @@ class Cv2Reader:
 class NvdecReader:
     """GPU video reader using NVDEC (sequential decode, cached overlap)."""
 
-    def __init__(self, video_path: Path, num_frames: int):
+    def __init__(self, video_path: Path, num_frames: int, cache_window: int = _DEFAULT_CACHE_FRAMES):
         self._dmx = nvc.CreateDemuxer(str(video_path))
         self._dec = nvc.CreateDecoder(
             gpuid=0,
@@ -142,6 +150,7 @@ class NvdecReader:
         self._cache: dict[int, np.ndarray] = {}
         self._exhausted = False
         self._num_frames = num_frames
+        self._cache_window = cache_window
 
     def __len__(self) -> int:
         return self._num_frames
@@ -168,7 +177,7 @@ class NvdecReader:
                     self._cache[self._pos] = frame
                 self._pos += 1
 
-        trim_below = max_idx - VJEPA_WINDOW
+        trim_below = max_idx - self._cache_window
         self._cache = {k: v for k, v in self._cache.items() if k >= trim_below}
 
         # Filter to only frames that were actually decoded (video may be shorter than metadata)
@@ -178,7 +187,11 @@ class NvdecReader:
         return np.stack([results[i] for i in available])
 
 
-def open_video(video_path: Path, use_gpu: bool = False) -> DecordReader | Cv2Reader | NvdecReader:
+def open_video(
+    video_path: Path,
+    use_gpu: bool = False,
+    cache_window: int = _DEFAULT_CACHE_FRAMES,
+) -> DecordReader | Cv2Reader | NvdecReader:
     """Open a video with the best available decoder."""
     if HAS_DECORD:
         reader = DecordReader(video_path)
@@ -187,10 +200,24 @@ def open_video(video_path: Path, use_gpu: bool = False) -> DecordReader | Cv2Rea
 
     if use_gpu and HAS_NVDEC:
         try:
-            return NvdecReader(video_path, num_frames=len(reader))
+            return NvdecReader(video_path, num_frames=len(reader), cache_window=cache_window)
         except Exception:
             pass
     return reader
+
+
+def _get_video_fps(video_path: Path) -> float:
+    """Read average fps from the container metadata."""
+    if HAS_DECORD:
+        try:
+            return float(VideoReader(str(video_path), ctx=cpu(0)).get_avg_fps())
+        except Exception:
+            pass
+    import cv2
+    cap = cv2.VideoCapture(str(video_path))
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    cap.release()
+    return float(fps) if fps and fps > 0 else 30.0
 
 
 # ── Model ──────────────────────────────────────────────────────────────
@@ -320,19 +347,35 @@ def extract_features_from_video(
     video_path: Path,
     model: torch.nn.Module,
     device: torch.device,
-    stride: int = 48,
+    clip_seconds: float = DEFAULT_CLIP_SECONDS,
+    stride_seconds: float = DEFAULT_STRIDE_SECONDS,
     batch_size: int = 32,
     feat_dim: int = 768,
 ) -> np.ndarray:
-    """Extract V-JEPA 2.1 features from a video file."""
-    reader = open_video(video_path, use_gpu=device.type == "cuda")
+    """Extract V-JEPA 2.1 features from a video file.
+
+    Each clip's 64 sampled frames span ``clip_seconds`` of wall-clock time, and
+    consecutive clip starts are ``stride_seconds`` apart. The resulting feature
+    rate is therefore ``1 / stride_seconds`` features per second regardless of
+    source fps.
+    """
+    fps = _get_video_fps(video_path)
+    window_frames = max(VJEPA_CLIP_FRAMES, int(round(clip_seconds * fps)))
+    clip_stride = max(1, int(round(stride_seconds * fps)))
+    # 64 evenly-spaced frame offsets within each clip's window. When
+    # window_frames < 64 (very low fps) some offsets repeat.
+    frame_offsets = (
+        np.linspace(0, window_frames - 1, VJEPA_CLIP_FRAMES).round().astype(int).tolist()
+    )
+
+    reader = open_video(video_path, use_gpu=device.type == "cuda", cache_window=window_frames)
     num_frames = len(reader)
 
-    if num_frames < VJEPA_WINDOW:
-        print(f"  Warning: Video too short ({num_frames} frames < {VJEPA_WINDOW})")
+    if num_frames < window_frames:
+        print(f"  Warning: Video too short ({num_frames} frames < {window_frames})")
         return np.zeros((1, feat_dim), dtype=np.float32)
 
-    clip_starts = list(range(0, num_frames - VJEPA_WINDOW + 1, stride))
+    clip_starts = list(range(0, num_frames - window_frames + 1, clip_stride))
     if not clip_starts:
         clip_starts = [0]
 
@@ -341,9 +384,9 @@ def extract_features_from_video(
     for batch_start in range(0, len(clip_starts), batch_size):
         batch_clip_starts = clip_starts[batch_start : batch_start + batch_size]
         all_indices = sorted({
-            start + i * VJEPA_FRAME_STRIDE
+            start + off
             for start in batch_clip_starts
-            for i in range(VJEPA_CLIP_FRAMES)
+            for off in frame_offsets
         })
         batch_infos.append((batch_clip_starts, all_indices))
 
@@ -383,7 +426,7 @@ def extract_features_from_video(
             # Build gather indices for all valid clips at once
             gather_rows = []  # list of [64 positions in processed] per valid clip
             for start_idx in batch_clip_starts:
-                clip_indices = [start_idx + i * VJEPA_FRAME_STRIDE for i in range(VJEPA_CLIP_FRAMES)]
+                clip_indices = [start_idx + off for off in frame_offsets]
                 if not all(i in idx_to_pos for i in clip_indices):
                     continue
                 gather_rows.append([idx_to_pos[i] for i in clip_indices])
@@ -446,7 +489,8 @@ def process_directory(
     input_dir: Path,
     output_dir: Path,
     device: torch.device,
-    stride: int = 48,
+    clip_seconds: float = DEFAULT_CLIP_SECONDS,
+    stride_seconds: float = DEFAULT_STRIDE_SECONDS,
     videos: list[str] | None = None,
     batch_size: int = 32,
     model_name: str = "base",
@@ -499,8 +543,9 @@ def process_directory(
 
         try:
             features = extract_features_from_video(
-                video_path, model, device, stride, batch_size,
-                feat_dim=cfg.feat_dim,
+                video_path, model, device,
+                clip_seconds=clip_seconds, stride_seconds=stride_seconds,
+                batch_size=batch_size, feat_dim=cfg.feat_dim,
             )
             np.save(output_path, features)
             print(f"Saved {output_path.name}: {features.shape}")
@@ -520,7 +565,13 @@ def main():
     parser.add_argument("--input", type=Path, default=Path.home() / "videos" / "cuts")
     parser.add_argument("--output", type=Path, default=None,
                         help="Output dir (default: ~/videos/features/vjepa-{size}/)")
-    parser.add_argument("--stride", type=int, default=48)
+    parser.add_argument("--clip-seconds", type=float, default=DEFAULT_CLIP_SECONDS,
+                        help=f"Wall-clock span of each clip's 64 sampled frames "
+                             f"(default: {DEFAULT_CLIP_SECONDS}s)")
+    parser.add_argument("--stride-seconds", type=float, default=DEFAULT_STRIDE_SECONDS,
+                        help=f"Time gap between consecutive clip starts "
+                             f"(default: {DEFAULT_STRIDE_SECONDS}s, "
+                             f"= {1 / DEFAULT_STRIDE_SECONDS:.2f} features/sec)")
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--videos", type=str, nargs="*", default=None)
@@ -532,12 +583,15 @@ def main():
     device = torch.device(args.device)
     print(f"Using device: {device}")
     print(f"V-JEPA 2.1 {args.model} ({cfg.hub_name}): dim={cfg.feat_dim}, "
-          f"{VJEPA_CLIP_FRAMES} frames/clip, "
-          f"frame stride {VJEPA_FRAME_STRIDE}, clip stride {args.stride}")
+          f"{VJEPA_CLIP_FRAMES} frames/clip spanning {args.clip_seconds}s, "
+          f"clip stride {args.stride_seconds}s "
+          f"(= {1 / args.stride_seconds:.2f} features/sec)")
     print(f"Output: {output_dir}")
 
-    process_directory(args.input, output_dir, device, args.stride, args.videos,
-                      args.batch_size, model_name=args.model)
+    process_directory(args.input, output_dir, device,
+                      clip_seconds=args.clip_seconds, stride_seconds=args.stride_seconds,
+                      videos=args.videos, batch_size=args.batch_size,
+                      model_name=args.model)
     print("Feature extraction complete!")
 
 
