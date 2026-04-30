@@ -7,6 +7,9 @@ let sseClient = null;
 let videos = [];
 let convVideos = [];
 let selectedModel = 'large';
+let perfData = null;
+let perfSources = [];
+let selectedSource = 'general';
 
 // Per-property tri-state filter for the Extract Features video list.
 // null = any, true = must have, false = must NOT have. AND across props.
@@ -180,15 +183,15 @@ export function render(container) {
               <div class="grid grid-cols-3 gap-3">
                 <div>
                   <label class="block text-[11px] text-text-muted mb-1">Learning rate</label>
-                  <input id="train-lr" type="number" step="any" placeholder="5e-4" class="w-full ${inputCls}">
+                  <input id="train-lr" type="number" step="any" class="w-full ${inputCls}">
                 </div>
                 <div>
                   <label class="block text-[11px] text-text-muted mb-1">Epochs (after warmup)</label>
-                  <input id="train-epochs" type="number" placeholder="140" class="w-full ${inputCls}">
+                  <input id="train-epochs" type="number" class="w-full ${inputCls}">
                 </div>
                 <div>
                   <label class="block text-[11px] text-text-muted mb-1">Warmup epochs</label>
-                  <input id="train-warmup" type="number" placeholder="10" class="w-full ${inputCls}">
+                  <input id="train-warmup" type="number" class="w-full ${inputCls}">
                 </div>
                 <div>
                   <label class="block text-[11px] text-text-muted mb-1">Schedule</label>
@@ -201,11 +204,11 @@ export function render(container) {
                 </div>
                 <div>
                   <label class="block text-[11px] text-text-muted mb-1">Batch size</label>
-                  <input id="train-batch" type="number" placeholder="16" class="w-full ${inputCls}">
+                  <input id="train-batch" type="number" class="w-full ${inputCls}">
                 </div>
                 <div>
                   <label class="block text-[11px] text-text-muted mb-1">Weight decay</label>
-                  <input id="train-wd" type="number" step="any" placeholder="0.05" class="w-full ${inputCls}">
+                  <input id="train-wd" type="number" step="any" class="w-full ${inputCls}">
                 </div>
               </div>
               <div class="h-px bg-border"></div>
@@ -216,9 +219,10 @@ export function render(container) {
                 </label>
                 <div>
                   <label class="block text-[11px] text-text-muted mb-1">Sampler alpha (0=uniform, 1=full balance)</label>
-                  <input id="train-alpha" type="number" step="0.1" min="0" max="1" value="1.0" class="w-full ${inputCls}">
+                  <input id="train-alpha" type="number" step="0.1" min="0" max="1" class="w-full ${inputCls}">
                 </div>
               </div>
+              <div id="train-config-source" class="text-[10px] text-text-muted/70 pt-1"></div>
             </div>
           </div>
           <div id="train-progress" class="ml-10 hidden space-y-2">
@@ -235,7 +239,60 @@ export function render(container) {
   loadStatus();
   loadVideos();
   loadPerformance();
+  loadConfigDefaults();
   bindEvents();
+}
+
+// YAML defaults shown as placeholders. The matching server endpoint is the source of truth;
+// these mirror the current YAML so the UI is correct even before the server is restarted.
+const FALLBACK_CONFIG_DEFAULTS = {
+  lr: 5e-4,
+  epochs: 90,
+  warmup_epochs: 10,
+  weight_decay: 0.05,
+  schedule: 'cosine',
+  batch_size: 16,
+  sampler_alpha: 0.5,
+};
+
+async function loadConfigDefaults() {
+  let cfg = null;
+  let fromServer = false;
+  try {
+    cfg = await api('/train/config-defaults');
+    fromServer = cfg && Object.keys(cfg).length > 0;
+  } catch { /* endpoint missing on old server build */ }
+  if (!cfg || Object.keys(cfg).length === 0) cfg = FALLBACK_CONFIG_DEFAULTS;
+
+  const setPlaceholder = (id, val) => {
+    const el = document.getElementById(id);
+    if (el && val != null) el.placeholder = String(val);
+  };
+  setPlaceholder('train-lr', cfg.lr);
+  setPlaceholder('train-epochs', cfg.epochs);
+  setPlaceholder('train-warmup', cfg.warmup_epochs);
+  setPlaceholder('train-batch', cfg.batch_size);
+  setPlaceholder('train-wd', cfg.weight_decay);
+
+  // Schedule dropdown: rewrite the "(config default)" option label so users see what the actual default is.
+  const sched = document.getElementById('train-schedule');
+  if (sched && cfg.schedule) {
+    const opt = sched.querySelector('option[value=""]');
+    if (opt) opt.textContent = `(config default: ${cfg.schedule})`;
+  }
+
+  // Sampler alpha is sent as a real value (not optional override), so set it directly.
+  const alphaEl = document.getElementById('train-alpha');
+  if (alphaEl && cfg.sampler_alpha != null) {
+    alphaEl.value = String(cfg.sampler_alpha);
+  }
+
+  const src = document.getElementById('train-config-source');
+  if (src) {
+    src.textContent = fromServer
+      ? 'Defaults loaded from volleyball_actionformer.yaml'
+      : 'Defaults loaded from frontend fallback (restart web server to read YAML directly)';
+  }
 }
 
 export function activate() {}
@@ -448,113 +505,189 @@ const TIOU_COLORS = {
   '0.70': '#f87171', // red
 };
 
+// Each entry stores per-source mAP under entry.per_source[src] = {mAP, tiou_mAP, n_videos, n_preds}.
+// `selectedSource === 'general'` reads the aggregated mAP from entry.tiou[k].mAP; otherwise we read
+// per_source[src].tiou_mAP, which is an array indexed in the same sorted-tIoU order as tiouKeys.
+function pointsForSource(entries, src, tiouKeys) {
+  if (src === 'general') {
+    return entries
+      .filter(e => e.tiou)
+      .map(e => ({
+        epoch: e.epoch,
+        values: tiouKeys.map(k => e.tiou[k]?.mAP ?? null),
+      }));
+  }
+  return entries
+    .filter(e => e.per_source?.[src]?.tiou_mAP)
+    .map(e => ({
+      epoch: e.epoch,
+      values: e.per_source[src].tiou_mAP,
+    }));
+}
+
 async function loadPerformance() {
   try {
-    const data = await api(`/train/performance?model=${selectedModel}`);
-    const el = document.getElementById('train-performance');
-    if (!data.entries?.length) {
-      el.innerHTML = '';
-      return;
+    perfData = await api(`/train/performance?model=${selectedModel}`);
+    const sources = new Set();
+    for (const e of perfData?.entries || []) {
+      for (const s of Object.keys(e.per_source || {})) sources.add(s);
     }
-
-    // Extract tIoU keys from first entry that has tiou data
-    const sample = data.entries.find(e => e.tiou && Object.keys(e.tiou).length > 0);
-    if (!sample) {
-      el.innerHTML = '';
-      return;
+    perfSources = [...sources].sort();
+    if (selectedSource !== 'general' && !sources.has(selectedSource)) {
+      selectedSource = 'general';
     }
-    const tiouKeys = Object.keys(sample.tiou).sort();
-    const epochs = data.entries.filter(e => e.tiou).map(e => e.epoch);
-
-    // Find max recall for Y axis
-    let maxVal = 0;
-    for (const e of data.entries) {
-      if (!e.tiou) continue;
-      for (const k of tiouKeys) {
-        if (e.tiou[k]?.recall > maxVal) maxVal = e.tiou[k].recall;
-      }
-    }
-    maxVal = Math.min(Math.ceil(maxVal * 10) / 10 + 0.1, 1.0);
-
-    // SVG chart dimensions
-    const W = 700, H = 260, pad = { t: 20, r: 20, b: 40, l: 50 };
-    const cw = W - pad.l - pad.r, ch = H - pad.t - pad.b;
-
-    const xMin = Math.min(...epochs), xMax = Math.max(...epochs);
-    const xRange = xMax - xMin || 1;
-    const x = ep => pad.l + ((ep - xMin) / xRange) * cw;
-    const y = val => pad.t + (1 - val / maxVal) * ch;
-
-    // Build lines
-    let lines = '';
-    let dots = '';
-    let legend = '';
-    for (const tiou of tiouKeys) {
-      const color = TIOU_COLORS[tiou] || '#888';
-      const points = data.entries.filter(e => e.tiou?.[tiou]).map(e => ({
-        x: x(e.epoch), y: y(e.tiou[tiou].recall),
-        epoch: e.epoch, recall: e.tiou[tiou].recall,
-      }));
-      if (points.length === 0) continue;
-
-      const pathD = points.map((p, i) => `${i === 0 ? 'M' : 'L'}${p.x},${p.y}`).join(' ');
-      lines += `<path d="${pathD}" fill="none" stroke="${color}" stroke-width="2" opacity="0.85"/>`;
-      for (const p of points) {
-        dots += `<circle cx="${p.x}" cy="${p.y}" r="3" fill="${color}" opacity="0.9"><title>Epoch ${p.epoch} | tIoU ${tiou} | Recall ${(p.recall * 100).toFixed(1)}%</title></circle>`;
-      }
-      legend += `<span class="inline-flex items-center gap-1.5 text-[11px]"><span class="w-3 h-0.5 rounded" style="background:${color}"></span><span class="text-text-muted">tIoU ${tiou}</span></span>`;
-    }
-
-    // Y axis ticks
-    let yAxis = '';
-    const ySteps = 5;
-    for (let i = 0; i <= ySteps; i++) {
-      const val = (maxVal / ySteps) * i;
-      const yy = y(val);
-      yAxis += `<line x1="${pad.l}" x2="${pad.l + cw}" y1="${yy}" y2="${yy}" stroke="white" stroke-opacity="0.06"/>`;
-      yAxis += `<text x="${pad.l - 8}" y="${yy + 3}" text-anchor="end" fill="#888" font-size="10">${(val * 100).toFixed(0)}%</text>`;
-    }
-
-    // X axis ticks (show ~6 labels)
-    let xAxis = '';
-    const step = Math.max(1, Math.floor(epochs.length / 6));
-    for (let i = 0; i < epochs.length; i += step) {
-      const xx = x(epochs[i]);
-      xAxis += `<text x="${xx}" y="${H - 8}" text-anchor="middle" fill="#888" font-size="10">${epochs[i]}</text>`;
-    }
-
-    // Right-side info panel
-    let rightPanel = '';
-    for (const tiou of tiouKeys) {
-      const color = TIOU_COLORS[tiou] || '#888';
-      const label = parseFloat(tiou);
-      let best = 0, bestEp = 0;
-      for (const e of data.entries) {
-        if (e.tiou?.[tiou]?.recall > best) { best = e.tiou[tiou].recall; bestEp = e.epoch; }
-      }
-      rightPanel += `
-        <div class="flex items-center gap-2 whitespace-nowrap">
-          <span class="w-2 h-2 rounded-full flex-shrink-0" style="background:${color}"></span>
-          <span class="text-text-muted text-[11px]">tIoU=${label}</span>
-          <span class="text-text-primary text-xs font-medium tabular-nums">${(best * 100).toFixed(1)}%</span>
-          <span class="text-text-muted text-[10px]">ep${bestEp}</span>
-        </div>`;
-    }
-
-    el.innerHTML = card(`
-      <div class="space-y-4">
-        ${sectionTitle('Performance', data.name || '')}
-        <div class="grid grid-cols-[3fr_1fr] gap-8 items-center">
-          <svg viewBox="0 0 ${W} ${H}" class="w-full" style="max-height:280px">
-            ${yAxis}${xAxis}${lines}${dots}
-            <text x="${pad.l + cw / 2}" y="${H}" text-anchor="middle" fill="#666" font-size="10">Epoch</text>
-            <text x="12" y="${pad.t + ch / 2}" text-anchor="middle" fill="#666" font-size="10" transform="rotate(-90, 12, ${pad.t + ch / 2})">Recall@1x</text>
-          </svg>
-          <div class="space-y-2.5">${rightPanel}</div>
-        </div>
-      </div>
-    `);
+    renderPerformance();
   } catch { /* silently fail */ }
+}
+
+function renderPerformance() {
+  const el = document.getElementById('train-performance');
+  if (!el) return;
+  if (!perfData?.entries?.length) {
+    el.innerHTML = '';
+    return;
+  }
+
+  const sample = perfData.entries.find(e => e.tiou && Object.keys(e.tiou).length > 0);
+  if (!sample) {
+    el.innerHTML = '';
+    return;
+  }
+  const tiouKeys = Object.keys(sample.tiou).sort();
+  const seriesPoints = pointsForSource(perfData.entries, selectedSource, tiouKeys);
+  if (!seriesPoints.length) {
+    el.innerHTML = '';
+    return;
+  }
+  const epochs = seriesPoints.map(p => p.epoch);
+
+  // Find max mAP for Y axis (auto-scale to data + small headroom).
+  let maxVal = 0;
+  for (const p of seriesPoints) {
+    for (const v of p.values) if (typeof v === 'number' && v > maxVal) maxVal = v;
+  }
+  maxVal = Math.min(Math.ceil(maxVal * 10) / 10 + 0.1, 1.0);
+  if (maxVal === 0) maxVal = 1.0;
+
+  // SVG chart dimensions
+  const W = 700, H = 260, pad = { t: 20, r: 20, b: 40, l: 50 };
+  const cw = W - pad.l - pad.r, ch = H - pad.t - pad.b;
+
+  const xMin = Math.min(...epochs), xMax = Math.max(...epochs);
+  const xRange = xMax - xMin || 1;
+  const x = ep => pad.l + ((ep - xMin) / xRange) * cw;
+  const y = val => pad.t + (1 - val / maxVal) * ch;
+
+  // Build lines per tIoU
+  let lines = '';
+  let dots = '';
+  for (let i = 0; i < tiouKeys.length; i++) {
+    const tiou = tiouKeys[i];
+    const color = TIOU_COLORS[tiou] || '#888';
+    const points = seriesPoints
+      .filter(p => typeof p.values[i] === 'number')
+      .map(p => ({ x: x(p.epoch), y: y(p.values[i]), epoch: p.epoch, mAP: p.values[i] }));
+    if (!points.length) continue;
+    const pathD = points.map((p, j) => `${j === 0 ? 'M' : 'L'}${p.x},${p.y}`).join(' ');
+    lines += `<path d="${pathD}" fill="none" stroke="${color}" stroke-width="2" opacity="0.85"/>`;
+    for (const p of points) {
+      dots += `<circle cx="${p.x}" cy="${p.y}" r="3" fill="${color}" opacity="0.9"><title>Epoch ${p.epoch} | tIoU ${tiou} | mAP ${(p.mAP * 100).toFixed(1)}%</title></circle>`;
+    }
+  }
+
+  // Y axis ticks
+  let yAxis = '';
+  const ySteps = 5;
+  for (let i = 0; i <= ySteps; i++) {
+    const val = (maxVal / ySteps) * i;
+    const yy = y(val);
+    yAxis += `<line x1="${pad.l}" x2="${pad.l + cw}" y1="${yy}" y2="${yy}" stroke="white" stroke-opacity="0.06"/>`;
+    yAxis += `<text x="${pad.l - 8}" y="${yy + 3}" text-anchor="end" fill="#888" font-size="10">${(val * 100).toFixed(0)}%</text>`;
+  }
+
+  // X axis ticks (~6 labels)
+  let xAxis = '';
+  const step = Math.max(1, Math.floor(epochs.length / 6));
+  for (let i = 0; i < epochs.length; i += step) {
+    const xx = x(epochs[i]);
+    xAxis += `<text x="${xx}" y="${H - 8}" text-anchor="middle" fill="#888" font-size="10">${epochs[i]}</text>`;
+  }
+
+  // Right panel: best mAP per tIoU
+  let rightPanel = '';
+  for (let i = 0; i < tiouKeys.length; i++) {
+    const tiou = tiouKeys[i];
+    const color = TIOU_COLORS[tiou] || '#888';
+    let best = 0, bestEp = 0;
+    for (const p of seriesPoints) {
+      const v = p.values[i];
+      if (typeof v === 'number' && v > best) { best = v; bestEp = p.epoch; }
+    }
+    rightPanel += `
+      <div class="flex items-center gap-2 whitespace-nowrap">
+        <span class="w-2 h-2 rounded-full flex-shrink-0" style="background:${color}"></span>
+        <span class="text-text-muted text-[11px]">tIoU=${parseFloat(tiou)}</span>
+        <span class="text-text-primary text-xs font-medium tabular-nums">${(best * 100).toFixed(1)}%</span>
+        <span class="text-text-muted text-[10px]">ep${bestEp}</span>
+      </div>`;
+  }
+
+  // Source filter chips
+  const chip = (key, label, extra = '') => {
+    const active = key === selectedSource;
+    const cls = active
+      ? 'bg-primary/10 text-primary-light border border-primary/15'
+      : 'bg-white/[0.06] text-text-secondary hover:text-text-primary hover:bg-white/[0.10] border border-border hover:border-border-light';
+    return `<button class="${cls} px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-all duration-200 perf-source-chip" data-source="${key}">${label}${extra}</button>`;
+  };
+  const latestEntry = perfData.entries[perfData.entries.length - 1];
+  const latestPerSrc = latestEntry?.per_source || {};
+  const chips = [chip('general', 'General')]
+    .concat(perfSources.map(s => {
+      const m = latestPerSrc[s];
+      const suffix = m && typeof m.mAP === 'number'
+        ? ` <span class="text-text-muted/80 ml-1">${(m.mAP * 100).toFixed(1)}</span>`
+        : '';
+      return chip(s, s.toUpperCase(), suffix);
+    }))
+    .join(' ');
+
+  // Header info: best overall mAP for the selected slice + n_videos when source-specific
+  let bestOverall = 0, bestOverallEp = 0;
+  for (const p of seriesPoints) {
+    const valid = p.values.filter(v => typeof v === 'number');
+    if (!valid.length) continue;
+    const mean = valid.reduce((a, b) => a + b, 0) / valid.length;
+    if (mean > bestOverall) { bestOverall = mean; bestOverallEp = p.epoch; }
+  }
+  const srcMeta = selectedSource !== 'general' ? latestPerSrc[selectedSource] : null;
+  const headerSubtitle = [
+    perfData.name || '',
+    selectedSource === 'general' ? 'aggregated mAP' : `${selectedSource} · ${srcMeta?.n_videos ?? '?'} val videos`,
+    `best mAP ${(bestOverall * 100).toFixed(1)}% @ ep${bestOverallEp}`,
+  ].filter(Boolean).join(' · ');
+
+  el.innerHTML = card(`
+    <div class="space-y-4">
+      ${sectionTitle('Performance', headerSubtitle)}
+      <div class="flex flex-wrap gap-2">${chips}</div>
+      <div class="grid grid-cols-[3fr_1fr] gap-8 items-center">
+        <svg viewBox="0 0 ${W} ${H}" class="w-full" style="max-height:280px">
+          ${yAxis}${xAxis}${lines}${dots}
+          <text x="${pad.l + cw / 2}" y="${H}" text-anchor="middle" fill="#666" font-size="10">Epoch</text>
+          <text x="12" y="${pad.t + ch / 2}" text-anchor="middle" fill="#666" font-size="10" transform="rotate(-90, 12, ${pad.t + ch / 2})">mAP</text>
+        </svg>
+        <div class="space-y-2.5">${rightPanel}</div>
+      </div>
+    </div>
+  `);
+
+  el.querySelectorAll('.perf-source-chip').forEach(b => {
+    b.addEventListener('click', (e) => {
+      selectedSource = e.currentTarget.dataset.source;
+      renderPerformance();
+    });
+  });
 }
 
 async function convertAnnotations() {
@@ -696,7 +829,7 @@ async function startTraining() {
         batch_size: num('train-batch'),
         weight_decay: num('train-wd'),
         balanced_sampler: document.getElementById('train-balanced').checked,
-        sampler_alpha: parseFloat(document.getElementById('train-alpha').value) || 1.0,
+        sampler_alpha: parseFloat(document.getElementById('train-alpha').value) || 0.5,
       },
     });
     showTrainingUI(res);

@@ -123,6 +123,35 @@ def list_models() -> list[dict]:
     ]
 
 
+@router.get("/config-defaults")
+def get_config_defaults():
+    """Return YAML defaults so the UI placeholders/values stay in sync with the config.
+
+    Without this, the Advanced panel hardcodes lr=5e-4, epochs=140, ... and silently
+    drifts whenever the YAML changes. Read the source of truth instead.
+    """
+    import yaml
+
+    cfg_path = TAD_CONFIGS_DIR / "volleyball_actionformer.yaml"
+    if not cfg_path.exists():
+        return {}
+    with open(cfg_path) as f:
+        cfg = yaml.safe_load(f) or {}
+    opt = cfg.get("opt", {})
+    loader = cfg.get("loader", {})
+    return {
+        "lr": opt.get("learning_rate"),
+        "epochs": opt.get("epochs"),
+        "warmup_epochs": opt.get("warmup_epochs"),
+        "weight_decay": opt.get("weight_decay"),
+        "schedule": opt.get("schedule_type"),
+        "batch_size": loader.get("batch_size"),
+        # Sampler alpha lives in train.py's argparse, not the YAML. Mirror its default
+        # here so the UI shows the same value the CLI uses when no override is passed.
+        "sampler_alpha": 0.5,
+    }
+
+
 @router.post("/extract-features")
 async def extract_features(req: ExtractFeaturesRequest):
     """Start feature extraction job."""
