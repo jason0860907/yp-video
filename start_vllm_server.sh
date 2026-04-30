@@ -43,6 +43,7 @@ tmux new-session -d -s "${SESSION_NAME}" \
     --max-model-len '${VLLM_MAX_MODEL_LEN}' \
     --gpu-memory-utilization '${VLLM_GPU_MEMORY_UTILIZATION}' \
     --max-num-seqs '${VLLM_MAX_NUM_SEQS}' \
+    ${VLLM_MAX_NUM_BATCHED_TOKENS:+--max-num-batched-tokens '${VLLM_MAX_NUM_BATCHED_TOKENS}'} \
     --enable-prefix-caching \
     --reasoning-parser qwen3 \
     --no-enable-log-requests \
