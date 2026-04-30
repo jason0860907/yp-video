@@ -29,9 +29,6 @@ export function render(container) {
         </div>
       `)}
 
-      <!-- Pipeline Stats -->
-      <div id="jobs-stats-card"></div>
-
       <!-- Job List -->
       ${card(`
         <div class="space-y-4">
@@ -56,7 +53,6 @@ export function deactivate() {
 
 function loadAll() {
   loadVLLM();
-  loadStats();
   loadJobs();
 }
 
@@ -98,36 +94,6 @@ async function stopVLLM() {
   } catch (e) {
     showToast(`Failed: ${e.message}`, 'error');
   }
-}
-
-async function loadStats() {
-  try {
-    const s = await api('/system/stats');
-    document.getElementById('jobs-stats-card').innerHTML = card(`
-      <div class="space-y-4">
-        ${sectionTitle('Pipeline')}
-        <div class="grid grid-cols-3 sm:grid-cols-6 gap-2.5">
-          ${statBox('Videos', s.videos)}
-          ${statBox('Cuts', s.cuts)}
-          ${statBox('Detected', s.detections)}
-          ${statBox('Pre-Ann', s.pre_annotations)}
-          ${statBox('Annotated', s.annotations)}
-          ${statBox('Predicted', s.predictions)}
-        </div>
-      </div>
-    `);
-  } catch { /* silently fail */ }
-}
-
-function statBox(label, value) {
-  const hasValue = value > 0;
-  return `
-    <div class="rounded-xl px-3 py-3.5 text-center border transition-colors duration-200 ${hasValue
-      ? 'border-indigo-500/15 bg-indigo-500/[0.04]'
-      : 'border-border bg-surface-50/50'}">
-      <div class="text-lg font-heading font-bold tabular-nums ${hasValue ? 'text-indigo-400' : 'text-text-muted'}">${value ?? 0}</div>
-      <div class="text-[10px] text-text-muted mt-1 uppercase tracking-wider font-medium">${label}</div>
-    </div>`;
 }
 
 async function loadJobs() {
