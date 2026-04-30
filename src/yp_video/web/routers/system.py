@@ -4,7 +4,6 @@ from fastapi import APIRouter
 
 from yp_video.config import (
     ANNOTATIONS_DIR,
-    CUTS_DIR,
     FEATURES_DIR,
     PREDICTIONS_DIR,
     PRE_ANNOTATIONS_DIR,
@@ -12,6 +11,8 @@ from yp_video.config import (
     TAD_FEATURES_DIR,
     RAW_VIDEOS_DIR,
     count_files,
+    cut_kind_of,
+    iter_all_cuts,
 )
 from yp_video.web.jobs import job_manager
 from yp_video.web.vllm_manager import vllm_manager
@@ -54,17 +55,17 @@ def list_videos(model: str = "base") -> list[dict]:
     feat_dir = FEATURES_DIR / cfg.dir_suffix
 
     results = []
-    if CUTS_DIR.exists():
-        for f in sorted(CUTS_DIR.glob("*.mp4")):
-            stem = f.stem
-            results.append({
-                "name": f.name,
-                "has_detection": (SEG_ANNOTATIONS_DIR / f"{stem}.jsonl").exists(),
-                "has_pre_annotation": (PRE_ANNOTATIONS_DIR / f"{stem}_annotations.jsonl").exists(),
-                "has_annotation": (ANNOTATIONS_DIR / f"{stem}_annotations.jsonl").exists(),
-                "has_features": (feat_dir / f"{stem}.npy").exists(),
-                "has_prediction": (PREDICTIONS_DIR / f"{stem}_annotations.jsonl").exists(),
-            })
+    for f in sorted(iter_all_cuts(), key=lambda p: p.name):
+        stem = f.stem
+        results.append({
+            "name": f.name,
+            "kind": cut_kind_of(f),
+            "has_detection": (SEG_ANNOTATIONS_DIR / f"{stem}.jsonl").exists(),
+            "has_pre_annotation": (PRE_ANNOTATIONS_DIR / f"{stem}_annotations.jsonl").exists(),
+            "has_annotation": (ANNOTATIONS_DIR / f"{stem}_annotations.jsonl").exists(),
+            "has_features": (feat_dir / f"{stem}.npy").exists(),
+            "has_prediction": (PREDICTIONS_DIR / f"{stem}_annotations.jsonl").exists(),
+        })
     return results
 
 
@@ -73,10 +74,12 @@ def get_stats():
     """Get pipeline statistics."""
     return {
         "videos": count_files(RAW_VIDEOS_DIR, "*.mp4"),
-        "cuts": count_files(CUTS_DIR, "*.mp4"),
+        "cuts": sum(1 for _ in iter_all_cuts()),
         "detections": count_files(SEG_ANNOTATIONS_DIR, "*.jsonl"),
         "pre_annotations": count_files(PRE_ANNOTATIONS_DIR, "*.jsonl"),
         "annotations": count_files(ANNOTATIONS_DIR, "*.jsonl"),
         "predictions": count_files(PREDICTIONS_DIR, "*.jsonl"),
+        "vjepa_b": count_files(FEATURES_DIR / "vjepa-b", "*.npy"),
+        "vjepa_l": count_files(FEATURES_DIR / "vjepa-l", "*.npy"),
         "active_jobs": job_manager.active_count(),
     }

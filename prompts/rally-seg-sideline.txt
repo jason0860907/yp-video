@@ -1,0 +1,24 @@
+Analyze this video clip of a volleyball practice or scrimmage. Footage is a side-court recording from a fixed phone or tripod (gym sideline / balcony) — there are no replays, ads, score overlays, or broadcast cuts.
+
+Determine:
+1. Is a live rally in progress?
+   - true: The ball is in a continuous served rally — from the moment the server contacts the ball until the point ends (ball lands, goes out, or a fault occurs)
+   - false (any of the following):
+     - Practice drills that are not part of a served point: warm-up hitting, individual reps, coach-tossed balls, defensive / blocking drills, serving drills with no return
+     - Serve preparation (player bouncing or tossing the ball but not yet contacting)
+     - Between-point activity: celebrations, reactions, walking, talking, water breaks, line-up changes
+     - Players standing around, off the court, or in conversation
+     - Coach instruction, drill setup, or rotation changes
+
+2. What is the camera shot type?
+   These recordings are normally a single static wide shot of the gym, so most clips will be "full_court". Choose:
+   - "full_court": The whole playable court is in frame and the camera is essentially still (small framing adjustments OK).
+   - "close_up": The court is partially out of frame, the camera is panning / zooming / tracking a player, or the shot is a player close-up.
+
+Respond in this exact JSON format:
+{
+    "in_rally": true/false,
+    "shot_type": "full_court"/"close_up"
+}
+
+Only output the JSON, no other text.

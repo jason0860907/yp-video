@@ -3,7 +3,7 @@
  */
 import { api, formatTime, parseTime, card, pageHeader, sectionTitle, btnSmall, showToast, emptyState, selectCls, kbdHint } from '../shared.js';
 
-let state = { results: [], annotations: [], videoName: '', duration: 0 };
+let state = { results: [], annotations: [], videoName: '', duration: 0, kindFilter: 'all' };
 let videoEl = null;
 let timelineCanvas = null;
 let animFrame = null;
@@ -15,6 +15,11 @@ export function render(container) {
   container.innerHTML = `
     <div class="max-w-screen-2xl mx-auto space-y-5">
       ${pageHeader('Review', 'Review TAD predictions and correct annotations', `
+        <div class="inline-flex rounded-lg border border-border bg-surface-100 p-0.5" role="tablist" aria-label="Cut kind">
+          <button type="button" data-kind="all"       class="rev-kind-tab px-3 py-1 text-xs font-heading rounded-md transition-colors duration-150" aria-pressed="true">All <span class="opacity-60 ml-1" data-count="all">0</span></button>
+          <button type="button" data-kind="broadcast" class="rev-kind-tab px-3 py-1 text-xs font-heading rounded-md transition-colors duration-150" aria-pressed="false">Broadcast <span class="opacity-60 ml-1" data-count="broadcast">0</span></button>
+          <button type="button" data-kind="sideline"  class="rev-kind-tab px-3 py-1 text-xs font-heading rounded-md transition-colors duration-150" aria-pressed="false">Sideline <span class="opacity-60 ml-1" data-count="sideline">0</span></button>
+        </div>
         <select id="rev-filter" class="${selectCls}" title="Filter by split / quality">
           <option value="all">All files</option>
           <option value="val">Validation only</option>
@@ -179,6 +184,12 @@ async function loadResults() {
     state.results = await api('/review/results');
     renderResultsDropdown();
     document.getElementById('rev-filter').addEventListener('change', renderResultsDropdown);
+    document.querySelectorAll('.rev-kind-tab').forEach(btn => {
+      btn.addEventListener('click', () => {
+        state.kindFilter = btn.dataset.kind;
+        renderResultsDropdown();
+      });
+    });
   } catch (e) {
     showToast(`Failed to load results: ${e.message}`, 'error');
   }
@@ -195,28 +206,55 @@ function renderResultsDropdown() {
     state.results.filter(r => r.source === 'annotation').map(r => r.name)
   );
 
-  let kept = 0;
-  state.results.forEach(r => {
-    // Filtering
+  // Apply the split/quality filter once; the kind filter and tab counts both
+  // run off this filtered set so the badges show only entries the dropdown
+  // could currently produce.
+  const passesSplit = (r) => {
     const isVal = r.subset === 'validation';
     const isTrain = r.subset === 'training';
     const isFailing = typeof r.map === 'number' && r.map < 0.3;
     const isPredictOnly = r.source === 'tad-prediction' && !annotatedNames.has(r.name);
-    if (filter === 'val' && !isVal) return;
-    if (filter === 'train' && !isTrain) return;
-    if (filter === 'predict-only' && !isPredictOnly) return;
-    if (filter === 'failing' && !isFailing) return;
-    if (filter === 'val-failing' && !(isVal && isFailing)) return;
+    if (filter === 'val' && !isVal) return false;
+    if (filter === 'train' && !isTrain) return false;
+    if (filter === 'predict-only' && !isPredictOnly) return false;
+    if (filter === 'failing' && !isFailing) return false;
+    if (filter === 'val-failing' && !(isVal && isFailing)) return false;
+    return true;
+  };
+  const counts = { all: 0, broadcast: 0, sideline: 0 };
+  state.results.forEach(r => {
+    if (!passesSplit(r)) return;
+    counts.all++;
+    if (r.kind === 'broadcast') counts.broadcast++;
+    else if (r.kind === 'sideline') counts.sideline++;
+  });
+  document.querySelectorAll('.rev-kind-tab').forEach(btn => {
+    const k = btn.dataset.kind;
+    const active = k === state.kindFilter;
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    btn.classList.toggle('bg-primary', active);
+    btn.classList.toggle('text-white', active);
+    btn.classList.toggle('text-text-secondary', !active);
+    btn.classList.toggle('hover:bg-white/[0.04]', !active);
+    const cnt = btn.querySelector(`[data-count="${k}"]`);
+    if (cnt) cnt.textContent = counts[k];
+  });
+
+  let kept = 0;
+  state.results.forEach(r => {
+    if (!passesSplit(r)) return;
+    if (state.kindFilter !== 'all' && r.kind !== state.kindFilter) return;
 
     const opt = document.createElement('option');
     opt.value = `${r.source}::${r.name}`;
     const srcTag = r.source === 'annotation' ? '\u2705' : '\ud83e\udd16';
-    const valTag = isVal ? ' [VAL]' : '';
+    const valTag = r.subset === 'validation' ? ' [VAL]' : '';
+    const kindTag = r.kind === 'sideline' ? ' [SIDE]' : '';
     // mAP describes the model's prediction vs ground truth — only meaningful
     // on the prediction entry. Annotation entries are the GT itself.
     const mapTag = (r.source === 'tad-prediction' && typeof r.map === 'number')
       ? ` (mAP=${(r.map * 100).toFixed(0)}%)` : '';
-    opt.textContent = `${srcTag}${valTag} ${r.name}${mapTag}`;
+    opt.textContent = `${srcTag}${valTag}${kindTag} ${r.name}${mapTag}`;
     sel.appendChild(opt);
     kept++;
   });

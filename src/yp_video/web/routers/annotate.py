@@ -10,7 +10,14 @@ from urllib.parse import unquote
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from yp_video.config import ANNOTATIONS_DIR, CUTS_DIR, PRE_ANNOTATIONS_DIR, RAW_VIDEOS_DIR, VIDEOS_DIR
+from yp_video.config import (
+    ANNOTATIONS_DIR,
+    CUT_R2_CATEGORIES,
+    PRE_ANNOTATIONS_DIR,
+    RAW_VIDEOS_DIR,
+    VIDEOS_DIR,
+    iter_all_cuts,
+)
 from yp_video.core.jsonl import read_jsonl
 from yp_video.tad.convert_annotations import _match_key, _source_key
 from yp_video.web.r2_client import r2_client, serve_video_or_r2_redirect, sync_to_r2
@@ -65,17 +72,17 @@ def list_results() -> list[dict]:
 def stats() -> dict:
     """Annotation progress by broadcast source: how many cuts have a saved annotation."""
     cuts: set[str] = set()  # video stems available as cuts (.mp4)
-    if CUTS_DIR.exists():
-        for f in CUTS_DIR.glob("*.mp4"):
-            cuts.add(f.stem)
+    for f in iter_all_cuts():
+        cuts.add(f.stem)
     if r2_client.configured:
-        try:
-            for obj in r2_client.list_objects(prefix="cuts/"):
-                stem = Path(obj["key"]).stem
-                if stem:
-                    cuts.add(stem)
-        except Exception:
-            pass
+        for prefix in ("cuts-broadcast/", "cuts-sideline/"):
+            try:
+                for obj in r2_client.list_objects(prefix=prefix):
+                    stem = Path(obj["key"]).stem
+                    if stem:
+                        cuts.add(stem)
+            except Exception:
+                pass
 
     annotated: set[str] = set()  # video stems with a saved annotation
     if ANNOTATIONS_DIR.exists():
@@ -143,18 +150,25 @@ async def get_result(name: str) -> dict:
 
 @router.get("/video/{path:path}")
 def stream_video(path: str):
+    from yp_video.config import find_cut
     decoded_path = unquote(path)
+    basename = Path(decoded_path).name
     if decoded_path.startswith("/"):
         video_path = Path(decoded_path)
     else:
-        # Subpath like "cuts/foo.mp4" resolves under VIDEOS_DIR. A bare
-        # filename is a raw video → falls through to RAW_VIDEOS_DIR.
-        video_path = VIDEOS_DIR / decoded_path
-        if not video_path.exists():
-            alt = RAW_VIDEOS_DIR / decoded_path
-            if alt.exists():
-                video_path = alt
-    response = serve_video_or_r2_redirect(video_path, ("cuts", "videos"))
+        # Try the split cut dirs first (the common case for annotations
+        # produced by the detect → review pipeline), then VIDEOS_DIR for
+        # historical paths, then raw-videos as a final fallback.
+        resolved = find_cut(basename)
+        if resolved is not None:
+            video_path = resolved
+        else:
+            video_path = VIDEOS_DIR / decoded_path
+            if not video_path.exists():
+                alt = RAW_VIDEOS_DIR / decoded_path
+                if alt.exists():
+                    video_path = alt
+    response = serve_video_or_r2_redirect(video_path, (*CUT_R2_CATEGORIES, "videos"))
     if response:
         return response
     raise HTTPException(404, f"Video not found: {video_path}")

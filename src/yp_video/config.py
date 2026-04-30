@@ -4,6 +4,7 @@ Single source of truth for all project paths. Eliminates hardcoded
 Path(__file__).parent.parent chains throughout the codebase (DIP).
 """
 
+from collections.abc import Iterator
 from pathlib import Path
 from typing import NamedTuple
 
@@ -35,7 +36,12 @@ TAD_CONFIGS_DIR = TAD_PKG_DIR / "configs"
 # ── User data directories (~/videos) ─────────────────────────────
 VIDEOS_DIR = Path.home() / "videos"
 RAW_VIDEOS_DIR = VIDEOS_DIR / "raw-videos"
-CUTS_DIR = VIDEOS_DIR / "cuts"
+# Cuts split by capture style — picked in the UI when exporting from Cut page.
+# "broadcast" = TV-style with replays / overlays / cuts (e.g. VNL, U19, TPVL)
+# "sideline"  = amateur side-court / tripod recording (e.g. 臨打 practice)
+CUTS_BROADCAST_DIR = VIDEOS_DIR / "cuts-broadcast"
+CUTS_SIDELINE_DIR = VIDEOS_DIR / "cuts-sideline"
+CUTS_DIRS = (CUTS_BROADCAST_DIR, CUTS_SIDELINE_DIR)
 SEG_ANNOTATIONS_DIR = VIDEOS_DIR / "seg-annotations"
 PRE_ANNOTATIONS_DIR = VIDEOS_DIR / "rally-pre-annotations"
 ANNOTATIONS_DIR = VIDEOS_DIR / "rally-annotations"
@@ -59,7 +65,8 @@ class R2Category(NamedTuple):
 
 R2_CATEGORIES: dict[str, R2Category] = {
     "videos": R2Category(RAW_VIDEOS_DIR, "*.mp4"),
-    "cuts": R2Category(CUTS_DIR, "*.mp4"),
+    "cuts-broadcast": R2Category(CUTS_BROADCAST_DIR, "*.mp4"),
+    "cuts-sideline": R2Category(CUTS_SIDELINE_DIR, "*.mp4"),
     "seg-annotations": R2Category(SEG_ANNOTATIONS_DIR, "*.jsonl"),
     "rally-pre-annotations": R2Category(PRE_ANNOTATIONS_DIR, "*.jsonl"),
     "rally-annotations": R2Category(ANNOTATIONS_DIR, "*.jsonl"),
@@ -69,6 +76,39 @@ R2_CATEGORIES: dict[str, R2Category] = {
     "tad-checkpoints": R2Category(TAD_CHECKPOINTS_DIR, "**/*"),
     "vlm-checkpoints": R2Category(VLM_CHECKPOINTS_DIR, "**/*"),
 }
+
+# All R2 categories that should be searched when serving a cut video by name.
+CUT_R2_CATEGORIES = ("cuts-broadcast", "cuts-sideline")
+
+
+def iter_all_cuts() -> Iterator[Path]:
+    """Yield every cut video across both split dirs."""
+    seen: set[str] = set()
+    for d in CUTS_DIRS:
+        if not d.exists():
+            continue
+        for p in d.glob("*.mp4"):
+            if p.name in seen:
+                continue
+            seen.add(p.name)
+            yield p
+
+
+def find_cut(name: str) -> Path | None:
+    """Return the first matching cut video across both split dirs."""
+    for d in CUTS_DIRS:
+        p = d / name
+        if p.exists():
+            return p
+    return None
+
+
+def cut_kind_of(path: Path) -> str:
+    """Return 'broadcast' or 'sideline' based on which dir the cut lives in."""
+    parent = path.parent.resolve()
+    if parent == CUTS_SIDELINE_DIR.resolve():
+        return "sideline"
+    return "broadcast"
 
 # ── Web static assets ────────────────────────────────────────────
 STATIC_DIR = Path(__file__).resolve().parent / "web" / "static"

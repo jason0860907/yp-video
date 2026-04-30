@@ -11,14 +11,16 @@ log = logging.getLogger(__name__)
 
 from yp_video.config import (
     ANNOTATIONS_DIR,
+    CUT_R2_CATEGORIES,
     FEATURES_DIR,
     PROJECT_ROOT,
-    CUTS_DIR,
     PREDICTIONS_DIR,
     PRE_ANNOTATIONS_DIR,
     VIDEOS_DIR,
     TAD_CONFIGS_DIR,
     TAD_CHECKPOINTS_DIR,
+    find_cut,
+    iter_all_cuts,
 )
 from yp_video.tad.extract_features import MODEL_CONFIGS
 from yp_video.web.jobs import job_manager, JobStatus
@@ -45,9 +47,6 @@ def list_videos() -> list[dict]:
     file has already been extracted — lets the UI grey-out videos that
     would otherwise silently fail at inference time.
     """
-    if not CUTS_DIR.exists():
-        return []
-
     feat_stems: dict[str, set[str]] = {
         name: {p.stem for p in (FEATURES_DIR / cfg.dir_suffix).glob("*.npy")}
         if (FEATURES_DIR / cfg.dir_suffix).exists() else set()
@@ -55,7 +54,7 @@ def list_videos() -> list[dict]:
     }
 
     results = []
-    for f in sorted(CUTS_DIR.glob("*.mp4")):
+    for f in sorted(iter_all_cuts(), key=lambda p: p.name):
         stem = f.stem
         results.append({
             "name": f.name,
@@ -95,8 +94,13 @@ def stream_video(video_name: str):
     from urllib.parse import unquote
 
     decoded = unquote(video_name)
-    video_path = CUTS_DIR / decoded
-    response = serve_video_or_r2_redirect(video_path, ("cuts",))
+    video_path = find_cut(decoded)
+    if video_path is None:
+        # Fall through to R2 lookup using a placeholder path so the redirect
+        # still works for files that exist remotely but not locally.
+        from yp_video.config import CUTS_BROADCAST_DIR
+        video_path = CUTS_BROADCAST_DIR / decoded
+    response = serve_video_or_r2_redirect(video_path, CUT_R2_CATEGORIES)
     if response:
         return response
     raise HTTPException(404, f"Video not found: {decoded}")
@@ -110,7 +114,7 @@ async def start_prediction(req: PredictRequest):
         raise HTTPException(404, f"Checkpoint not found: {req.checkpoint}")
 
     for video_name in req.videos:
-        if not (CUTS_DIR / video_name).exists():
+        if find_cut(video_name) is None:
             raise HTTPException(404, f"Video not found: {video_name}")
 
     total = len(req.videos)
@@ -136,7 +140,9 @@ async def start_prediction(req: PredictRequest):
                 failed = 0
 
                 for i, video_name in enumerate(req.videos):
-                    video_path = CUTS_DIR / video_name
+                    video_path = find_cut(video_name)
+                    if video_path is None:
+                        raise HTTPException(404, f"Video not found: {video_name}")
                     prefix = f"({i + 1}/{total})"
 
                     def _make_cbs(pfx, jid):

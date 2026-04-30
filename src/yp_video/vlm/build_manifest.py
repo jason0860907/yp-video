@@ -22,9 +22,9 @@ from pathlib import Path
 
 from yp_video.config import (
     ANNOTATIONS_DIR,
-    CUTS_DIR,
     VLM_MANIFEST_FILE,
     PRE_ANNOTATIONS_DIR,
+    iter_all_cuts,
 )
 from yp_video.core.jsonl import read_jsonl
 from yp_video.tad.convert_annotations import _match_key, _source_key
@@ -109,14 +109,12 @@ def build_manifest(
         pre-annotation. Set False to include cuts as 'non_rally' implicitly
         (but that's risky — better to annotate or skip).
     """
-    if not CUTS_DIR.exists():
-        raise FileNotFoundError(f"Cuts directory missing: {CUTS_DIR}")
-
     stems_with_anno: list[str] = []
     segments: dict[str, list[tuple[float, float]]] = {}
     durations: dict[str, float] = {}
+    paths: dict[str, Path] = {}  # stem -> resolved cut path
 
-    for video_path in sorted(CUTS_DIR.glob("*.mp4")):
+    for video_path in sorted(iter_all_cuts(), key=lambda p: p.name):
         stem = video_path.stem
         segs = _load_rally_segments(stem)
         if segs is None and only_annotated:
@@ -129,6 +127,7 @@ def build_manifest(
         stems_with_anno.append(stem)
         segments[stem] = segs or []
         durations[stem] = dur
+        paths[stem] = video_path
 
     print(f"\nFound {len(stems_with_anno)} annotated cuts.")
     print("\nStratified split (matches | videos):")
@@ -147,7 +146,7 @@ def build_manifest(
                 iou = _iou(w_start, w_end, segments[stem])
                 label = "rally" if iou >= iou_threshold else "non_rally"
                 rec = {
-                    "video": str(CUTS_DIR / f"{stem}.mp4"),
+                    "video": str(paths[stem]),
                     "stem": stem,
                     "start": round(w_start, 3),
                     "end": round(w_end, 3),

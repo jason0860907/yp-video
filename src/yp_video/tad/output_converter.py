@@ -86,7 +86,7 @@ def convert_tad_output_to_jsonl(
 
 def convert_mambatad_results(
     results_path: Path,
-    video_dir: Path,
+    video_dir,
     output_dir: Path,
     feature_fps: float = 1.0,
 ):
@@ -94,7 +94,7 @@ def convert_mambatad_results(
 
     Args:
         results_path: Path to MambaTAD results JSON
-        video_dir: Directory containing original videos
+        video_dir: One Path or a sequence of Paths containing original videos
         output_dir: Directory for output JSONL files
     """
     with open(results_path, "r", encoding="utf-8") as f:
@@ -102,18 +102,26 @@ def convert_mambatad_results(
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    if isinstance(video_dir, Path):
+        video_dirs = [video_dir]
+    else:
+        video_dirs = list(video_dir)
+
     for video_name, video_results in results.get("results", {}).items():
-        # Find video file
+        # Find video file across all candidate dirs
         video_path = None
-        for ext in [".mp4", ".avi", ".mkv", ".mov", ".webm"]:
-            candidate = video_dir / f"{video_name}{ext}"
-            if candidate.exists():
-                video_path = candidate
+        for d in video_dirs:
+            for ext in [".mp4", ".avi", ".mkv", ".mov", ".webm"]:
+                candidate = d / f"{video_name}{ext}"
+                if candidate.exists():
+                    video_path = candidate
+                    break
+            if video_path is not None:
                 break
 
         if video_path is None:
             print(f"Warning: Video not found for {video_name}")
-            video_path = video_dir / f"{video_name}.mp4"
+            video_path = video_dirs[0] / f"{video_name}.mp4"
 
         # Get video duration
         duration = get_video_duration(video_path) if video_path.exists() else 0
@@ -154,8 +162,9 @@ def main():
     parser.add_argument(
         "--video-dir",
         type=Path,
-        default=Path.home() / "videos" / "cuts",
-        help="Directory containing original videos",
+        nargs="+",
+        default=None,
+        help="One or more cut dirs (default: cuts-broadcast + cuts-sideline)",
     )
     parser.add_argument(
         "--output-dir",
@@ -175,8 +184,10 @@ def main():
         print(f"Error: Input file not found: {args.input}")
         return
 
+    from yp_video.config import CUTS_DIRS as _CUTS_DIRS
+    video_dirs = args.video_dir if args.video_dir else list(_CUTS_DIRS)
     convert_mambatad_results(
-        args.input, args.video_dir, args.output_dir, args.feature_fps
+        args.input, video_dirs, args.output_dir, args.feature_fps
     )
 
 

@@ -21,10 +21,10 @@ from pydantic import BaseModel
 
 from yp_video.config import (
     ANNOTATIONS_DIR,
-    CUTS_DIR,
     PROJECT_ROOT,
     VLM_CHECKPOINTS_DIR,
     VLM_MANIFEST_FILE,
+    iter_all_cuts,
 )
 from yp_video.web.jobs import job_manager
 
@@ -66,7 +66,7 @@ class TrainRequest(BaseModel):
 @router.get("/status")
 def status() -> dict:
     """Surface what's required before training can start."""
-    cuts_count = sum(1 for _ in CUTS_DIR.glob("*.mp4")) if CUTS_DIR.exists() else 0
+    cuts_count = sum(1 for _ in iter_all_cuts())
     anno_count = sum(1 for _ in ANNOTATIONS_DIR.glob("*.jsonl")) if ANNOTATIONS_DIR.exists() else 0
     manifest_exists = VLM_MANIFEST_FILE.exists()
     n_windows = 0

@@ -31,7 +31,19 @@ from yp_video.core.ffmpeg import FFmpegError, extract_clip, get_video_duration
 from yp_video.config import load_vllm_env, load_prompt
 
 _VLLM_CONFIG = load_vllm_env()
-VOLLEYBALL_SEGMENT_PROMPT = load_prompt("volleyball_segment.txt")
+# Two prompts: broadcast footage (the original) vs. amateur side-court
+# practice recordings (no replays/ads, but lots of drill activity that
+# isn't a real served rally). _select_prompt() picks based on which
+# cuts dir the video lives in (cuts-broadcast vs cuts-sideline) — set
+# explicitly by the user in the Cut UI when exporting.
+BROADCAST_PROMPT = load_prompt("rally-seg-broadcast.txt")
+SIDELINE_PROMPT = load_prompt("rally-seg-sideline.txt")
+
+
+def _select_prompt(video_path: str) -> str:
+    """Pick prompt by which cuts dir the video is in."""
+    from yp_video.config import cut_kind_of
+    return SIDELINE_PROMPT if cut_kind_of(Path(video_path)) == "sideline" else BROADCAST_PROMPT
 
 
 class VLLMServerError(RuntimeError):
@@ -143,13 +155,15 @@ def analyze_clip_with_vllm(
     server_url: str,
     model: str,
     fps: float = 4.0,
+    prompt: str | None = None,
 ) -> dict:
     """Send video clip to vLLM server for analysis."""
 
     # Use file:// URL for local files (requires --allowed-local-media-path on server)
     video_url = f"file://{video_path}"
 
-    prompt = VOLLEYBALL_SEGMENT_PROMPT
+    if prompt is None:
+        prompt = _select_prompt(video_path)
 
     payload = {
         "model": model,
@@ -197,11 +211,13 @@ async def analyze_clip_async(
     model: str,
     fps: float = 4.0,
     max_retries: int = 3,
+    prompt: str | None = None,
 ) -> dict:
     """Async version of analyze_clip_with_vllm with retry on transient errors."""
     video_url = f"file://{video_path}"
 
-    prompt = VOLLEYBALL_SEGMENT_PROMPT
+    if prompt is None:
+        prompt = _select_prompt(video_path)
 
     payload = {
         "model": model,
@@ -366,6 +382,7 @@ async def _run_pipeline_async(
     tmpdir: str,
     pbar: tqdm,
     on_progress: "Callable[[int, int], None] | None",
+    prompt: str,
 ) -> list[ClipResult]:
     """Producer-consumer pipeline overlapping ffmpeg extract with vLLM inference.
 
@@ -427,6 +444,7 @@ async def _run_pipeline_async(
             try:
                 analysis = await analyze_clip_async(
                     session, clip_path, server_url, model, fps=fps,
+                    prompt=prompt,
                 )
             except (aiohttp.ClientError, OSError) as e:
                 # TimeoutError after retries → drop this clip; other connection
@@ -532,6 +550,12 @@ def process_video(
 
     session = loop.run_until_complete(_create_session())
 
+    # Pick prompt once based on the source video name so every clip in this
+    # run uses the same one (broadcast vs. side-court practice recording).
+    prompt = _select_prompt(video_path)
+    is_sideline = prompt is SIDELINE_PROMPT
+    print(f"Prompt: {'sideline' if is_sideline else 'broadcast'}")
+
     results: list[ClipResult] = []
     pipeline_start = time.time()
 
@@ -554,6 +578,7 @@ def process_video(
                         batch_size=batch_size,
                         tmpdir=tmpdir,
                         pbar=pbar,
+                        prompt=prompt,
                         on_progress=on_progress,
                     )
                 )

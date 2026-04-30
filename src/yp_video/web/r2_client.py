@@ -200,7 +200,7 @@ r2_client = R2Client()
 
 def serve_video_or_r2_redirect(
     local_path: Path,
-    r2_categories: Sequence[str] = ("cuts", "videos"),
+    r2_categories: Sequence[str] = ("cuts-broadcast", "cuts-sideline", "videos"),
 ):
     """Serve a video via R2 presigned URL (preferred) or local file fallback.
 

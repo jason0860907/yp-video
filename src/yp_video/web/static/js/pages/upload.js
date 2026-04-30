@@ -7,8 +7,8 @@ let sseClients = [];
 
 const CATEGORIES = [
   { key: 'videos', label: 'Videos', localOnly: true },
-  { key: 'cuts', label: 'Cuts' },
-  { key: 'seg-annotations', label: 'Seg Annotations' },
+  { key: 'cuts-broadcast', label: 'Cuts (Broadcast)' },
+  { key: 'cuts-sideline', label: 'Cuts (Sideline)' },
   { key: 'rally-pre-annotations', label: 'VLM-Predictions' },
   { key: 'tad-predictions', label: 'TAD-Predictions' },
   { key: 'tad-features', label: 'TAD-Features' },
@@ -24,7 +24,7 @@ function isLocalOnly() {
 let state = {
   configured: false,
   bucket: null,
-  category: 'cuts',
+  category: 'cuts-broadcast',
   mode: 'upload', // 'upload' or 'download'
   files: [],
   jobs: [],

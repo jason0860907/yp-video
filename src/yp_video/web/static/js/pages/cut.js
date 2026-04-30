@@ -3,7 +3,7 @@
  */
 import { api, formatTimePrecise, card, pageHeader, sectionTitle, btnPrimary, btnDanger, btnSmall, selectCls, inputCls, showToast, showConfirm, emptyState, kbdHint } from '../shared.js';
 
-let state = { videos: [], segments: [], markStart: null };
+let state = { videos: [], segments: [], markStart: null, kind: 'broadcast' };
 let videoEl = null;
 
 export function render(container) {
@@ -34,7 +34,17 @@ export function render(container) {
 
       ${card(`
         <div class="space-y-4">
-          ${sectionTitle('Segments', '', btnPrimary('Export All', 'id="cut-export"'))}
+          ${sectionTitle(
+            'Segments',
+            '',
+            `<div class="flex items-center gap-2">
+              <div class="inline-flex rounded-lg border border-border bg-surface-100 p-0.5" role="radiogroup" aria-label="Cut destination">
+                <button type="button" data-kind="broadcast" class="cut-kind-btn px-2.5 py-1 text-xs font-heading rounded-md transition-colors duration-150" aria-pressed="true">Broadcast</button>
+                <button type="button" data-kind="sideline" class="cut-kind-btn px-2.5 py-1 text-xs font-heading rounded-md transition-colors duration-150" aria-pressed="false">Sideline</button>
+              </div>
+              ${btnPrimary('Export All', 'id="cut-export"')}
+            </div>`
+          )}
 
           <div id="cut-mark-info" class="hidden">
             <div class="flex items-center gap-3 p-3 rounded-xl bg-primary/10 border border-primary/20">
@@ -87,9 +97,25 @@ function bindEvents() {
   document.getElementById('cut-mark-end').addEventListener('click', markEnd);
   document.getElementById('cut-export').addEventListener('click', exportAll);
   document.getElementById('cut-delete-video').addEventListener('click', () => deleteSourceVideo());
+  document.querySelectorAll('.cut-kind-btn').forEach(btn => {
+    btn.addEventListener('click', () => setKind(btn.dataset.kind));
+  });
+  setKind(state.kind);  // initial styling
 
   videoEl.addEventListener('timeupdate', () => {
     document.getElementById('cut-time').textContent = formatTimePrecise(videoEl.currentTime);
+  });
+}
+
+function setKind(kind) {
+  state.kind = kind;
+  document.querySelectorAll('.cut-kind-btn').forEach(btn => {
+    const active = btn.dataset.kind === kind;
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    btn.classList.toggle('bg-primary', active);
+    btn.classList.toggle('text-white', active);
+    btn.classList.toggle('text-text-secondary', !active);
+    btn.classList.toggle('hover:bg-white/[0.04]', !active);
   });
 }
 
@@ -258,7 +284,7 @@ async function exportAll() {
   try {
     const res = await api('/cut/export', {
       method: 'POST',
-      body: { source, segments: state.segments },
+      body: { source, segments: state.segments, kind: state.kind },
     });
     showToast(`Exported ${res.success.length} segments${res.failed.length ? `, ${res.failed.length} failed` : ''}`, res.failed.length ? 'warning' : 'success');
 

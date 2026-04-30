@@ -14,10 +14,13 @@ from pydantic import BaseModel
 
 from yp_video.config import (
     ANNOTATIONS_DIR,
+    CUT_R2_CATEGORIES,
+    CUTS_BROADCAST_DIR,
     PREDICTIONS_DIR,
-    CUTS_DIR,
     TAD_ANNOTATIONS_FILE,
     VIDEOS_DIR,
+    cut_kind_of,
+    find_cut,
 )
 from yp_video.core.jsonl import read_jsonl
 from yp_video.web.r2_client import serve_video_or_r2_redirect
@@ -183,6 +186,11 @@ def list_results() -> list[dict]:
                 e["subset"] = subset[stem]
             if stem in m_ap:
                 e["map"] = m_ap[stem]
+            # Tag each entry with the cut kind (broadcast/sideline) so the UI
+            # can filter. If the cut isn't on disk anymore default to broadcast
+            # to match cut_kind_of's fallback.
+            cut_path = find_cut(f"{stem}.mp4")
+            e["kind"] = cut_kind_of(cut_path) if cut_path else "broadcast"
             entries.append(e)
 
     # Sort by filename, then source so the two variants of a file appear together
@@ -225,8 +233,11 @@ def stream_video(path: str):
     if decoded_path.startswith("/"):
         video_path = Path(decoded_path)
     else:
-        video_path = CUTS_DIR / decoded_path
-    response = serve_video_or_r2_redirect(video_path, ("cuts",))
+        # Search both cut dirs by basename; fall back to the broadcast path
+        # so the R2 redirect can still resolve files that exist remotely.
+        resolved = find_cut(Path(decoded_path).name)
+        video_path = resolved if resolved is not None else CUTS_BROADCAST_DIR / decoded_path
+    response = serve_video_or_r2_redirect(video_path, CUT_R2_CATEGORIES)
     if response:
         return response
     raise HTTPException(404, f"Video not found: {video_path}")

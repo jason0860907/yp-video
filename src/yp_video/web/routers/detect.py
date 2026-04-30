@@ -6,7 +6,11 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from yp_video.config import CUTS_DIR, SEG_ANNOTATIONS_DIR, PRE_ANNOTATIONS_DIR
+from yp_video.config import (
+    SEG_ANNOTATIONS_DIR,
+    PRE_ANNOTATIONS_DIR,
+    find_cut,
+)
 from yp_video.web.jobs import job_manager, JobStatus, make_progress_callback
 from yp_video.web.r2_client import sync_to_r2, sync_directory_to_r2
 from yp_video.web.vllm_manager import vllm_manager
@@ -61,7 +65,10 @@ async def start_detection(req: DetectRequest):
             failed = 0
 
             for i, video_name in enumerate(req.videos):
-                video_path = str(CUTS_DIR / video_name)
+                resolved = find_cut(video_name)
+                if resolved is None:
+                    raise HTTPException(404, f"Cut video not found: {video_name}")
+                video_path = str(resolved)
                 output_file = str(SEG_ANNOTATIONS_DIR / f"{Path(video_name).stem}.jsonl")
                 prefix = f"({i + 1}/{total})"
 

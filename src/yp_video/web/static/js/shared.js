@@ -475,9 +475,10 @@ async function pollSidebar() {
       const items = [
         ['Videos', stats.videos],
         ['Cuts', stats.cuts],
-        ['Seg-Ann', stats.detections],
         ['VLM-Pred', stats.pre_annotations],
         ['Annotations', stats.annotations],
+        ['VJEPA-B', stats.vjepa_b],
+        ['VJEPA-L', stats.vjepa_l],
         ['TAD-Pred', stats.predictions],
       ];
       statsEl.innerHTML = items.map(([k, v]) => `

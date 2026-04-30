@@ -49,7 +49,7 @@ def get_status():
 
 
 @router.get("/files")
-def list_local_files(category: str = "cuts") -> list[dict]:
+def list_local_files(category: str = "cuts-broadcast") -> list[dict]:
     """List local files with R2 sync status."""
     base_dir = _get_base_dir(category)
     if not base_dir.exists():
@@ -134,7 +134,7 @@ def list_local_files(category: str = "cuts") -> list[dict]:
 
 
 @router.get("/r2-files")
-def list_r2_files(category: str = "cuts") -> list[dict]:
+def list_r2_files(category: str = "cuts-broadcast") -> list[dict]:
     """List files on R2 for a category."""
     if not r2_client.configured:
         raise HTTPException(400, "R2 not configured")

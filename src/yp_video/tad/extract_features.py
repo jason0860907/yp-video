@@ -486,7 +486,7 @@ def extract_features_from_video(
 
 
 def process_directory(
-    input_dir: Path,
+    input_dir,
     output_dir: Path,
     device: torch.device,
     clip_seconds: float = DEFAULT_CLIP_SECONDS,
@@ -496,9 +496,11 @@ def process_directory(
     model_name: str = "base",
     on_progress: Callable[[int, int], None] | None = None,
 ):
-    """Process all videos in a directory.
+    """Process all videos under one or more directories.
 
     Args:
+        input_dir: A single Path or a sequence of Paths. Cuts are split across
+            broadcast/sideline dirs, so this accepts both forms.
         on_progress: Optional callback ``(done, total) -> None`` called after
             each video is processed (or skipped).
     """
@@ -506,8 +508,21 @@ def process_directory(
     model = load_model(device, model_name)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    if isinstance(input_dir, Path):
+        input_dirs = [input_dir]
+    else:
+        input_dirs = list(input_dir)
+
     video_extensions = {".mp4", ".avi", ".mkv", ".mov", ".webm"}
-    video_files = [f for f in input_dir.iterdir() if f.suffix.lower() in video_extensions]
+    video_files: list[Path] = []
+    seen: set[str] = set()
+    for d in input_dirs:
+        if not d.exists():
+            continue
+        for f in d.iterdir():
+            if f.suffix.lower() in video_extensions and f.name not in seen:
+                seen.add(f.name)
+                video_files.append(f)
 
     if videos:
         video_set = set(videos)
@@ -515,7 +530,7 @@ def process_directory(
 
     video_files.sort()
     total = len(video_files)
-    print(f"Found {total} videos in {input_dir}")
+    print(f"Found {total} videos in {[str(d) for d in input_dirs]}")
     decoder = "NVDEC (GPU)" if HAS_NVDEC else ("decord" if HAS_DECORD else "OpenCV")
     print(f"Using {decoder} for video loading")
 
@@ -562,7 +577,13 @@ def main():
     parser.add_argument("--model", type=str, default="base",
                         choices=list(MODEL_CONFIGS.keys()),
                         help="V-JEPA 2.1 model size (default: base)")
-    parser.add_argument("--input", type=Path, default=Path.home() / "videos" / "cuts")
+    parser.add_argument(
+        "--input",
+        type=Path,
+        nargs="+",
+        default=None,
+        help="One or more cut dirs (default: cuts-broadcast + cuts-sideline)",
+    )
     parser.add_argument("--output", type=Path, default=None,
                         help="Output dir (default: ~/videos/features/vjepa-{size}/)")
     parser.add_argument("--clip-seconds", type=float, default=DEFAULT_CLIP_SECONDS,
@@ -588,7 +609,9 @@ def main():
           f"(= {1 / args.stride_seconds:.2f} features/sec)")
     print(f"Output: {output_dir}")
 
-    process_directory(args.input, output_dir, device,
+    from yp_video.config import CUTS_DIRS as _CUTS_DIRS
+    inputs = args.input if args.input else list(_CUTS_DIRS)
+    process_directory(inputs, output_dir, device,
                       clip_seconds=args.clip_seconds, stride_seconds=args.stride_seconds,
                       videos=args.videos, batch_size=args.batch_size,
                       model_name=args.model)

@@ -14,16 +14,17 @@ log = logging.getLogger(__name__)
 
 from yp_video.config import (
     ANNOTATIONS_DIR,
+    CUTS_DIRS,
     FEATURES_DIR,
     PRE_ANNOTATIONS_DIR,
     PROJECT_ROOT,
-    CUTS_DIR,
     VIDEOS_DIR,
     TAD_PKG_DIR,
     TAD_FEATURES_DIR,
     TAD_ANNOTATIONS_FILE,
     TAD_CHECKPOINTS_DIR,
     TAD_CONFIGS_DIR,
+    iter_all_cuts,
 )
 from yp_video.web.jobs import job_manager, JobStatus, make_progress_callback
 
@@ -76,7 +77,7 @@ def get_status(model: str = "base"):
         for name, c in MODEL_CONFIGS.items()
     }
 
-    cuts_count = len(list(CUTS_DIR.glob("*.mp4"))) if CUTS_DIR.exists() else 0
+    cuts_count = sum(1 for _ in iter_all_cuts())
     annotations_exist = TAD_ANNOTATIONS_FILE.exists()
 
     # List checkpoints (supports both old flat and new nested layout)
@@ -187,7 +188,7 @@ async def extract_features(req: ExtractFeaturesRequest):
                 await loop.run_in_executor(
                     None,
                     lambda: process_directory(
-                        CUTS_DIR, output_dir, device,
+                        CUTS_DIRS, output_dir, device,
                         videos=req.videos, batch_size=req.batch_size,
                         model_name=req.model,
                         on_progress=progress_cb,
