@@ -29,13 +29,11 @@ model: {
 opt: {
   type: AdamW,
   learning_rate: 5.0e-4,
-  epochs: 140,
+  epochs: 90,
   warmup: True,
   warmup_epochs: 10,
   weight_decay: 0.05,
-  schedule_type: multistep,
-  schedule_steps: [99999],
-  schedule_gamma: 0.1,
+  schedule_type: cosine,
 }
 loader: {
   batch_size: 16,

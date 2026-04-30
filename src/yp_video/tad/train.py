@@ -221,7 +221,7 @@ def main():
     parser.add_argument(
         "--sampler-alpha",
         type=float,
-        default=1.0,
+        default=0.5,
         help="Smoothing for inverse-frequency weights: weight = (1/count_in_source)**alpha. "
              "1.0 = full balance, 0.0 = uniform, 0.5 = sqrt-sampling.",
     )
