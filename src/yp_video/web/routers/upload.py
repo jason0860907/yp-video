@@ -1,6 +1,7 @@
 """R2 cloud storage upload/download router."""
 
 import asyncio
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -172,34 +173,111 @@ async def _run_batch_transfer(
     transfer_fn: Callable[[Path, str, Callable | None], None],
     verb: str,
 ):
-    """Run file transfers as a single job with per-file progress."""
+    """Run file transfers as a single job with per-file byte-level progress.
+
+    Emits ``bytes_done / bytes_total / speed / eta`` into ``job.params`` so the
+    frontend can render live speed and ETA without an extra endpoint.
+    """
     loop = asyncio.get_running_loop()
     total = len(files)
     failed = 0
+    batch_started = time.monotonic()
+    bytes_done_so_far = 0  # cumulative across files for batch-level speed/ETA
+
+    # Best-effort total: for downloads we don't have the local file yet, so
+    # this stays 0 and the UI just won't show ETA until per-file progress lands.
+    bytes_total_estimate = 0
+    for f in files:
+        p = base_dir / f
+        try:
+            if p.exists():
+                bytes_total_estimate += p.stat().st_size
+        except OSError:
+            pass
 
     for i, file_path in enumerate(files):
         local_path = base_dir / file_path
         r2_key = f"{category}/{file_path}"
         prefix = f"({i + 1}/{total})"
+        name = Path(file_path).name
+
+        await job_manager.update_job(
+            job.id, status="running", progress=i / total,
+            message=f"{prefix} {verb}ing {name}...",
+            params={
+                **job.params,
+                "current_file": name,
+                "bytes_done": bytes_done_so_far,
+                "bytes_total": bytes_total_estimate,
+            },
+        )
+
+        last_emit = 0.0
+        prev_done_in_file = 0
+
+        def make_cb(file_idx=i, file_name=name, file_prefix=prefix):
+            def on_bytes(done: int, total_bytes: int):
+                nonlocal last_emit, prev_done_in_file, bytes_done_so_far
+                now = time.monotonic()
+                # Throttle to ~4Hz, but always emit the final byte
+                if now - last_emit < 0.25 and done < total_bytes:
+                    return
+                last_emit = now
+
+                delta = done - prev_done_in_file
+                prev_done_in_file = done
+                bytes_done_so_far += delta
+
+                # For downloads bytes_total_estimate may be 0 — fall back to
+                # the in-flight file's known total.
+                btotal = max(bytes_total_estimate, bytes_done_so_far + max(total_bytes - done, 0))
+                elapsed = max(now - batch_started, 0.001)
+                speed = bytes_done_so_far / elapsed
+                remaining = max(btotal - bytes_done_so_far, 0)
+                eta = int(remaining / speed) if speed > 0 else 0
+                file_pct = done / total_bytes if total_bytes else 0
+                overall = (file_idx + file_pct) / total
+
+                snapshot = {
+                    **job.params,
+                    "current_file": file_name,
+                    "bytes_done": bytes_done_so_far,
+                    "bytes_total": btotal,
+                    "speed": speed,
+                    "eta": eta,
+                }
+                pct_str = done * 100 // max(total_bytes, 1)
+                loop.call_soon_threadsafe(
+                    lambda: asyncio.ensure_future(
+                        job_manager.update_job(
+                            job.id, progress=overall,
+                            message=f"{file_prefix} {verb}ing {file_name} — {pct_str}%",
+                            params=snapshot,
+                        )
+                    )
+                )
+            return on_bytes
 
         try:
-            await job_manager.update_job(
-                job.id, status="running", progress=i / total,
-                message=f"{prefix} {verb}ing {Path(file_path).name}...",
-            )
-
             await loop.run_in_executor(
                 None,
-                lambda fp=local_path, k=r2_key:
-                    transfer_fn(fp, k, None),
+                lambda fp=local_path, k=r2_key, cb=make_cb():
+                    transfer_fn(fp, k, cb),
             )
+            # Reconcile after each file so cumulative bytes stay correct even
+            # when callbacks were throttled near the tail.
+            try:
+                actual_size = local_path.stat().st_size
+                bytes_done_so_far += max(actual_size - prev_done_in_file, 0)
+            except OSError:
+                pass
         except asyncio.CancelledError:
             await job_manager.update_job(job.id, status="cancelled", message="Cancelled")
             return
         except Exception as e:
             failed += 1
             await job_manager.update_job(
-                job.id, message=f"{prefix} Failed: {Path(file_path).name} — {e}",
+                job.id, message=f"{prefix} Failed: {name} — {e}",
             )
 
     if failed == 0:

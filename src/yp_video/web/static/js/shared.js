@@ -76,34 +76,88 @@ export async function api(path, options = {}) {
 }
 
 // ── SSE Client ──
+// Survives transient disconnects: when the browser suspends EventSource (e.g.
+// on mobile when the tab/app is backgrounded), the client retries with
+// exponential backoff (1s → 2s → 5s → 10s, capped at 30s) and reconnects
+// immediately when the page becomes visible again. Callers must call
+// `stop()` exactly when they no longer want updates (terminal job state,
+// page deactivate, etc.) — that is treated as a permanent close.
+const _aliveClients = new Set();
+const _BACKOFF_STEPS_MS = [1000, 2000, 5000, 10000, 30000];
+
 export class SSEClient {
   constructor(url, handlers = {}) {
     this.url = url;
     this.handlers = handlers;
     this.source = null;
+    this._alive = false;
+    this._retry = 0;
+    this._retryTimer = null;
   }
 
   start() {
+    this._alive = true;
+    _aliveClients.add(this);
+    this._open();
+    return this;
+  }
+
+  _open() {
+    if (!this._alive) return;
+    if (this.source) { this.source.close(); this.source = null; }
     this.source = new EventSource(this.url);
     this.source.onmessage = (e) => {
+      this._retry = 0;  // reset backoff on any successful frame
       try {
         const data = JSON.parse(e.data);
         if (this.handlers.onMessage) this.handlers.onMessage(data);
       } catch { /* ignore parse errors */ }
     };
     this.source.onerror = () => {
-      if (this.handlers.onError) this.handlers.onError();
-      this.stop();
+      if (!this._alive) return;
+      // Don't notify caller on transient errors — only when we actually give
+      // up. Schedule a reconnect; the visibilitychange listener may also
+      // trigger one sooner.
+      this._scheduleReconnect();
     };
-    return this;
+  }
+
+  _scheduleReconnect() {
+    if (!this._alive || this._retryTimer) return;
+    if (this.source) { this.source.close(); this.source = null; }
+    const delay = _BACKOFF_STEPS_MS[Math.min(this._retry, _BACKOFF_STEPS_MS.length - 1)];
+    this._retry += 1;
+    this._retryTimer = setTimeout(() => {
+      this._retryTimer = null;
+      this._open();
+    }, delay);
+  }
+
+  // Force an immediate reconnect attempt (e.g. when the page returns to the
+  // foreground after a long background period).
+  _kick() {
+    if (!this._alive) return;
+    if (this._retryTimer) { clearTimeout(this._retryTimer); this._retryTimer = null; }
+    this._retry = 0;
+    if (!this.source || this.source.readyState === 2 /* CLOSED */) {
+      this._open();
+    }
   }
 
   stop() {
-    if (this.source) {
-      this.source.close();
-      this.source = null;
-    }
+    this._alive = false;
+    _aliveClients.delete(this);
+    if (this._retryTimer) { clearTimeout(this._retryTimer); this._retryTimer = null; }
+    if (this.source) { this.source.close(); this.source = null; }
   }
+}
+
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      _aliveClients.forEach(c => c._kick());
+    }
+  });
 }
 
 // ── Page Header ──

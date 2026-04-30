@@ -81,7 +81,30 @@ export function render(container) {
   loadStatus();
 }
 
-export function activate() { loadStatus(); }
+export function activate() {
+  loadStatus();
+  // After returning to the page (e.g. mobile background → foreground), pull
+  // the latest snapshot of any in-flight job so the UI doesn't stay frozen
+  // on whatever the last SSE event was before the connection died.
+  reconcileActiveJobs();
+}
+
+async function reconcileActiveJobs() {
+  const running = state.jobs.filter(j =>
+    j.status === 'running' || j.status === 'pending'
+  );
+  for (const j of running) {
+    try {
+      const fresh = await api(`/jobs/${j.id}`);
+      state.jobs = state.jobs.map(x => x.id === fresh.id ? fresh : x);
+      renderJobsProgress();
+      if (['completed', 'failed', 'cancelled'].includes(fresh.status)) {
+        sseClients.forEach(c => c.stop());
+        sseClients = [];
+      }
+    } catch { /* job may have been pruned server-side; ignore */ }
+  }
+}
 
 export function deactivate() {
   sseClients.forEach(c => c.stop());
@@ -501,6 +524,13 @@ function renderJobsProgress() {
     else if (isFailed) statusColor = 'text-red-400';
     else if (isCancelled) statusColor = 'text-amber-400';
 
+    const p = job.params || {};
+    const bytes = (p.bytes_done && p.bytes_total)
+      ? `${formatBytes(p.bytes_done)}/${formatBytes(p.bytes_total)}` : '';
+    const speed = (isRunning && p.speed) ? `${formatBytes(p.speed)}/s` : '';
+    const eta = (isRunning && p.eta) ? `ETA ${p.eta}s` : '';
+    const detail = [bytes, speed, eta].filter(Boolean).join(' · ');
+
     return `
       <div class="space-y-1.5">
         <div class="flex items-center justify-between">
@@ -508,6 +538,7 @@ function renderJobsProgress() {
           <span class="text-[11px] ${statusColor} tabular-nums font-medium">${isDone ? 'done' : isFailed ? 'failed' : isCancelled ? 'cancelled' : pct + '%'}</span>
         </div>
         ${createProgressBar(job.progress)}
+        ${detail ? `<div class="text-[11px] text-text-muted tabular-nums">${detail}</div>` : ''}
         ${job.error ? `<p class="text-[10px] text-red-400/80 truncate">${job.error}</p>` : ''}
       </div>`;
   }).join('');
