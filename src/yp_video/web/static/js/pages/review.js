@@ -9,7 +9,7 @@ let timelineCanvas = null;
 let animFrame = null;
 let _markStart = null;
 let _selectedIdx = -1;
-let _playingIdx = -1;
+let _highlight = { inside: -1, prev: -1, next: -1 };
 
 export function render(container) {
   container.innerHTML = `
@@ -288,22 +288,39 @@ function addAnnotation(label) {
   renderAnnotations();
 }
 
-// Highlight the row whose [start, end) contains the playhead. Independent of
-// _selectedIdx; helps find the next rally to click while watching.
+// Highlight rows around the playhead so the user can find "where am I now" in
+// a long list. Three states:
+//   inside a rally  → orange left border on that row
+//   between rallies → orange marker on prev rally + orange marker on next rally
+//   before/after all → only one marker on the adjacent rally
 function refreshPlayingHighlight({ scroll = true } = {}) {
   if (!videoEl) return;
   const t = videoEl.currentTime;
-  const newIdx = state.annotations.findIndex(a => t >= a.start && t < a.end);
-  if (newIdx === _playingIdx) return;
+
+  let inside = -1, prev = -1, next = -1;
+  for (let i = 0; i < state.annotations.length; i++) {
+    const a = state.annotations[i];
+    if (t >= a.start && t < a.end) { inside = i; prev = -1; next = -1; break; }
+    if (a.end <= t) prev = i;
+    if (a.start > t && next === -1) next = i;
+  }
+
+  if (inside === _highlight.inside && prev === _highlight.prev && next === _highlight.next) return;
 
   const listEl = document.getElementById('rev-list');
-  if (!listEl) { _playingIdx = newIdx; return; }
+  if (!listEl) { _highlight = { inside, prev, next }; return; }
 
-  const applyStyle = (idx, on) => {
+  const STYLE = {
+    inside: 'inset 3px 0 0 #F97316',
+    prev:   'inset 3px 0 0 rgba(249, 115, 22, 0.4)',
+    next:   'inset 3px 0 0 rgba(249, 115, 22, 0.4)',
+  };
+  const applyStyle = (idx, kind) => {
+    if (idx < 0) return;
     const row = listEl.querySelector(`.rev-item[data-idx="${idx}"]`);
     if (!row) return;
-    if (on) {
-      row.style.boxShadow = 'inset 3px 0 0 #F97316';
+    if (kind) {
+      row.style.boxShadow = STYLE[kind];
       row.dataset.playing = '1';
     } else {
       row.style.boxShadow = '';
@@ -311,22 +328,29 @@ function refreshPlayingHighlight({ scroll = true } = {}) {
     }
   };
 
-  if (_playingIdx >= 0) applyStyle(_playingIdx, false);
-  if (newIdx >= 0) {
-    applyStyle(newIdx, true);
-    if (scroll) {
-      const row = listEl.querySelector(`.rev-item[data-idx="${newIdx}"]`);
+  applyStyle(_highlight.inside, null);
+  applyStyle(_highlight.prev, null);
+  applyStyle(_highlight.next, null);
+  applyStyle(inside, 'inside');
+  applyStyle(prev, 'prev');
+  applyStyle(next, 'next');
+
+  if (scroll) {
+    const target = inside >= 0 ? inside : (next >= 0 ? next : prev);
+    if (target >= 0) {
+      const row = listEl.querySelector(`.rev-item[data-idx="${target}"]`);
       row?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     }
   }
-  _playingIdx = newIdx;
+
+  _highlight = { inside, prev, next };
 }
 
 function renderAnnotations() {
   const el = document.getElementById('rev-list');
   document.getElementById('rev-count').textContent = `(${state.annotations.length})`;
   // DOM was replaced; force the highlight to re-apply on the new nodes.
-  _playingIdx = -1;
+  _highlight = { inside: -1, prev: -1, next: -1 };
 
   if (state.annotations.length === 0) {
     el.innerHTML = emptyState(
