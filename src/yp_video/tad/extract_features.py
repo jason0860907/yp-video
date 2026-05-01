@@ -77,7 +77,15 @@ TARGET_SAMPLE_FPS = 30.0
 # Producer-consumer prefetch depth. Decoded-batch buffer between the decord
 # producer thread(s) and the GPU consumer; absorbs decode-time spikes so V-JEPA
 # inference doesn't stall waiting for the next batch.
-PREFETCH_DEPTH = 4
+#
+# Memory note: each batch's `all_indices` spans the union of 32 clips' 64
+# frames each. With ~30fps source + stride=0.8s, that's ~800 unique frames per
+# batch ≈ 5 GB at 1080p (808 × 1920×1080×3 bytes). With NUM_DECODE_PRODUCERS=N
+# producers and PREFETCH_DEPTH=D the in-flight host RAM for frames is roughly
+# (N + D + 1) × per_batch_bytes (producers in hand + queue + consumer). Defaults
+# of N=2 D=2 use ~25 GB on 1080p, leaving headroom on a 64 GB box; tune via
+# env on bigger machines or for higher-resolution source.
+PREFETCH_DEPTH = int(os.environ.get("TAD_PREFETCH_DEPTH", "2"))
 
 # Threads decord uses internally for a single get_batch call. Measured scaling
 # (num_threads=1→4: 1.7×, →8: 1.9×, →12: plateau).
@@ -88,9 +96,10 @@ DECORD_NUM_THREADS = 4
 # decode (~4.7s/batch) is slower than V-JEPA inference (~3s/batch), so the GPU
 # stalls; multiple producers × num_threads each cut aggregate decode time
 # below inference time and turn the prior sawtooth GPU utilisation into
-# steady saturation. 3 × 4 = 12 threads matches the 12-vCPU budget; V-JEPA's
-# main thread mostly waits on GPU so it doesn't compete much for CPU.
-NUM_DECODE_PRODUCERS = 3
+# steady saturation. Default 2 × 4 = 8 threads stays comfortably within the
+# 12-vCPU budget AND keeps in-flight host RAM bounded; bump to 3 via env on
+# big-RAM machines for the last ~10% throughput.
+NUM_DECODE_PRODUCERS = int(os.environ.get("TAD_NUM_PRODUCERS", "2"))
 # Upper bound for NvdecReader cache trim when the per-call window is unknown.
 _DEFAULT_CACHE_FRAMES = 256
 
@@ -647,6 +656,14 @@ def process_directory(
     print(f"Found {total} videos in {[str(d) for d in input_dirs]}")
     decoder = "NVDEC (GPU)" if HAS_NVDEC else ("decord" if HAS_DECORD else "OpenCV")
     print(f"Using {decoder} for video loading")
+    # Surface the host-RAM tuning choice so OOM kills are easier to diagnose.
+    # Override via env: TAD_NUM_PRODUCERS (default 2) and TAD_PREFETCH_DEPTH
+    # (default 2). Concurrent vLLM also competes for host RAM; use the
+    # `stop_vllm` flag in the UI / CLI to free it during extraction.
+    print(
+        f"Pipeline: {NUM_DECODE_PRODUCERS} producer(s) × decord(threads={DECORD_NUM_THREADS}), "
+        f"prefetch={PREFETCH_DEPTH} (env: TAD_NUM_PRODUCERS / TAD_PREFETCH_DEPTH)"
+    )
 
     # Warmup: trigger AUTOTUNE + CUDAGraph with real batch_size so the
     # cost doesn't land inside the first video's tqdm.
