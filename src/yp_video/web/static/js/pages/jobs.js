@@ -1,7 +1,7 @@
 /**
  * Jobs page — Background task monitoring + vLLM control.
  */
-import { api, card, pageHeader, sectionTitle, btnPrimary, btnSecondary, btnSmall, btnDanger, createProgressBar, createStatusBadge, showToast, emptyState } from '../shared.js';
+import { api, API, card, pageHeader, sectionTitle, btnPrimary, btnSecondary, btnSmall, btnDanger, createProgressBar, createStatusBadge, showToast, emptyState } from '../shared.js';
 
 let pollTimer = null;
 
@@ -58,7 +58,7 @@ function loadAll() {
 
 async function loadVLLM() {
   try {
-    const status = await api('/system/vllm/status');
+    const status = await api(API.system.vllmStatus);
     document.getElementById('jobs-vllm-badge').innerHTML = createStatusBadge(status.status || 'stopped');
     const btns = document.getElementById('jobs-vllm-btns');
     const info = document.getElementById('jobs-vllm-info');
@@ -78,7 +78,7 @@ async function loadVLLM() {
 async function startVLLM() {
   try {
     showToast('Starting vLLM server...', 'info');
-    await api('/system/vllm/start', { method: 'POST' });
+    await api(API.system.vllmStart, { method: 'POST' });
     showToast('vLLM starting', 'success');
     setTimeout(loadVLLM, 3000);
   } catch (e) {
@@ -88,7 +88,7 @@ async function startVLLM() {
 
 async function stopVLLM() {
   try {
-    await api('/system/vllm/stop', { method: 'POST' });
+    await api(API.system.vllmStop, { method: 'POST' });
     showToast('vLLM stopped', 'success');
     loadVLLM();
   } catch (e) {
@@ -98,7 +98,7 @@ async function stopVLLM() {
 
 async function loadJobs() {
   try {
-    const jobs = await api('/jobs');
+    const jobs = await api(API.jobs.list);
     const el = document.getElementById('jobs-list');
 
     if (!jobs || jobs.length === 0) {
@@ -140,7 +140,7 @@ async function loadJobs() {
     el.querySelectorAll('.job-cancel').forEach(btn => {
       btn.addEventListener('click', async () => {
         try {
-          await api(`/jobs/${btn.dataset.id}/cancel`, { method: 'POST' });
+          await api(API.jobs.cancel(btn.dataset.id), { method: 'POST' });
           showToast('Job cancelled', 'warning');
           loadJobs();
         } catch (e) {

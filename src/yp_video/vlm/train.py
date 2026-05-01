@@ -31,6 +31,7 @@ import torch
 from torch.utils.data import Dataset, WeightedRandomSampler
 
 from yp_video.config import VLM_CHECKPOINTS_DIR, VLM_MANIFEST_FILE
+from yp_video.core.jsonl import append_jsonl, write_meta_header
 
 
 LABELS = ("non_rally", "rally")
@@ -282,9 +283,7 @@ def main():
         sampler = WeightedRandomSampler(weights, num_samples=len(weights), replacement=True)
         sampler_info = {"per_source": dict(counts)}
 
-    # Write meta header
-    meta = {
-        "_meta": True,
+    write_meta_header(log_path, {
         "started_at": datetime.now().isoformat(timespec="seconds"),
         "model": args.model,
         "manifest": str(args.manifest),
@@ -298,9 +297,7 @@ def main():
         "n_frames": args.n_frames,
         "balanced_sampler": bool(args.balanced_sampler),
         "sampler": sampler_info,
-    }
-    with open(log_path, "w") as f:
-        f.write(json.dumps(meta, ensure_ascii=False) + "\n")
+    })
 
     training_args = TrainingArguments(
         output_dir=str(args.work_dir),
@@ -346,8 +343,7 @@ def main():
             metrics = evaluate(model, processor, val_records, args.n_frames,
                                max_eval=args.eval_samples)
             entry = {"epoch": ep, "step": state.global_step, **metrics}
-            with open(log_path, "a") as f:
-                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            append_jsonl(log_path, entry)
             print(f"[VLM Eval] epoch={ep} acc={metrics.get('accuracy')} "
                   f"by_source={metrics.get('by_source')}")
 

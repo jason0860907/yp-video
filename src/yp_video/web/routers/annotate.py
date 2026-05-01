@@ -16,6 +16,8 @@ from yp_video.config import (
     PRE_ANNOTATIONS_DIR,
     RAW_VIDEOS_DIR,
     VIDEOS_DIR,
+    cut_kind_of,
+    find_cut,
     iter_all_cuts,
 )
 from yp_video.core.jsonl import read_jsonl
@@ -62,8 +64,13 @@ def list_results() -> list[dict]:
                 files.setdefault(Path(obj["key"]).name, set()).add("pre-annotation")
         except Exception:
             pass
+    def _kind(name: str) -> str:
+        # Strip the conventional "_annotations.jsonl" suffix to get the cut stem.
+        stem = name.removesuffix(".jsonl").removesuffix("_annotations")
+        cut = find_cut(f"{stem}.mp4")
+        return cut_kind_of(cut) if cut else "broadcast"
     return sorted(
-        [{"name": k, "source": sorted(v)} for k, v in files.items()],
+        [{"name": k, "source": sorted(v), "kind": _kind(k)} for k, v in files.items()],
         key=lambda x: x["name"],
     )
 

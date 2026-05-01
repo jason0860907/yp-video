@@ -1,7 +1,7 @@
 /**
  * Detect page — VLM rally detection + vlm_to_rally conversion.
  */
-import { api, SSEClient, card, pageHeader, sectionTitle, stepBadge, btnPrimary, btnSecondary, btnSmall, createProgressBar, showToast, emptyState, inputCls } from '../shared.js';
+import { api, API, SSEClient, card, pageHeader, sectionTitle, stepBadge, btnPrimary, btnSecondary, btnSmall, showToast, emptyState, inputCls, renderJobProgress } from '../shared.js';
 
 let sseClients = [];
 let state = { videos: [], jobs: [], kindFilter: 'all' };
@@ -139,8 +139,8 @@ function visibleVideos() {
 async function loadVideos() {
   try {
     const [videos, vllmStatus] = await Promise.all([
-      api('/system/videos'),
-      api('/system/vllm/status').catch(() => null),
+      api(API.system.videos()),
+      api(API.system.vllmStatus).catch(() => null),
     ]);
     state.videos = videos.map(v => ({ ...v, selected: !v.has_detection }));
     renderVideos();
@@ -230,7 +230,7 @@ async function startDetection() {
   sseClients = [];
 
   try {
-    const job = await api('/detect/start', {
+    const job = await api(API.detect.start, {
       method: 'POST',
       body: {
         videos: selected,
@@ -246,7 +246,7 @@ async function startDetection() {
     document.getElementById('det-progress').classList.remove('hidden');
     renderJobsProgress();
 
-    const client = new SSEClient(`/api/jobs/${job.id}/events`, {
+    const client = new SSEClient(API.jobs.eventsSSE(job.id), {
       onMessage: (data) => {
         state.jobs = [data];
         renderJobsProgress();
@@ -280,31 +280,7 @@ function retryFailed() {
 function renderJobsProgress() {
   const el = document.getElementById('det-jobs-progress');
   if (!el) return;
-
-  el.innerHTML = state.jobs.map(job => {
-    const pct = Math.round((job.progress || 0) * 100);
-    const isRunning = job.status === 'running';
-    const isDone = job.status === 'completed';
-    const isFailed = job.status === 'failed';
-    const isCancelled = job.status === 'cancelled';
-
-    let statusColor = 'text-text-muted';
-    if (isRunning) statusColor = 'text-primary-light';
-    else if (isDone) statusColor = 'text-emerald-400';
-    else if (isFailed) statusColor = 'text-red-400';
-    else if (isCancelled) statusColor = 'text-amber-400';
-
-    return `
-      <div class="space-y-1.5">
-        <div class="flex items-center justify-between">
-          <span class="text-xs text-text-primary font-medium truncate">${job.name}</span>
-          <span class="text-[11px] ${statusColor} tabular-nums font-medium">${isDone ? 'done' : isFailed ? 'failed' : isCancelled ? 'cancelled' : pct + '%'}</span>
-        </div>
-        ${createProgressBar(job.progress)}
-        ${job.message && isRunning ? `<p class="text-[10px] text-text-muted truncate">${job.message}</p>` : ''}
-        ${job.error ? `<p class="text-[10px] text-red-400/80 truncate">${job.error}</p>` : ''}
-      </div>`;
-  }).join('');
+  el.innerHTML = state.jobs.map(job => renderJobProgress(job)).join('');
 }
 
 async function convertDetections() {
@@ -313,7 +289,7 @@ async function convertDetections() {
   btn.textContent = 'Converting...';
 
   try {
-    const res = await api('/detect/convert', {
+    const res = await api(API.detect.convert, {
       method: 'POST',
       body: {
         min_duration: parseFloat(document.getElementById('det-min-dur').value),

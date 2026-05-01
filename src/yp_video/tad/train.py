@@ -1,7 +1,6 @@
 """Train ActionFormer model for volleyball rally detection."""
 
 import argparse
-import json
 import os
 import sys
 from datetime import datetime
@@ -11,6 +10,7 @@ from pprint import pprint
 import torch
 import torch.nn as nn
 
+from yp_video.core.jsonl import append_jsonl, write_meta_header
 from yp_video.config import (
     ACTIONFORMER_DIR,
     FEATURES_DIR,
@@ -430,7 +430,6 @@ def main():
             })
 
         meta = {
-            "_meta": True,
             "started_at": datetime.now().isoformat(timespec="seconds"),
             "model": model_name,
             "feat_dim": cfg["dataset"]["input_dim"],
@@ -458,8 +457,7 @@ def main():
             "balanced_sampler": bool(args.balanced_sampler),
             "sampler": sampler_info,
         }
-        with open(log_path, "w") as f:
-            f.write(json.dumps(meta, ensure_ascii=False) + "\n")
+        write_meta_header(Path(log_path), meta)
 
     # Training loop
     max_epochs = cfg["opt"].get(
@@ -519,8 +517,7 @@ def main():
                 "tiou": tiou_metrics,
                 "per_source": per_source,
             }
-            with open(log_path, "a") as f:
-                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            append_jsonl(Path(log_path), entry)
 
             print(f"[Epoch {epoch + 1}] mAP = {avg_mAP:.4f}  best = {best_mAP:.4f}")
             if per_source:

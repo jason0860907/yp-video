@@ -1,9 +1,9 @@
 /**
  * Review page — Review TAD predictions and save corrected annotations.
  */
-import { api, formatTime, parseTime, card, pageHeader, sectionTitle, btnSmall, showToast, emptyState, selectCls, kbdHint } from '../shared.js';
+import { api, API, formatTime, parseTime, card, pageHeader, sectionTitle, btnSmall, showToast, emptyState, selectCls, kbdHint } from '../shared.js';
 
-let state = { results: [], annotations: [], videoName: '', duration: 0, kindFilter: 'all' };
+let state = { results: [], annotations: [], videoName: '', duration: 0 };
 let videoEl = null;
 let timelineCanvas = null;
 let animFrame = null;
@@ -15,18 +15,15 @@ export function render(container) {
   container.innerHTML = `
     <div class="max-w-screen-2xl mx-auto space-y-5">
       ${pageHeader('Review', 'Review TAD predictions and correct annotations', `
-        <div class="inline-flex rounded-lg border border-border bg-surface-100 p-0.5" role="tablist" aria-label="Cut kind">
-          <button type="button" data-kind="all"       class="rev-kind-tab px-3 py-1 text-xs font-heading rounded-md transition-colors duration-150" aria-pressed="true">All <span class="opacity-60 ml-1" data-count="all">0</span></button>
-          <button type="button" data-kind="broadcast" class="rev-kind-tab px-3 py-1 text-xs font-heading rounded-md transition-colors duration-150" aria-pressed="false">Broadcast <span class="opacity-60 ml-1" data-count="broadcast">0</span></button>
-          <button type="button" data-kind="sideline"  class="rev-kind-tab px-3 py-1 text-xs font-heading rounded-md transition-colors duration-150" aria-pressed="false">Sideline <span class="opacity-60 ml-1" data-count="sideline">0</span></button>
-        </div>
-        <select id="rev-filter" class="${selectCls}" title="Filter by split / quality">
+        <select id="rev-filter" class="${selectCls}" title="Filter by split / quality / kind">
           <option value="all">All files</option>
           <option value="val">Validation only</option>
           <option value="train">Training only</option>
           <option value="predict-only">Predict only (no annotation)</option>
           <option value="failing">Failing (mAP &lt; 30%)</option>
           <option value="val-failing">Val + failing</option>
+          <option value="broadcast">Broadcast only</option>
+          <option value="sideline">Sideline only</option>
         </select>
         <select id="rev-results" class="${selectCls}">
           <option value="">Select result file...</option>
@@ -181,15 +178,9 @@ function handleKeydown(e) {
 
 async function loadResults() {
   try {
-    state.results = await api('/review/results');
+    state.results = await api(API.review.results);
     renderResultsDropdown();
     document.getElementById('rev-filter').addEventListener('change', renderResultsDropdown);
-    document.querySelectorAll('.rev-kind-tab').forEach(btn => {
-      btn.addEventListener('click', () => {
-        state.kindFilter = btn.dataset.kind;
-        renderResultsDropdown();
-      });
-    });
   } catch (e) {
     showToast(`Failed to load results: ${e.message}`, 'error');
   }
@@ -206,10 +197,8 @@ function renderResultsDropdown() {
     state.results.filter(r => r.source === 'annotation').map(r => r.name)
   );
 
-  // Apply the split/quality filter once; the kind filter and tab counts both
-  // run off this filtered set so the badges show only entries the dropdown
-  // could currently produce.
-  const passesSplit = (r) => {
+  // The dropdown is a single one-of filter combining split/quality and kind.
+  const passesFilter = (r) => {
     const isVal = r.subset === 'validation';
     const isTrain = r.subset === 'training';
     const isFailing = typeof r.map === 'number' && r.map < 0.3;
@@ -219,31 +208,14 @@ function renderResultsDropdown() {
     if (filter === 'predict-only' && !isPredictOnly) return false;
     if (filter === 'failing' && !isFailing) return false;
     if (filter === 'val-failing' && !(isVal && isFailing)) return false;
+    if (filter === 'broadcast' && r.kind !== 'broadcast') return false;
+    if (filter === 'sideline' && r.kind !== 'sideline') return false;
     return true;
   };
-  const counts = { all: 0, broadcast: 0, sideline: 0 };
-  state.results.forEach(r => {
-    if (!passesSplit(r)) return;
-    counts.all++;
-    if (r.kind === 'broadcast') counts.broadcast++;
-    else if (r.kind === 'sideline') counts.sideline++;
-  });
-  document.querySelectorAll('.rev-kind-tab').forEach(btn => {
-    const k = btn.dataset.kind;
-    const active = k === state.kindFilter;
-    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
-    btn.classList.toggle('bg-primary', active);
-    btn.classList.toggle('text-white', active);
-    btn.classList.toggle('text-text-secondary', !active);
-    btn.classList.toggle('hover:bg-white/[0.04]', !active);
-    const cnt = btn.querySelector(`[data-count="${k}"]`);
-    if (cnt) cnt.textContent = counts[k];
-  });
 
   let kept = 0;
   state.results.forEach(r => {
-    if (!passesSplit(r)) return;
-    if (state.kindFilter !== 'all' && r.kind !== state.kindFilter) return;
+    if (!passesFilter(r)) return;
 
     const opt = document.createElement('option');
     opt.value = `${r.source}::${r.name}`;
@@ -271,8 +243,7 @@ async function loadFile() {
   const name = sep >= 0 ? raw.slice(sep + 2) : raw;
 
   try {
-    const qs = source ? `?source=${encodeURIComponent(source)}` : '';
-    const data = await api(`/review/results/${encodeURIComponent(name)}${qs}`);
+    const data = await api(API.review.result(name, source ? { source } : {}));
     const videoPath = data.video || data.source_video || data.metadata?.video || '';
     state.videoName = videoPath;
     if (videoPath) {
@@ -483,7 +454,7 @@ function renderAnnotations() {
 async function saveAnnotations() {
   if (!state.videoName) return showToast('No video loaded', 'warning');
   try {
-    await api('/review/annotations', {
+    await api(API.review.annotations, {
       method: 'POST',
       body: { video: state.videoName, duration: state.duration, annotations: state.annotations },
     });

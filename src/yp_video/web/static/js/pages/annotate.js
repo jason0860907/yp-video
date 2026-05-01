@@ -1,7 +1,7 @@
 /**
  * Annotate page — Rally annotation with timeline visualization.
  */
-import { api, formatTime, parseTime, card, pageHeader, sectionTitle, btnSmall, showToast, emptyState, selectCls, kbdHint } from '../shared.js';
+import { api, API, formatTime, parseTime, card, pageHeader, sectionTitle, btnSmall, showToast, emptyState, selectCls, kbdHint } from '../shared.js';
 
 let state = { results: [], annotations: [], videoName: '', duration: 0 };
 let videoEl = null;
@@ -15,6 +15,11 @@ export function render(container) {
   container.innerHTML = `
     <div class="max-w-screen-2xl mx-auto space-y-5">
       ${pageHeader('Annotate', 'Review and edit rally annotations', `
+        <select id="ann-kind" class="${selectCls}" title="Filter by cut kind">
+          <option value="all">All kinds</option>
+          <option value="broadcast">Broadcast only</option>
+          <option value="sideline">Sideline only</option>
+        </select>
         <select id="ann-results" class="${selectCls}">
           <option value="">Select result file...</option>
         </select>
@@ -182,7 +187,7 @@ async function loadStats() {
   const el = document.getElementById('ann-stats');
   if (!el) return;
   try {
-    const data = await api('/annotate/stats');
+    const data = await api(API.annotate.stats);
     if (!data.by_source?.length) return;
     const chips = data.by_source.map(s => {
       const cls = SOURCE_CHIP_CLS[s.source] || SOURCE_CHIP_CLS.other;
@@ -206,19 +211,32 @@ async function loadStats() {
 
 async function loadResults() {
   try {
-    const results = await api('/annotate/results');
-    state.results = results;
-    const sel = document.getElementById('ann-results');
-    results.forEach(r => {
-      const opt = document.createElement('option');
-      opt.value = r.name;
-      const tag = r.source.includes('annotation') ? '✅' : '⚡';
-      opt.textContent = `${tag} ${r.name}`;
-      sel.appendChild(opt);
-    });
+    state.results = await api(API.annotate.results);
+    renderResultsDropdown();
+    document.getElementById('ann-kind').addEventListener('change', renderResultsDropdown);
   } catch (e) {
     showToast(`Failed to load results: ${e.message}`, 'error');
   }
+}
+
+function renderResultsDropdown() {
+  const sel = document.getElementById('ann-results');
+  const kindFilter = document.getElementById('ann-kind')?.value || 'all';
+  // Preserve current selection if it still passes the filter; otherwise clear.
+  const prev = sel.value;
+  while (sel.options.length > 1) sel.remove(1);
+  let prevStillVisible = false;
+  for (const r of state.results) {
+    if (kindFilter !== 'all' && r.kind !== kindFilter) continue;
+    const opt = document.createElement('option');
+    opt.value = r.name;
+    const tag = r.source.includes('annotation') ? '✅' : '⚡';
+    const kindTag = r.kind === 'sideline' ? ' [SIDE]' : '';
+    opt.textContent = `${tag}${kindTag} ${r.name}`;
+    sel.appendChild(opt);
+    if (r.name === prev) prevStillVisible = true;
+  }
+  sel.value = prevStillVisible ? prev : '';
 }
 
 async function loadFile() {
@@ -226,7 +244,7 @@ async function loadFile() {
   if (!name) return;
 
   try {
-    const data = await api(`/annotate/results/${encodeURIComponent(name)}`);
+    const data = await api(API.annotate.result(name));
     const videoPath = data.video || data.source_video || data.metadata?.video || '';
     state.videoName = videoPath;
     if (videoPath) {
@@ -431,7 +449,7 @@ function renderAnnotations() {
 async function saveAnnotations() {
   if (!state.videoName) return showToast('No video loaded', 'warning');
   try {
-    await api('/annotate/annotations', {
+    await api(API.annotate.annotations, {
       method: 'POST',
       body: { video: state.videoName, duration: state.duration, annotations: state.annotations },
     });

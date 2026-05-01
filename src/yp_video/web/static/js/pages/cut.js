@@ -1,7 +1,7 @@
 /**
  * Cut page — Video segment cutter.
  */
-import { api, formatTimePrecise, card, pageHeader, sectionTitle, btnPrimary, btnDanger, btnSmall, selectCls, inputCls, showToast, showConfirm, emptyState, kbdHint } from '../shared.js';
+import { api, API, formatTimePrecise, card, pageHeader, sectionTitle, btnPrimary, btnDanger, btnSmall, selectCls, inputCls, showToast, showConfirm, emptyState, kbdHint } from '../shared.js';
 
 let state = { videos: [], segments: [], markStart: null, kind: 'broadcast' };
 let videoEl = null;
@@ -138,7 +138,7 @@ async function deleteSourceVideo({ skipConfirm = false, contextMessage = '' } = 
   }
 
   try {
-    await api(`/cut/video/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    await api(API.cut.video(name), { method: 'DELETE' });
     showToast(`Deleted ${name}`, 'success');
 
     // Clear player + remove from dropdown
@@ -174,7 +174,7 @@ function handleKeydown(e) {
 
 async function loadVideos() {
   try {
-    const videos = await api('/cut/videos');
+    const videos = await api(API.cut.videos);
     state.videos = videos;
     const sel = document.getElementById('cut-video-select');
     videos.forEach(v => {
@@ -282,7 +282,7 @@ async function exportAll() {
   btn.textContent = 'Exporting...';
 
   try {
-    const res = await api('/cut/export', {
+    const res = await api(API.cut.export, {
       method: 'POST',
       body: { source, segments: state.segments, kind: state.kind },
     });

@@ -7,6 +7,7 @@
  */
 import {
   api,
+  API,
   SSEClient,
   card,
   pageHeader,
@@ -19,6 +20,7 @@ import {
   showToast,
   inputCls,
   selectCls,
+  escapeHtml,
 } from '../shared.js';
 
 let sseClient = null;
@@ -142,7 +144,7 @@ function bindEvents() {
 
 async function loadStatus() {
   try {
-    const s = await api('/vlm/status');
+    const s = await api(API.vlm.status);
     document.getElementById('vlm-status-card').innerHTML = card(`
       <div class="grid grid-cols-5 gap-3">
         ${statCard('Cuts', s.cuts_count, s.cuts_count > 0)}
@@ -168,7 +170,7 @@ async function buildManifest() {
   status.textContent = 'Building...';
   status.className = 'text-xs text-text-muted';
   try {
-    const res = await api('/vlm/build-manifest', {
+    const res = await api(API.vlm.buildManifest, {
       method: 'POST',
       body: {
         window: parseFloat(document.getElementById('vlm-window').value),
@@ -196,14 +198,14 @@ function showTrainingUI(data) {
   const logsEl = document.getElementById('vlm-logs');
   if (data.logs?.length > 0) {
     logsEl.classList.remove('hidden');
-    logsEl.innerHTML = data.logs.slice(-200).map(l => `<div>${l.replace(/</g, '&lt;')}</div>`).join('');
+    logsEl.innerHTML = data.logs.slice(-200).map(l => `<div>${escapeHtml(l)}</div>`).join('');
     logsEl.scrollTop = logsEl.scrollHeight;
   }
 }
 
 function subscribeJob(jobId, btn) {
   sseClient?.stop();
-  sseClient = new SSEClient(`/api/jobs/${jobId}/events`, {
+  sseClient = new SSEClient(API.jobs.eventsSSE(jobId), {
     onMessage: (data) => {
       showTrainingUI(data);
       if (data.message?.includes('VLM Eval')) loadPerformance();
@@ -226,7 +228,7 @@ async function startTraining() {
   const btn = document.getElementById('vlm-start');
   btn.disabled = true;
   try {
-    const res = await api('/vlm/start', {
+    const res = await api(API.vlm.start, {
       method: 'POST',
       body: {
         model: document.getElementById('vlm-model').value,
@@ -250,7 +252,7 @@ async function startTraining() {
 
 async function loadPerformance() {
   try {
-    const data = await api('/vlm/performance');
+    const data = await api(API.vlm.performance);
     const el = document.getElementById('vlm-performance');
     if (!data.entries?.length) { el.innerHTML = ''; return; }
 

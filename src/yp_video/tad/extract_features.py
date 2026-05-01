@@ -24,6 +24,7 @@ warnings.filterwarnings("ignore", message=".*sdp_kernel.*", category=FutureWarni
 import numpy as np
 
 from yp_video.config import FEATURES_DIR
+from yp_video.core.sampling import get_fps as _get_video_fps
 import torch
 import torch.nn.functional as F
 from torch.nn.attention import SDPBackend, sdpa_kernel
@@ -229,20 +230,6 @@ def open_video(
         except Exception:
             pass
     return reader
-
-
-def _get_video_fps(video_path: Path) -> float:
-    """Read average fps from the container metadata."""
-    if HAS_DECORD:
-        try:
-            return float(VideoReader(str(video_path), ctx=cpu(0)).get_avg_fps())
-        except Exception:
-            pass
-    import cv2
-    cap = cv2.VideoCapture(str(video_path))
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    cap.release()
-    return float(fps) if fps and fps > 0 else 30.0
 
 
 # ── Model ──────────────────────────────────────────────────────────────

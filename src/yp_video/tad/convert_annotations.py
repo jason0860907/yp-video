@@ -29,6 +29,8 @@ from pathlib import Path
 
 import numpy as np
 
+from yp_video.core.sampling import get_fps as get_video_fps
+
 from yp_video.config import TAD_ANNOTATIONS_FILE, TAD_FEATURES_DIR
 from yp_video.core.jsonl import read_jsonl
 
@@ -102,19 +104,6 @@ def _stratified_split(video_names: list[str], train_ratio: float, seed: int = 42
         print(f"  {src:<14s} {tm:>8d} {vm:>6d}  {tv:>8d} {vv:>6d}")
 
     return train
-
-
-def get_video_fps(video_path: Path) -> float:
-    """Get video FPS using OpenCV."""
-    try:
-        import cv2
-
-        cap = cv2.VideoCapture(str(video_path))
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        cap.release()
-        return fps if fps > 0 else 30.0
-    except Exception:
-        return 30.0
 
 
 def convert_annotations(

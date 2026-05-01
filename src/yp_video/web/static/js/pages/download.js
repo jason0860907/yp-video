@@ -1,7 +1,7 @@
 /**
  * Download page — YouTube playlist batch download.
  */
-import { api, SSEClient, formatBytes, formatSpeed, formatDuration, card, pageHeader, sectionTitle, btnPrimary, btnDanger, btnSmall, selectInput, showToast, emptyState, inputCls, createProgressBar, createStatusBadge, kbdHint } from '../shared.js';
+import { api, API, SSEClient, formatBytes, formatSpeed, formatDuration, card, pageHeader, sectionTitle, btnPrimary, btnDanger, btnSmall, selectInput, showToast, emptyState, inputCls, createProgressBar, createStatusBadge, kbdHint } from '../shared.js';
 
 let sseClient = null;
 let state = { videos: [], sessionId: null, downloading: false };
@@ -82,7 +82,7 @@ async function fetchPlaylist() {
   status.textContent = 'Fetching playlist info...';
 
   try {
-    const data = await api(`/download/playlist?url=${encodeURIComponent(url)}`);
+    const data = await api(API.download.playlist(url));
     state.videos = data.videos.map(v => ({ ...v, selected: true, status: 'pending', progress: null }));
 
     document.getElementById('dl-title').textContent = data.title;
@@ -156,7 +156,7 @@ function renderActionBtns() {
 
 function reconnectSSE(sessionId) {
   sseClient?.stop();
-  sseClient = new SSEClient(`/api/download/${sessionId}/progress`, {
+  sseClient = new SSEClient(API.download.progressSSE(sessionId), {
     onMessage: (data) => {
       if (data.video_id) {
         const v = state.videos.find(x => x.id === data.video_id);
@@ -189,7 +189,7 @@ async function startDownload() {
   renderActionBtns();
 
   try {
-    const res = await api('/download/start', {
+    const res = await api(API.download.start, {
       method: 'POST',
       body: { videos: selected.map(v => ({ id: v.id, title: v.title, duration: v.duration, url: v.url })), quality },
     });
@@ -206,7 +206,7 @@ async function startDownload() {
 async function cancelDownload() {
   if (!state.sessionId) return;
   try {
-    await api(`/download/${state.sessionId}/cancel`, { method: 'POST' });
+    await api(API.download.cancel(state.sessionId), { method: 'POST' });
     sseClient?.stop();
     state.downloading = false;
     showToast('Download cancelled', 'warning');

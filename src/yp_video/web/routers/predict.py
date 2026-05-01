@@ -19,6 +19,7 @@ from yp_video.config import (
     VIDEOS_DIR,
     TAD_CONFIGS_DIR,
     TAD_CHECKPOINTS_DIR,
+    cut_kind_of,
     find_cut,
     iter_all_cuts,
 )
@@ -58,6 +59,7 @@ def list_videos() -> list[dict]:
         stem = f.stem
         results.append({
             "name": f.name,
+            "kind":               cut_kind_of(f),
             "has_prediction":     (PREDICTIONS_DIR / f"{stem}_annotations.jsonl").exists(),
             "has_annotation":     (ANNOTATIONS_DIR / f"{stem}_annotations.jsonl").exists(),
             "has_pre_annotation": (PRE_ANNOTATIONS_DIR / f"{stem}_annotations.jsonl").exists(),

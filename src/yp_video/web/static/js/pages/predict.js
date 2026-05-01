@@ -1,7 +1,7 @@
 /**
  * Predict page — TAD inference with multi-video selection and result visualization.
  */
-import { api, SSEClient, formatTime, card, pageHeader, sectionTitle, stepBadge, btnPrimary, btnSmall, createProgressBar, showToast, showConfirm, emptyState, inputCls, selectCls } from '../shared.js';
+import { api, API, SSEClient, formatTime, card, pageHeader, sectionTitle, stepBadge, btnPrimary, btnSmall, showToast, showConfirm, emptyState, inputCls, selectCls, kindTabs, updateKindTabs, badges, renderJobProgress } from '../shared.js';
 
 let sseClients = [];
 let state = { videos: [], checkpoints: [], results: [], jobs: [] };
@@ -11,6 +11,12 @@ let animFrame = null;
 let _selectedIdx = -1;
 let _detections = [];
 let _duration = 0;
+let predKindFilter = 'all';
+
+function visibleVideos() {
+  if (predKindFilter === 'all') return state.videos;
+  return state.videos.filter(v => v.kind === predKindFilter);
+}
 
 export function render(container) {
   container.innerHTML = `
@@ -22,7 +28,8 @@ export function render(container) {
           ${sectionTitle(
             'Videos',
             '',
-            `<select id="pred-model" class="${selectCls}" title="Feature model — affects which videos have features available">
+            `${kindTabs('pred')}
+             <select id="pred-model" class="${selectCls}" title="Feature model — affects which videos have features available">
                <option value="base">ViT-B (768d)</option>
                <option value="large" selected>ViT-L (1024d)</option>
                <option value="giant">ViT-g (1408d)</option>
@@ -159,23 +166,28 @@ function bindEvents() {
   document.getElementById('pred-start').addEventListener('click', startPrediction);
   document.getElementById('pred-refresh').addEventListener('click', loadResults);
   document.getElementById('pred-retry-failed').addEventListener('click', retryFailed);
-  document.getElementById('pred-select-all').addEventListener('click', () => {
-    state.videos.forEach(v => v.selected = true);
+  // Bulk-select operates on the kind-filtered subset so tabs narrow the
+  // selection scope (e.g. "select all broadcast" without touching sideline).
+  const setSelectionForVisible = (pred) => {
+    const visible = new Set(visibleVideos());
+    state.videos.forEach(v => { if (visible.has(v)) v.selected = pred(v); });
     renderVideos();
-  });
-  document.getElementById('pred-deselect-all').addEventListener('click', () => {
-    state.videos.forEach(v => v.selected = false);
-    renderVideos();
-  });
-  document.getElementById('pred-select-unpredicted').addEventListener('click', () => {
-    state.videos.forEach(v => v.selected = !v.has_prediction);
-    renderVideos();
-  });
-  document.getElementById('pred-select-annotated').addEventListener('click', () => {
-    state.videos.forEach(v => v.selected = v.has_annotation);
-    renderVideos();
-  });
+  };
+  document.getElementById('pred-select-all').addEventListener('click',
+    () => setSelectionForVisible(() => true));
+  document.getElementById('pred-deselect-all').addEventListener('click',
+    () => setSelectionForVisible(() => false));
+  document.getElementById('pred-select-unpredicted').addEventListener('click',
+    () => setSelectionForVisible(v => !v.has_prediction));
+  document.getElementById('pred-select-annotated').addEventListener('click',
+    () => setSelectionForVisible(v => v.has_annotation));
   document.getElementById('pred-model').addEventListener('change', renderVideos);
+  document.querySelectorAll('.kind-tab[data-prefix="pred"]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      predKindFilter = btn.dataset.kind;
+      renderVideos();
+    });
+  });
 }
 
 async function loadCheckpoints() {
@@ -183,7 +195,7 @@ async function loadCheckpoints() {
   const cpSel = document.getElementById('pred-checkpoint');
   const prev = cpSel.value;
   try {
-    const checkpoints = await api(`/train/checkpoints?show_all=${showAll}`);
+    const checkpoints = await api(API.train.checkpoints({ show_all: showAll }));
     state.checkpoints = checkpoints;
     cpSel.innerHTML = '<option value="">Select checkpoint...</option>';
     const KIND_TAG = { best: '⭐', last: '🆕', epoch: '' };
@@ -203,7 +215,7 @@ async function loadCheckpoints() {
 
 async function loadData() {
   try {
-    const videos = await api('/predict/videos');
+    const videos = await api(API.predict.videos);
     state.videos = videos.map(v => ({ ...v, selected: !v.has_prediction }));
     renderVideos();
 
@@ -218,6 +230,7 @@ async function loadData() {
 
 function renderVideos() {
   const el = document.getElementById('pred-videos');
+  updateKindTabs('pred', predKindFilter, state.videos);
   if (state.videos.length === 0) {
     el.innerHTML = emptyState(
       '<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>',
@@ -227,18 +240,26 @@ function renderVideos() {
     return;
   }
 
+  const vis = visibleVideos();
+  if (vis.length === 0) {
+    el.innerHTML = emptyState(
+      '<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 4h18M3 12h18M3 20h18"/></svg>',
+      `No ${predKindFilter} videos`,
+      'Switch to a different tab'
+    );
+    return;
+  }
+
   const model = document.getElementById('pred-model')?.value || 'large';
-  el.innerHTML = state.videos.map((v, i) => {
-    const annBadge = v.has_annotation
-      ? '<span title="Annotated">✅</span>'
-      : (v.has_pre_annotation ? '<span title="Pre-annotation">⚡</span>' : '');
+  // Index back into the master `state.videos` so checkbox toggles still mutate
+  // the right entry after filtering.
+  el.innerHTML = vis.map(v => {
+    const i = state.videos.indexOf(v);
+    const annBadge = v.has_annotation ? badges.annotated()
+      : (v.has_pre_annotation ? badges.preAnnotated() : '');
     const hasFeat = v.features?.[model];
-    const featBadge = hasFeat
-      ? '<span title="Features extracted" class="inline-flex items-center gap-1.5 text-[11px] text-indigo-400 bg-indigo-500/10 ring-1 ring-indigo-500/20 px-2.5 py-0.5 rounded-full font-medium"><span class="w-1.5 h-1.5 rounded-full bg-current"></span>features</span>'
-      : '<span title="No features for selected model" class="inline-flex items-center gap-1.5 text-[11px] text-amber-400/80 bg-amber-500/10 ring-1 ring-amber-500/20 px-2.5 py-0.5 rounded-full font-medium"><span class="w-1.5 h-1.5 rounded-full bg-current"></span>no features</span>';
-    const predBadge = v.has_prediction
-      ? '<span class="inline-flex items-center gap-1.5 text-[11px] text-emerald-400 bg-emerald-500/10 ring-1 ring-emerald-500/20 px-2.5 py-0.5 rounded-full font-medium"><span class="w-1.5 h-1.5 rounded-full bg-current"></span>predicted</span>'
-      : '<span class="inline-flex items-center gap-1.5 text-[11px] text-text-muted bg-white/5 ring-1 ring-white/10 px-2.5 py-0.5 rounded-full font-medium"><span class="w-1.5 h-1.5 rounded-full bg-current"></span>pending</span>';
+    const featBadge = hasFeat ? badges.hasFeatures() : badges.noFeatures();
+    const predBadge = v.has_prediction ? badges.predictedPill() : badges.pendingPill();
     const rowDim = hasFeat ? '' : ' opacity-60';
     return `
     <div class="group flex items-center gap-3 p-2.5 rounded-xl border border-transparent hover:bg-white/[0.03] hover:border-white/5 transition-all duration-200${rowDim}">
@@ -268,7 +289,7 @@ function updatePredCount() {
 
 async function loadResults() {
   try {
-    state.results = await api('/predict/results');
+    state.results = await api(API.predict.results);
     renderResults();
   } catch { /* silently fail */ }
 }
@@ -307,7 +328,7 @@ async function startPrediction() {
   if (!checkpoint) return showToast('Select a checkpoint', 'warning');
 
   let stopVllm = false;
-  const vllmStatus = await api('/system/vllm/status').catch(() => null);
+  const vllmStatus = await api(API.system.vllmStatus).catch(() => null);
   if (vllmStatus?.status === 'running') {
     const ok = await showConfirm({
       title: 'Stop vLLM for prediction?',
@@ -332,7 +353,7 @@ async function startPrediction() {
   sseClients = [];
 
   try {
-    const job = await api('/predict/start', {
+    const job = await api(API.predict.start, {
       method: 'POST',
       body: {
         videos: selected,
@@ -349,7 +370,7 @@ async function startPrediction() {
     document.getElementById('pred-progress').classList.remove('hidden');
     renderJobsProgress();
 
-    const client = new SSEClient(`/api/jobs/${job.id}/events`, {
+    const client = new SSEClient(API.jobs.eventsSSE(job.id), {
       onMessage: (data) => {
         state.jobs = [data];
         renderJobsProgress();
@@ -382,7 +403,7 @@ function retryFailed() {
 
 async function loadVideos() {
   try {
-    const videos = await api('/predict/videos');
+    const videos = await api(API.predict.videos);
     state.videos = videos.map(v => ({ ...v, selected: !v.has_prediction }));
     renderVideos();
   } catch { /* silently fail */ }
@@ -391,52 +412,14 @@ async function loadVideos() {
 function renderJobsProgress() {
   const el = document.getElementById('pred-jobs-progress');
   if (!el) return;
-
-  el.innerHTML = state.jobs.map(job => {
-    const pct = Math.round((job.progress || 0) * 100);
-    const isRunning = job.status === 'running';
-    const isDone = job.status === 'completed';
-    const isFailed = job.status === 'failed';
-    const isCancelled = job.status === 'cancelled';
-
-    let statusColor = 'text-text-muted';
-    if (isRunning) statusColor = 'text-primary-light';
-    else if (isDone) statusColor = 'text-emerald-400';
-    else if (isFailed) statusColor = 'text-red-400';
-    else if (isCancelled) statusColor = 'text-amber-400';
-
-    // Summary label: show "X/Y failed" form when the message contains a failure count
-    let statusLabel = pct + '%';
-    if (isFailed) statusLabel = 'failed';
-    else if (isCancelled) statusLabel = 'cancelled';
-    else if (isDone) statusLabel = job.message?.includes('failed') ? 'partial' : 'done';
-
-    const hasLogs = Array.isArray(job.logs) && job.logs.length > 0;
-    const showMessage = job.message && (isRunning || isDone || isFailed);
-    const logsHtml = hasLogs && (isFailed || (isDone && job.message?.includes('failed')))
-      ? `<details class="mt-1">
-           <summary class="text-[10px] text-text-muted cursor-pointer hover:text-text-primary">Show logs (${job.logs.length} lines)</summary>
-           <pre class="mt-1 max-h-64 overflow-y-auto rounded-lg bg-black/40 border border-white/5 p-2 font-mono text-[10px] text-red-300/80 whitespace-pre-wrap break-words">${job.logs.map(l => l.replace(/</g, '&lt;')).join('\n')}</pre>
-         </details>`
-      : '';
-
-    return `
-      <div class="space-y-1.5">
-        <div class="flex items-center justify-between">
-          <span class="text-xs text-text-primary font-medium truncate">${job.name}</span>
-          <span class="text-[11px] ${statusColor} tabular-nums font-medium">${statusLabel}</span>
-        </div>
-        ${createProgressBar(job.progress)}
-        ${showMessage ? `<p class="text-[10px] text-text-muted">${(job.message || '').replace(/</g, '&lt;')}</p>` : ''}
-        ${job.error ? `<p class="text-[10px] text-red-400/80">${job.error.replace(/</g, '&lt;')}</p>` : ''}
-        ${logsHtml}
-      </div>`;
-  }).join('');
+  el.innerHTML = state.jobs.map(job =>
+    renderJobProgress(job, { showLogs: true, truncateMsg: false })
+  ).join('');
 }
 
 async function viewResult(name) {
   try {
-    const data = await api(`/predict/results/${encodeURIComponent(name)}`);
+    const data = await api(API.predict.result(name));
     const detailEl = document.getElementById('pred-detail');
     detailEl.classList.remove('hidden');
 

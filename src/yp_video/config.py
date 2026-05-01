@@ -77,8 +77,20 @@ R2_CATEGORIES: dict[str, R2Category] = {
     "vlm-checkpoints": R2Category(VLM_CHECKPOINTS_DIR, "**/*"),
 }
 
-# All R2 categories that should be searched when serving a cut video by name.
-CUT_R2_CATEGORIES = ("cuts-broadcast", "cuts-sideline")
+# Registry: kind → (local cuts dir, R2 category name). Single source of truth
+# so adding a new cut kind (e.g. indoor/outdoor) is a one-line change here.
+class CutKind(NamedTuple):
+    local_dir: Path
+    r2_category: str
+
+CUT_KINDS: dict[str, CutKind] = {
+    "broadcast": CutKind(CUTS_BROADCAST_DIR, "cuts-broadcast"),
+    "sideline":  CutKind(CUTS_SIDELINE_DIR, "cuts-sideline"),
+}
+DEFAULT_CUT_KIND = "broadcast"
+
+# Tuple form for callers that just need the R2 category list.
+CUT_R2_CATEGORIES = tuple(k.r2_category for k in CUT_KINDS.values())
 
 
 def iter_all_cuts() -> Iterator[Path]:
@@ -104,11 +116,12 @@ def find_cut(name: str) -> Path | None:
 
 
 def cut_kind_of(path: Path) -> str:
-    """Return 'broadcast' or 'sideline' based on which dir the cut lives in."""
+    """Return the cut kind ('broadcast' / 'sideline') based on parent dir."""
     parent = path.parent.resolve()
-    if parent == CUTS_SIDELINE_DIR.resolve():
-        return "sideline"
-    return "broadcast"
+    for kind, info in CUT_KINDS.items():
+        if parent == info.local_dir.resolve():
+            return kind
+    return DEFAULT_CUT_KIND
 
 # ── Web static assets ────────────────────────────────────────────
 STATIC_DIR = Path(__file__).resolve().parent / "web" / "static"

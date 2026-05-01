@@ -1,7 +1,7 @@
 /**
  * Train page — Feature extraction + annotation conversion + TAD training.
  */
-import { api, SSEClient, card, pageHeader, stepBadge, statCard, sectionTitle, btnPrimary, btnSecondary, btnSmall, createProgressBar, showToast, showConfirm, emptyState, inputCls, selectCls } from '../shared.js';
+import { api, API, SSEClient, card, pageHeader, stepBadge, statCard, sectionTitle, btnPrimary, btnSecondary, btnSmall, createProgressBar, showToast, showConfirm, emptyState, inputCls, selectCls, escapeHtml, kindTabs, updateKindTabs, badges } from '../shared.js';
 
 let sseClient = null;
 let videos = [];
@@ -19,6 +19,9 @@ const filterState = {
   features: null,
   prediction: null,
 };
+
+// Kind filter for Extract Features list — 'all' | 'broadcast' | 'sideline'.
+let trainKindFilter = 'all';
 
 const FILTER_LABELS = {
   annotated: 'Annotated',
@@ -55,6 +58,7 @@ function filterChips(prefix, props) {
 }
 
 function matchesFilter(v) {
+  if (trainKindFilter !== 'all' && v.kind !== trainKindFilter) return false;
   for (const [prop, want] of Object.entries(filterState)) {
     if (want === null) continue;
     const has = !!v[FILTER_PROP[prop]];
@@ -88,6 +92,7 @@ export function render(container) {
               ${sectionTitle(
                 'Videos',
                 '',
+                kindTabs('train') + ' ' +
                 btnSmall('Select All', 'id="train-select-all"') + ' ' +
                 btnSmall('Deselect All', 'id="train-deselect-all"') + ' ' +
                 filterChips('train', ['annotated', 'pre_annotated', 'features', 'prediction'])
@@ -259,7 +264,7 @@ async function loadConfigDefaults() {
   let cfg = null;
   let fromServer = false;
   try {
-    cfg = await api('/train/config-defaults');
+    cfg = await api(API.train.configDefaults);
     fromServer = cfg && Object.keys(cfg).length > 0;
   } catch { /* endpoint missing on old server build */ }
   if (!cfg || Object.keys(cfg).length === 0) cfg = FALLBACK_CONFIG_DEFAULTS;
@@ -362,6 +367,12 @@ function bindEvents() {
       renderVideos();
     });
   });
+  document.querySelectorAll('.kind-tab[data-prefix="train"]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      trainKindFilter = btn.dataset.kind;
+      renderVideos();
+    });
+  });
   document.getElementById('conv-select-all').addEventListener('click', () => {
     convVideos.forEach(v => v.selected = true);
     renderConvVideos();
@@ -382,7 +393,7 @@ function bindEvents() {
 
 async function loadStatus() {
   try {
-    const s = await api(`/train/status?model=${selectedModel}`);
+    const s = await api(API.train.status({ model: selectedModel }));
     const featB = s.features_by_model?.base ?? 0;
     const featL = s.features_by_model?.large ?? 0;
     document.getElementById('train-status-card').innerHTML = card(`
@@ -407,7 +418,7 @@ async function loadStatus() {
 
 async function loadVideos() {
   try {
-    const list = await api(`/system/videos?model=${selectedModel}`);
+    const list = await api(API.system.videos({ model: selectedModel }));
     videos = list.map(v => ({ ...v, selected: !v.has_features }));
     convVideos = list.map(v => ({ ...v, selected: v.has_annotation || v.has_pre_annotation }));
     renderVideos();
@@ -419,15 +430,16 @@ async function loadVideos() {
 
 function videoBadges(v) {
   const b = [];
-  if (v.has_annotation) b.push('<span title="Annotated">✅</span>');
-  else if (v.has_pre_annotation) b.push('<span title="Pre-annotation">⚡</span>');
-  if (v.has_features) b.push('<span class="inline-flex items-center gap-1.5 text-[11px] text-emerald-400 bg-emerald-500/10 ring-1 ring-emerald-500/20 px-2.5 py-0.5 rounded-full font-medium"><span class="w-1.5 h-1.5 rounded-full bg-current"></span>features</span>');
-  if (v.has_prediction) b.push('<span title="Predicted">🤖</span>');
+  if (v.has_annotation) b.push(badges.annotated());
+  else if (v.has_pre_annotation) b.push(badges.preAnnotated());
+  if (v.has_features) b.push(badges.hasFeatures());
+  if (v.has_prediction) b.push(badges.predicted());
   return b.join(' ');
 }
 
 function renderVideos() {
   const el = document.getElementById('train-videos');
+  updateKindTabs('train', trainKindFilter, videos);
   if (videos.length === 0) {
     el.innerHTML = emptyState(
       '<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>',
@@ -527,7 +539,7 @@ function pointsForSource(entries, src, tiouKeys) {
 
 async function loadPerformance() {
   try {
-    perfData = await api(`/train/performance?model=${selectedModel}`);
+    perfData = await api(API.train.performance({ model: selectedModel }));
     const sources = new Set();
     for (const e of perfData?.entries || []) {
       for (const s of Object.keys(e.per_source || {})) sources.add(s);
@@ -698,7 +710,7 @@ async function convertAnnotations() {
   const status = document.getElementById('train-convert-status');
   btn.disabled = true;
   try {
-    const res = await api('/train/convert-annotations', {
+    const res = await api(API.train.convertAnnotations, {
       method: 'POST',
       body: {
         train_ratio: parseFloat(document.getElementById('train-ratio').value),
@@ -722,7 +734,7 @@ async function extractFeatures() {
   if (selected.length === 0) return showToast('No videos selected', 'warning');
 
   let stopVllm = false;
-  const vllmStatus = await api('/system/vllm/status').catch(() => null);
+  const vllmStatus = await api(API.system.vllmStatus).catch(() => null);
   if (vllmStatus?.status === 'running') {
     const ok = await showConfirm({
       title: 'Stop vLLM for feature extraction?',
@@ -741,7 +753,7 @@ async function extractFeatures() {
   const btn = document.getElementById('train-extract');
   btn.disabled = true;
   try {
-    const res = await api('/train/extract-features', {
+    const res = await api(API.train.extractFeatures, {
       method: 'POST',
       body: {
         videos: selected,
@@ -751,7 +763,7 @@ async function extractFeatures() {
       },
     });
     document.getElementById('train-extract-progress').classList.remove('hidden');
-    sseClient = new SSEClient(`/api/jobs/${res.id}/events`, {
+    sseClient = new SSEClient(API.jobs.eventsSSE(res.id), {
       onMessage: (data) => {
         document.getElementById('train-extract-bar').innerHTML = createProgressBar(data.progress);
         document.getElementById('train-extract-msg').textContent = data.message || '';
@@ -778,14 +790,14 @@ function showTrainingUI(data) {
   const logsEl = document.getElementById('train-logs');
   if (data.logs?.length > 0) {
     logsEl.classList.remove('hidden');
-    logsEl.innerHTML = data.logs.map(l => `<div>${l.replace(/</g, '&lt;')}</div>`).join('');
+    logsEl.innerHTML = data.logs.map(l => `<div>${escapeHtml(l)}</div>`).join('');
     logsEl.scrollTop = logsEl.scrollHeight;
   }
 }
 
 function subscribeTrainingJob(jobId, btn) {
   sseClient?.stop();
-  sseClient = new SSEClient(`/api/jobs/${jobId}/events`, {
+  sseClient = new SSEClient(API.jobs.eventsSSE(jobId), {
     onMessage: (data) => {
       showTrainingUI(data);
       // Refresh performance chart on validation results
@@ -816,7 +828,7 @@ async function startTraining() {
     };
     const sched = document.getElementById('train-schedule').value || null;
 
-    const res = await api('/train/start', {
+    const res = await api(API.train.start, {
       method: 'POST',
       body: {
         gpu: parseInt(document.getElementById('train-gpu').value),

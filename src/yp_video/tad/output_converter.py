@@ -15,6 +15,9 @@ import argparse
 import json
 from pathlib import Path
 
+from yp_video.core.jsonl import write_jsonl
+from yp_video.core.sampling import get_video_duration_cv2 as get_video_duration
+
 
 def convert_tad_output_to_jsonl(
     detections: list[dict],
@@ -38,49 +41,35 @@ def convert_tad_output_to_jsonl(
         checkpoint: Checkpoint path used for inference
         model: V-JEPA model name (base/large/giant/gigantic)
     """
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    meta = {"video": str(video_path), "duration": duration}
+    if checkpoint:
+        meta["checkpoint"] = checkpoint
+    if model:
+        meta["model"] = model
 
-    with open(output_path, "w", encoding="utf-8") as f:
-        # Write metadata
-        meta = {"_meta": True, "video": str(video_path), "duration": duration}
-        if checkpoint:
-            meta["checkpoint"] = checkpoint
-        if model:
-            meta["model"] = model
-        f.write(json.dumps(meta, ensure_ascii=False) + "\n")
-
-        # Write detections
+    def _records():
         for det in detections:
             segment = det.get("segment", [0, 0])
-
-            # Convert frame indices to time
             if feature_fps > 0:
                 start_time = segment[0] / feature_fps
                 end_time = segment[1] / feature_fps
             else:
                 start_time = segment[0]
                 end_time = segment[1]
-
-            # Clamp to video duration
             start_time = max(0, min(start_time, duration))
             end_time = max(0, min(end_time, duration))
-
-            # Skip too short detections
             if end_time - start_time < min_duration:
                 continue
-
-            annotation = {
+            ann = {
                 "start": round(start_time, 2),
                 "end": round(end_time, 2),
                 "label": det.get("label", "rally"),
             }
-
-            # Optionally include score for reference
             if "score" in det:
-                annotation["confidence"] = round(det["score"], 3)
+                ann["confidence"] = round(det["score"], 3)
+            yield ann
 
-            f.write(json.dumps(annotation, ensure_ascii=False) + "\n")
-
+    write_jsonl(output_path, meta, _records())
     return output_path
 
 
@@ -135,20 +124,6 @@ def convert_mambatad_results(
             output_path=output_path,
         )
         print(f"Converted: {output_path.name}")
-
-
-def get_video_duration(video_path: Path) -> float:
-    """Get video duration in seconds."""
-    try:
-        import cv2
-
-        cap = cv2.VideoCapture(str(video_path))
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
-        cap.release()
-        return frame_count / fps if fps > 0 else 0
-    except Exception:
-        return 0
 
 
 def main():

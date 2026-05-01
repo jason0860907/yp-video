@@ -1,7 +1,7 @@
 /**
  * Upload page — R2 cloud storage sync.
  */
-import { api, SSEClient, formatBytes, card, pageHeader, sectionTitle, btnPrimary, btnSecondary, btnSmall, btnDanger, createProgressBar, showToast, emptyState } from '../shared.js';
+import { api, API, SSEClient, formatBytes, card, pageHeader, sectionTitle, btnPrimary, btnSecondary, btnSmall, btnDanger, showToast, emptyState, renderJobProgress } from '../shared.js';
 
 let sseClients = [];
 
@@ -95,7 +95,7 @@ async function reconcileActiveJobs() {
   );
   for (const j of running) {
     try {
-      const fresh = await api(`/jobs/${j.id}`);
+      const fresh = await api(API.jobs.get(j.id));
       state.jobs = state.jobs.map(x => x.id === fresh.id ? fresh : x);
       renderJobsProgress();
       if (['completed', 'failed', 'cancelled'].includes(fresh.status)) {
@@ -142,7 +142,7 @@ function renderModeTabs() {
 
 async function loadStatus() {
   try {
-    const res = await api('/upload/status');
+    const res = await api(API.upload.status);
     state.configured = res.configured;
     state.bucket = res.bucket;
     renderStatus();
@@ -217,9 +217,9 @@ async function loadFiles() {
 
   try {
     if (state.mode === 'upload') {
-      state.files = await api(`/upload/files?category=${state.category}`);
+      state.files = await api(API.upload.files(state.category));
     } else {
-      state.files = await api(`/upload/r2-files?category=${state.category}`);
+      state.files = await api(API.upload.r2Files(state.category));
     }
     state.files.forEach(f => f.selected = false);
     renderFiles();
@@ -378,7 +378,7 @@ async function startUpload() {
   sseClients = [];
 
   try {
-    const job = await api('/upload/start', {
+    const job = await api(API.upload.start, {
       method: 'POST',
       body: { category: state.category, files: selected },
     });
@@ -405,7 +405,7 @@ async function startDownload() {
   sseClients = [];
 
   try {
-    const job = await api('/upload/download', {
+    const job = await api(API.upload.download, {
       method: 'POST',
       body: { category: state.category, files: selected },
     });
@@ -432,7 +432,7 @@ async function deleteR2() {
   const btn = document.getElementById('upl-delete-r2');
   btn.disabled = true;
   try {
-    const res = await api('/upload/delete-r2', {
+    const res = await api(API.upload.deleteR2, {
       method: 'POST',
       body: { category: state.category, files: selected.map(f => f.path) },
     });
@@ -469,7 +469,7 @@ async function deleteLocal() {
   const force = localOnly || notUploaded.length > 0;
 
   try {
-    const res = await api('/upload/delete-local', {
+    const res = await api(API.upload.deleteLocal, {
       method: 'POST',
       body: { category: state.category, files: selected.map(f => f.path), force },
     });
@@ -484,7 +484,7 @@ async function deleteLocal() {
 }
 
 function trackJob(job, btn, onDone) {
-  const client = new SSEClient(`/api/jobs/${job.id}/events`, {
+  const client = new SSEClient(API.jobs.eventsSSE(job.id), {
     onMessage: (data) => {
       state.jobs = [data];
       renderJobsProgress();
@@ -510,36 +510,14 @@ function trackJob(job, btn, onDone) {
 function renderJobsProgress() {
   const el = document.getElementById('upl-jobs-progress');
   if (!el) return;
-
   el.innerHTML = state.jobs.map(job => {
-    const pct = Math.round((job.progress || 0) * 100);
-    const isRunning = job.status === 'running';
-    const isDone = job.status === 'completed';
-    const isFailed = job.status === 'failed';
-    const isCancelled = job.status === 'cancelled';
-
-    let statusColor = 'text-text-muted';
-    if (isRunning) statusColor = 'text-primary-light';
-    else if (isDone) statusColor = 'text-emerald-400';
-    else if (isFailed) statusColor = 'text-red-400';
-    else if (isCancelled) statusColor = 'text-amber-400';
-
     const p = job.params || {};
+    const isRunning = job.status === 'running';
     const bytes = (p.bytes_done && p.bytes_total)
       ? `${formatBytes(p.bytes_done)}/${formatBytes(p.bytes_total)}` : '';
     const speed = (isRunning && p.speed) ? `${formatBytes(p.speed)}/s` : '';
     const eta = (isRunning && p.eta) ? `ETA ${p.eta}s` : '';
     const detail = [bytes, speed, eta].filter(Boolean).join(' · ');
-
-    return `
-      <div class="space-y-1.5">
-        <div class="flex items-center justify-between">
-          <span class="text-xs text-text-primary font-medium truncate">${job.name}</span>
-          <span class="text-[11px] ${statusColor} tabular-nums font-medium">${isDone ? 'done' : isFailed ? 'failed' : isCancelled ? 'cancelled' : pct + '%'}</span>
-        </div>
-        ${createProgressBar(job.progress)}
-        ${detail ? `<div class="text-[11px] text-text-muted tabular-nums">${detail}</div>` : ''}
-        ${job.error ? `<p class="text-[10px] text-red-400/80 truncate">${job.error}</p>` : ''}
-      </div>`;
+    return renderJobProgress(job, { detail });
   }).join('');
 }

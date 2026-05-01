@@ -61,6 +61,16 @@ export function formatDuration(seconds) {
   return `${s}s`;
 }
 
+// ── HTML escaping ──
+// Use when interpolating untrusted strings (user filenames, server messages,
+// log lines, error text) into innerHTML/template strings. Trusted UI labels
+// don't need it. Returns '' for null/undefined so callers can chain freely.
+const _ESCAPE_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+export function escapeHtml(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"']/g, c => _ESCAPE_MAP[c]);
+}
+
 // ── API helper ──
 export async function api(path, options = {}) {
   const res = await fetch(`/api${path}`, {
@@ -74,6 +84,88 @@ export async function api(path, options = {}) {
   }
   return res.json();
 }
+
+// ── API endpoint map ──
+// Single source of truth so backend route renames don't require grepping.
+// Strings are paths relative to /api (matching api()); leaves are either
+// literal strings or functions that accept identifiers and return a path.
+// SSE URLs include /api because new SSEClient() takes the absolute path.
+const _q = (params) => {
+  const e = Object.entries(params).filter(([, v]) => v != null && v !== '');
+  return e.length ? '?' + e.map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&') : '';
+};
+export const API = {
+  jobs: {
+    list: '/jobs',
+    activeCount: '/jobs/active-count',
+    get: id => `/jobs/${id}`,
+    cancel: id => `/jobs/${id}/cancel`,
+    eventsSSE: id => `/api/jobs/${id}/events`,
+  },
+  system: {
+    stats: '/system/stats',
+    videos: (params = {}) => `/system/videos${_q(params)}`,
+    vllmStart: '/system/vllm/start',
+    vllmStop: '/system/vllm/stop',
+    vllmStatus: '/system/vllm/status',
+  },
+  upload: {
+    start: '/upload/start',
+    status: '/upload/status',
+    download: '/upload/download',
+    deleteLocal: '/upload/delete-local',
+    deleteR2: '/upload/delete-r2',
+    files: category => `/upload/files?category=${encodeURIComponent(category)}`,
+    r2Files: category => `/upload/r2-files?category=${encodeURIComponent(category)}`,
+  },
+  download: {
+    start: '/download/start',
+    playlist: url => `/download/playlist?url=${encodeURIComponent(url)}`,
+    cancel: sessionId => `/download/${sessionId}/cancel`,
+    progressSSE: sessionId => `/api/download/${sessionId}/progress`,
+  },
+  cut: {
+    videos: '/cut/videos',
+    export: '/cut/export',
+    video: name => `/cut/video/${encodeURIComponent(name)}`,
+  },
+  detect: {
+    start: '/detect/start',
+    convert: '/detect/convert',
+  },
+  annotate: {
+    stats: '/annotate/stats',
+    results: '/annotate/results',
+    annotations: '/annotate/annotations',
+    result: name => `/annotate/results/${encodeURIComponent(name)}`,
+  },
+  review: {
+    results: '/review/results',
+    annotations: '/review/annotations',
+    result: (name, params = {}) => `/review/results/${encodeURIComponent(name)}${_q(params)}`,
+  },
+  predict: {
+    videos: '/predict/videos',
+    start: '/predict/start',
+    results: '/predict/results',
+    result: name => `/predict/results/${encodeURIComponent(name)}`,
+  },
+  train: {
+    configDefaults: '/train/config-defaults',
+    convertAnnotations: '/train/convert-annotations',
+    extractFeatures: '/train/extract-features',
+    start: '/train/start',
+    status: (params = {}) => `/train/status${_q(params)}`,
+    performance: (params = {}) => `/train/performance${_q(params)}`,
+    checkpoints: (params = {}) => `/train/checkpoints${_q(params)}`,
+  },
+  vlm: {
+    status: '/vlm/status',
+    buildManifest: '/vlm/build-manifest',
+    start: '/vlm/start',
+    performance: '/vlm/performance',
+  },
+};
 
 // ── SSE Client ──
 // Survives transient disconnects: when the browser suspends EventSource (e.g.
@@ -437,6 +529,109 @@ export function sectionTitle(title, subtitle = '', actions = '') {
   </div>`;
 }
 
+// ── Cut-kind tabs ──
+// All / Broadcast / Sideline filter, used on Predict + Train (and any future
+// page that lists cuts). The `prefix` namespaces buttons so multiple sets of
+// tabs can coexist on the same page if needed.
+export function kindTabs(prefix) {
+  const tab = (k, label) => `<button type="button" data-prefix="${prefix}" data-kind="${k}"
+      class="kind-tab px-3 py-1 text-xs font-heading rounded-md transition-colors duration-150"
+      aria-pressed="${k === 'all' ? 'true' : 'false'}">${label} <span class="opacity-60 ml-1" data-prefix="${prefix}" data-count="${k}">0</span></button>`;
+  return `<div class="inline-flex rounded-lg border border-border bg-surface-100 p-0.5" role="tablist" aria-label="Cut kind">
+      ${tab('all', 'All')}${tab('broadcast', 'Broadcast')}${tab('sideline', 'Sideline')}
+    </div>`;
+}
+
+export function updateKindTabs(prefix, kindFilter, list) {
+  const counts = { all: list.length, broadcast: 0, sideline: 0 };
+  for (const v of list) {
+    if (v.kind === 'broadcast') counts.broadcast++;
+    else if (v.kind === 'sideline') counts.sideline++;
+  }
+  document.querySelectorAll(`.kind-tab[data-prefix="${prefix}"]`).forEach(btn => {
+    const k = btn.dataset.kind;
+    const active = k === kindFilter;
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    btn.classList.toggle('bg-primary', active);
+    btn.classList.toggle('text-white', active);
+    btn.classList.toggle('text-text-secondary', !active);
+    btn.classList.toggle('hover:bg-white/[0.04]', !active);
+    const cnt = btn.querySelector(`[data-count="${k}"]`);
+    if (cnt) cnt.textContent = counts[k];
+  });
+}
+
+// ── Video status badges ──
+// Small composable helpers used by Predict / Train / Review video lists. Pages
+// compose only the badges they care about (e.g. Predict shows the missing-
+// features pill explicitly while Train hides it).
+export const badges = {
+  annotated: () => '<span title="Annotated">✅</span>',
+  preAnnotated: () => '<span title="Pre-annotation">⚡</span>',
+  predicted: () => '<span title="Predicted">🤖</span>',
+  hasFeatures: () =>
+    '<span title="Features extracted" class="inline-flex items-center gap-1.5 text-[11px] text-emerald-400 bg-emerald-500/10 ring-1 ring-emerald-500/20 px-2.5 py-0.5 rounded-full font-medium"><span class="w-1.5 h-1.5 rounded-full bg-current"></span>features</span>',
+  noFeatures: () =>
+    '<span title="No features for selected model" class="inline-flex items-center gap-1.5 text-[11px] text-amber-400/80 bg-amber-500/10 ring-1 ring-amber-500/20 px-2.5 py-0.5 rounded-full font-medium"><span class="w-1.5 h-1.5 rounded-full bg-current"></span>no features</span>',
+  predictedPill: () =>
+    '<span class="inline-flex items-center gap-1.5 text-[11px] text-emerald-400 bg-emerald-500/10 ring-1 ring-emerald-500/20 px-2.5 py-0.5 rounded-full font-medium"><span class="w-1.5 h-1.5 rounded-full bg-current"></span>predicted</span>',
+  pendingPill: () =>
+    '<span class="inline-flex items-center gap-1.5 text-[11px] text-text-muted bg-white/5 ring-1 ring-white/10 px-2.5 py-0.5 rounded-full font-medium"><span class="w-1.5 h-1.5 rounded-full bg-current"></span>pending</span>',
+};
+
+// ── Job progress rendering ──
+// Single source of truth for "background job → progress row" UI used on
+// Predict / Detect / Upload. Train uses a bespoke layout and stays separate.
+export function getJobStatusColor(status) {
+  if (status === 'running') return 'text-primary-light';
+  if (status === 'completed') return 'text-emerald-400';
+  if (status === 'failed') return 'text-red-400';
+  if (status === 'cancelled') return 'text-amber-400';
+  return 'text-text-muted';
+}
+
+export function getJobStatusLabel(job) {
+  const pct = Math.round((job.progress || 0) * 100);
+  if (job.status === 'failed') return 'failed';
+  if (job.status === 'cancelled') return 'cancelled';
+  if (job.status === 'completed') return job.message?.includes('failed') ? 'partial' : 'done';
+  return pct + '%';
+}
+
+// Render a single job's progress row.
+//   detail: optional HTML appended below the bar (e.g. bytes/ETA)
+//   showLogs: collapse a `<details>` with job.logs when status is failed/partial
+//   truncateMsg: add `truncate` class to message/error (default true)
+export function renderJobProgress(job, { detail = '', showLogs = false, truncateMsg = true } = {}) {
+  const color = getJobStatusColor(job.status);
+  const label = getJobStatusLabel(job);
+  const isRunning = job.status === 'running';
+  const isDone = job.status === 'completed';
+  const isFailed = job.status === 'failed';
+  const showMessage = job.message && (isRunning || isDone || isFailed);
+  const trunc = truncateMsg ? ' truncate' : '';
+  const hasLogs = Array.isArray(job.logs) && job.logs.length > 0;
+  const showLogsBlock = showLogs && hasLogs && (isFailed || (isDone && job.message?.includes('failed')));
+  const logsHtml = showLogsBlock
+    ? `<details class="mt-1">
+         <summary class="text-[10px] text-text-muted cursor-pointer hover:text-text-primary">Show logs (${job.logs.length} lines)</summary>
+         <pre class="mt-1 max-h-64 overflow-y-auto rounded-lg bg-black/40 border border-white/5 p-2 font-mono text-[10px] text-red-300/80 whitespace-pre-wrap break-words">${job.logs.map(escapeHtml).join('\n')}</pre>
+       </details>`
+    : '';
+  return `
+      <div class="space-y-1.5">
+        <div class="flex items-center justify-between">
+          <span class="text-xs text-text-primary font-medium truncate">${escapeHtml(job.name)}</span>
+          <span class="text-[11px] ${color} tabular-nums font-medium">${label}</span>
+        </div>
+        ${createProgressBar(job.progress)}
+        ${detail ? `<div class="text-[11px] text-text-muted tabular-nums">${detail}</div>` : ''}
+        ${showMessage ? `<p class="text-[10px] text-text-muted${trunc}">${escapeHtml(job.message)}</p>` : ''}
+        ${job.error ? `<p class="text-[10px] text-red-400/80${trunc}">${escapeHtml(job.error)}</p>` : ''}
+        ${logsHtml}
+      </div>`;
+}
+
 // ── Sidebar state ──
 let _pollInterval = null;
 
@@ -449,9 +644,9 @@ export function startSidebarPolling() {
 async function pollSidebar() {
   try {
     const [vllm, stats, jobs] = await Promise.all([
-      api('/system/vllm/status'),
-      api('/system/stats'),
-      api('/jobs/active-count'),
+      api(API.system.vllmStatus),
+      api(API.system.stats),
+      api(API.jobs.activeCount),
     ]);
 
     // vLLM indicator

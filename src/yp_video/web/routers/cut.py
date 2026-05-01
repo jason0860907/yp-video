@@ -6,8 +6,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from yp_video.config import (
-    CUTS_BROADCAST_DIR,
-    CUTS_SIDELINE_DIR,
+    CUT_KINDS,
     RAW_VIDEOS_DIR,
 )
 from yp_video.core.ffmpeg import FFmpegError, export_segment
@@ -75,12 +74,11 @@ async def export_segments(req: ExportRequest) -> ExportResult:
     if not source_path.exists():
         raise HTTPException(404, "Source video not found")
 
-    if req.kind == "sideline":
-        target_dir, r2_category = CUTS_SIDELINE_DIR, "cuts-sideline"
-    elif req.kind == "broadcast":
-        target_dir, r2_category = CUTS_BROADCAST_DIR, "cuts-broadcast"
-    else:
-        raise HTTPException(400, f"Invalid kind: {req.kind!r} (expected 'broadcast' or 'sideline')")
+    info = CUT_KINDS.get(req.kind)
+    if info is None:
+        valid = ", ".join(repr(k) for k in CUT_KINDS)
+        raise HTTPException(400, f"Invalid kind: {req.kind!r} (expected one of {valid})")
+    target_dir, r2_category = info.local_dir, info.r2_category
 
     target_dir.mkdir(parents=True, exist_ok=True)
 

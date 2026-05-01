@@ -21,6 +21,8 @@ from yp_video.config import (
     TAD_FEATURES_DIR,
 )
 
+from yp_video.core.sampling import frame_to_time, get_fps
+
 from .extract_features import MODEL_CONFIGS, extract_features_from_video, load_model, open_video
 from .output_converter import convert_tad_output_to_jsonl
 
@@ -69,11 +71,8 @@ def run_inference(
     # Get video info
     reader = open_video(video_path)
     num_frames = len(reader)
-    import cv2
-    cap = cv2.VideoCapture(str(video_path))
-    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    cap.release()
-    duration = num_frames / fps if fps > 0 else 0
+    fps = get_fps(video_path)
+    duration = frame_to_time(num_frames, fps)
 
     # Step 1: Extract features (or load from cache)
     feature_cache = feat_dir / f"{video_path.stem}.npy"
@@ -196,9 +195,9 @@ def simple_inference(
             if i - start_idx >= 3:  # Minimum duration
                 confidence = float(np.mean(smoothed[start_idx:i]) / np.max(smoothed))
                 if confidence >= confidence_threshold:
-                    # Convert to time (assuming features are at 1 per 16 frames at 30fps)
-                    start_time = start_idx * 16 / fps
-                    end_time = i * 16 / fps
+                    # Features are at 1 per 16 frames at 30fps
+                    start_time = frame_to_time(start_idx * 16, fps)
+                    end_time = frame_to_time(i * 16, fps)
                     detections.append(
                         {
                             "segment": [start_time, end_time],

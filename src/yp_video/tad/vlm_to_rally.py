@@ -16,10 +16,10 @@ Rally detection logic:
 """
 
 import argparse
-import json
 from pathlib import Path
 
-from yp_video.core.jsonl import read_jsonl
+from yp_video.core.jsonl import read_jsonl, write_jsonl
+from yp_video.core.sampling import get_video_duration_cv2 as get_video_duration
 
 
 def detect_rallies(
@@ -124,20 +124,6 @@ def detect_rallies(
     return rallies
 
 
-def get_video_duration(video_path: Path) -> float:
-    """Get video duration in seconds."""
-    try:
-        import cv2
-
-        cap = cv2.VideoCapture(str(video_path))
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
-        cap.release()
-        return frame_count / fps if fps > 0 else 0
-    except Exception:
-        return 0
-
-
 def convert_vlm_to_rally(
     input_path: Path,
     output_path: Path,
@@ -168,17 +154,11 @@ def convert_vlm_to_rally(
     slide_interval = meta.get("slide_interval", 2.0)
     rallies = detect_rallies(clips, clip_duration, slide_interval, min_duration, min_score)
 
-    # Write output
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w", encoding="utf-8") as f:
-        # Write metadata
-        rally_meta = {"_meta": True, "video": str(video_path), "duration": duration}
-        f.write(json.dumps(rally_meta, ensure_ascii=False) + "\n")
-
-        # Write rallies
-        for rally in rallies:
-            f.write(json.dumps(rally, ensure_ascii=False) + "\n")
-
+    write_jsonl(
+        output_path,
+        {"video": str(video_path), "duration": duration},
+        rallies,
+    )
     return len(rallies)
 
 
