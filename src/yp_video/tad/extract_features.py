@@ -482,12 +482,17 @@ def extract_features_from_video(
     def _supervisor() -> None:
         for t in producer_threads:
             t.join()
-        # Best-effort sentinel — consumer might already be in shutdown via
-        # an exception path, in which case it isn't reading anymore.
-        try:
-            decoded_q.put(SENTINEL, timeout=1.0)
-        except queue.Full:
-            pass
+        # Retry the SENTINEL put until shutdown so we don't drop it when the
+        # queue is briefly full at end-of-video — that drop would leave the
+        # consumer's decoded_q.get() blocked forever and the next video
+        # would never start. On the consumer-error path shutdown is set in
+        # consumer's finally, so we exit the loop without wedging.
+        while not shutdown.is_set():
+            try:
+                decoded_q.put(SENTINEL, timeout=0.5)
+                return
+            except queue.Full:
+                continue
 
     supervisor_thread = threading.Thread(target=_supervisor, daemon=True)
     supervisor_thread.start()
