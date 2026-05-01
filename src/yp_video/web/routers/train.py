@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-import subprocess
 import sys
 import traceback
 from pathlib import Path
@@ -27,6 +26,11 @@ from yp_video.config import (
     iter_all_cuts,
 )
 from yp_video.web.jobs import job_manager, JobStatus, make_progress_callback
+from yp_video.web.job_helpers import (
+    ProgressParser,
+    stop_vllm_for_job,
+    stream_subprocess,
+)
 
 router = APIRouter()
 
@@ -165,45 +169,40 @@ async def extract_features(req: ExtractFeaturesRequest):
     job = job_manager.create_job("feature_extract", {"videos": req.videos, "model": req.model}, name=label)
 
     async def run_extraction():
-        vllm_was_stopped = False
         try:
             await job_manager.update_job(job.id, status="running", message="Waiting for GPU...")
-            if req.stop_vllm and job_manager.vllm_using_gpu:
-                from yp_video.web.vllm_manager import vllm_manager
-                await job_manager.update_job(job.id, message="Stopping vLLM to free VRAM...")
-                await vllm_manager.stop()
-                vllm_was_stopped = True
-            async with job_manager.gpu_lock:
-                await job_manager.update_job(job.id, message=f"Loading V-JEPA 2.1 {req.model}...")
+            async with stop_vllm_for_job(job.id, when=req.stop_vllm):
+                async with job_manager.gpu_lock:
+                    await job_manager.update_job(job.id, message=f"Loading V-JEPA 2.1 {req.model}...")
 
-                from yp_video.tad.extract_features import process_directory
-                import torch
+                    from yp_video.tad.extract_features import process_directory
+                    import torch
 
-                device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-                loop = asyncio.get_event_loop()
-                progress_cb = make_progress_callback(
-                    job.id, loop,
-                    message_template="Extracting features ({done}/{total} videos)",
-                )
-                await loop.run_in_executor(
-                    None,
-                    lambda: process_directory(
-                        CUTS_DIRS, output_dir, device,
-                        videos=req.videos, batch_size=req.batch_size,
-                        model_name=req.model,
-                        on_progress=progress_cb,
-                    ),
-                )
+                    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+                    loop = asyncio.get_event_loop()
+                    progress_cb = make_progress_callback(
+                        job.id, loop,
+                        message_template="Extracting features ({done}/{total} videos)",
+                    )
+                    await loop.run_in_executor(
+                        None,
+                        lambda: process_directory(
+                            CUTS_DIRS, output_dir, device,
+                            videos=req.videos, batch_size=req.batch_size,
+                            model_name=req.model,
+                            on_progress=progress_cb,
+                        ),
+                    )
 
-                # V-JEPA model is cached at module level — clear before gpu_lock exits
-                from yp_video.tad.extract_features import clear_model_cache
-                clear_model_cache()
+                    # V-JEPA model is cached at module level — clear before gpu_lock exits
+                    from yp_video.tad.extract_features import clear_model_cache
+                    clear_model_cache()
 
-                count = len(list(output_dir.glob("*.npy")))
-                await job_manager.update_job(
-                    job.id, status="completed", progress=1.0,
-                    message=f"Extracted {req.model} features for {count} videos",
-                )
+                    count = len(list(output_dir.glob("*.npy")))
+                    await job_manager.update_job(
+                        job.id, status="completed", progress=1.0,
+                        message=f"Extracted {req.model} features for {count} videos",
+                    )
         except asyncio.CancelledError:
             await job_manager.update_job(job.id, status="cancelled")
         except Exception as e:
@@ -222,11 +221,6 @@ async def extract_features(req: ExtractFeaturesRequest):
                 error=f"{err_type}: {err_msg}",
                 message=f"Failed: {err_type}: {err_msg}",
             )
-        finally:
-            if vllm_was_stopped:
-                from yp_video.web.vllm_manager import vllm_manager
-                log.info("Auto-restarting vLLM after feature extraction job %s", job.id)
-                asyncio.create_task(vllm_manager.start())
 
     task = asyncio.create_task(run_extraction())
     job_manager.attach_task(job, task)
@@ -267,7 +261,6 @@ async def start_training(req: TrainRequest):
     job = job_manager.create_job("train", {"gpu": req.gpu, "seed": req.seed, "model": req.model}, name=f"ActionFormer training ({req.model})")
 
     async def run_training():
-        process = None
         try:
             await job_manager.update_job(job.id, status="running", message="Waiting for GPU...")
             async with job_manager.gpu_lock:
@@ -311,63 +304,35 @@ async def start_training(req: TrainRequest):
                     cmd.append("--no-balanced-sampler")
                 cmd.extend(["--sampler-alpha", str(req.sampler_alpha)])
 
-                env = {**os.environ, "PYTHONUNBUFFERED": "1"}
-                process = await asyncio.create_subprocess_exec(
-                    *cmd,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.STDOUT,
-                    cwd=str(PROJECT_ROOT),
-                    env=env,
+                # Closure-captured max_epochs lets the second parser convert
+                # the printed epoch number into a 0..1 progress fraction.
+                ctx = {"max_epochs": 0}
+                def on_total(m):
+                    ctx["max_epochs"] = int(m.group(1))
+                    return None
+                def on_epoch(m):
+                    if ctx["max_epochs"] > 0:
+                        return {"progress": min((int(m.group(1)) + 1) / ctx["max_epochs"], 0.99)}
+                    return None
+
+                rc, last_msg = await stream_subprocess(
+                    job.id,
+                    cmd,
+                    cwd=PROJECT_ROOT,
+                    env={**os.environ, "PYTHONUNBUFFERED": "1"},
+                    parsers=[
+                        ProgressParser(r"for (\d+) epochs", on_total),
+                        ProgressParser(r"\[Train\]: Epoch (\d+) finished", on_epoch),
+                    ],
+                    is_key_line=lambda t: ("[Train]: Epoch" in t and "finished" in t) or "mAP" in t,
                 )
 
-                # Stream output and parse epoch progress
-                import re
-                import time as _time
-                last_msg = ""
-                max_epochs = 0
-                current_progress = 0.0
-                job_obj = job_manager.get_job(job.id)
-                last_push = 0.0
-                push_interval = 1.0  # send SSE update at most once per second
-
-                while True:
-                    line = await process.stdout.readline()
-                    if not line:
-                        break
-                    text = line.decode().strip()
-                    if not text:
-                        continue
-                    last_msg = text
-                    job_obj.logs.append(text)
-
-                    # Parse total epochs: "Start training ActionFormer for 605 epochs ..."
-                    m = re.search(r"for (\d+) epochs", text)
-                    if m:
-                        max_epochs = int(m.group(1))
-
-                    # Parse epoch progress: "[Train]: Epoch 42 finished"
-                    m = re.search(r"\[Train\]: Epoch (\d+) finished", text)
-                    if m and max_epochs > 0:
-                        current_progress = min((int(m.group(1)) + 1) / max_epochs, 0.99)
-
-                    # Throttle SSE updates; always push epoch/mAP lines immediately
-                    now = _time.monotonic()
-                    is_key_line = "[Train]: Epoch" in text and "finished" in text or "mAP" in text
-                    if is_key_line or now - last_push >= push_interval:
-                        last_push = now
-                        await job_manager.update_job(
-                            job.id, message=text, progress=current_progress,
-                        )
-
-                returncode = await process.wait()
-                if returncode == 0:
-                    # Auto-sync key files to R2
-                    from yp_video.web.r2_client import sync_to_r2_nested
+                if rc == 0:
+                    from yp_video.web.r2_client import sync_to_r2
                     for fname in ("best.pth.tar", "config.txt", "train_log.jsonl"):
                         fpath = work_dir / fname
                         if fpath.exists():
-                            sync_to_r2_nested(fpath, "tad-checkpoints", TAD_CHECKPOINTS_DIR)
-
+                            sync_to_r2(fpath, "tad-checkpoints", base_dir=TAD_CHECKPOINTS_DIR)
                     await job_manager.update_job(
                         job.id, status="completed", progress=1.0,
                         message=f"Training complete. Output: {work_dir}",
@@ -375,11 +340,9 @@ async def start_training(req: TrainRequest):
                 else:
                     await job_manager.update_job(
                         job.id, status="failed",
-                        error=f"Training failed (exit code {returncode}): {last_msg}",
+                        error=f"Training failed (exit code {rc}): {last_msg}",
                     )
         except asyncio.CancelledError:
-            if process and process.returncode is None:
-                process.terminate()
             await job_manager.update_job(job.id, status="cancelled")
         except Exception as e:
             await job_manager.update_job(job.id, status="failed", error=str(e))

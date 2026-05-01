@@ -10,11 +10,8 @@ import asyncio
 import json
 import logging
 import os
-import re
 import sys
-import time as _time
 from datetime import datetime
-from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -27,6 +24,7 @@ from yp_video.config import (
     iter_all_cuts,
 )
 from yp_video.web.jobs import job_manager
+from yp_video.web.job_helpers import ProgressParser, stream_subprocess
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -189,7 +187,6 @@ async def start_training(req: TrainRequest) -> dict:
     )
 
     async def run():
-        process = None
         try:
             await job_manager.update_job(job.id, status="running",
                                          message="Waiting for GPU lock...")
@@ -220,45 +217,19 @@ async def start_training(req: TrainRequest) -> dict:
                 if not req.balanced_sampler:
                     cmd.append("--no-balanced-sampler")
 
-                env = {**os.environ, "PYTHONUNBUFFERED": "1"}
-                process = await asyncio.create_subprocess_exec(
-                    *cmd,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.STDOUT,
-                    cwd=str(PROJECT_ROOT),
-                    env=env,
+                # HF Trainer prints "{'loss': X, 'epoch': Y}" each logging_step.
+                def on_epoch(m):
+                    return {"progress": min(float(m.group(1)) / max(req.epochs, 1), 0.99)}
+
+                rc, last_msg = await stream_subprocess(
+                    job.id,
+                    cmd,
+                    cwd=PROJECT_ROOT,
+                    env={**os.environ, "PYTHONUNBUFFERED": "1"},
+                    parsers=[ProgressParser(r"'epoch':\s*([\d.]+)", on_epoch)],
+                    is_key_line=lambda t: "[VLM Eval]" in t or "loss" in t.lower(),
                 )
 
-                last_msg = ""
-                progress = 0.0
-                last_push = 0.0
-                job_obj = job_manager.get_job(job.id)
-
-                while True:
-                    line = await process.stdout.readline()
-                    if not line:
-                        break
-                    text = line.decode().rstrip()
-                    if not text:
-                        continue
-                    last_msg = text
-                    job_obj.logs.append(text)
-
-                    # HF Trainer prints "{'loss': X, 'epoch': Y}" each logging_step
-                    m = re.search(r"'epoch':\s*([\d.]+)", text)
-                    if m:
-                        ep = float(m.group(1))
-                        progress = min(ep / max(req.epochs, 1), 0.99)
-
-                    now = _time.monotonic()
-                    is_key = ("[VLM Eval]" in text) or ("loss" in text.lower())
-                    if is_key or now - last_push >= 1.0:
-                        last_push = now
-                        await job_manager.update_job(
-                            job.id, message=text, progress=progress,
-                        )
-
-                rc = await process.wait()
                 if rc == 0:
                     await job_manager.update_job(
                         job.id, status="completed", progress=1.0,
@@ -270,8 +241,6 @@ async def start_training(req: TrainRequest) -> dict:
                         error=f"VLM training failed (exit {rc}): {last_msg}",
                     )
         except asyncio.CancelledError:
-            if process and process.returncode is None:
-                process.terminate()
             await job_manager.update_job(job.id, status="cancelled")
         except Exception as e:
             log.exception("VLM training crashed")

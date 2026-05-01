@@ -104,15 +104,35 @@ class JobManager:
     def active_count(self) -> int:
         return sum(1 for j in self.jobs.values() if j.status == JobStatus.RUNNING)
 
-    async def update_job(self, job_id: str, **kwargs):
+    async def update_job(
+        self,
+        job_id: str,
+        *,
+        status: str | JobStatus | None = None,
+        progress: float | None = None,
+        message: str | None = None,
+        error: str | None = None,
+        name: str | None = None,
+    ) -> None:
+        """Update mutable job fields and broadcast the new state to subscribers.
+
+        Only the listed fields are writable from outside; private state
+        (``_task``, ``_subscribers``, ``logs``) must be touched directly on
+        the ``Job`` (logs append) or via ``cancel_job`` / ``attach_task``.
+        """
         job = self.jobs.get(job_id)
         if not job:
             return
-        for k, v in kwargs.items():
-            if k == "status":
-                job.status = JobStatus(v)
-            elif hasattr(job, k):
-                setattr(job, k, v)
+        if status is not None:
+            job.status = JobStatus(status) if not isinstance(status, JobStatus) else status
+        if progress is not None:
+            job.progress = progress
+        if message is not None:
+            job.message = message
+        if error is not None:
+            job.error = error
+        if name is not None:
+            job.name = name
         # Notify SSE subscribers
         event = job.to_dict()
         for q in job._subscribers:
@@ -173,21 +193,22 @@ def make_progress_callback(
     job_id: str,
     loop: asyncio.AbstractEventLoop,
     message_template: str = "Progress ({done}/{total})",
+    *,
+    manager: "JobManager | None" = None,
 ) -> Callable[[int, int], None]:
-    """Create a thread-safe progress callback for executor-based tasks.
+    """Create a thread-safe ``(done, total) -> None`` progress callback.
 
-    Args:
-        job_id: Job to update.
-        loop: The running event loop (from the async caller).
-        message_template: Format string with {done} and {total} placeholders.
-
-    Returns:
-        A callback ``(done, total) -> None`` safe to call from any thread.
+    Used by sync code running in ``run_in_executor`` to push progress back to
+    a job. ``loop`` is the async caller's event loop (the callback may fire
+    from any thread). ``manager`` defaults to the module-level ``job_manager``;
+    pass an explicit one if you ever construct your own JobManager (e.g. tests).
     """
+    mgr = manager if manager is not None else job_manager
+
     def callback(done: int, total: int) -> None:
         loop.call_soon_threadsafe(
             lambda d=done, t=total: asyncio.ensure_future(
-                job_manager.update_job(
+                mgr.update_job(
                     job_id,
                     progress=d / t if t else 0,
                     message=message_template.format(done=d, total=t),

@@ -23,6 +23,7 @@ class _QuietPollFilter(logging.Filter):
 logging.getLogger("uvicorn.access").addFilter(_QuietPollFilter())
 
 from yp_video.config import STATIC_DIR
+from yp_video.web.r2_client import r2_client
 from yp_video.web.routers import download, cut, annotate, detect, train, predict, review, jobs, system, upload, vlm
 from yp_video.web.vllm_manager import vllm_manager
 
@@ -38,6 +39,11 @@ async def lifespan(app: FastAPI):
 
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
+
+    # Eager-load R2 config so a misconfigured r2.env surfaces at boot
+    # rather than on the first upload deep inside a job handler.
+    r2_client.reload()
+    print(f"R2: {'configured' if r2_client.configured else 'not configured (uploads will be skipped)'}")
 
     # Detect existing vLLM server
     await vllm_manager.initial_check()

@@ -12,6 +12,7 @@ from yp_video.config import (
     find_cut,
 )
 from yp_video.web.jobs import job_manager, JobStatus, make_progress_callback
+from yp_video.web.job_helpers import finalize_batch_job
 from yp_video.web.r2_client import sync_to_r2, sync_directory_to_r2
 from yp_video.web.vllm_manager import vllm_manager
 from yp_video.config import load_vllm_env
@@ -133,25 +134,9 @@ async def start_detection(req: DetectRequest):
 
                 await asyncio.sleep(2)
 
-            final_name = f"VLM Predict ({total} videos)"
-            if failed == 0:
-                await job_manager.update_job(
-                    job.id, status="completed", progress=1.0,
-                    name=final_name,
-                    message=f"All {total} videos complete",
-                )
-            elif failed == total:
-                await job_manager.update_job(
-                    job.id, status="failed", progress=1.0,
-                    name=final_name,
-                    message=f"All {total} videos failed",
-                )
-            else:
-                await job_manager.update_job(
-                    job.id, status="completed", progress=1.0,
-                    name=final_name,
-                    message=f"{total - failed}/{total} completed, {failed} failed",
-                )
+            await finalize_batch_job(
+                job.id, total, failed, name=f"VLM Predict ({total} videos)",
+            )
 
     task = asyncio.create_task(run_all())
     job_manager.attach_task([job], task)

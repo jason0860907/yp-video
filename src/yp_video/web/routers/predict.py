@@ -25,6 +25,7 @@ from yp_video.config import (
 )
 from yp_video.tad.extract_features import MODEL_CONFIGS
 from yp_video.web.jobs import job_manager, JobStatus
+from yp_video.web.job_helpers import finalize_batch_job, stop_vllm_for_job
 from yp_video.web.r2_client import serve_video_or_r2_redirect
 
 router = APIRouter()
@@ -129,13 +130,7 @@ async def start_prediction(req: PredictRequest):
         from yp_video.tad.infer import run_inference
 
         await job_manager.update_job(job.id, status="running", message="Waiting for GPU...")
-        vllm_was_stopped = False
-        if req.stop_vllm and job_manager.vllm_using_gpu:
-            from yp_video.web.vllm_manager import vllm_manager
-            await job_manager.update_job(job.id, message="Stopping vLLM to free VRAM...")
-            await vllm_manager.stop()
-            vllm_was_stopped = True
-        try:
+        async with stop_vllm_for_job(job.id, when=req.stop_vllm):
             async with job_manager.gpu_lock:
                 loop = asyncio.get_event_loop()
                 config_path = TAD_CONFIGS_DIR / "volleyball_actionformer.yaml"
@@ -208,30 +203,9 @@ async def start_prediction(req: PredictRequest):
                             error=f"{err_type}: {err_msg}",
                         )
 
-                final_name = f"Predict ({total} videos)"
-                if failed == 0:
-                    await job_manager.update_job(
-                        job.id, status="completed", progress=1.0,
-                        name=final_name,
-                        message=f"All {total} videos complete",
-                    )
-                elif failed == total:
-                    await job_manager.update_job(
-                        job.id, status="failed", progress=1.0,
-                        name=final_name,
-                        message=f"All {total} videos failed — see logs",
-                    )
-                else:
-                    await job_manager.update_job(
-                        job.id, status="completed", progress=1.0,
-                        name=final_name,
-                        message=f"{total - failed}/{total} completed, {failed} failed",
-                    )
-        finally:
-            if vllm_was_stopped:
-                from yp_video.web.vllm_manager import vllm_manager
-                log.info("Auto-restarting vLLM after prediction job %s", job.id)
-                asyncio.create_task(vllm_manager.start())
+                await finalize_batch_job(
+                    job.id, total, failed, name=f"Predict ({total} videos)",
+                )
 
     task = asyncio.create_task(run_all())
     job_manager.attach_task([job], task)
