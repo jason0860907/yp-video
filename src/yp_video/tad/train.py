@@ -149,6 +149,49 @@ def _build_balanced_loader(train_dataset, rng_generator, alpha: float, loader_cf
     return loader, info
 
 
+def _apply_config_overrides(cfg: dict, args: argparse.Namespace) -> str:
+    """Apply CLI overrides to the loaded ActionFormer YAML config in-place.
+
+    Returns the resolved V-JEPA model name (used downstream for run dirs etc.).
+    Encapsulates the dataset path expansion + opt/loader/schedule overrides
+    + per-model feature dir routing so main() reads top-down without 30 lines
+    of conditional cfg[key] assignments.
+    """
+    cfg["devices"] = ["cuda:0"]
+    for key in ("json_file", "feat_folder"):
+        if key in cfg["dataset"]:
+            cfg["dataset"][key] = os.path.expanduser(cfg["dataset"][key])
+
+    if args.lr is not None:
+        cfg["opt"]["learning_rate"] = args.lr
+    if args.epochs is not None:
+        cfg["opt"]["epochs"] = args.epochs
+    if args.warmup_epochs is not None:
+        cfg["opt"]["warmup_epochs"] = args.warmup_epochs
+    if args.weight_decay is not None:
+        cfg["opt"]["weight_decay"] = args.weight_decay
+    if args.batch_size is not None:
+        cfg["loader"]["batch_size"] = args.batch_size
+    if args.schedule == "constant":
+        # Flat-after-warmup: multistep with a milestone past the horizon
+        cfg["opt"]["schedule_type"] = "multistep"
+        cfg["opt"]["schedule_steps"] = [10**9]
+        cfg["opt"]["schedule_gamma"] = 0.1
+    elif args.schedule is not None:
+        cfg["opt"]["schedule_type"] = args.schedule
+
+    from yp_video.tad.extract_features import MODEL_CONFIGS
+    model_name = args.model or "base"
+    mcfg = MODEL_CONFIGS[model_name]
+    if args.model:
+        feat_folder = str(FEATURES_DIR / mcfg.dir_suffix)
+        cfg["dataset"]["feat_folder"] = feat_folder
+        cfg["dataset"]["input_dim"] = mcfg.feat_dim
+        cfg["model"]["input_dim"] = mcfg.feat_dim
+        print(f"Model override: feat_folder={feat_folder}, input_dim={mcfg.feat_dim}")
+    return model_name
+
+
 def main():
     parser = argparse.ArgumentParser(description="Train ActionFormer for volleyball")
     parser.add_argument(
@@ -270,43 +313,8 @@ def main():
         valid_one_epoch,
     )
 
-    # Load config
     cfg = load_config(str(args.config))
-    cfg["devices"] = ["cuda:0"]
-    # Expand ~ in paths
-    for key in ("json_file", "feat_folder"):
-        if key in cfg["dataset"]:
-            cfg["dataset"][key] = os.path.expanduser(cfg["dataset"][key])
-
-    # Override opt/loader params from CLI when supplied
-    if args.lr is not None:
-        cfg["opt"]["learning_rate"] = args.lr
-    if args.epochs is not None:
-        cfg["opt"]["epochs"] = args.epochs
-    if args.warmup_epochs is not None:
-        cfg["opt"]["warmup_epochs"] = args.warmup_epochs
-    if args.weight_decay is not None:
-        cfg["opt"]["weight_decay"] = args.weight_decay
-    if args.batch_size is not None:
-        cfg["loader"]["batch_size"] = args.batch_size
-    if args.schedule == "constant":
-        # Flat-after-warmup: multistep with a milestone past the horizon
-        cfg["opt"]["schedule_type"] = "multistep"
-        cfg["opt"]["schedule_steps"] = [10**9]
-        cfg["opt"]["schedule_gamma"] = 0.1
-    elif args.schedule is not None:
-        cfg["opt"]["schedule_type"] = args.schedule
-
-    # Override feature folder & input_dim when --model is specified
-    from yp_video.tad.extract_features import MODEL_CONFIGS
-    model_name = args.model or "base"
-    mcfg = MODEL_CONFIGS[model_name]
-    if args.model:
-        feat_folder = str(FEATURES_DIR / mcfg.dir_suffix)
-        cfg["dataset"]["feat_folder"] = feat_folder
-        cfg["dataset"]["input_dim"] = mcfg.feat_dim
-        cfg["model"]["input_dim"] = mcfg.feat_dim
-        print(f"Model override: feat_folder={feat_folder}, input_dim={mcfg.feat_dim}")
+    model_name = _apply_config_overrides(cfg, args)
 
     # Override output folder
     if not args.work_dir:
