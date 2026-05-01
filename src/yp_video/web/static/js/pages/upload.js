@@ -1,7 +1,7 @@
 /**
  * Upload page — R2 cloud storage sync.
  */
-import { api, API, SSEClient, formatBytes, card, pageHeader, sectionTitle, btnPrimary, btnSecondary, btnSmall, btnDanger, showToast, emptyState, renderJobProgress } from '../shared.js';
+import { api, API, SSEClient, formatBytes, card, pageHeader, sectionTitle, btnPrimary, btnSecondary, btnSmall, btnDanger, showToast, showConfirm, emptyState, renderJobProgress } from '../shared.js';
 
 let sseClients = [];
 
@@ -425,9 +425,13 @@ async function deleteR2() {
   const selected = state.files.filter(f => f.selected);
   if (selected.length === 0) return showToast('No files selected', 'warning');
 
-  const msg = `Delete ${selected.length} selected files from R2?\n\n` +
-              `This only removes them from cloud storage — local copies are not touched.`;
-  if (!confirm(msg)) return;
+  const ok = await showConfirm({
+    title: `Delete ${selected.length} files from R2?`,
+    body: 'This only removes them from cloud storage — local copies are not touched.',
+    confirmText: 'Delete from R2',
+    variant: 'danger',
+  });
+  if (!ok) return;
 
   const btn = document.getElementById('upl-delete-r2');
   btn.disabled = true;
@@ -452,17 +456,24 @@ async function deleteLocal() {
   const localOnly = isLocalOnly();
   const notUploaded = localOnly ? [] : selected.filter(f => !f.uploaded);
 
-  let msg;
+  let body;
+  let variant = 'warning';
   if (localOnly) {
-    msg = `Delete ${selected.length} local files?`;
+    body = 'These files only exist locally and are not backed up to R2.';
+    variant = 'danger';
   } else if (notUploaded.length === 0) {
-    msg = `Delete ${selected.length} local files? They are already on R2.`;
+    body = 'They are already on R2, so this is recoverable.';
   } else {
-    msg = `Delete ${selected.length} local files?\n\n` +
-          `⚠️ ${notUploaded.length} of them are NOT on R2 and will be lost permanently.`;
+    body = `⚠️ ${notUploaded.length} of them are NOT on R2 and will be lost permanently.`;
+    variant = 'danger';
   }
-
-  if (!confirm(msg)) return;
+  const ok = await showConfirm({
+    title: `Delete ${selected.length} local files?`,
+    body,
+    confirmText: 'Delete locally',
+    variant,
+  });
+  if (!ok) return;
 
   // force=true when user has confirmed despite the R2-safety warning, so the
   // backend doesn't silently skip the not-on-R2 files.

@@ -389,6 +389,20 @@ function bindEvents() {
     convVideos.forEach(v => v.selected = v.has_pre_annotation);
     renderConvVideos();
   });
+
+  // Delegated checkbox listeners for the two video lists, bound once at
+  // page render. Avoids re-binding N rows of listeners on every render +
+  // accumulating leaks if a render is interrupted mid-flight.
+  document.getElementById('train-videos').addEventListener('change', (e) => {
+    if (!e.target.matches('.train-check')) return;
+    videos[parseInt(e.target.dataset.idx)].selected = e.target.checked;
+    updateExtractCount();
+  });
+  document.getElementById('conv-videos').addEventListener('change', (e) => {
+    if (!e.target.matches('.conv-check')) return;
+    convVideos[parseInt(e.target.dataset.idx)].selected = e.target.checked;
+    updateConvertCount();
+  });
 }
 
 async function loadStatus() {
@@ -472,12 +486,7 @@ function renderVideos() {
     </div>`;
   }).join('');
 
-  el.querySelectorAll('.train-check').forEach(cb => {
-    cb.addEventListener('change', (e) => {
-      videos[parseInt(e.target.dataset.idx)].selected = e.target.checked;
-      updateExtractCount();
-    });
-  });
+  // Click handlers are delegated from #train-videos in bindEvents().
   updateExtractCount();
 }
 
@@ -500,12 +509,7 @@ function renderConvVideos() {
     </div>
   `).join('');
 
-  el.querySelectorAll('.conv-check').forEach(cb => {
-    cb.addEventListener('change', (e) => {
-      convVideos[parseInt(e.target.dataset.idx)].selected = e.target.checked;
-      updateConvertCount();
-    });
-  });
+  // Click handlers are delegated from #conv-videos in bindEvents().
   updateConvertCount();
 }
 
