@@ -10,12 +10,12 @@ temporal scale of features consistent across videos with different fps.
 
 import argparse
 import os
+import queue
 import threading
 import time
 import traceback
 import warnings
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import NamedTuple
 
@@ -65,6 +65,31 @@ CROP_SIZE = 384
 # (window=128 frames @ 60fps = 2.13s; clip stride=48 frames @ 60fps = 0.80s).
 DEFAULT_CLIP_SECONDS = 2.13
 DEFAULT_STRIDE_SECONDS = 0.80
+
+# Effective sampling rate fed to V-JEPA, regardless of source fps. 30 Hz
+# matches what 60fps source got under the legacy 2:1 sub-sample, so prior
+# 60fps-trained models still see in-distribution input. 30/25fps sources are
+# upsampled (frame duplication) to this rate so feature distribution doesn't
+# vary with capture fps.
+TARGET_SAMPLE_FPS = 30.0
+
+# Producer-consumer prefetch depth. Decoded-batch buffer between the decord
+# producer thread(s) and the GPU consumer; absorbs decode-time spikes so V-JEPA
+# inference doesn't stall waiting for the next batch.
+PREFETCH_DEPTH = 4
+
+# Threads decord uses internally for a single get_batch call. Measured scaling
+# (num_threads=1→4: 1.7×, →8: 1.9×, →12: plateau).
+DECORD_NUM_THREADS = 4
+
+# Number of parallel decoder threads, each owning its own VideoReader on the
+# same file (decord readers are independent and can coexist). Single-producer
+# decode (~4.7s/batch) is slower than V-JEPA inference (~3s/batch), so the GPU
+# stalls; multiple producers × num_threads each cut aggregate decode time
+# below inference time and turn the prior sawtooth GPU utilisation into
+# steady saturation. 3 × 4 = 12 threads matches the 12-vCPU budget; V-JEPA's
+# main thread mostly waits on GPU so it doesn't compete much for CPU.
+NUM_DECODE_PRODUCERS = 3
 # Upper bound for NvdecReader cache trim when the per-call window is unknown.
 _DEFAULT_CACHE_FRAMES = 256
 
@@ -96,8 +121,8 @@ _model_cache_lock = threading.Lock()
 class DecordReader:
     """CPU video reader using decord (random access)."""
 
-    def __init__(self, video_path: Path):
-        self._vr = VideoReader(str(video_path), ctx=cpu(0))
+    def __init__(self, video_path: Path, num_threads: int = DECORD_NUM_THREADS):
+        self._vr = VideoReader(str(video_path), ctx=cpu(0), num_threads=num_threads)
 
     def __len__(self) -> int:
         return len(self._vr)
@@ -360,13 +385,15 @@ def extract_features_from_video(
     source fps.
     """
     fps = _get_video_fps(video_path)
-    window_frames = max(VJEPA_CLIP_FRAMES, int(round(clip_seconds * fps)))
     clip_stride = max(1, int(round(stride_seconds * fps)))
-    # 64 evenly-spaced frame offsets within each clip's window. When
-    # window_frames < 64 (very low fps) some offsets repeat.
-    frame_offsets = (
-        np.linspace(0, window_frames - 1, VJEPA_CLIP_FRAMES).round().astype(int).tolist()
-    )
+    # Map 64 V-JEPA-fed positions (sampled at TARGET_SAMPLE_FPS) onto source-frame
+    # indices. Source > target → 2:1+ sub-sample (60fps → every other frame).
+    # Source < target → frame duplication (25fps → some indices repeat).
+    # Effect: V-JEPA sees the same temporal density regardless of source fps.
+    frame_offsets = [
+        round(i * fps / TARGET_SAMPLE_FPS) for i in range(VJEPA_CLIP_FRAMES)
+    ]
+    window_frames = frame_offsets[-1] + 1
 
     reader = open_video(video_path, use_gpu=device.type == "cuda", cache_window=window_frames)
     num_frames = len(reader)
@@ -399,16 +426,68 @@ def extract_features_from_video(
             torch.cuda.synchronize()
         return time.perf_counter()
 
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        future = pool.submit(reader.get_batch, batch_infos[0][1])
+    # Producer-consumer pipeline. A small pool of decoder threads (each with
+    # its own VideoReader instance) pulls batch indices from a work queue,
+    # decodes frames, and pushes (bi, frames) tuples into a bounded buffer
+    # queue. The single GPU consumer pulls from the buffer and runs preprocess
+    # + V-JEPA. With NUM_DECODE_PRODUCERS=2 the aggregate decode rate exceeds
+    # inference rate, so the buffer stays full and the GPU runs saturated
+    # instead of the sawtooth 100%↔0% pattern of the single-prefetch design.
+    SENTINEL: object = object()
+    work_q: queue.Queue = queue.Queue()
+    for bi in range(len(batch_infos)):
+        work_q.put(bi)
+    for _ in range(NUM_DECODE_PRODUCERS):
+        work_q.put(SENTINEL)
+    decoded_q: queue.Queue = queue.Queue(maxsize=PREFETCH_DEPTH)
+    producer_errors: list[BaseException] = []
 
-        for bi in tqdm(range(len(batch_infos)), desc=f"  {video_path.name}", leave=False):
+    use_gpu = device.type == "cuda"
+
+    def _producer() -> None:
+        try:
+            own_reader = open_video(video_path, use_gpu=use_gpu, cache_window=window_frames)
+            while True:
+                item = work_q.get()
+                if item is SENTINEL:
+                    return
+                _, all_indices = batch_infos[item]
+                frames = own_reader.get_batch(all_indices)
+                decoded_q.put((item, frames))
+        except BaseException as e:  # noqa: BLE001 - re-raised on consumer side
+            producer_errors.append(e)
+
+    producer_threads = [
+        threading.Thread(target=_producer, daemon=True)
+        for _ in range(NUM_DECODE_PRODUCERS)
+    ]
+    for t in producer_threads:
+        t.start()
+
+    # Supervisor: once all producers finish, send a single SENTINEL to the
+    # consumer. Done in a tiny daemon thread so the consumer below stays a
+    # plain blocking loop on decoded_q.get().
+    def _supervisor() -> None:
+        for t in producer_threads:
+            t.join()
+        decoded_q.put(SENTINEL)
+
+    supervisor_thread = threading.Thread(target=_supervisor, daemon=True)
+    supervisor_thread.start()
+
+    # Multi-producer can deliver batches out of order. Collect features keyed
+    # by batch index, then concatenate in order at the end.
+    features_by_bi: dict[int, np.ndarray] = {}
+
+    pbar = tqdm(total=len(batch_infos), desc=f"  {video_path.name}", leave=False)
+    try:
+        while True:
             t0 = _now()
-            frames = future.result()
+            item = decoded_q.get()
             t1 = _now()
-
-            if bi + 1 < len(batch_infos):
-                future = pool.submit(reader.get_batch, batch_infos[bi + 1][1])
+            if item is SENTINEL:
+                break
+            bi, frames = item
 
             batch_clip_starts, all_indices = batch_infos[bi]
 
@@ -432,6 +511,7 @@ def extract_features_from_video(
                 gather_rows.append([idx_to_pos[i] for i in clip_indices])
 
             if not gather_rows:
+                pbar.update(1)
                 continue  # all clips in this batch were incomplete
 
             # Single advanced-index gather: (num_clips, 64, C, H, W) → permute to (num_clips, C, 64, H, W)
@@ -462,15 +542,27 @@ def extract_features_from_video(
                  sdpa_kernel([SDPBackend.FLASH_ATTENTION]):
                 patch_feats = model(clips)
                 feats = patch_feats.mean(dim=1)[:actual_count]  # trim padding
-                features.append(feats.float().cpu().numpy())
+                features_by_bi[bi] = feats.float().cpu().numpy()
             t4 = _now()
 
+            pbar.update(1)
             if _PROFILE:
+                # decode_wait now measures only consumer-side waits — when
+                # the buffer was empty. Steady ~0 means GPU never idled.
                 timings["decode_wait"] += t1 - t0
                 timings["preprocess"]  += t2 - t1
                 timings["gather"]      += t3 - t2
                 timings["inference"]   += t4 - t3
                 n_timed += 1
+    finally:
+        pbar.close()
+        supervisor_thread.join()
+        if producer_errors:
+            raise producer_errors[0]
+
+    # Concatenate features in batch order (multi-producer arrival is unordered).
+    for bi in sorted(features_by_bi):
+        features.append(features_by_bi[bi])
 
     if _PROFILE and n_timed > 0:
         total = sum(timings.values())
