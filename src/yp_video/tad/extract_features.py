@@ -420,6 +420,13 @@ def extract_features_from_video(
     # + V-JEPA. With NUM_DECODE_PRODUCERS=2 the aggregate decode rate exceeds
     # inference rate, so the buffer stays full and the GPU runs saturated
     # instead of the sawtooth 100%↔0% pattern of the single-prefetch design.
+    #
+    # Shutdown protocol: on any consumer-side exception, ``shutdown`` is set in
+    # the consumer's finally block. Producers poll it on every put() so they
+    # don't hang on a full buffer the consumer will never drain — without this
+    # a single CUDA OOM or NaN deadlocks producers waiting on decoded_q.put,
+    # the supervisor waiting on producer.join, and the executor thread waiting
+    # on supervisor.join, which never releases the gpu_lock for the next job.
     SENTINEL: object = object()
     work_q: queue.Queue = queue.Queue()
     for bi in range(len(batch_infos)):
@@ -428,19 +435,27 @@ def extract_features_from_video(
         work_q.put(SENTINEL)
     decoded_q: queue.Queue = queue.Queue(maxsize=PREFETCH_DEPTH)
     producer_errors: list[BaseException] = []
+    shutdown = threading.Event()
 
     use_gpu = device.type == "cuda"
 
     def _producer() -> None:
         try:
             own_reader = open_video(video_path, use_gpu=use_gpu, cache_window=window_frames)
-            while True:
+            while not shutdown.is_set():
                 item = work_q.get()
                 if item is SENTINEL:
                     return
                 _, all_indices = batch_infos[item]
                 frames = own_reader.get_batch(all_indices)
-                decoded_q.put((item, frames))
+                # Bounded poll on put so a dead/slow consumer + full buffer
+                # can't pin this thread; we exit promptly when shutdown fires.
+                while not shutdown.is_set():
+                    try:
+                        decoded_q.put((item, frames), timeout=0.5)
+                        break
+                    except queue.Full:
+                        continue
         except BaseException as e:  # noqa: BLE001 - re-raised on consumer side
             producer_errors.append(e)
 
@@ -457,7 +472,12 @@ def extract_features_from_video(
     def _supervisor() -> None:
         for t in producer_threads:
             t.join()
-        decoded_q.put(SENTINEL)
+        # Best-effort sentinel — consumer might already be in shutdown via
+        # an exception path, in which case it isn't reading anymore.
+        try:
+            decoded_q.put(SENTINEL, timeout=1.0)
+        except queue.Full:
+            pass
 
     supervisor_thread = threading.Thread(target=_supervisor, daemon=True)
     supervisor_thread.start()
@@ -484,6 +504,11 @@ def extract_features_from_video(
             # Preprocess unique frames on GPU, then assemble clips via indexing
             processed = preprocess_frames_batch(frames, device=device)
             # processed: (N_unique, C, H, W) on device
+            # Release the host-side numpy buffer immediately — for 4K source
+            # `frames` can be 1-4 GB and the next batch is already arriving
+            # in decoded_q. Holding both at once doubled peak host RAM.
+            frames = None
+            item = None
             t2 = _now()
 
             # Build index map: frame index → position in processed tensor
@@ -542,8 +567,18 @@ def extract_features_from_video(
                 timings["inference"]   += t4 - t3
                 n_timed += 1
     finally:
+        # Tell producers to bail and drain the buffer so any in-flight
+        # decoded_q.put() unblocks immediately. Without this, a consumer
+        # exception leaves producers wedged on a full queue and the
+        # supervisor.join() below would hang forever.
+        shutdown.set()
+        try:
+            while True:
+                decoded_q.get_nowait()
+        except queue.Empty:
+            pass
         pbar.close()
-        supervisor_thread.join()
+        supervisor_thread.join(timeout=10.0)
         if producer_errors:
             raise producer_errors[0]
 

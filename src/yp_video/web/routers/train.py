@@ -204,6 +204,14 @@ async def extract_features(req: ExtractFeaturesRequest):
                         message=f"Extracted {req.model} features for {count} videos",
                     )
         except asyncio.CancelledError:
+            # Drop the cached compiled model so a retry rebuilds from scratch
+            # instead of reusing a possibly half-initialized one (e.g. when
+            # cancel fired mid-warmup or mid-compile).
+            try:
+                from yp_video.tad.extract_features import clear_model_cache
+                clear_model_cache()
+            except Exception:
+                pass
             await job_manager.update_job(job.id, status="cancelled")
         except Exception as e:
             tb = traceback.format_exc()
@@ -216,6 +224,14 @@ async def extract_features(req: ExtractFeaturesRequest):
                 job_obj.logs.append(f"{err_type}: {err_msg}")
                 for line in tb.splitlines():
                     job_obj.logs.append(line)
+            # Also clear the cache on hard failure: if the failure was a
+            # CUDA OOM, leaving the compiled module cached pins VRAM that
+            # the subsequent retry will need for the same allocation.
+            try:
+                from yp_video.tad.extract_features import clear_model_cache
+                clear_model_cache()
+            except Exception:
+                pass
             await job_manager.update_job(
                 job.id, status="failed",
                 error=f"{err_type}: {err_msg}",
