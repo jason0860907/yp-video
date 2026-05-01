@@ -211,17 +211,35 @@ function markEnd() {
   const end = videoEl.currentTime;
   if (end <= state.markStart) return showToast('End must be after start', 'warning');
 
-  const videoStem = (document.getElementById('cut-video-select').value || '').replace(/\.[^.]+$/, '');
-  const idx = state.segments.length + 1;
+  // _auto flags this segment as eligible for renumbering. As long as the user
+  // doesn't edit the name input, renumberAutoNames() keeps it in sync with
+  // the segment count: bare stem when there's exactly one set, `_set1/_set2/…`
+  // once a second segment is added (and back to bare if it gets deleted).
   state.segments.push({
-    name: `${videoStem}_set${idx}`,
+    name: '',  // filled in below by renumberAutoNames
     start: state.markStart,
     end: end,
+    _auto: true,
   });
+  renumberAutoNames();
 
   state.markStart = null;
   document.getElementById('cut-mark-info').classList.add('hidden');
   renderSegments();
+}
+
+function videoStem() {
+  return (document.getElementById('cut-video-select').value || '').replace(/\.[^.]+$/, '');
+}
+
+function renumberAutoNames() {
+  const stem = videoStem();
+  const total = state.segments.length;
+  state.segments.forEach((s, i) => {
+    if (s._auto) {
+      s.name = total === 1 ? stem : `${stem}_set${i + 1}`;
+    }
+  });
 }
 
 function renderSegments() {
@@ -254,7 +272,10 @@ function renderSegments() {
 
   el.querySelectorAll('.seg-name').forEach(inp => {
     inp.addEventListener('change', (e) => {
-      state.segments[parseInt(e.target.dataset.idx)].name = e.target.value;
+      const seg = state.segments[parseInt(e.target.dataset.idx)];
+      seg.name = e.target.value;
+      // User intent: opt out of auto-renumbering for this row.
+      seg._auto = false;
     });
   });
   el.querySelectorAll('.seg-preview').forEach(btn => {
@@ -267,6 +288,7 @@ function renderSegments() {
   el.querySelectorAll('.seg-delete').forEach(btn => {
     btn.addEventListener('click', (e) => {
       state.segments.splice(parseInt(e.target.dataset.idx), 1);
+      renumberAutoNames();
       renderSegments();
     });
   });

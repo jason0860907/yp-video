@@ -352,15 +352,18 @@ export class AnnotationEditor {
   _renderAnnotations() {
     const p = this.prefix;
     const el = document.getElementById(`${p}-list`);
-    document.getElementById(`${p}-count`).textContent = `(${this.state.annotations.length})`;
+    // Count + total played time focus on rallies (the primary class). The
+    // count is stored in `(N rally)` form so a quick scan tells the user
+    // how many rallies were marked, and the trailing "MM:SS played" sums
+    // their durations as a sanity check (e.g. 30-min broadcast → ~10 min
+    // of actual play).
+    const rallies = this.state.annotations.filter(a => a.label === 'rally');
+    document.getElementById(`${p}-count`).textContent = `(${rallies.length} rally)`;
 
-    // Total rally duration as a quick sanity-check for users
     const totalEl = document.getElementById(`${p}-total-duration`);
     if (totalEl) {
-      const total = this.state.annotations
-        .filter(a => a.label === 'rally')
-        .reduce((s, a) => s + (a.end - a.start), 0);
-      totalEl.textContent = total > 0 ? `· ${formatTime(total)} rally` : '';
+      const total = rallies.reduce((s, a) => s + (a.end - a.start), 0);
+      totalEl.textContent = total > 0 ? `${formatTime(total)} played` : '';
     }
 
     this._refreshDirtyIndicator();
