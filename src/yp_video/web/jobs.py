@@ -195,23 +195,33 @@ def make_progress_callback(
     message_template: str = "Progress ({done}/{total})",
     *,
     manager: "JobManager | None" = None,
-) -> Callable[[int, int], None]:
-    """Create a thread-safe ``(done, total) -> None`` progress callback.
+) -> Callable[..., None]:
+    """Create a thread-safe ``(done, total[, msg]) -> None`` progress callback.
 
     Used by sync code running in ``run_in_executor`` to push progress back to
     a job. ``loop`` is the async caller's event loop (the callback may fire
     from any thread). ``manager`` defaults to the module-level ``job_manager``;
     pass an explicit one if you ever construct your own JobManager (e.g. tests).
+
+    The optional third positional ``msg`` lets the caller override the
+    formatted template — useful when the natural progress unit is "videos
+    completed" (filling the template) but in between completions the caller
+    wants to surface "currently processing X" without bumping the count.
+    Pass a fractional ``done`` (e.g. 2.4 of 227) to render sub-item progress.
     """
     mgr = manager if manager is not None else job_manager
 
-    def callback(done: int, total: int) -> None:
+    def callback(done: float, total: float, msg: str | None = None) -> None:
+        rendered = msg if msg is not None else message_template.format(
+            done=int(done) if done == int(done) else done,
+            total=int(total) if total == int(total) else total,
+        )
         loop.call_soon_threadsafe(
-            lambda d=done, t=total: asyncio.ensure_future(
+            lambda d=done, t=total, m=rendered: asyncio.ensure_future(
                 mgr.update_job(
                     job_id,
                     progress=d / t if t else 0,
-                    message=message_template.format(done=d, total=t),
+                    message=m,
                 )
             )
         )

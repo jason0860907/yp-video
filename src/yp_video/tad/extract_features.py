@@ -372,6 +372,7 @@ def extract_features_from_video(
     stride_seconds: float = DEFAULT_STRIDE_SECONDS,
     batch_size: int = 32,
     feat_dim: int = 768,
+    on_batch_progress: Callable[[int, int], None] | None = None,
 ) -> np.ndarray:
     """Extract V-JEPA 2.1 features from a video file.
 
@@ -496,6 +497,7 @@ def extract_features_from_video(
     features_by_bi: dict[int, np.ndarray] = {}
 
     pbar = tqdm(total=len(batch_infos), desc=f"  {video_path.name}", leave=False)
+    last_batch_push = 0.0
     try:
         while True:
             t0 = _now()
@@ -567,6 +569,14 @@ def extract_features_from_video(
             t4 = _now()
 
             pbar.update(1)
+            # Throttle external progress notifications to 1 Hz so a long video
+            # (hundreds of batches) keeps the Job UI alive without flooding
+            # SSE subscribers with updates the user can't read at that rate.
+            if on_batch_progress:
+                now = time.perf_counter()
+                if now - last_batch_push >= 1.0:
+                    last_batch_push = now
+                    on_batch_progress(pbar.n, len(batch_infos))
             if _PROFILE:
                 # decode_wait now measures only consumer-side waits — when
                 # the buffer was empty. Steady ~0 means GPU never idled.
@@ -687,11 +697,29 @@ def process_directory(
                 on_progress(i + 1, total)
             continue
 
+        # Surface the current video name + (i+1)/total in the Job UI before
+        # the extraction starts so the user gets feedback even on long videos
+        # where the per-video on_progress wouldn't fire for many minutes.
+        if on_progress:
+            on_progress(i, total, msg=f"({i + 1}/{total}) {video_path.name}")
+
+        # Push fractional sub-progress every ~1s while the video processes
+        # so the UI doesn't appear stuck during long extractions.
+        def _on_batch(done_b: int, total_b: int, _i=i, _name=video_path.name) -> None:
+            if not on_progress:
+                return
+            frac = _i + (done_b / total_b if total_b else 0)
+            on_progress(
+                frac, total,
+                msg=f"({_i + 1}/{total}) {_name} [{done_b}/{total_b} batches]",
+            )
+
         try:
             features = extract_features_from_video(
                 video_path, model, device,
                 clip_seconds=clip_seconds, stride_seconds=stride_seconds,
                 batch_size=batch_size, feat_dim=cfg.feat_dim,
+                on_batch_progress=_on_batch,
             )
             np.save(output_path, features)
             print(f"Saved {output_path.name}: {features.shape}")
