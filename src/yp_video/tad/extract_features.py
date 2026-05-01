@@ -572,11 +572,16 @@ def extract_features_from_video(
             # Throttle external progress notifications to 1 Hz so a long video
             # (hundreds of batches) keeps the Job UI alive without flooding
             # SSE subscribers with updates the user can't read at that rate.
+            # Wrap defensively — a broken progress callback (closed event loop,
+            # SSE queue mishap) must never break extraction itself.
             if on_batch_progress:
                 now = time.perf_counter()
                 if now - last_batch_push >= 1.0:
                     last_batch_push = now
-                    on_batch_progress(pbar.n, len(batch_infos))
+                    try:
+                        on_batch_progress(pbar.n, len(batch_infos))
+                    except Exception as _e:  # noqa: BLE001
+                        print(f"  [warn] progress callback failed: {_e}", flush=True)
             if _PROFILE:
                 # decode_wait now measures only consumer-side waits — when
                 # the buffer was empty. Steady ~0 means GPU never idled.
