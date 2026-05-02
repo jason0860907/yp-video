@@ -373,6 +373,7 @@ def extract_features_from_video(
     batch_size: int = 32,
     feat_dim: int = 768,
     on_batch_progress: Callable[[int, int], None] | None = None,
+    should_stop: "threading.Event | None" = None,
 ) -> np.ndarray:
     """Extract V-JEPA 2.1 features from a video file.
 
@@ -505,6 +506,11 @@ def extract_features_from_video(
     last_batch_push = 0.0
     try:
         while True:
+            # Cooperative cancel: bail before pulling another batch off the
+            # queue. The finally block then sets `shutdown` which lets the
+            # producer threads exit instead of blocking on a full queue.
+            if should_stop is not None and should_stop.is_set():
+                break
             t0 = _now()
             item = decoded_q.get()
             t1 = _now()
@@ -638,6 +644,7 @@ def process_directory(
     batch_size: int = 32,
     model_name: str = "base",
     on_progress: Callable[[int, int], None] | None = None,
+    should_stop: "threading.Event | None" = None,
 ):
     """Process all videos under one or more directories.
 
@@ -646,6 +653,12 @@ def process_directory(
             broadcast/sideline dirs, so this accepts both forms.
         on_progress: Optional callback ``(done, total) -> None`` called after
             each video is processed (or skipped).
+        should_stop: Optional ``threading.Event`` polled between videos and
+            (via the same flag piped into ``extract_features_from_video``)
+            between batches. Async callers wrap a ``run_in_executor`` call
+            with this so a ``task.cancel()`` in the event loop actually
+            interrupts the sync worker — without it, CancelledError lands on
+            the awaiter while the thread keeps running V-JEPA on the GPU.
     """
     cfg = MODEL_CONFIGS[model_name]
     model = load_model(device, model_name)
@@ -700,6 +713,10 @@ def process_directory(
     print("Warmup done.")
 
     for i, video_path in enumerate(tqdm(video_files, desc="Processing videos")):
+        if should_stop and should_stop.is_set():
+            print(f"Cancelled — stopping after {i}/{total} videos")
+            break
+
         output_path = output_dir / f"{video_path.stem}.npy"
         if output_path.exists():
             print(f"Skipping {video_path.name} (already exists)")
@@ -730,7 +747,13 @@ def process_directory(
                 clip_seconds=clip_seconds, stride_seconds=stride_seconds,
                 batch_size=batch_size, feat_dim=cfg.feat_dim,
                 on_batch_progress=_on_batch,
+                should_stop=should_stop,
             )
+            # If the user cancelled mid-video, partial features are not safe
+            # to save (incomplete coverage breaks downstream alignment).
+            if should_stop and should_stop.is_set():
+                print(f"Cancelled mid-video, dropping partial features for {video_path.name}")
+                break
             np.save(output_path, features)
             print(f"Saved {output_path.name}: {features.shape}")
         except Exception as e:

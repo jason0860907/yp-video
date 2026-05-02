@@ -168,6 +168,18 @@ async def extract_features(req: ExtractFeaturesRequest):
 
     job = job_manager.create_job("feature_extract", {"videos": req.videos, "model": req.model}, name=label)
 
+    # Threading events so a Cancel button reaches the sync worker thread.
+    # asyncio.task.cancel() raises CancelledError on the awaiter but can't
+    # interrupt run_in_executor's blocking call by itself; the worker only
+    # bails when it polls `should_stop` at the next safe point (between
+    # batches / between videos). `worker_done` is set in the worker's
+    # finally so we can wait for the thread to actually exit before
+    # releasing the gpu_lock — once the asyncio Future is cancelled we
+    # can no longer await it directly to learn when the thread returned.
+    import threading
+    should_stop = threading.Event()
+    worker_done = threading.Event()
+
     async def run_extraction():
         try:
             await job_manager.update_job(job.id, status="running", message="Waiting for GPU...")
@@ -184,15 +196,35 @@ async def extract_features(req: ExtractFeaturesRequest):
                         job.id, loop,
                         message_template="Extracting features ({done}/{total} videos)",
                     )
-                    await loop.run_in_executor(
-                        None,
-                        lambda: process_directory(
-                            CUTS_DIRS, output_dir, device,
-                            videos=req.videos, batch_size=req.batch_size,
-                            model_name=req.model,
-                            on_progress=progress_cb,
-                        ),
-                    )
+
+                    def _run_worker():
+                        try:
+                            return process_directory(
+                                CUTS_DIRS, output_dir, device,
+                                videos=req.videos, batch_size=req.batch_size,
+                                model_name=req.model,
+                                on_progress=progress_cb,
+                                should_stop=should_stop,
+                            )
+                        finally:
+                            worker_done.set()
+
+                    worker = loop.run_in_executor(None, _run_worker)
+                    try:
+                        await worker
+                    except asyncio.CancelledError:
+                        # The asyncio Future is now cancelled but the worker
+                        # thread is still running. Set should_stop so it
+                        # bails at the next checkpoint, then block on
+                        # worker_done from a fresh executor slot — this
+                        # keeps gpu_lock held until CUDA work is actually
+                        # done so a follow-up job won't race.
+                        should_stop.set()
+                        await job_manager.update_job(
+                            job.id, message="Cancelling — finishing current batch...",
+                        )
+                        await loop.run_in_executor(None, worker_done.wait, 120.0)
+                        raise
 
                     # V-JEPA model is cached at module level — clear before gpu_lock exits
                     from yp_video.tad.extract_features import clear_model_cache
