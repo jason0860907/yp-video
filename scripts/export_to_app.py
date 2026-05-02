@@ -137,6 +137,30 @@ def fetch_manifest_signed_url(endpoint: str, token: str) -> dict:
     return r.json()
 
 
+class _ProgressReader:
+    """File wrapper that exposes both `read()` and `__len__()`.
+
+    Having `__len__` makes requests' `super_len()` resolve to a real Content-
+    Length, so the request goes out as a regular streamed PUT instead of
+    Transfer-Encoding: chunked. R2 rejects the chunked variant on presigned
+    PUTs (TCP closes mid-handshake → SSLEOFError on the client).
+    """
+
+    def __init__(self, file, size: int, on_progress):
+        self._file = file
+        self._size = size
+        self._on_progress = on_progress
+
+    def __len__(self) -> int:
+        return self._size
+
+    def read(self, n: int = -1) -> bytes:
+        chunk = self._file.read(n)
+        if chunk:
+            self._on_progress(len(chunk))
+        return chunk
+
+
 def put_with_progress(url: str, path: Path, content_type: str) -> None:
     size = path.stat().st_size
     with path.open("rb") as f, tqdm(
@@ -146,19 +170,11 @@ def put_with_progress(url: str, path: Path, content_type: str) -> None:
         desc=path.name,
         leave=False,
     ) as bar:
-
-        def chunked():
-            while True:
-                chunk = f.read(1024 * 1024)
-                if not chunk:
-                    break
-                bar.update(len(chunk))
-                yield chunk
-
+        body = _ProgressReader(f, size, bar.update)
         r = requests.put(
             url,
-            data=chunked(),
-            headers={"Content-Type": content_type, "Content-Length": str(size)},
+            data=body,
+            headers={"Content-Type": content_type},
             timeout=None,
         )
         r.raise_for_status()
