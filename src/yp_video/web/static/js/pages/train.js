@@ -1,7 +1,7 @@
 /**
  * Train page — Feature extraction + annotation conversion + TAD training.
  */
-import { api, API, SSEClient, card, pageHeader, stepBadge, statCard, sectionTitle, btnPrimary, btnSecondary, btnSmall, createProgressBar, showToast, showConfirm, emptyState, inputCls, selectCls, escapeHtml, kindTabs, updateKindTabs, badges } from '../shared.js';
+import { api, API, SSEClient, card, pageHeader, stepBadge, statCard, sectionTitle, btnPrimary, btnSecondary, btnSmall, createProgressBar, showToast, showConfirm, emptyState, inputCls, selectCls, escapeHtml, kindTabs, updateKindTabs, badges, filterChips, bindFilterChips } from '../shared.js';
 
 let sseClient = null;
 let videos = [];
@@ -23,39 +23,13 @@ const filterState = {
 // Kind filter for Extract Features list — 'all' | 'broadcast' | 'sideline'.
 let trainKindFilter = 'all';
 
-const FILTER_LABELS = {
-  annotated: 'Annotated',
-  pre_annotated: 'Pre-annotated',
-  features: 'Features',
-  prediction: 'Prediction',
-};
-
+// `has_*` fields on the train video records this page filters against.
 const FILTER_PROP = {
   annotated: 'has_annotation',
   pre_annotated: 'has_pre_annotation',
   features: 'has_features',
   prediction: 'has_prediction',
 };
-
-function filterChips(prefix, props) {
-  // Each chip shares btnSmall's shell so it sits inline beside the Select All
-  // / Deselect All buttons in the section header without visual mismatch.
-  const chip = (p) => `
-    <span class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium bg-white/[0.06] border border-border text-text-secondary">
-      <span>${FILTER_LABELS[p]}</span>
-      <label class="inline-flex items-center gap-1 cursor-pointer hover:text-emerald-300 transition-colors">
-        <input type="checkbox" data-prefix="${prefix}" data-prop="${p}" data-val="yes"
-               class="filter-cb accent-emerald-400 w-3 h-3 cursor-pointer">
-        <span>yes</span>
-      </label>
-      <label class="inline-flex items-center gap-1 cursor-pointer hover:text-rose-300 transition-colors">
-        <input type="checkbox" data-prefix="${prefix}" data-prop="${p}" data-val="no"
-               class="filter-cb accent-rose-400 w-3 h-3 cursor-pointer">
-        <span>no</span>
-      </label>
-    </span>`;
-  return props.map(chip).join(' ');
-}
 
 function matchesFilter(v) {
   if (trainKindFilter !== 'all' && v.kind !== trainKindFilter) return false;
@@ -352,21 +326,7 @@ function bindEvents() {
   document.getElementById('train-deselect-all').addEventListener('click',
     () => setSelectionForVisible(() => false));
 
-  // Filter checkboxes — yes/no per property are mutually exclusive.
-  document.querySelectorAll('.filter-cb[data-prefix="train"]').forEach(cb => {
-    cb.addEventListener('change', (e) => {
-      const { prop, val } = e.target.dataset;
-      if (e.target.checked) {
-        filterState[prop] = (val === 'yes');
-        const sibling = document.querySelector(
-          `.filter-cb[data-prefix="train"][data-prop="${prop}"][data-val="${val === 'yes' ? 'no' : 'yes'}"]`);
-        if (sibling) sibling.checked = false;
-      } else {
-        filterState[prop] = null;
-      }
-      renderVideos();
-    });
-  });
+  bindFilterChips('train', filterState, renderVideos);
   document.querySelectorAll('.kind-tab[data-prefix="train"]').forEach(btn => {
     btn.addEventListener('click', () => {
       trainKindFilter = btn.dataset.kind;

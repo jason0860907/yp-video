@@ -1,7 +1,7 @@
 /**
  * Predict page — TAD inference with multi-video selection and result visualization.
  */
-import { api, API, SSEClient, formatTime, card, pageHeader, sectionTitle, stepBadge, btnPrimary, btnSmall, showToast, showConfirm, emptyState, inputCls, selectCls, kindTabs, updateKindTabs, badges, renderJobProgress } from '../shared.js';
+import { api, API, SSEClient, formatTime, card, pageHeader, sectionTitle, stepBadge, btnPrimary, btnSmall, showToast, showConfirm, emptyState, inputCls, selectCls, kindTabs, updateKindTabs, badges, renderJobProgress, filterChips, bindFilterChips } from '../shared.js';
 
 let sseClients = [];
 let state = { videos: [], checkpoints: [], results: [], jobs: [] };
@@ -13,9 +13,36 @@ let _detections = [];
 let _duration = 0;
 let predKindFilter = 'all';
 
+// Per-property tri-state filter, same shape as Train.
+// null = any, true = must have, false = must NOT have. AND across props.
+const filterState = {
+  annotated: null,
+  pre_annotated: null,
+  features: null,
+  prediction: null,
+};
+
+function _currentModel() {
+  return document.getElementById('pred-model')?.value || 'large';
+}
+
+function matchesFilter(v) {
+  if (predKindFilter !== 'all' && v.kind !== predKindFilter) return false;
+  for (const [prop, want] of Object.entries(filterState)) {
+    if (want === null) continue;
+    let has;
+    if (prop === 'annotated')         has = !!v.has_annotation;
+    else if (prop === 'pre_annotated') has = !!v.has_pre_annotation;
+    else if (prop === 'prediction')    has = !!v.has_prediction;
+    else if (prop === 'features')      has = !!(v.features && v.features[_currentModel()]);
+    else continue;
+    if (has !== want) return false;
+  }
+  return true;
+}
+
 function visibleVideos() {
-  if (predKindFilter === 'all') return state.videos;
-  return state.videos.filter(v => v.kind === predKindFilter);
+  return state.videos.filter(matchesFilter);
 }
 
 export function render(container) {
@@ -37,8 +64,7 @@ export function render(container) {
              </select>
              ${btnSmall('Select All', 'id="pred-select-all"')}
              ${btnSmall('Deselect All', 'id="pred-deselect-all"')}
-             ${btnSmall('Unpredicted', 'id="pred-select-unpredicted"', 'primary')}
-             ${btnSmall('✅ Annotated', 'id="pred-select-annotated"')}`
+             ${filterChips('pred', ['annotated', 'pre_annotated', 'features', 'prediction'])}`
           )}
           <div id="pred-videos" class="space-y-0.5 max-h-72 overflow-y-auto pr-1"></div>
         </div>
@@ -177,10 +203,6 @@ function bindEvents() {
     () => setSelectionForVisible(() => true));
   document.getElementById('pred-deselect-all').addEventListener('click',
     () => setSelectionForVisible(() => false));
-  document.getElementById('pred-select-unpredicted').addEventListener('click',
-    () => setSelectionForVisible(v => !v.has_prediction));
-  document.getElementById('pred-select-annotated').addEventListener('click',
-    () => setSelectionForVisible(v => v.has_annotation));
   document.getElementById('pred-model').addEventListener('change', renderVideos);
   document.querySelectorAll('.kind-tab[data-prefix="pred"]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -188,6 +210,10 @@ function bindEvents() {
       renderVideos();
     });
   });
+  // Tri-state filter chips: narrow the visible list by per-property AND
+  // filters. Combined with Select All this replaces the old "Unpredicted"
+  // / "✅ Annotated" shortcut buttons with something composable.
+  bindFilterChips('pred', filterState, renderVideos);
 
   // Delegated handlers for dynamic lists — bound once at page render so
   // re-rendering the list innerHTML doesn't have to re-bind N rows of
@@ -257,9 +283,10 @@ function renderVideos() {
   if (vis.length === 0) {
     el.innerHTML = emptyState(
       '<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 4h18M3 12h18M3 20h18"/></svg>',
-      `No ${predKindFilter} videos`,
-      'Switch to a different tab'
+      'No videos match the filters',
+      'Adjust the kind tab or filter chips above',
     );
+    updatePredCount();
     return;
   }
 

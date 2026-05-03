@@ -561,6 +561,60 @@ export function updateKindTabs(prefix, kindFilter, list) {
   });
 }
 
+// ── Tri-state filter chips ──
+// Used on Train + Predict to narrow long video lists by per-property
+// must-have / must-not-have AND filters. Each chip has a "yes" and a "no"
+// checkbox that are mutually exclusive (clicking one unchecks the other).
+// Rendering only — pages keep their own `filterState` (`{prop: true|false|null}`)
+// and `matchesFilter()` predicate, since whether a property is satisfied
+// can be page-specific (e.g. Predict's `features` flag depends on the
+// currently-selected V-JEPA model).
+export const FILTER_LABELS = {
+  annotated: 'Annotated',
+  pre_annotated: 'Pre-annotated',
+  features: 'Features',
+  prediction: 'Prediction',
+};
+
+export function filterChips(prefix, props, labels = FILTER_LABELS) {
+  const chip = (p) => `
+    <span class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium bg-white/[0.06] border border-border text-text-secondary">
+      <span>${labels[p] ?? p}</span>
+      <label class="inline-flex items-center gap-1 cursor-pointer hover:text-emerald-300 transition-colors">
+        <input type="checkbox" data-prefix="${prefix}" data-prop="${p}" data-val="yes"
+               class="filter-cb accent-emerald-400 w-3 h-3 cursor-pointer">
+        <span>yes</span>
+      </label>
+      <label class="inline-flex items-center gap-1 cursor-pointer hover:text-rose-300 transition-colors">
+        <input type="checkbox" data-prefix="${prefix}" data-prop="${p}" data-val="no"
+               class="filter-cb accent-rose-400 w-3 h-3 cursor-pointer">
+        <span>no</span>
+      </label>
+    </span>`;
+  return props.map(chip).join(' ');
+}
+
+// Wire the click handler that flips a tri-state cell of the page's
+// filterState dict and re-renders. The two checkboxes per prop are
+// mutually exclusive — checking one unchecks the other.
+export function bindFilterChips(prefix, filterState, onChange) {
+  document.querySelectorAll(`.filter-cb[data-prefix="${prefix}"]`).forEach(cb => {
+    cb.addEventListener('change', (e) => {
+      const { prop, val } = e.target.dataset;
+      if (e.target.checked) {
+        filterState[prop] = (val === 'yes');
+        const sibling = document.querySelector(
+          `.filter-cb[data-prefix="${prefix}"][data-prop="${prop}"][data-val="${val === 'yes' ? 'no' : 'yes'}"]`,
+        );
+        if (sibling) sibling.checked = false;
+      } else {
+        filterState[prop] = null;
+      }
+      onChange();
+    });
+  });
+}
+
 // ── Video status badges ──
 // Small composable helpers used by Predict / Train / Review video lists. Pages
 // compose only the badges they care about (e.g. Predict shows the missing-
