@@ -177,7 +177,41 @@ async def _run_batch_transfer(
 
     Emits ``bytes_done / bytes_total / speed / eta`` into ``job.params`` so the
     frontend can render live speed and ETA without an extra endpoint.
+
+    Wrapped so any unhandled exception (e.g. an API contract drift on
+    ``job_manager.update_job``) surfaces as a failed job instead of a silent
+    "Task exception was never retrieved" warning on a job that just sits in
+    pending forever.
     """
+    try:
+        await _run_batch_transfer_inner(
+            job, files, category, base_dir, transfer_fn, verb,
+        )
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        print(f"\n[{verb.lower()}] batch transfer crashed:\n{tb}", flush=True)
+        job_obj = job_manager.get_job(job.id)
+        if job_obj:
+            job_obj.logs.append(f"{type(e).__name__}: {e}")
+            for line in tb.splitlines():
+                job_obj.logs.append(line)
+        await job_manager.update_job(
+            job.id, status="failed",
+            error=f"{type(e).__name__}: {e}",
+            message=f"{verb} crashed: {type(e).__name__}: {e}",
+        )
+
+
+async def _run_batch_transfer_inner(
+    job,
+    files: list[str],
+    category: str,
+    base_dir: Path,
+    transfer_fn: Callable[[Path, str, Callable | None], None],
+    verb: str,
+):
+    """Inner body of _run_batch_transfer; see wrapper for failure handling."""
     loop = asyncio.get_running_loop()
     total = len(files)
     failed = 0

@@ -113,12 +113,18 @@ class JobManager:
         message: str | None = None,
         error: str | None = None,
         name: str | None = None,
+        params: dict | None = None,
     ) -> None:
         """Update mutable job fields and broadcast the new state to subscribers.
 
         Only the listed fields are writable from outside; private state
         (``_task``, ``_subscribers``, ``logs``) must be touched directly on
         the ``Job`` (logs append) or via ``cancel_job`` / ``attach_task``.
+
+        ``params`` replaces the dict wholesale (callers usually do
+        ``params={**job.params, "bytes_done": …}`` to merge). Used by the
+        upload/download routers to pipe byte/speed/ETA telemetry through to
+        the frontend without a separate channel.
         """
         job = self.jobs.get(job_id)
         if not job:
@@ -133,6 +139,8 @@ class JobManager:
             job.error = error
         if name is not None:
             job.name = name
+        if params is not None:
+            job.params = params
         # Notify SSE subscribers
         event = job.to_dict()
         for q in job._subscribers:
