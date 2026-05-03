@@ -11,7 +11,7 @@ let perfData = null;
 let perfSources = [];
 let selectedSource = 'general';
 
-// Per-property tri-state filter for the Extract Features video list.
+// Per-property tri-state filters for the two video lists on this page.
 // null = any, true = must have, false = must NOT have. AND across props.
 const filterState = {
   annotated: null,
@@ -19,9 +19,16 @@ const filterState = {
   features: null,
   prediction: null,
 };
+const convFilterState = {
+  annotated: null,
+  pre_annotated: null,
+  features: null,
+  prediction: null,
+};
 
-// Kind filter for Extract Features list — 'all' | 'broadcast' | 'sideline'.
+// Kind filter for the lists — 'all' | 'broadcast' | 'sideline'.
 let trainKindFilter = 'all';
+let convKindFilter = 'all';
 
 // `has_*` fields on the train video records this page filters against.
 const FILTER_PROP = {
@@ -39,6 +46,20 @@ function matchesFilter(v) {
     if (has !== want) return false;
   }
   return true;
+}
+
+function matchesConvFilter(v) {
+  if (convKindFilter !== 'all' && v.kind !== convKindFilter) return false;
+  for (const [prop, want] of Object.entries(convFilterState)) {
+    if (want === null) continue;
+    const has = !!v[FILTER_PROP[prop]];
+    if (has !== want) return false;
+  }
+  return true;
+}
+
+function visibleConvVideos() {
+  return convVideos.filter(matchesConvFilter);
 }
 
 function visibleVideos() {
@@ -112,10 +133,10 @@ export function render(container) {
               ${sectionTitle(
                 'Videos',
                 '',
+                kindTabs('conv') + ' ' +
                 btnSmall('Select All', 'id="conv-select-all"') + ' ' +
                 btnSmall('Deselect All', 'id="conv-deselect-all"') + ' ' +
-                btnSmall('✅ Annotated', 'id="conv-select-annotated"', 'primary') + ' ' +
-                btnSmall('⚡ Pre-annotated', 'id="conv-select-pre-annotated"')
+                filterChips('conv', ['annotated', 'pre_annotated', 'features', 'prediction']),
               )}
               <div id="conv-videos" class="space-y-0.5 max-h-72 overflow-y-auto pr-1"></div>
             </div>
@@ -333,22 +354,24 @@ function bindEvents() {
       renderVideos();
     });
   });
-  document.getElementById('conv-select-all').addEventListener('click', () => {
-    convVideos.forEach(v => v.selected = true);
+  // Bulk-select for Convert operates on the visible-after-filters subset
+  // so chips + kind tabs narrow the scope of "Select All".
+  const setConvSelectionForVisible = (pred) => {
+    const visible = new Set(visibleConvVideos());
+    convVideos.forEach(v => { if (visible.has(v)) v.selected = pred(v); });
     renderConvVideos();
+  };
+  document.getElementById('conv-select-all').addEventListener('click',
+    () => setConvSelectionForVisible(() => true));
+  document.getElementById('conv-deselect-all').addEventListener('click',
+    () => setConvSelectionForVisible(() => false));
+  document.querySelectorAll('.kind-tab[data-prefix="conv"]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      convKindFilter = btn.dataset.kind;
+      renderConvVideos();
+    });
   });
-  document.getElementById('conv-deselect-all').addEventListener('click', () => {
-    convVideos.forEach(v => v.selected = false);
-    renderConvVideos();
-  });
-  document.getElementById('conv-select-annotated').addEventListener('click', () => {
-    convVideos.forEach(v => v.selected = v.has_annotation);
-    renderConvVideos();
-  });
-  document.getElementById('conv-select-pre-annotated').addEventListener('click', () => {
-    convVideos.forEach(v => v.selected = v.has_pre_annotation);
-    renderConvVideos();
-  });
+  bindFilterChips('conv', convFilterState, renderConvVideos);
 
   // Delegated checkbox listeners for the two video lists, bound once at
   // page render. Avoids re-binding N rows of listeners on every render +
@@ -452,22 +475,39 @@ function renderVideos() {
 
 function renderConvVideos() {
   const el = document.getElementById('conv-videos');
+  updateKindTabs('conv', convKindFilter, convVideos);
   if (convVideos.length === 0) {
     el.innerHTML = emptyState(
       '<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>',
       'No cut videos found',
-      'Cut some videos first'
+      'Cut some videos first',
     );
+    updateConvertCount();
     return;
   }
 
-  el.innerHTML = convVideos.map((v, i) => `
+  const vis = visibleConvVideos();
+  if (vis.length === 0) {
+    el.innerHTML = emptyState(
+      '<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 4h18M3 12h18M3 20h18"/></svg>',
+      'No videos match the filters',
+      'Adjust the kind tab or filter chips above',
+    );
+    updateConvertCount();
+    return;
+  }
+
+  // Index back into the master `convVideos` array so checkbox toggles still
+  // mutate the right entry after filtering.
+  el.innerHTML = vis.map(v => {
+    const i = convVideos.indexOf(v);
+    return `
     <div class="group flex items-center gap-3 p-2.5 rounded-xl border border-transparent hover:bg-white/[0.03] hover:border-white/5 transition-all duration-200">
       <input type="checkbox" data-idx="${i}" class="conv-check cursor-pointer accent-primary w-3.5 h-3.5" ${v.selected ? 'checked' : ''}>
       <span class="text-sm text-text-primary flex-1 truncate group-hover:text-white transition-colors duration-200">${v.name}</span>
       ${videoBadges(v)}
-    </div>
-  `).join('');
+    </div>`;
+  }).join('');
 
   // Click handlers are delegated from #conv-videos in bindEvents().
   updateConvertCount();
