@@ -28,6 +28,7 @@ from yp_video.config import (
 from yp_video.web.jobs import job_manager, JobStatus, make_progress_callback
 from yp_video.web.job_helpers import (
     ProgressParser,
+    run_gpu_sync,
     stop_vllm_for_job,
     stream_subprocess,
 )
@@ -168,82 +169,39 @@ async def extract_features(req: ExtractFeaturesRequest):
 
     job = job_manager.create_job("feature_extract", {"videos": req.videos, "model": req.model}, name=label)
 
-    # Threading events so a Cancel button reaches the sync worker thread.
-    # asyncio.task.cancel() raises CancelledError on the awaiter but can't
-    # interrupt run_in_executor's blocking call by itself; the worker only
-    # bails when it polls `should_stop` at the next safe point (between
-    # batches / between videos). `worker_done` is set in the worker's
-    # finally so we can wait for the thread to actually exit before
-    # releasing the gpu_lock — once the asyncio Future is cancelled we
-    # can no longer await it directly to learn when the thread returned.
-    import threading
-    should_stop = threading.Event()
-    worker_done = threading.Event()
-
     async def run_extraction():
         try:
             await job_manager.update_job(job.id, status="running", message="Waiting for GPU...")
-            async with stop_vllm_for_job(job.id, when=req.stop_vllm):
-                async with job_manager.gpu_lock:
-                    await job_manager.update_job(job.id, message=f"Loading V-JEPA 2.1 {req.model}...")
+            from yp_video.tad.extract_features import clear_model_cache, process_directory
+            import torch
 
-                    from yp_video.tad.extract_features import process_directory
-                    import torch
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            loop = asyncio.get_event_loop()
+            progress_cb = make_progress_callback(
+                job.id, loop,
+                message_template="Extracting features ({done}/{total} videos)",
+            )
+            await job_manager.update_job(job.id, message=f"Loading V-JEPA 2.1 {req.model}...")
 
-                    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-                    loop = asyncio.get_event_loop()
-                    progress_cb = make_progress_callback(
-                        job.id, loop,
-                        message_template="Extracting features ({done}/{total} videos)",
-                    )
+            await run_gpu_sync(
+                job.id,
+                lambda stop: process_directory(
+                    CUTS_DIRS, output_dir, device,
+                    videos=req.videos, batch_size=req.batch_size,
+                    model_name=req.model,
+                    on_progress=progress_cb,
+                    should_stop=stop,
+                ),
+                stop_vllm=req.stop_vllm,
+                on_cleanup=clear_model_cache,
+            )
 
-                    def _run_worker():
-                        try:
-                            return process_directory(
-                                CUTS_DIRS, output_dir, device,
-                                videos=req.videos, batch_size=req.batch_size,
-                                model_name=req.model,
-                                on_progress=progress_cb,
-                                should_stop=should_stop,
-                            )
-                        finally:
-                            worker_done.set()
-
-                    worker = loop.run_in_executor(None, _run_worker)
-                    try:
-                        await worker
-                    except asyncio.CancelledError:
-                        # The asyncio Future is now cancelled but the worker
-                        # thread is still running. Set should_stop so it
-                        # bails at the next checkpoint, then block on
-                        # worker_done from a fresh executor slot — this
-                        # keeps gpu_lock held until CUDA work is actually
-                        # done so a follow-up job won't race.
-                        should_stop.set()
-                        await job_manager.update_job(
-                            job.id, message="Cancelling — finishing current batch...",
-                        )
-                        await loop.run_in_executor(None, worker_done.wait, 120.0)
-                        raise
-
-                    # V-JEPA model is cached at module level — clear before gpu_lock exits
-                    from yp_video.tad.extract_features import clear_model_cache
-                    clear_model_cache()
-
-                    count = len(list(output_dir.glob("*.npy")))
-                    await job_manager.update_job(
-                        job.id, status="completed", progress=1.0,
-                        message=f"Extracted {req.model} features for {count} videos",
-                    )
+            count = len(list(output_dir.glob("*.npy")))
+            await job_manager.update_job(
+                job.id, status="completed", progress=1.0,
+                message=f"Extracted {req.model} features for {count} videos",
+            )
         except asyncio.CancelledError:
-            # Drop the cached compiled model so a retry rebuilds from scratch
-            # instead of reusing a possibly half-initialized one (e.g. when
-            # cancel fired mid-warmup or mid-compile).
-            try:
-                from yp_video.tad.extract_features import clear_model_cache
-                clear_model_cache()
-            except Exception:
-                pass
             await job_manager.update_job(job.id, status="cancelled")
         except Exception as e:
             tb = traceback.format_exc()
@@ -256,9 +214,8 @@ async def extract_features(req: ExtractFeaturesRequest):
                 job_obj.logs.append(f"{err_type}: {err_msg}")
                 for line in tb.splitlines():
                     job_obj.logs.append(line)
-            # Also clear the cache on hard failure: if the failure was a
-            # CUDA OOM, leaving the compiled module cached pins VRAM that
-            # the subsequent retry will need for the same allocation.
+            # Hard failure (e.g. CUDA OOM): drop the cached compiled module
+            # so a retry doesn't reuse a possibly-bad allocation.
             try:
                 from yp_video.tad.extract_features import clear_model_cache
                 clear_model_cache()

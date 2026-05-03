@@ -25,7 +25,7 @@ from yp_video.config import (
 )
 from yp_video.tad.extract_features import MODEL_CONFIGS
 from yp_video.web.jobs import job_manager, JobStatus
-from yp_video.web.job_helpers import finalize_batch_job, stop_vllm_for_job
+from yp_video.web.job_helpers import finalize_batch_job, run_gpu_sync
 from yp_video.web.r2_client import serve_video_or_r2_redirect
 
 router = APIRouter()
@@ -128,84 +128,87 @@ async def start_prediction(req: PredictRequest):
 
     async def run_all():
         from yp_video.tad.infer import run_inference
+        from yp_video.tad.extract_features import clear_model_cache
 
         await job_manager.update_job(job.id, status="running", message="Waiting for GPU...")
-        async with stop_vllm_for_job(job.id, when=req.stop_vllm):
-            async with job_manager.gpu_lock:
-                loop = asyncio.get_event_loop()
-                config_path = TAD_CONFIGS_DIR / "volleyball_actionformer.yaml"
-                failed = 0
+        config_path = TAD_CONFIGS_DIR / "volleyball_actionformer.yaml"
+        loop = asyncio.get_event_loop()
 
-                for i, video_name in enumerate(req.videos):
-                    video_path = find_cut(video_name)
-                    if video_path is None:
-                        raise HTTPException(404, f"Video not found: {video_name}")
-                    prefix = f"({i + 1}/{total})"
-
-                    def _make_cbs(pfx, jid):
-                        def msg_cb(text):
-                            loop.call_soon_threadsafe(
-                                lambda t=text: asyncio.ensure_future(
-                                    job_manager.update_job(jid, message=f"{pfx} {t}")
-                                )
-                            )
-                        def prog_cb(frac):
-                            loop.call_soon_threadsafe(
-                                lambda f=frac: asyncio.ensure_future(
-                                    job_manager.update_job(jid, progress=f)
-                                )
-                            )
-                        return msg_cb, prog_cb
-
-                    msg_cb, prog_cb = _make_cbs(prefix, job.id)
-
-                    try:
-                        await job_manager.update_job(
-                            job.id, progress=0.0,
-                            name=f"Predict ({i + 1}/{total}) — {video_name}",
-                            message=f"{prefix} Starting {video_name}...",
-                        )
-
-                        output_path = PREDICTIONS_DIR / f"{video_path.stem}_annotations.jsonl"
-                        cut_dir = None
-                        if req.cut_rallies:
-                            cut_dir = VIDEOS_DIR / "rally_clips" / video_path.stem
-
-                        await loop.run_in_executor(
-                            None,
-                            lambda vp=video_path, op=output_path, cd=cut_dir, mc=msg_cb, pc=prog_cb: run_inference(
-                                vp, checkpoint_path, config_path,
-                                op, req.device, req.threshold, cd,
-                                model_name=req.model,
-                                on_message=mc,
-                                on_progress=pc,
-                            ),
-                        )
-                    except asyncio.CancelledError:
-                        await job_manager.update_job(job.id, status="cancelled", message="Cancelled")
-                        return
-                    except Exception as e:
-                        failed += 1
-                        tb = traceback.format_exc()
-                        # Ensure traceback lands in stderr so the tmux/api log shows it
-                        print(f"\n[predict] Prediction failed for {video_name}:\n{tb}", flush=True)
-                        log.error("Prediction failed for %s:\n%s", video_name, tb)
-                        err_type = type(e).__name__
-                        err_msg = str(e) or "<no message>"
-                        job_obj = job_manager.get_job(job.id)
-                        if job_obj:
-                            job_obj.logs.append(f"[{video_name}] {err_type}: {err_msg}")
-                            for line in tb.splitlines():
-                                job_obj.logs.append(line)
-                        await job_manager.update_job(
-                            job.id,
-                            message=f"{prefix} Failed: {video_name} — {err_type}: {err_msg}",
-                            error=f"{err_type}: {err_msg}",
-                        )
-
-                await finalize_batch_job(
-                    job.id, total, failed, name=f"Predict ({total} videos)",
+        # Helpers that bounce job-state updates from the executor thread back
+        # onto the asyncio loop. Same pattern as before, just lifted out so
+        # the sync worker below stays plain blocking code.
+        def _push_update(**fields):
+            loop.call_soon_threadsafe(
+                lambda f=fields: asyncio.ensure_future(
+                    job_manager.update_job(job.id, **f)
                 )
+            )
+
+        def _make_cbs(pfx):
+            def msg_cb(text):
+                _push_update(message=f"{pfx} {text}")
+            def prog_cb(frac):
+                _push_update(progress=frac)
+            return msg_cb, prog_cb
+
+        def _predict_all(should_stop):
+            failed = 0
+            for i, video_name in enumerate(req.videos):
+                if should_stop.is_set():
+                    print(f"[predict] Cancelled — stopping after {i}/{total} videos")
+                    break
+                video_path = find_cut(video_name)
+                if video_path is None:
+                    failed += 1
+                    continue
+                prefix = f"({i + 1}/{total})"
+                msg_cb, prog_cb = _make_cbs(prefix)
+                _push_update(
+                    progress=i / total,
+                    name=f"Predict ({i + 1}/{total}) — {video_name}",
+                    message=f"{prefix} Starting {video_name}...",
+                )
+                output_path = PREDICTIONS_DIR / f"{video_path.stem}_annotations.jsonl"
+                cut_dir = (VIDEOS_DIR / "rally_clips" / video_path.stem) if req.cut_rallies else None
+                try:
+                    run_inference(
+                        video_path, checkpoint_path, config_path,
+                        output_path, req.device, req.threshold, cut_dir,
+                        model_name=req.model,
+                        on_message=msg_cb,
+                        on_progress=prog_cb,
+                    )
+                except Exception as e:
+                    failed += 1
+                    tb = traceback.format_exc()
+                    print(f"\n[predict] Prediction failed for {video_name}:\n{tb}", flush=True)
+                    log.error("Prediction failed for %s:\n%s", video_name, tb)
+                    err_type = type(e).__name__
+                    err_msg = str(e) or "<no message>"
+                    job_obj = job_manager.get_job(job.id)
+                    if job_obj:
+                        job_obj.logs.append(f"[{video_name}] {err_type}: {err_msg}")
+                        for line in tb.splitlines():
+                            job_obj.logs.append(line)
+                    _push_update(
+                        message=f"{prefix} Failed: {video_name} — {err_type}: {err_msg}",
+                        error=f"{err_type}: {err_msg}",
+                    )
+            return failed
+
+        try:
+            failed = await run_gpu_sync(
+                job.id,
+                _predict_all,
+                stop_vllm=req.stop_vllm,
+                on_cleanup=clear_model_cache,
+            )
+        except asyncio.CancelledError:
+            await job_manager.update_job(job.id, status="cancelled", message="Cancelled")
+            return
+        await finalize_batch_job(
+            job.id, total, failed, name=f"Predict ({total} videos)",
+        )
 
     task = asyncio.create_task(run_all())
     job_manager.attach_task([job], task)
