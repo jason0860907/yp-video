@@ -243,6 +243,18 @@ def actionformer_inference(
     cfg["dataset"]["input_dim"] = mcfg.feat_dim
     cfg["model"]["input_dim"] = mcfg.feat_dim
 
+    # Use the same fps that the training data loader did so postprocessing's
+    # `seconds = (feat_idx * stride + nframes/2) / fps` matches what the
+    # loss converged on. ActionFormer's THUMOS dataset takes default_fps
+    # from the YAML when it's set (it is — 60.0) and IGNORES the per-video
+    # `fps` field in the annotation JSON. Passing the real video fps here
+    # would scale every predicted boundary by default_fps / video_fps
+    # (e.g. 60/30 = 2× too long), then duration-clamp would truncate to
+    # the video length — exactly the "94% val mAP, garbage at predict
+    # time" symptom.
+    default_fps = cfg["dataset"].get("default_fps")
+    fps_for_postprocess = float(default_fps) if default_fps is not None else float(video_fps)
+
     # Build model and wrap in DataParallel (ActionFormer checkpoints expect this)
     model = make_meta_arch(cfg["model_name"], **cfg["model"])
     model = torch.nn.DataParallel(model, device_ids=[0])
@@ -268,7 +280,7 @@ def actionformer_inference(
         "feats": feats,
         "segments": None,
         "labels": None,
-        "fps": video_fps,
+        "fps": fps_for_postprocess,
         "duration": duration,
         "feat_stride": feat_stride,
         "feat_num_frames": num_frames,
