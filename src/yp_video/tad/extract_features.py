@@ -9,6 +9,7 @@ temporal scale of features consistent across videos with different fps.
 """
 
 import argparse
+import gc
 import os
 import queue
 import threading
@@ -18,6 +19,12 @@ import warnings
 from collections.abc import Callable
 from pathlib import Path
 from typing import NamedTuple
+
+try:
+    import psutil
+    _HAS_PSUTIL = True
+except ImportError:
+    _HAS_PSUTIL = False
 
 warnings.filterwarnings("ignore", message=".*sdp_kernel.*", category=FutureWarning)
 
@@ -712,6 +719,18 @@ def process_directory(
     torch.cuda.empty_cache()
     print("Warmup done.")
 
+    def _avail_gb() -> float:
+        if not _HAS_PSUTIL:
+            return -1.0
+        return psutil.virtual_memory().available / (1024 ** 3)
+
+    def _sweep() -> None:
+        # Force a generational GC + return CUDA cached blocks so a transient
+        # spike from one video doesn't pin RAM the next will need.
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
     for i, video_path in enumerate(tqdm(video_files, desc="Processing videos")):
         if should_stop and should_stop.is_set():
             print(f"Cancelled — stopping after {i}/{total} videos")
@@ -741,6 +760,7 @@ def process_directory(
                 msg=f"({_i + 1}/{total}) {_name} [{done_b}/{total_b} batches]",
             )
 
+        features = None
         try:
             features = extract_features_from_video(
                 video_path, model, device,
@@ -759,6 +779,16 @@ def process_directory(
         except Exception as e:
             print(f"Error processing {video_path.name}: {e}")
             traceback.print_exc()
+        finally:
+            # Per-video sweep: drop large transient buffers (frame numpy
+            # arrays, feature dicts, decord readers held by exited producer
+            # threads) so they don't accumulate across videos and silently
+            # push host RAM above the OOM threshold by the 5th or 6th
+            # iteration.
+            features = None
+            _sweep()
+            if _HAS_PSUTIL:
+                print(f"  [mem] {_avail_gb():.1f} GB available after {video_path.name}")
 
         if on_progress:
             on_progress(i + 1, total)
