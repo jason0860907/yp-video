@@ -39,6 +39,10 @@ async def lifespan(app: FastAPI):
 
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
+    # Survive controlling-tty close (tmux pane exit, SSH disconnect without
+    # nohup). Without this the default SIGHUP action terminates the process
+    # mid-job and we lose hours of feature extraction.
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)
 
     # Eager-load R2 config so a misconfigured r2.env surfaces at boot
     # rather than on the first upload deep inside a job handler.
