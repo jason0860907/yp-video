@@ -147,8 +147,6 @@ export const API = {
   predict: {
     videos: '/predict/videos',
     start: '/predict/start',
-    results: '/predict/results',
-    result: name => `/predict/results/${encodeURIComponent(name)}`,
   },
   train: {
     configDefaults: '/train/config-defaults',

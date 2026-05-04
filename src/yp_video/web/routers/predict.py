@@ -11,7 +11,6 @@ log = logging.getLogger(__name__)
 
 from yp_video.config import (
     ANNOTATIONS_DIR,
-    CUT_R2_CATEGORIES,
     FEATURES_DIR,
     PROJECT_ROOT,
     PREDICTIONS_DIR,
@@ -26,7 +25,6 @@ from yp_video.config import (
 from yp_video.tad.extract_features import MODEL_CONFIGS
 from yp_video.web.jobs import job_manager, JobStatus
 from yp_video.web.job_helpers import finalize_batch_job, run_gpu_sync
-from yp_video.web.r2_client import serve_video_or_r2_redirect
 
 router = APIRouter()
 
@@ -67,46 +65,6 @@ def list_videos() -> list[dict]:
             "features":           {name: stem in stems for name, stems in feat_stems.items()},
         })
     return results
-
-
-@router.get("/results")
-def list_results() -> list[str]:
-    """List prediction result files."""
-    if not PREDICTIONS_DIR.exists():
-        return []
-    return sorted(f.name for f in PREDICTIONS_DIR.glob("*.jsonl"))
-
-
-@router.get("/results/{name}")
-def get_result(name: str) -> dict:
-    """Get prediction result contents."""
-    from yp_video.core.jsonl import read_jsonl
-
-    path = PREDICTIONS_DIR / name
-    if not path.exists():
-        raise HTTPException(404, "Result not found")
-
-    meta, records = read_jsonl(path)
-    meta["results"] = records
-    return meta
-
-
-@router.get("/video/{video_name:path}")
-def stream_video(video_name: str):
-    """Serve a video file for playback."""
-    from urllib.parse import unquote
-
-    decoded = unquote(video_name)
-    video_path = find_cut(decoded)
-    if video_path is None:
-        # Fall through to R2 lookup using a placeholder path so the redirect
-        # still works for files that exist remotely but not locally.
-        from yp_video.config import CUTS_BROADCAST_DIR
-        video_path = CUTS_BROADCAST_DIR / decoded
-    response = serve_video_or_r2_redirect(video_path, CUT_R2_CATEGORIES)
-    if response:
-        return response
-    raise HTTPException(404, f"Video not found: {decoded}")
 
 
 @router.post("/start")

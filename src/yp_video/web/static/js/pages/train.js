@@ -6,7 +6,7 @@ import { api, API, SSEClient, card, pageHeader, stepBadge, statCard, sectionTitl
 let sseClient = null;
 let videos = [];
 let convVideos = [];
-let selectedModel = 'large';
+let selectedModel = 'base';
 let perfData = null;
 let perfSources = [];
 let selectedSource = 'general';
@@ -98,8 +98,8 @@ export function render(container) {
               <div>
                 <label class="block text-[11px] text-text-muted mb-1.5 uppercase tracking-wider font-medium">Model</label>
                 <select id="train-feat-model" class="w-44 ${selectCls}">
-                  <option value="base">ViT-B (768d, 80M)</option>
-                  <option value="large" selected>ViT-L (1024d, 300M)</option>
+                  <option value="base" selected>ViT-B (768d, 80M)</option>
+                  <option value="large">ViT-L (1024d, 300M)</option>
                   <option value="giant">ViT-g (1408d, 1B)</option>
                   <option value="gigantic">ViT-G (1664d, 2B)</option>
                 </select>
@@ -172,7 +172,7 @@ export function render(container) {
               <input id="train-seed" type="number" value="42" class="w-20 ${inputCls}">
             </div>
             <div>
-              <span id="train-model-label" class="text-[11px] text-text-muted">Features: <span class="text-text-primary font-medium">ViT-L</span></span>
+              <span id="train-model-label" class="text-[11px] text-text-muted">Features: <span class="text-text-primary font-medium">ViT-B</span></span>
             </div>
             ${btnSmall('Advanced ▾', 'id="train-advanced-toggle"')}
             ${btnPrimary('Start Training', 'id="train-start"')}
