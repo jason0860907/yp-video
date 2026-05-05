@@ -105,6 +105,13 @@ export class AnnotationEditor {
               )}
               <div class="h-px bg-border"></div>
               <div id="${p}-list" class="space-y-1.5 max-h-[55vh] overflow-y-auto pr-1 scrollbar-thin"></div>
+              <div class="h-px bg-border"></div>
+              <div class="flex items-center gap-2">
+                <label for="${p}-shift" class="text-[11px] text-text-muted whitespace-nowrap">YT shift</label>
+                <input id="${p}-shift" type="text" value="0" placeholder="0 or 1:23 or 1:23:45"
+                  class="bg-surface-100 text-text-primary border border-border-light rounded-lg px-2.5 py-1.5 text-xs flex-1 min-w-0 font-heading tabular-nums focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary/15 placeholder:text-text-muted">
+                ${btnSmall('Copy YT timestamps', `id="${p}-copy"`, 'primary')}
+              </div>
             </div>
           `)}
         </div>
@@ -122,6 +129,7 @@ export class AnnotationEditor {
     document.getElementById(`${p}-add-rally`).addEventListener('click', () => this.addAnnotation('rally'));
     document.getElementById(`${p}-add-nonrally`).addEventListener('click', () => this.addAnnotation('non-rally'));
     document.getElementById(`${p}-save`).addEventListener('click', () => this.save());
+    document.getElementById(`${p}-copy`).addEventListener('click', () => this.copyTimestamps());
     document.getElementById(`${p}-clear`).addEventListener('click', () => this.clearAll());
 
     this.videoEl.addEventListener('loadedmetadata', () => {
@@ -243,6 +251,41 @@ export class AnnotationEditor {
     this._selectedIdx = -1;
     this.state.dirty = true;
     this._renderAnnotations();
+  }
+
+  async copyTimestamps() {
+    const rallies = this.state.annotations.filter(a => a.label === 'rally');
+    if (rallies.length === 0) return showToast('No rallies to copy', 'warning');
+    const shift = parseTime(document.getElementById(`${this.prefix}-shift`)?.value);
+    const maxStart = Math.max(...rallies.map(a => a.start)) + shift;
+    const useHours = maxStart >= 3600;
+    const fmt = (s) => {
+      s = Math.max(0, Math.floor(s));
+      const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+      const pad = (n) => String(n).padStart(2, '0');
+      return useHours ? `${h}:${pad(m)}:${pad(sec)}` : `${pad(m)}:${pad(sec)}`;
+    };
+    const text = rallies.map((a, i) => `${fmt(a.start + shift)} Rally ${i + 1}`).join('\n');
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        // navigator.clipboard requires a secure context (HTTPS / localhost).
+        // Fall back to a hidden textarea + execCommand for plain-HTTP access.
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        const ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        if (!ok) throw new Error('execCommand copy failed');
+      }
+      showToast(`Copied ${rallies.length} timestamp(s)`, 'success');
+    } catch (e) {
+      showToast(`Copy failed: ${e.message}`, 'error');
+    }
   }
 
   async save() {
