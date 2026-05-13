@@ -23,7 +23,7 @@ def _find_project_root() -> Path:
 PROJECT_ROOT = _find_project_root()
 
 # ── External dependencies (at project root) ──────────────────────
-ACTIONFORMER_DIR = PROJECT_ROOT / "actionformer_release"
+ACTIONFORMER_DIR = PROJECT_ROOT / "actionformer"
 PROMPTS_DIR = PROJECT_ROOT / "prompts"
 VLLM_ENV_PATH = PROJECT_ROOT / "vllm.env"
 R2_ENV_PATH = PROJECT_ROOT / "r2.env"
