@@ -111,6 +111,25 @@ NUM_DECODE_PRODUCERS = int(os.environ.get("TAD_NUM_PRODUCERS", "2"))
 _DEFAULT_CACHE_FRAMES = 256
 
 
+# Crash-survival log: fsync'd per line so a kernel OOM-kill (which can't be
+# caught by Python `except`) still leaves a breadcrumb of which video was in
+# flight. Default location sits next to feature outputs so it's easy to find.
+_CRASH_LOG = Path(os.environ.get("TAD_CRASH_LOG", str(FEATURES_DIR / "extract_features.log")))
+
+
+def _crash_log(msg: str) -> None:
+    """Append a timestamped line and fsync immediately. Never raises."""
+    try:
+        _CRASH_LOG.parent.mkdir(parents=True, exist_ok=True)
+        line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} pid={os.getpid()} {msg}\n"
+        with open(_CRASH_LOG, "a") as f:
+            f.write(line)
+            f.flush()
+            os.fsync(f.fileno())
+    except Exception:
+        pass
+
+
 class ModelConfig(NamedTuple):
     hub_name: str
     feat_dim: int
@@ -705,6 +724,14 @@ def process_directory(
         f"prefetch={PREFETCH_DEPTH} (env: TAD_NUM_PRODUCERS / TAD_PREFETCH_DEPTH)"
     )
 
+    avail0 = (psutil.virtual_memory().available / (1024 ** 3)) if _HAS_PSUTIL else -1
+    _crash_log(
+        f"START total={total} model={model_name} batch={batch_size} "
+        f"producers={NUM_DECODE_PRODUCERS} prefetch={PREFETCH_DEPTH} "
+        f"decoder={'NVDEC' if HAS_NVDEC else ('decord' if HAS_DECORD else 'opencv')} "
+        f"avail_ram={avail0:.1f}GB"
+    )
+
     # Warmup: trigger AUTOTUNE + CUDAGraph with real batch_size so the
     # cost doesn't land inside the first video's tqdm.
     print("Warming up (AUTOTUNE + CUDAGraph)...")
@@ -761,6 +788,7 @@ def process_directory(
             )
 
         features = None
+        _crash_log(f"BEGIN [{i + 1}/{total}] {video_path.name} avail_ram={_avail_gb():.1f}GB")
         try:
             features = extract_features_from_video(
                 video_path, model, device,
@@ -773,12 +801,15 @@ def process_directory(
             # to save (incomplete coverage breaks downstream alignment).
             if should_stop and should_stop.is_set():
                 print(f"Cancelled mid-video, dropping partial features for {video_path.name}")
+                _crash_log(f"CANCEL {video_path.name}")
                 break
             np.save(output_path, features)
             print(f"Saved {output_path.name}: {features.shape}")
+            _crash_log(f"END   {video_path.name} shape={tuple(features.shape)}")
         except Exception as e:
             print(f"Error processing {video_path.name}: {e}")
             traceback.print_exc()
+            _crash_log(f"ERROR {video_path.name} {type(e).__name__}: {e}")
         finally:
             # Per-video sweep: drop large transient buffers (frame numpy
             # arrays, feature dicts, decord readers held by exited producer
@@ -788,7 +819,9 @@ def process_directory(
             features = None
             _sweep()
             if _HAS_PSUTIL:
-                print(f"  [mem] {_avail_gb():.1f} GB available after {video_path.name}")
+                avail = _avail_gb()
+                print(f"  [mem] {avail:.1f} GB available after {video_path.name}")
+                _crash_log(f"SWEEP {video_path.name} avail_ram={avail:.1f}GB")
 
         if on_progress:
             on_progress(i + 1, total)
