@@ -97,6 +97,12 @@ DEFAULTS = {
         "droppath": 0.1,
         # if to use label smoothing (>0.0)
         "label_smoothing": 0.0,
+        # regression loss: 'diou' (upstream) or 'asym_diou' (over-coverage bias)
+        "reg_loss_type": "diou",
+        # asym_diou: under-coverage penalty weight (clipping rally boundaries)
+        "reg_loss_miss_weight": 2.0,
+        # asym_diou: over-coverage penalty weight (extending past GT)
+        "reg_loss_extra_weight": 0.5,
     },
     "test_cfg": {
         "pre_nms_thresh": 0.001,

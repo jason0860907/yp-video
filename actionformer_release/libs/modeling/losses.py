@@ -166,3 +166,69 @@ def ctr_diou_loss_1d(
         loss = loss.sum()
 
     return loss
+
+
+@torch.jit.script
+def ctr_asym_diou_loss_1d(
+    input_offsets: torch.Tensor,
+    target_offsets: torch.Tensor,
+    miss_weight: float = 2.0,
+    extra_weight: float = 0.5,
+    reduction: str = 'none',
+    eps: float = 1e-8,
+) -> torch.Tensor:
+    """
+    Asymmetric variant of ctr_diou_loss_1d.
+
+    Adds a direction-aware boundary penalty (normalized by GT length) on top
+    of the standard DIoU. With miss_weight > extra_weight the model is
+    pushed toward predicting segments that *fully contain* the GT rather
+    than clipping the start or end.
+
+        miss  = ReLU(target - input)   # how much of GT is missed (under-cover)
+        extra = ReLU(input - target)   # how much beyond GT (over-cover)
+        loss  = diou + (miss_weight * miss + extra_weight * extra) / |GT|
+
+    Args:
+        input/target_offsets (Tensor): 1D offsets of size (N, 2),
+            [left, right] distances from the anchor center to segment ends.
+        miss_weight: penalty weight when predicted boundary falls inside GT.
+        extra_weight: penalty weight when predicted boundary extends past GT.
+        reduction: 'none' | 'mean' | 'sum'.
+    """
+    input_offsets = input_offsets.float()
+    target_offsets = target_offsets.float()
+    assert (input_offsets >= 0.0).all(), "predicted offsets must be non-negative"
+    assert (target_offsets >= 0.0).all(), "GT offsets must be non-negative"
+
+    lp, rp = input_offsets[:, 0], input_offsets[:, 1]
+    lg, rg = target_offsets[:, 0], target_offsets[:, 1]
+
+    # iou
+    lkis = torch.min(lp, lg)
+    rkis = torch.min(rp, rg)
+    intsctk = rkis + lkis
+    unionk = (lp + rp) + (lg + rg) - intsctk
+    iouk = intsctk / unionk.clamp(min=eps)
+
+    # smallest enclosing box + center offset (same as ctr_diou)
+    lc = torch.max(lp, lg)
+    rc = torch.max(rp, rg)
+    len_c = lc + rc
+    rho = 0.5 * (rp - lp - rg + lg)
+    diou_loss = 1.0 - iouk + torch.square(rho / len_c.clamp(min=eps))
+
+    # asymmetric boundary penalty (per side, normalized by GT length)
+    miss = F.relu(lg - lp) + F.relu(rg - rp)
+    extra = F.relu(lp - lg) + F.relu(rp - rg)
+    gt_len = (lg + rg).clamp(min=eps)
+    asym = (miss_weight * miss + extra_weight * extra) / gt_len
+
+    loss = diou_loss + asym
+
+    if reduction == "mean":
+        loss = loss.mean() if loss.numel() > 0 else 0.0 * loss.sum()
+    elif reduction == "sum":
+        loss = loss.sum()
+
+    return loss

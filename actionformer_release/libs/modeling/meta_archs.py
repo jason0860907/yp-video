@@ -6,7 +6,7 @@ from torch.nn import functional as F
 
 from .models import register_meta_arch, make_backbone, make_neck, make_generator
 from .blocks import MaskedConv1D, Scale, LayerNorm
-from .losses import ctr_diou_loss_1d, sigmoid_focal_loss
+from .losses import ctr_asym_diou_loss_1d, ctr_diou_loss_1d, sigmoid_focal_loss
 
 from ..utils import batched_nms
 
@@ -228,6 +228,13 @@ class PtTransformer(nn.Module):
         self.train_dropout = train_cfg['dropout']
         self.train_droppath = train_cfg['droppath']
         self.train_label_smoothing = train_cfg['label_smoothing']
+        # asymmetric regression loss (over-coverage bias). Defaults preserve
+        # the upstream behaviour: 'diou' -> standard ctr_diou_loss_1d.
+        self.train_reg_loss_type = train_cfg.get('reg_loss_type', 'diou')
+        self.train_reg_loss_miss_weight = train_cfg.get(
+            'reg_loss_miss_weight', 2.0)
+        self.train_reg_loss_extra_weight = train_cfg.get(
+            'reg_loss_extra_weight', 0.5)
 
         # test time config
         self.test_pre_nms_thresh = test_cfg['pre_nms_thresh']
@@ -575,12 +582,21 @@ class PtTransformer(nn.Module):
         if num_pos == 0:
             reg_loss = 0 * pred_offsets.sum()
         else:
-            # giou loss defined on positive samples
-            reg_loss = ctr_diou_loss_1d(
-                pred_offsets,
-                gt_offsets,
-                reduction='sum'
-            )
+            # regression loss defined on positive samples
+            if self.train_reg_loss_type == 'asym_diou':
+                reg_loss = ctr_asym_diou_loss_1d(
+                    pred_offsets,
+                    gt_offsets,
+                    miss_weight=self.train_reg_loss_miss_weight,
+                    extra_weight=self.train_reg_loss_extra_weight,
+                    reduction='sum',
+                )
+            else:
+                reg_loss = ctr_diou_loss_1d(
+                    pred_offsets,
+                    gt_offsets,
+                    reduction='sum'
+                )
             reg_loss /= self.loss_normalizer
 
         if self.train_loss_weight > 0:

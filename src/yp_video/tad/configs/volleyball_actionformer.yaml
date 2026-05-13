@@ -47,6 +47,11 @@ train_cfg: {
   center_sample_radius: 1.5,
   dropout: 0.2,
   droppath: 0.1,
+  # over-coverage bias for rally boundaries: penalize under-cover (clipped
+  # boundary) more than over-cover (extending past GT).
+  reg_loss_type: asym_diou,
+  reg_loss_miss_weight: 2.0,
+  reg_loss_extra_weight: 0.5,
 }
 test_cfg: {
   nms_method: soft,
