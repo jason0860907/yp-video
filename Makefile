@@ -1,4 +1,4 @@
-.PHONY: install dev
+.PHONY: install dev tunnel
 
 install:
 	sudo apt-get update && sudo apt-get install -y ffmpeg
@@ -12,3 +12,6 @@ install:
 
 dev:
 	uv run yp-app
+
+tunnel:
+	cloudflared tunnel --url http://localhost:8080
