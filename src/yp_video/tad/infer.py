@@ -38,7 +38,7 @@ def run_inference(
     model_name: str = "base",
     on_message: "Callable[[str], None] | None" = None,
     on_progress: "Callable[[float], None] | None" = None,
-):
+) -> list[dict]:
     """Run full inference pipeline on a video.
 
     Args:
@@ -52,6 +52,11 @@ def run_inference(
         model_name: V-JEPA model size (base/large/giant/gigantic)
         on_message: Optional callback for step-level status updates
         on_progress: Optional callback ``(fraction) -> None`` for progress bar
+
+    Returns:
+        List of detection dicts (also written to ``output_path`` as JSONL).
+        Each dict has keys ``segment`` ([start, end] in seconds), ``label``,
+        and ``score``.
     """
     def _msg(text: str):
         print(text)
@@ -156,6 +161,7 @@ def run_inference(
         print(f"\n  {len(sorted_dets)} clips saved to: {cut_dir}")
 
     print("Inference complete!")
+    return detections
 
 
 def simple_inference(
