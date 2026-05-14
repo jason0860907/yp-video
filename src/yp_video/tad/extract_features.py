@@ -85,7 +85,7 @@ TARGET_SAMPLE_FPS = 30.0
 # producer thread(s) and the GPU consumer; absorbs decode-time spikes so V-JEPA
 # inference doesn't stall waiting for the next batch.
 #
-# Memory note: each batch's `all_indices` spans the union of 32 clips' 64
+# Memory note: each batch's `all_indices` spans the union of 16 clips' 64
 # frames each. With ~30fps source + stride=0.8s, that's ~800 unique frames per
 # batch ≈ 5 GB at 1080p (808 × 1920×1080×3 bytes). With NUM_DECODE_PRODUCERS=N
 # producers and PREFETCH_DEPTH=D the in-flight host RAM for frames is roughly
@@ -396,7 +396,7 @@ def extract_features_from_video(
     device: torch.device,
     clip_seconds: float = DEFAULT_CLIP_SECONDS,
     stride_seconds: float = DEFAULT_STRIDE_SECONDS,
-    batch_size: int = 32,
+    batch_size: int = 16,
     feat_dim: int = 768,
     on_batch_progress: Callable[[int, int], None] | None = None,
     should_stop: "threading.Event | None" = None,
@@ -667,7 +667,7 @@ def process_directory(
     clip_seconds: float = DEFAULT_CLIP_SECONDS,
     stride_seconds: float = DEFAULT_STRIDE_SECONDS,
     videos: list[str] | None = None,
-    batch_size: int = 32,
+    batch_size: int = 16,
     model_name: str = "base",
     on_progress: Callable[[int, int], None] | None = None,
     should_stop: "threading.Event | None" = None,
@@ -848,7 +848,7 @@ def main():
                         help=f"Time gap between consecutive clip starts "
                              f"(default: {DEFAULT_STRIDE_SECONDS}s, "
                              f"= {1 / DEFAULT_STRIDE_SECONDS:.2f} features/sec)")
-    parser.add_argument("--batch-size", type=int, default=32)
+    parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--videos", type=str, nargs="*", default=None)
     args = parser.parse_args()
