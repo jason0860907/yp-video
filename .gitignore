@@ -29,6 +29,8 @@ r2.env
 # Project specific
 *.json
 !package.json
+# Generated wire contract — source of truth for the iOS client codegen
+!contracts/detector.schema.json
 
 # Large directories (use git submodule if needed)
 InternVideo/

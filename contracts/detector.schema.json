@@ -1,0 +1,217 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VolleyIQ Rally Detector Wire Contract",
+  "version": "2.0.0",
+  "description": "Source of truth for the request/response shape between the iOS app and any rally-detection backend. Generated from yp_video/contracts/detector.py via make_schema.py \u2014 do not edit by hand.",
+  "$defs": {
+    "CameraAngle": {
+      "enum": [
+        "phoneSideline",
+        "fixedVenue",
+        "broadcast"
+      ],
+      "title": "CameraAngle",
+      "type": "string"
+    },
+    "DetectorInput": {
+      "additionalProperties": false,
+      "description": "Detection request posted by the iOS client.",
+      "properties": {
+        "video_url": {
+          "description": "HTTP(S) or YouTube URL of the video to analyze",
+          "minLength": 1,
+          "title": "Video Url",
+          "type": "string"
+        },
+        "camera_angle": {
+          "$ref": "#/$defs/CameraAngle",
+          "default": "phoneSideline",
+          "description": "Camera position; affects model preprocessing."
+        },
+        "quality": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VideoQuality"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional download quality. Only honoured for YouTube URLs."
+        },
+        "locale": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "BCP-47 language tag echoed back so the iOS UI can match.",
+          "title": "Locale"
+        }
+      },
+      "required": [
+        "video_url"
+      ],
+      "title": "DetectorInput",
+      "type": "object"
+    },
+    "ErrorCode": {
+      "description": "Failure categories the backend reports.\n\nA new code may be added at any time; clients must treat unknown codes as a\ngeneric failure rather than crashing.",
+      "enum": [
+        "INVALID_INPUT",
+        "DOWNLOAD_FAILED",
+        "EXTRACTION_FAILED",
+        "MODEL_INFERENCE_ERROR",
+        "UPLOAD_FAILED",
+        "INTERNAL_ERROR"
+      ],
+      "title": "ErrorCode",
+      "type": "string"
+    },
+    "ErrorPayload": {
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/ErrorCode"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "retryable": {
+          "description": "Whether the caller can retry this exact request. False for permanent failures (invalid input, model crash); true for transient failures (network, ffmpeg flake, R2 hiccup, GPU OOM).",
+          "title": "Retryable",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable"
+      ],
+      "title": "ErrorPayload",
+      "type": "object"
+    },
+    "ErrorResult": {
+      "description": "Payload returned when detection fails. Mutually exclusive with SuccessResult.",
+      "properties": {
+        "error": {
+          "$ref": "#/$defs/ErrorPayload"
+        }
+      },
+      "required": [
+        "error"
+      ],
+      "title": "ErrorResult",
+      "type": "object"
+    },
+    "Rally": {
+      "properties": {
+        "index": {
+          "description": "1-based rally number within the match",
+          "minimum": 1,
+          "title": "Index",
+          "type": "integer"
+        },
+        "set": {
+          "description": "Set number this rally belongs to",
+          "minimum": 1,
+          "title": "Set",
+          "type": "integer"
+        },
+        "start": {
+          "description": "Seconds from video start",
+          "minimum": 0,
+          "title": "Start",
+          "type": "number"
+        },
+        "end": {
+          "description": "Seconds from video start",
+          "minimum": 0,
+          "title": "End",
+          "type": "number"
+        },
+        "score": {
+          "description": "Highlight score 0-100",
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Score",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "index",
+        "set",
+        "start",
+        "end",
+        "score"
+      ],
+      "title": "Rally",
+      "type": "object"
+    },
+    "SuccessResult": {
+      "description": "Payload returned when detection succeeds.",
+      "properties": {
+        "total_duration": {
+          "description": "Source video length in seconds",
+          "minimum": 0,
+          "title": "Total Duration",
+          "type": "number"
+        },
+        "rallies": {
+          "items": {
+            "$ref": "#/$defs/Rally"
+          },
+          "title": "Rallies",
+          "type": "array"
+        },
+        "locale_echo": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Echoes back DetectorInput.locale if provided",
+          "title": "Locale Echo"
+        },
+        "video_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Playable URL the iOS client should hand to AVPlayer. Echoes the input URL for direct HTTP sources; points at R2 for YouTube imports; null if the worker had to skip the upload.",
+          "title": "Video Url"
+        }
+      },
+      "required": [
+        "total_duration",
+        "rallies"
+      ],
+      "title": "SuccessResult",
+      "type": "object"
+    },
+    "VideoQuality": {
+      "enum": [
+        "360p",
+        "480p",
+        "720p",
+        "1080p"
+      ],
+      "title": "VideoQuality",
+      "type": "string"
+    }
+  }
+}

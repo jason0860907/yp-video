@@ -21,10 +21,26 @@ from yp_video.config import (
     TAD_FEATURES_DIR,
 )
 
+from yp_video.contracts import (
+    ExtractionError,
+    InvalidInputError,
+    ModelInferenceError,
+)
 from yp_video.core.sampling import frame_to_time, get_fps
 
 from .extract_features import MODEL_CONFIGS, extract_features_from_video, load_model, open_video
 from .output_converter import convert_tad_output_to_jsonl
+
+
+def _is_oom(exc: BaseException) -> bool:
+    """True if ``exc`` is a CUDA out-of-memory error.
+
+    A process-level OOM-kill (exit 137) can't be caught here; this only
+    catches the recoverable CUDA allocator failure, which is retryable.
+    """
+    if isinstance(exc, torch.cuda.OutOfMemoryError):
+        return True
+    return "out of memory" in str(exc).lower()
 
 
 def run_inference(
@@ -74,9 +90,12 @@ def run_inference(
     feat_dir = FEATURES_DIR / mcfg.dir_suffix
 
     # Get video info
-    reader = open_video(video_path)
-    num_frames = len(reader)
-    fps = get_fps(video_path)
+    try:
+        reader = open_video(video_path)
+        num_frames = len(reader)
+        fps = get_fps(video_path)
+    except Exception as exc:
+        raise InvalidInputError(f"Cannot read video {video_path.name}: {exc}") from exc
     duration = frame_to_time(num_frames, fps)
 
     # Step 1: Extract features (or load from cache)
@@ -86,12 +105,18 @@ def run_inference(
         features = np.load(feature_cache)
     else:
         _msg(f"Step 1/3: Extracting V-JEPA 2.1 {model_name} features...")
-        torch_device = torch.device(device)
-        model = load_model(torch_device, model_name)
-        features = extract_features_from_video(
-            video_path, model, torch_device,
-            feat_dim=mcfg.feat_dim,
-        )
+        try:
+            torch_device = torch.device(device)
+            model = load_model(torch_device, model_name)
+            features = extract_features_from_video(
+                video_path, model, torch_device,
+                feat_dim=mcfg.feat_dim,
+            )
+        except Exception as exc:
+            raise ExtractionError(
+                f"V-JEPA feature extraction failed: {exc}",
+                retryable=_is_oom(exc),
+            ) from exc
         feature_cache.parent.mkdir(parents=True, exist_ok=True)
         np.save(feature_cache, features)
     print(f"  Features shape: {features.shape}")
@@ -103,16 +128,22 @@ def run_inference(
         print("Warning: Checkpoint not found, using simple detection")
         detections = simple_inference(features, fps, confidence_threshold)
     else:
-        detections = actionformer_inference(
-            features,
-            checkpoint_path,
-            config_path,
-            device,
-            confidence_threshold,
-            duration,
-            fps,
-            model_name,
-        )
+        try:
+            detections = actionformer_inference(
+                features,
+                checkpoint_path,
+                config_path,
+                device,
+                confidence_threshold,
+                duration,
+                fps,
+                model_name,
+            )
+        except Exception as exc:
+            raise ModelInferenceError(
+                f"ActionFormer inference failed: {exc}",
+                retryable=_is_oom(exc),
+            ) from exc
 
     print(f"  Found {len(detections)} detections")
     _prog(0.9)
