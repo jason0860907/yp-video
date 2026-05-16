@@ -4,7 +4,7 @@
  * Pages are rendered once and kept in the DOM. Navigation toggles
  * visibility and calls activate/deactivate lifecycle hooks.
  */
-import { startSidebarPolling, skeleton } from './shared.js';
+import { startSidebarPolling, initSidebarToggle, skeleton } from './shared.js';
 
 const pages = {};       // module cache: { name: mod }
 const containers = {};  // DOM containers: { name: HTMLDivElement }
@@ -100,9 +100,11 @@ window.addEventListener('hashchange', navigate);
 window.addEventListener('DOMContentLoaded', () => {
   navigate();
   startSidebarPolling();
+  initSidebarToggle();
 });
 
 if (document.readyState !== 'loading') {
   navigate();
   startSidebarPolling();
+  initSidebarToggle();
 }

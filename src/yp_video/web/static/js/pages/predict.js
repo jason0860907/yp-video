@@ -2,7 +2,7 @@
  * Predict page — TAD inference with multi-video selection. Result browsing
  * and editing live on the Review page.
  */
-import { api, API, SSEClient, card, pageHeader, sectionTitle, stepBadge, btnPrimary, btnSmall, showToast, showConfirm, emptyState, inputCls, selectCls, kindTabs, updateKindTabs, badges, renderJobProgress, filterChips, bindFilterChips } from '../shared.js';
+import { api, API, SSEClient, card, pageHeader, sectionTitle, stepBadge, btnPrimary, btnSmall, showToast, showConfirm, emptyState, inputCls, selectCls, kindTabs, updateKindTabs, badges, renderJobProgress, filterPanel, bindFilterPanel, selectAllRow, syncSelectAll } from '../shared.js';
 
 let sseClients = [];
 let state = { videos: [], checkpoints: [], jobs: [] };
@@ -57,10 +57,9 @@ export function render(container) {
                <option value="giant">ViT-g (1408d)</option>
                <option value="gigantic">ViT-G (1664d)</option>
              </select>
-             ${btnSmall('Select All', 'id="pred-select-all"')}
-             ${btnSmall('Deselect All', 'id="pred-deselect-all"')}
-             ${filterChips('pred', ['annotated', 'pre_annotated', 'features', 'prediction'])}`
+             ${filterPanel('pred', ['annotated', 'pre_annotated', 'features', 'prediction'])}`
           )}
+          ${selectAllRow('pred')}
           <div id="pred-videos" class="space-y-0.5 max-h-72 overflow-y-auto pr-1"></div>
         </div>
       `)}
@@ -144,17 +143,12 @@ export function deactivate() {
 function bindEvents() {
   document.getElementById('pred-start').addEventListener('click', startPrediction);
   document.getElementById('pred-retry-failed').addEventListener('click', retryFailed);
-  // Bulk-select operates on the kind-filtered subset so tabs narrow the
-  // selection scope (e.g. "select all broadcast" without touching sideline).
-  const setSelectionForVisible = (pred) => {
+  // Master checkbox selects/clears every row currently passing the filters.
+  document.querySelector('[data-select-all="pred"]').addEventListener('change', (e) => {
     const visible = new Set(visibleVideos());
-    state.videos.forEach(v => { if (visible.has(v)) v.selected = pred(v); });
+    state.videos.forEach(v => { if (visible.has(v)) v.selected = e.target.checked; });
     renderVideos();
-  };
-  document.getElementById('pred-select-all').addEventListener('click',
-    () => setSelectionForVisible(() => true));
-  document.getElementById('pred-deselect-all').addEventListener('click',
-    () => setSelectionForVisible(() => false));
+  });
   document.getElementById('pred-model').addEventListener('change', renderVideos);
   document.querySelectorAll('.kind-tab[data-prefix="pred"]').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -162,10 +156,10 @@ function bindEvents() {
       renderVideos();
     });
   });
-  // Tri-state filter chips: narrow the visible list by per-property AND
-  // filters. Combined with Select All this replaces the old "Unpredicted"
-  // / "✅ Annotated" shortcut buttons with something composable.
-  bindFilterChips('pred', filterState, renderVideos);
+  // Tri-state filter panel: narrow the visible list by per-property AND
+  // filters. Combined with the master checkbox this replaces the old
+  // "Unpredicted" / "Annotated" shortcut buttons with something composable.
+  bindFilterPanel('pred', filterState, renderVideos);
 
   // Delegated handlers for dynamic lists — bound once at page render so
   // re-rendering the list innerHTML doesn't have to re-bind N rows of
@@ -261,6 +255,7 @@ function renderVideos() {
 }
 
 function updatePredCount() {
+  syncSelectAll('pred', visibleVideos());
   const el = document.getElementById('pred-count');
   if (!el) return;
   const sel = state.videos.filter(v => v.selected).length;

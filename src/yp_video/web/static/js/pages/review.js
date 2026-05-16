@@ -39,10 +39,11 @@ export function render(container) {
           <option value="broadcast">Broadcast only</option>
           <option value="sideline">Sideline only</option>
         </select>
-        <select id="rev-results" class="${selectCls}">
+        <select id="rev-results" class="${selectCls} max-w-[14rem] truncate">
           <option value="">Select result file...</option>
         </select>
         ${btnSmall('Load', 'id="rev-load"', 'primary')}
+        ${btnSmall('Download', 'id="rev-download"')}
       `)}
 
       ${editor.bodyHTML()}
@@ -52,6 +53,7 @@ export function render(container) {
 
   editor.bindEvents();
   document.getElementById('rev-load').addEventListener('click', loadFile);
+  document.getElementById('rev-download').addEventListener('click', () => editor.openDownloadModal());
   document.getElementById('rev-filter').addEventListener('change', renderResultsDropdown);
 
   loadResults();
@@ -143,3 +145,4 @@ async function loadFile() {
     showToast(`Failed to load: ${e.message}`, 'error');
   }
 }
+

@@ -11,9 +11,33 @@
  * handlers don't have to be re-bound on every render.
  */
 import {
-  api, formatTime, parseTime, card, sectionTitle,
-  btnSmall, showToast, showConfirm, emptyState,
+  api, API, formatTime, parseTime, card, sectionTitle,
+  btnSmall, btnPrimary, showToast, showConfirm, emptyState, escapeHtml,
 } from '../shared.js';
+
+
+// Trigger a browser download for an already-fetched Blob.
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+// POST to a clip endpoint and return the response Blob (mp4 / zip).
+async function postForBlob(path, body) {
+  const res = await fetch(`/api${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`API ${res.status}: ${await res.text()}`);
+  return res.blob();
+}
 
 
 export class AnnotationEditor {
@@ -80,8 +104,6 @@ export class AnnotationEditor {
                   <div class="flex items-center gap-2">
                     ${btnSmall('Start [', `id="${p}-mark-start"`, 'primary')}
                     ${btnSmall('End ]', `id="${p}-mark-end"`, 'primary')}
-                    ${btnSmall('Rally ↵', `id="${p}-add-rally"`, 'success')}
-                    ${btnSmall('Non-Rally', `id="${p}-add-nonrally"`)}
                   </div>
                 </div>
               </div>
@@ -126,8 +148,6 @@ export class AnnotationEditor {
 
     document.getElementById(`${p}-mark-start`).addEventListener('click', () => this.markStart());
     document.getElementById(`${p}-mark-end`).addEventListener('click', () => this.markEnd());
-    document.getElementById(`${p}-add-rally`).addEventListener('click', () => this.addAnnotation('rally'));
-    document.getElementById(`${p}-add-nonrally`).addEventListener('click', () => this.addAnnotation('non-rally'));
     document.getElementById(`${p}-save`).addEventListener('click', () => this.save());
     document.getElementById(`${p}-copy`).addEventListener('click', () => this.copyTimestamps());
     document.getElementById(`${p}-clear`).addEventListener('click', () => this.clearAll());
@@ -204,7 +224,7 @@ export class AnnotationEditor {
     this.state.annotations = (data.results || []).map(r => ({
       start: r.start ?? r.start_time ?? r.segment?.[0] ?? 0,
       end: r.end ?? r.end_time ?? r.segment?.[1] ?? 0,
-      label: r.label || (r.in_rally ? 'rally' : 'non-rally'),
+      label: 'rally',
       score: r.confidence ?? r.score ?? null,
     }));
     this.state.annotations.sort((a, b) => a.start - b.start);
@@ -223,14 +243,14 @@ export class AnnotationEditor {
 
   markEnd() {
     if (this._markStart == null) return;
-    this.addAnnotation('rally');
+    this.addAnnotation();
   }
 
-  addAnnotation(label) {
+  addAnnotation() {
     if (this._markStart == null) return showToast('Mark start first with [', 'warning');
     const end = this.videoEl.currentTime;
     if (end <= this._markStart) return showToast('End must be after start', 'warning');
-    this.state.annotations.push({ start: this._markStart, end, label });
+    this.state.annotations.push({ start: this._markStart, end, label: 'rally' });
     this.state.annotations.sort((a, b) => a.start - b.start);
     this._markStart = null;
     document.getElementById(`${this.prefix}-mark-info`).classList.add('hidden');
@@ -254,7 +274,7 @@ export class AnnotationEditor {
   }
 
   async copyTimestamps() {
-    const rallies = this.state.annotations.filter(a => a.label === 'rally');
+    const rallies = this.state.annotations;
     if (rallies.length === 0) return showToast('No rallies to copy', 'warning');
     const shift = parseTime(document.getElementById(`${this.prefix}-shift`)?.value);
     const maxStart = Math.max(...rallies.map(a => a.start)) + shift;
@@ -319,17 +339,9 @@ export class AnnotationEditor {
       case ' ': e.preventDefault(); this.videoEl.paused ? this.videoEl.play() : this.videoEl.pause(); break;
       case '[': e.preventDefault(); this.markStart(); break;
       case ']': e.preventDefault(); this.markEnd(); break;
-      case 'Enter': e.preventDefault(); this.addAnnotation('rally'); break;
+      case 'Enter': e.preventDefault(); this.addAnnotation(); break;
       case 'ArrowLeft': e.preventDefault(); this.videoEl.currentTime = Math.max(0, this.videoEl.currentTime - 5); break;
       case 'ArrowRight': e.preventDefault(); this.videoEl.currentTime += 5; break;
-      case 't': case 'T':
-        if (this._selectedIdx >= 0 && this._selectedIdx < this.state.annotations.length) {
-          const a = this.state.annotations[this._selectedIdx];
-          a.label = a.label === 'rally' ? 'non-rally' : 'rally';
-          this.state.dirty = true;
-          this._renderAnnotations();
-        }
-        break;
       case 'Delete': case 'Backspace':
         if (this._selectedIdx >= 0 && this._selectedIdx < this.state.annotations.length) {
           this.state.annotations.splice(this._selectedIdx, 1);
@@ -356,6 +368,11 @@ export class AnnotationEditor {
       this._renderAnnotations();
       return;
     }
+    const dlBtn = e.target.closest('[data-action="download"]');
+    if (dlBtn) {
+      this._downloadClip(idx, dlBtn);
+      return;
+    }
     if (e.target.closest('[data-action="preview"]')) {
       this._selectedIdx = idx;
       const a = this.state.annotations[idx];
@@ -372,6 +389,165 @@ export class AnnotationEditor {
     this.videoEl.currentTime = this.state.annotations[idx].start;
     this.videoEl.play();
     this._renderAnnotations();
+  }
+
+  /** Cut + download one rally segment as an mp4 via the clip endpoint. */
+  async _downloadClip(idx, btn) {
+    const a = this.state.annotations[idx];
+    if (!a) return;
+    if (!this.state.videoName) return showToast('No video loaded', 'warning');
+    if (btn.dataset.busy) return;
+    btn.dataset.busy = '1';
+    btn.classList.add('opacity-50', 'pointer-events-none');
+    try {
+      const blob = await postForBlob(API.review.clip, {
+        video: this.state.videoName,
+        segment: { start: a.start, end: a.end, label: 'rally' },
+      });
+      downloadBlob(blob, `rally_${Math.round(a.start)}-${Math.round(a.end)}.mp4`);
+      showToast('Clip downloaded', 'success');
+    } catch (e) {
+      showToast(`Download failed: ${e.message}`, 'error');
+    } finally {
+      // The row may have re-rendered mid-download — guard the detached node.
+      btn.dataset.busy = '';
+      btn.classList.remove('opacity-50', 'pointer-events-none');
+    }
+  }
+
+  /**
+   * Modal: cut the loaded rally annotations into mp4 clips — one at a time,
+   * or several checked at once as a zip. Operates on a snapshot of the
+   * current segments, so any start/end edits in the editor carry through.
+   */
+  openDownloadModal() {
+    const video = this.state.videoName;
+    if (!video || !this.state.annotations.length) {
+      showToast('Load a rally file first', 'warning');
+      return;
+    }
+    // Snapshot so later edits in the editor don't desync the open modal.
+    const segments = this.state.annotations.map(
+      a => ({ start: a.start, end: a.end, label: a.label }),
+    );
+    let busy = false;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'fixed inset-0 z-[60] flex items-center justify-center p-4';
+    overlay.style.cssText = 'background: rgba(0,0,0,0.55); backdrop-filter: blur(8px);';
+
+    const row = (s, i) => {
+      const isRally = s.label === 'rally';
+      const tag = isRally
+        ? 'bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/25'
+        : 'bg-white/[0.06] text-text-muted ring-1 ring-white/10';
+      return `
+        <div class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-white/[0.04]">
+          <input type="checkbox" data-idx="${i}" class="dl-pick accent-primary w-3.5 h-3.5 cursor-pointer" ${isRally ? 'checked' : ''}>
+          <span class="text-[10px] font-heading text-text-muted/60 w-5 text-right select-none">${i + 1}</span>
+          <span class="${tag} px-2 py-0.5 rounded-full text-[10px] font-medium select-none">${s.label}</span>
+          <span class="flex-1 text-xs font-heading text-text-secondary tabular-nums">${formatTime(s.start)} → ${formatTime(s.end)}</span>
+          <span class="text-[10px] text-text-muted font-heading tabular-nums">${(s.end - s.start).toFixed(1)}s</span>
+          ${btnSmall('Download', `data-one="${i}"`)}
+        </div>`;
+    };
+
+    overlay.innerHTML = `
+      <div class="relative w-full max-w-lg rounded-2xl border border-white/10 p-6 shadow-2xl flex flex-col max-h-[80vh]"
+           style="background: linear-gradient(180deg, rgba(20,20,26,0.98), rgba(12,12,16,0.98)); backdrop-filter: blur(20px);">
+        <div class="flex items-start justify-between gap-4 mb-4">
+          <div class="min-w-0">
+            <h3 class="text-base font-heading font-semibold text-text-primary">Download rally clips</h3>
+            <p class="mt-1 text-xs text-text-muted truncate">Cut from <span class="text-text-secondary">${escapeHtml(video.split('/').pop())}</span></p>
+          </div>
+          <button data-act="close" class="text-text-muted hover:text-text-primary cursor-pointer flex-shrink-0" aria-label="Close">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <div class="flex items-center gap-2 text-xs mb-2">
+          ${btnSmall('Select All', 'data-act="all"')}
+          ${btnSmall('Deselect All', 'data-act="none"')}
+          <span data-count class="ml-auto text-text-muted font-heading tabular-nums"></span>
+        </div>
+        <div class="flex-1 overflow-y-auto space-y-0.5 pr-1 border-t border-border pt-2">
+          ${segments.map(row).join('')}
+        </div>
+        <div class="flex items-center justify-between gap-2.5 mt-4 pt-4 border-t border-border">
+          <span data-status class="text-xs text-text-muted"></span>
+          ${btnPrimary('Download ZIP', 'data-act="zip" disabled')}
+        </div>
+      </div>`;
+
+    document.body.appendChild(overlay);
+    const dialog = overlay.firstElementChild;
+    const countEl = dialog.querySelector('[data-count]');
+    const statusEl = dialog.querySelector('[data-status]');
+    const zipBtn = dialog.querySelector('[data-act="zip"]');
+
+    const close = () => { document.removeEventListener('keydown', onKey); overlay.remove(); };
+    const onKey = (e) => { if (e.key === 'Escape') close(); };
+    const checks = () => [...dialog.querySelectorAll('.dl-pick')];
+
+    const refresh = () => {
+      const n = checks().filter(c => c.checked).length;
+      countEl.textContent = `${n} / ${segments.length} selected`;
+      zipBtn.disabled = n === 0 || busy;
+    };
+
+    // FFmpeg cuts on the server take a few seconds — lock the controls so the
+    // user can't fire overlapping requests, and surface a status line.
+    const setBusy = (on, msg = '') => {
+      busy = on;
+      statusEl.textContent = msg;
+      dialog.querySelectorAll('button, input').forEach(el => {
+        if (el.dataset.act !== 'close') el.disabled = on;
+      });
+      refresh();
+    };
+
+    dialog.querySelector('[data-act="close"]').addEventListener('click', close);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+    document.addEventListener('keydown', onKey);
+
+    dialog.addEventListener('change', (e) => {
+      if (e.target.matches('.dl-pick')) refresh();
+    });
+
+    dialog.addEventListener('click', async (e) => {
+      const btn = e.target.closest('button');
+      if (!btn || busy) return;
+      const act = btn.dataset.act;
+
+      if (act === 'all' || act === 'none') {
+        checks().forEach(c => { c.checked = act === 'all'; });
+        refresh();
+      } else if (act === 'zip') {
+        const picked = checks().filter(c => c.checked).map(c => segments[+c.dataset.idx]);
+        setBusy(true, `Cutting ${picked.length} clip(s)…`);
+        try {
+          const blob = await postForBlob(API.review.clipZip, { video, segments: picked });
+          downloadBlob(blob, 'rally-clips.zip');
+          showToast(`Downloaded ${picked.length} clip(s)`, 'success');
+        } catch (err) {
+          showToast(`Clip export failed: ${err.message}`, 'error');
+        } finally {
+          setBusy(false);
+        }
+      } else if (btn.dataset.one != null) {
+        const seg = segments[+btn.dataset.one];
+        setBusy(true, 'Cutting clip…');
+        try {
+          const blob = await postForBlob(API.review.clip, { video, segment: seg });
+          downloadBlob(blob, `${seg.label}_${Math.round(seg.start)}-${Math.round(seg.end)}.mp4`);
+        } catch (err) {
+          showToast(`Clip export failed: ${err.message}`, 'error');
+        } finally {
+          setBusy(false);
+        }
+      }
+    });
+
+    refresh();
   }
 
   _handleListChange(e) {
@@ -395,12 +571,11 @@ export class AnnotationEditor {
   _renderAnnotations() {
     const p = this.prefix;
     const el = document.getElementById(`${p}-list`);
-    // Count + total played time focus on rallies (the primary class). The
-    // count is stored in `(N rally)` form so a quick scan tells the user
-    // how many rallies were marked, and the trailing "MM:SS played" sums
-    // their durations as a sanity check (e.g. 30-min broadcast → ~10 min
-    // of actual play).
-    const rallies = this.state.annotations.filter(a => a.label === 'rally');
+    // The count shows `(N rally)` so a quick scan tells the user how many
+    // rallies were marked, and the trailing "MM:SS played" sums their
+    // durations as a sanity check (e.g. 30-min broadcast → ~10 min of
+    // actual play).
+    const rallies = this.state.annotations;
     document.getElementById(`${p}-count`).textContent = `(${rallies.length} rally)`;
 
     const totalEl = document.getElementById(`${p}-total-duration`);
@@ -427,20 +602,19 @@ export class AnnotationEditor {
   }
 
   _renderRow(a, i) {
-    const isRally = a.label === 'rally';
     const selected = this._selectedIdx === i;
-    const rowCls = isRally
-      ? (selected ? 'border-emerald-500/40 bg-emerald-500/[0.08]' : 'border-emerald-500/15 bg-emerald-500/[0.04] hover:bg-emerald-500/[0.08]')
-      : (selected ? 'border-primary/40 bg-primary/[0.08]' : 'border-border bg-surface-50/30 hover:bg-white/[0.04]');
-    const labelCls = isRally
-      ? 'bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/25'
-      : 'bg-white/[0.06] text-text-muted ring-1 ring-white/10';
+    const rowCls = selected
+      ? 'border-emerald-500/40 bg-emerald-500/[0.08]'
+      : 'border-emerald-500/15 bg-emerald-500/[0.04] hover:bg-emerald-500/[0.08]';
     const durationSec = (a.end - a.start).toFixed(1);
 
     return `
       <div class="ae-item flex items-center gap-2.5 px-3 py-2.5 rounded-xl border ${rowCls} cursor-pointer transition-all duration-200 group" data-idx="${i}">
         <span class="text-[10px] font-heading text-text-muted/60 w-4 text-right select-none">${i + 1}</span>
-        <span class="${labelCls} px-2.5 py-0.5 rounded-full text-[11px] font-medium select-none">${a.label}</span>
+        <button class="flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/25 hover:bg-emerald-500/30 cursor-pointer transition-colors duration-200" data-action="download" title="Download this rally clip">
+          <svg class="w-3 h-3 pointer-events-none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 11l5 5 5-5M12 16V4"/></svg>
+          <span class="pointer-events-none">rally</span>
+        </button>
         <div class="flex items-center gap-1.5 ml-auto">
           <input type="text" value="${formatTime(a.start)}" class="bg-transparent border-b border-white/10 text-text-primary text-[11px] w-14 text-center font-heading focus:border-primary-light outline-none transition-colors duration-200 tabular-nums" data-idx="${i}" data-field="start">
           <span class="text-text-muted/40 text-[10px]">→</span>
@@ -539,14 +713,10 @@ export class AnnotationEditor {
       for (const a of this.state.annotations) {
         const x1 = (a.start / this.state.duration) * w;
         const x2 = (a.end / this.state.duration) * w;
-        if (a.label === 'rally') {
-          const grad = ctx.createLinearGradient(x1, 0, x1, h);
-          grad.addColorStop(0, 'rgba(34, 197, 94, 0.5)');
-          grad.addColorStop(1, 'rgba(34, 197, 94, 0.25)');
-          ctx.fillStyle = grad;
-        } else {
-          ctx.fillStyle = 'rgba(100, 116, 139, 0.2)';
-        }
+        const grad = ctx.createLinearGradient(x1, 0, x1, h);
+        grad.addColorStop(0, 'rgba(34, 197, 94, 0.5)');
+        grad.addColorStop(1, 'rgba(34, 197, 94, 0.25)');
+        ctx.fillStyle = grad;
         ctx.beginPath();
         ctx.roundRect(x1, 2 * dpr, x2 - x1, h - 4 * dpr, 3 * dpr);
         ctx.fill();
@@ -582,6 +752,5 @@ export const ANNOTATION_KEYS = [
   [']', 'mark end'],
   ['Enter', 'rally'],
   ['← →', '±5s'],
-  ['T', 'rally/non-rally'],
   ['Del', 'remove'],
 ];

@@ -79,6 +79,24 @@
     }
     .sidebar-link.active svg { color: #818CF8; }
 
+    /* ── Collapsible sidebar ── */
+    /* When collapsed the sidebar is fully removed from the flex row, so
+       #app (flex-1) expands to the full window width. The floating
+       hamburger is the only way back. */
+    body.sidebar-collapsed #sidebar { display: none; }
+    #sidebar-toggle-show { display: none; }
+    body.sidebar-collapsed #sidebar-toggle-show { display: inline-flex; }
+
+    /* Pages cap their content at max-w-screen-2xl (~1536px) for readability
+       on wide monitors. When the sidebar is collapsed the user wants the
+       extra room, so lift the cap and let content fill the full width. */
+    body.sidebar-collapsed .max-w-screen-2xl { max-width: none; }
+
+    /* Video players (Review / Annotate / Cut — all ids end in -player) are
+       height-capped at ~45-50vh so the editor fits one screen. When the
+       sidebar is collapsed, give the video more vertical room too. */
+    body.sidebar-collapsed video[id$="-player"] { max-height: 72vh; }
+
     /* ── Accent stripe on sidebar top ── */
     #sidebar::before {
       content: '';
@@ -131,6 +149,15 @@
   </style>
 </head>
 <body class="flex h-screen overflow-hidden">
+  <!-- Restore collapsed state before paint to avoid a flash of the sidebar. -->
+  <script>if(localStorage.getItem('sidebarCollapsed')==='1')document.body.classList.add('sidebar-collapsed');</script>
+
+  <!-- Floating button to reopen the sidebar (only visible when collapsed). -->
+  <button id="sidebar-toggle-show" title="Show sidebar" aria-label="Show sidebar"
+    class="fixed top-3 left-3 z-50 w-9 h-9 rounded-lg items-center justify-center bg-surface-100/90 border border-border-light text-text-secondary hover:text-text-primary hover:bg-surface-200 backdrop-blur shadow-lg transition-colors duration-200 cursor-pointer">
+    <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
+  </button>
+
   <!-- Sidebar -->
   <aside id="sidebar" class="w-56 flex-shrink-0 flex flex-col h-screen relative">
     <!-- Logo -->
@@ -139,10 +166,14 @@
         <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-primary to-accent flex items-center justify-center shadow-lg">
           <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
         </div>
-        <div>
+        <div class="flex-1 min-w-0">
           <h1 class="text-sm font-bold text-text-primary font-heading tracking-tight">YP Video</h1>
           <p class="text-[10px] text-text-muted leading-none mt-0.5">Pipeline Dashboard</p>
         </div>
+        <button id="sidebar-collapse" title="Collapse sidebar" aria-label="Collapse sidebar"
+          class="flex-shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-text-muted hover:text-text-primary hover:bg-white/[0.06] transition-colors duration-200 cursor-pointer">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11 19l-7-7 7-7M19 19l-7-7 7-7"/></svg>
+        </button>
       </div>
     </div>
 

@@ -29,13 +29,12 @@ export function render(container) {
           <option value="broadcast">Broadcast only</option>
           <option value="sideline">Sideline only</option>
         </select>
-        <select id="ann-results" class="${selectCls}">
+        <select id="ann-results" class="${selectCls} max-w-[14rem] truncate">
           <option value="">Select result file...</option>
         </select>
         ${btnSmall('Load', 'id="ann-load"', 'primary')}
+        ${btnSmall('Download', 'id="ann-download"')}
       `)}
-
-      <div id="ann-stats" class="hidden flex flex-wrap items-center gap-2 px-1"></div>
 
       ${editor.bodyHTML()}
 
@@ -44,10 +43,10 @@ export function render(container) {
 
   editor.bindEvents();
   document.getElementById('ann-load').addEventListener('click', loadFile);
+  document.getElementById('ann-download').addEventListener('click', () => editor.openDownloadModal());
   document.getElementById('ann-kind').addEventListener('change', renderResultsDropdown);
 
   loadResults();
-  loadStats();
   editor.activate();
 }
 
@@ -55,42 +54,6 @@ export const activate = () => editor.activate();
 export const deactivate = () => editor.deactivate();
 
 // ── Page-specific data loading ─────────────────────────────────────────
-
-const SOURCE_CHIP_CLS = {
-  vnl: 'bg-sky-500/10 text-sky-300 border-sky-500/20',
-  u19: 'bg-purple-500/10 text-purple-300 border-purple-500/20',
-  cev_u22: 'bg-pink-500/10 text-pink-300 border-pink-500/20',
-  svl_japan: 'bg-rose-500/10 text-rose-300 border-rose-500/20',
-  enterprise: 'bg-amber-500/10 text-amber-300 border-amber-500/20',
-  tpvl: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20',
-  other: 'bg-white/[0.06] text-text-muted border-border',
-};
-
-async function loadStats() {
-  const el = document.getElementById('ann-stats');
-  if (!el) return;
-  try {
-    const data = await api(API.annotate.stats);
-    if (!data.by_source?.length) return;
-    const chips = data.by_source.map(s => {
-      const cls = SOURCE_CHIP_CLS[s.source] || SOURCE_CHIP_CLS.other;
-      const done = s.cuts > 0 && s.annotated >= s.cuts;
-      const mark = done ? '<span class="opacity-70">✓</span>' : '';
-      return `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] font-medium ${cls}" title="${s.annotated} annotated / ${s.cuts} cuts">
-        ${s.source}
-        <span class="font-heading tabular-nums opacity-80">${s.annotated}/${s.cuts}</span>
-        ${mark}
-      </span>`;
-    }).join('');
-    const total = `<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-border bg-surface-50/30 text-[11px] text-text-secondary ml-auto" title="annotated sets / total cuts">
-      Total <span class="font-heading text-text-primary tabular-nums">${data.total_annotated}/${data.total_cuts}</span>
-    </span>`;
-    el.innerHTML = chips + total;
-    el.classList.remove('hidden');
-  } catch {
-    // Stats are non-critical; stay silent on failure.
-  }
-}
 
 async function loadResults() {
   try {

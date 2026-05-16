@@ -134,7 +134,6 @@ export const API = {
     convert: '/detect/convert',
   },
   annotate: {
-    stats: '/annotate/stats',
     results: '/annotate/results',
     annotations: '/annotate/annotations',
     result: name => `/annotate/results/${encodeURIComponent(name)}`,
@@ -143,6 +142,8 @@ export const API = {
     results: '/review/results',
     annotations: '/review/annotations',
     result: (name, params = {}) => `/review/results/${encodeURIComponent(name)}${_q(params)}`,
+    clip: '/review/clip',
+    clipZip: '/review/clip-zip',
   },
   predict: {
     videos: '/predict/videos',
@@ -559,14 +560,13 @@ export function updateKindTabs(prefix, kindFilter, list) {
   });
 }
 
-// ── Tri-state filter chips ──
-// Used on Train + Predict to narrow long video lists by per-property
-// must-have / must-not-have AND filters. Each chip has a "yes" and a "no"
-// checkbox that are mutually exclusive (clicking one unchecks the other).
-// Rendering only — pages keep their own `filterState` (`{prop: true|false|null}`)
-// and `matchesFilter()` predicate, since whether a property is satisfied
-// can be page-specific (e.g. Predict's `features` flag depends on the
-// currently-selected V-JEPA model).
+// ── Video filter panel ──
+// A "Filters" button + dropdown popover that narrows long video lists by
+// per-property tri-state AND filters. Used on Train + Predict. Rendering
+// only — pages keep their own `filterState` (`{prop: true|false|null}`,
+// null = any / true = must-have / false = must-not-have) and a
+// `matchesFilter()` predicate, since whether a property is satisfied can be
+// page-specific (e.g. Predict's `features` flag depends on the V-JEPA model).
 export const FILTER_LABELS = {
   annotated: 'Annotated',
   pre_annotated: 'Pre-annotated',
@@ -574,43 +574,118 @@ export const FILTER_LABELS = {
   prediction: 'Prediction',
 };
 
-export function filterChips(prefix, props, labels = FILTER_LABELS) {
-  const chip = (p) => `
-    <span class="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium bg-white/[0.06] border border-border text-text-secondary">
-      <span>${labels[p] ?? p}</span>
-      <label class="inline-flex items-center gap-1 cursor-pointer hover:text-emerald-300 transition-colors">
-        <input type="checkbox" data-prefix="${prefix}" data-prop="${p}" data-val="yes"
-               class="filter-cb accent-emerald-400 w-3 h-3 cursor-pointer">
-        <span>yes</span>
-      </label>
-      <label class="inline-flex items-center gap-1 cursor-pointer hover:text-rose-300 transition-colors">
-        <input type="checkbox" data-prefix="${prefix}" data-prop="${p}" data-val="no"
-               class="filter-cb accent-rose-400 w-3 h-3 cursor-pointer">
-        <span>no</span>
-      </label>
-    </span>`;
-  return props.map(chip).join(' ');
+export function filterPanel(prefix, props, labels = FILTER_LABELS) {
+  const seg = (p, val, text) => `
+    <button type="button" data-filter-tri="${prefix}" data-prop="${p}" data-val="${val}"
+      class="filter-tri px-2.5 py-1 text-[11px] font-heading rounded-md transition-colors duration-150 text-text-muted cursor-pointer">${text}</button>`;
+  const triRow = (p) => `
+    <div class="flex items-center justify-between gap-3 py-1">
+      <span class="text-xs text-text-secondary">${labels[p] ?? p}</span>
+      <div class="inline-flex rounded-lg border border-border bg-surface-100 p-0.5">
+        ${seg(p, 'any', 'Any')}${seg(p, 'yes', 'Has')}${seg(p, 'no', 'None')}
+      </div>
+    </div>`;
+  return `
+    <div class="relative inline-block" data-filter-root="${prefix}">
+      <button type="button" data-filter-btn="${prefix}"
+        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-white/[0.06] border border-border text-text-secondary hover:text-text-primary hover:bg-white/[0.08] transition-colors duration-200 cursor-pointer">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 4h18l-7 8v6l-4 2v-8z"/></svg>
+        Filters
+        <span data-filter-count="${prefix}" class="hidden px-1.5 rounded-full bg-primary/25 text-primary-light text-[10px] font-heading tabular-nums leading-[1.5]"></span>
+        <svg class="w-3 h-3 opacity-60" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
+      </button>
+      <div data-filter-pop="${prefix}"
+        class="hidden absolute right-0 mt-2 z-50 w-72 rounded-xl border border-white/10 p-3 shadow-2xl"
+        style="background: linear-gradient(180deg, rgba(20,20,26,0.99), rgba(12,12,16,0.99)); backdrop-filter: blur(16px);">
+        <div class="flex items-center justify-between mb-1.5">
+          <span class="text-xs font-heading font-semibold text-text-primary">Filter videos</span>
+          <button type="button" data-filter-clear="${prefix}" class="text-[11px] text-text-muted hover:text-text-primary cursor-pointer">Clear all</button>
+        </div>
+        ${props.map(triRow).join('')}
+      </div>
+    </div>`;
 }
 
-// Wire the click handler that flips a tri-state cell of the page's
-// filterState dict and re-renders. The two checkboxes per prop are
-// mutually exclusive — checking one unchecks the other.
-export function bindFilterChips(prefix, filterState, onChange) {
-  document.querySelectorAll(`.filter-cb[data-prefix="${prefix}"]`).forEach(cb => {
-    cb.addEventListener('change', (e) => {
-      const { prop, val } = e.target.dataset;
-      if (e.target.checked) {
-        filterState[prop] = (val === 'yes');
-        const sibling = document.querySelector(
-          `.filter-cb[data-prefix="${prefix}"][data-prop="${prop}"][data-val="${val === 'yes' ? 'no' : 'yes'}"]`,
-        );
-        if (sibling) sibling.checked = false;
-      } else {
-        filterState[prop] = null;
-      }
+// Wire the Filters popover: open/close, tri-state segments, clear-all.
+// Active segment colour mirrors the semantics — emerald = must-have,
+// rose = must-not-have, neutral = any.
+export function bindFilterPanel(prefix, filterState, onChange) {
+  const root = document.querySelector(`[data-filter-root="${prefix}"]`);
+  if (!root) return;
+  const btn = root.querySelector(`[data-filter-btn="${prefix}"]`);
+  const pop = root.querySelector(`[data-filter-pop="${prefix}"]`);
+  const countEl = root.querySelector(`[data-filter-count="${prefix}"]`);
+
+  const VAL = { any: null, yes: true, no: false };
+  const valOf = (s) => (s === null ? 'any' : s ? 'yes' : 'no');
+
+  const sync = () => {
+    const n = Object.values(filterState).filter(v => v !== null).length;
+    countEl.textContent = n;
+    countEl.classList.toggle('hidden', n === 0);
+    btn.classList.toggle('border-primary/50', n > 0);
+    btn.classList.toggle('text-text-primary', n > 0);
+    root.querySelectorAll('.filter-tri').forEach(s => {
+      const active = valOf(filterState[s.dataset.prop]) === s.dataset.val;
+      s.classList.remove('bg-emerald-500', 'bg-rose-500', 'bg-white/10', 'text-white', 'text-text-primary', 'text-text-muted');
+      if (!active) { s.classList.add('text-text-muted'); return; }
+      if (s.dataset.val === 'yes') s.classList.add('bg-emerald-500', 'text-white');
+      else if (s.dataset.val === 'no') s.classList.add('bg-rose-500', 'text-white');
+      else s.classList.add('bg-white/10', 'text-text-primary');
+    });
+  };
+
+  const onDoc = (e) => { if (!root.contains(e.target)) close(); };
+  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  const open = () => {
+    pop.classList.remove('hidden');
+    document.addEventListener('click', onDoc);
+    document.addEventListener('keydown', onKey);
+  };
+  function close() {
+    pop.classList.add('hidden');
+    document.removeEventListener('click', onDoc);
+    document.removeEventListener('keydown', onKey);
+  }
+
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    pop.classList.contains('hidden') ? open() : close();
+  });
+  root.querySelectorAll('.filter-tri').forEach(s => {
+    s.addEventListener('click', () => {
+      filterState[s.dataset.prop] = VAL[s.dataset.val];
+      sync();
       onChange();
     });
   });
+  root.querySelector(`[data-filter-clear="${prefix}"]`).addEventListener('click', () => {
+    for (const k of Object.keys(filterState)) filterState[k] = null;
+    sync();
+    onChange();
+  });
+  sync();
+}
+
+// ── Bulk-select header ──
+// A master tri-state checkbox for a filtered video list: checking it selects
+// every currently-visible row, unchecking clears them. `syncSelectAll` keeps
+// the box's checked / indeterminate state in step with the rows.
+export function selectAllRow(prefix) {
+  return `
+    <label class="flex w-fit items-center gap-2 px-1 py-0.5 cursor-pointer select-none group">
+      <input type="checkbox" data-select-all="${prefix}" class="accent-primary w-3.5 h-3.5 cursor-pointer">
+      <span class="text-[11px] text-text-muted group-hover:text-text-secondary transition-colors">Select all shown</span>
+    </label>`;
+}
+
+export function syncSelectAll(prefix, visibleList) {
+  const cb = document.querySelector(`[data-select-all="${prefix}"]`);
+  if (!cb) return;
+  const sel = visibleList.filter(v => v.selected).length;
+  cb.disabled = visibleList.length === 0;
+  cb.checked = visibleList.length > 0 && sel === visibleList.length;
+  cb.indeterminate = sel > 0 && sel < visibleList.length;
 }
 
 // ── Video status badges ──
@@ -618,9 +693,9 @@ export function bindFilterChips(prefix, filterState, onChange) {
 // compose only the badges they care about (e.g. Predict shows the missing-
 // features pill explicitly while Train hides it).
 export const badges = {
-  annotated: () => '<span title="Annotated">✅</span>',
-  preAnnotated: () => '<span title="Pre-annotation">⚡</span>',
-  predicted: () => '<span title="Predicted">🤖</span>',
+  annotated: () => '<span title="Annotated" class="inline-block w-2 h-2 rounded-full bg-sky-400 align-middle"></span>',
+  preAnnotated: () => '<span title="Pre-annotation" class="inline-block w-2 h-2 rounded-full bg-amber-400 align-middle"></span>',
+  predicted: () => '<span title="Predicted" class="inline-block w-2 h-2 rounded-full bg-violet-400 align-middle"></span>',
   hasFeatures: () =>
     '<span title="Features extracted" class="inline-flex items-center gap-1.5 text-[11px] text-emerald-400 bg-emerald-500/10 ring-1 ring-emerald-500/20 px-2.5 py-0.5 rounded-full font-medium"><span class="w-1.5 h-1.5 rounded-full bg-current"></span>features</span>',
   noFeatures: () =>
@@ -682,6 +757,23 @@ export function renderJobProgress(job, { detail = '', showLogs = false, truncate
         ${job.error ? `<p class="text-[10px] text-red-400/80${trunc}">${escapeHtml(job.error)}</p>` : ''}
         ${logsHtml}
       </div>`;
+}
+
+// ── Collapsible sidebar ──
+// Full-hide toggle: the chevron in the sidebar header collapses it; a
+// floating hamburger brings it back. State persists in localStorage. The
+// initial collapsed class is applied by an inline script in index.html so
+// there's no flash of the sidebar before this module runs.
+export function initSidebarToggle() {
+  const KEY = 'sidebarCollapsed';
+  const set = (collapsed) => {
+    document.body.classList.toggle('sidebar-collapsed', collapsed);
+    localStorage.setItem(KEY, collapsed ? '1' : '0');
+  };
+  document.getElementById('sidebar-collapse')
+    ?.addEventListener('click', () => set(true));
+  document.getElementById('sidebar-toggle-show')
+    ?.addEventListener('click', () => set(false));
 }
 
 // ── Sidebar state ──

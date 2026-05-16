@@ -1,7 +1,7 @@
 /**
  * Train page — Feature extraction + annotation conversion + TAD training.
  */
-import { api, API, SSEClient, card, pageHeader, stepBadge, statCard, sectionTitle, btnPrimary, btnSecondary, btnSmall, createProgressBar, showToast, showConfirm, emptyState, inputCls, selectCls, escapeHtml, kindTabs, updateKindTabs, badges, filterChips, bindFilterChips } from '../shared.js';
+import { api, API, SSEClient, card, pageHeader, stepBadge, statCard, sectionTitle, btnPrimary, btnSecondary, btnSmall, createProgressBar, showToast, showConfirm, emptyState, inputCls, selectCls, escapeHtml, kindTabs, updateKindTabs, badges, filterPanel, bindFilterPanel, selectAllRow, syncSelectAll } from '../shared.js';
 
 let sseClient = null;
 let videos = [];
@@ -88,10 +88,9 @@ export function render(container) {
                 'Videos',
                 '',
                 kindTabs('train') + ' ' +
-                btnSmall('Select All', 'id="train-select-all"') + ' ' +
-                btnSmall('Deselect All', 'id="train-deselect-all"') + ' ' +
-                filterChips('train', ['annotated', 'pre_annotated', 'features', 'prediction'])
+                filterPanel('train', ['annotated', 'pre_annotated', 'features', 'prediction'])
               )}
+              ${selectAllRow('train')}
               <div id="train-videos" class="space-y-0.5 max-h-72 overflow-y-auto pr-1"></div>
             </div>
             <div class="flex items-end gap-4">
@@ -134,10 +133,9 @@ export function render(container) {
                 'Videos',
                 '',
                 kindTabs('conv') + ' ' +
-                btnSmall('Select All', 'id="conv-select-all"') + ' ' +
-                btnSmall('Deselect All', 'id="conv-deselect-all"') + ' ' +
-                filterChips('conv', ['annotated', 'pre_annotated', 'features', 'prediction']),
+                filterPanel('conv', ['annotated', 'pre_annotated', 'features', 'prediction']),
               )}
+              ${selectAllRow('conv')}
               <div id="conv-videos" class="space-y-0.5 max-h-72 overflow-y-auto pr-1"></div>
             </div>
             <div class="flex items-end gap-4">
@@ -299,6 +297,7 @@ export function activate() {}
 export function deactivate() {}
 
 function updateExtractCount() {
+  syncSelectAll('train', visibleVideos());
   const el = document.getElementById('train-extract-count');
   if (!el) return;
   const vis = visibleVideos();
@@ -311,6 +310,7 @@ function updateExtractCount() {
 }
 
 function updateConvertCount() {
+  syncSelectAll('conv', visibleConvVideos());
   const el = document.getElementById('train-convert-count');
   if (!el) return;
   const sel = convVideos.filter(v => v.selected).length;
@@ -335,43 +335,34 @@ function bindEvents() {
     document.getElementById('train-model-label').innerHTML =
       `Features: <span class="text-text-primary font-medium">${names[selectedModel] || selectedModel}</span>`;
   });
-  // Bulk-select operates on the *visible* (filter-passing) subset so users can
-  // first narrow with filters and then "Select All" only the matching rows.
-  const setSelectionForVisible = (pred) => {
+  // Master checkbox selects/clears every row currently passing the filters,
+  // so users narrow with filters first and then bulk-select just the matches.
+  document.querySelector('[data-select-all="train"]').addEventListener('change', (e) => {
     const visible = new Set(visibleVideos());
-    videos.forEach(v => { if (visible.has(v)) v.selected = pred(v); });
+    videos.forEach(v => { if (visible.has(v)) v.selected = e.target.checked; });
     renderVideos();
-  };
-  document.getElementById('train-select-all').addEventListener('click',
-    () => setSelectionForVisible(() => true));
-  document.getElementById('train-deselect-all').addEventListener('click',
-    () => setSelectionForVisible(() => false));
+  });
 
-  bindFilterChips('train', filterState, renderVideos);
+  bindFilterPanel('train', filterState, renderVideos);
   document.querySelectorAll('.kind-tab[data-prefix="train"]').forEach(btn => {
     btn.addEventListener('click', () => {
       trainKindFilter = btn.dataset.kind;
       renderVideos();
     });
   });
-  // Bulk-select for Convert operates on the visible-after-filters subset
-  // so chips + kind tabs narrow the scope of "Select All".
-  const setConvSelectionForVisible = (pred) => {
+  // Master checkbox for Convert operates on the visible-after-filters subset.
+  document.querySelector('[data-select-all="conv"]').addEventListener('change', (e) => {
     const visible = new Set(visibleConvVideos());
-    convVideos.forEach(v => { if (visible.has(v)) v.selected = pred(v); });
+    convVideos.forEach(v => { if (visible.has(v)) v.selected = e.target.checked; });
     renderConvVideos();
-  };
-  document.getElementById('conv-select-all').addEventListener('click',
-    () => setConvSelectionForVisible(() => true));
-  document.getElementById('conv-deselect-all').addEventListener('click',
-    () => setConvSelectionForVisible(() => false));
+  });
   document.querySelectorAll('.kind-tab[data-prefix="conv"]').forEach(btn => {
     btn.addEventListener('click', () => {
       convKindFilter = btn.dataset.kind;
       renderConvVideos();
     });
   });
-  bindFilterChips('conv', convFilterState, renderConvVideos);
+  bindFilterPanel('conv', convFilterState, renderConvVideos);
 
   // Delegated checkbox listeners for the two video lists, bound once at
   // page render. Avoids re-binding N rows of listeners on every render +

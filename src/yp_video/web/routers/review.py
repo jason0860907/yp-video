@@ -5,12 +5,19 @@ instead of rally-pre-annotations/.  Saves to rally-annotations/
 so corrected labels feed back into training.
 """
 
+import asyncio
+import io
 import json
+import shutil
+import tempfile
+import zipfile
 from pathlib import Path
 from urllib.parse import unquote
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
+from starlette.background import BackgroundTask
 
 from yp_video.config import (
     ANNOTATIONS_DIR,
@@ -22,6 +29,7 @@ from yp_video.config import (
     cut_kind_of,
     find_cut,
 )
+from yp_video.core.ffmpeg import FFmpegError, export_segment
 from yp_video.core.jsonl import read_jsonl
 from yp_video.web.r2_client import serve_video_or_r2_redirect
 
@@ -224,6 +232,113 @@ def get_result(name: str, source: str = "") -> dict:
                 raise HTTPException(400, "Invalid JSONL file")
 
     raise HTTPException(404, "Results file not found")
+
+
+# ── Rally clip download ──────────────────────────────────────────────────
+#
+# Cut the source video into mp4 clips at the rally annotation boundaries, so
+# a reviewer can download the actual rally footage (single clip or a zip).
+
+# Global cap on concurrent FFmpeg cuts, matching the Cut page's policy — each
+# FFmpeg process is CPU-heavy and more than 2 at once just thrash the VM.
+_CLIP_SEMAPHORE = asyncio.Semaphore(2)
+
+
+class ClipSegment(BaseModel):
+    start: float
+    end: float
+    label: str = "rally"
+
+
+class ClipRequest(BaseModel):
+    video: str
+    segment: ClipSegment
+
+
+class ClipZipRequest(BaseModel):
+    video: str
+    segments: list[ClipSegment]
+
+
+def _resolve_source(video: str) -> Path:
+    """Resolve an annotation's stored video path to a real file on disk.
+
+    Annotation files store the source video as the path it was cut from.
+    Accept either an absolute path or a bare filename resolved against the
+    cut dirs. The file must be present locally — FFmpeg needs to read it.
+    """
+    p = Path(video)
+    if p.is_absolute() and p.is_file():
+        return p
+    found = find_cut(p.name)
+    if found is not None:
+        return found
+    raise HTTPException(
+        404,
+        f"Source video not found locally: {video}. "
+        "The cut video must be on this machine to export clips.",
+    )
+
+
+def _clip_name(stem: str, seg: ClipSegment, idx: int) -> str:
+    """Stable, sortable clip filename: <video>_<label>NNN_<start>-<end>.mp4."""
+    return f"{stem}_{seg.label}{idx:03d}_{int(seg.start)}-{int(seg.end)}.mp4"
+
+
+async def _cut(source: Path, seg: ClipSegment, out: Path) -> None:
+    """Stream-copy one segment, surfacing FFmpeg failures as HTTP 500."""
+    if seg.end <= seg.start:
+        raise HTTPException(400, f"Segment end must be after start ({seg.start}–{seg.end})")
+    try:
+        async with _CLIP_SEMAPHORE:
+            # copy=True: stream copy, fast but cuts at the nearest keyframe —
+            # same trade-off the Cut page uses for segment export.
+            await export_segment(source, seg.start, seg.end, out, copy=True)
+    except FFmpegError as e:
+        raise HTTPException(500, f"Clip export failed: {e}")
+
+
+@router.post("/clip")
+async def cut_clip(req: ClipRequest):
+    """Cut a single rally segment and return it as an mp4 download."""
+    source = _resolve_source(req.video)
+    tmp = Path(tempfile.mkdtemp(prefix="rally-clip-"))
+    out = tmp / _clip_name(source.stem, req.segment, 1)
+    try:
+        await _cut(source, req.segment, out)
+    except BaseException:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
+    # BackgroundTask removes the temp dir after the response is fully sent.
+    return FileResponse(
+        out, media_type="video/mp4", filename=out.name,
+        background=BackgroundTask(shutil.rmtree, tmp, ignore_errors=True),
+    )
+
+
+@router.post("/clip-zip")
+async def cut_clip_zip(req: ClipZipRequest):
+    """Cut multiple rally segments and bundle them into one zip."""
+    if not req.segments:
+        raise HTTPException(400, "No segments selected")
+    source = _resolve_source(req.video)
+    tmp = Path(tempfile.mkdtemp(prefix="rally-clips-"))
+    try:
+        buf = io.BytesIO()
+        # ZIP_STORED — mp4 is already compressed, deflating just burns CPU.
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as zf:
+            for i, seg in enumerate(req.segments, 1):
+                out = tmp / _clip_name(source.stem, seg, i)
+                await _cut(source, seg, out)
+                zf.write(out, out.name)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    return Response(
+        buf.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="rally-clips.zip"'},
+    )
 
 
 @router.get("/video/{path:path}")
