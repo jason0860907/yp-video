@@ -34,7 +34,19 @@ export function render(container) {
         </select>
         ${btnSmall('Load', 'id="ann-load"', 'primary')}
         ${btnSmall('Download', 'id="ann-download"')}
+        ${btnSmall('✅ Mark Complete', 'id="ann-publish"', 'success')}
       `)}
+
+      <div id="ann-publish-result"
+           class="hidden rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 space-y-2">
+        <div class="text-sm font-medium">
+          ✅ Pushed to the app — paste this URL into VolleyIQ → Settings → Library manifest URL
+        </div>
+        <div class="flex gap-2 items-center">
+          <input id="ann-manifest-url" readonly class="${selectCls} flex-1 text-xs" />
+          ${btnSmall('Copy', 'id="ann-copy-url"', 'primary')}
+        </div>
+      </div>
 
       ${editor.bodyHTML()}
 
@@ -44,6 +56,8 @@ export function render(container) {
   editor.bindEvents();
   document.getElementById('ann-load').addEventListener('click', loadFile);
   document.getElementById('ann-download').addEventListener('click', () => editor.openDownloadModal());
+  document.getElementById('ann-publish').addEventListener('click', publishToApp);
+  document.getElementById('ann-copy-url').addEventListener('click', copyManifestURL);
   document.getElementById('ann-kind').addEventListener('change', renderResultsDropdown);
 
   loadResults();
@@ -93,8 +107,64 @@ async function loadFile() {
   try {
     const data = await api(API.annotate.result(name));
     editor.loadFromData(data);
+    document.getElementById('ann-publish-result').classList.add('hidden');
     showToast(`Loaded ${data.results?.length ?? 0} annotations`, 'success');
   } catch (e) {
     showToast(`Failed to load: ${e.message}`, 'error');
+  }
+}
+
+// ── Mark complete → push to the iOS app ────────────────────────────────
+
+async function publishToApp() {
+  const video = editor.state.videoName;
+  if (!video) return showToast('Load a result file first', 'warning');
+
+  const btn = document.getElementById('ann-publish');
+  btn.disabled = true;
+  try {
+    // Save the current annotations first so the export reads fresh data —
+    // the export reads the on-disk rally-annotations file by basename.
+    await api(API.annotate.annotations, {
+      method: 'POST',
+      body: {
+        video,
+        duration: editor.state.duration,
+        annotations: editor.state.annotations,
+      },
+    });
+    const res = await api(API.annotate.publish, { method: 'POST', body: { video } });
+    document.getElementById('ann-manifest-url').value = res.manifest_url;
+    document.getElementById('ann-publish-result').classList.remove('hidden');
+    showToast(`Pushed ${res.rally_count} rallies to the app`, 'success');
+  } catch (e) {
+    showToast(`Publish failed: ${e.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function copyManifestURL() {
+  const url = document.getElementById('ann-manifest-url').value;
+  if (!url) return;
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(url);
+    } else {
+      // navigator.clipboard needs a secure context (HTTPS / localhost);
+      // fall back to a hidden textarea for plain-HTTP dashboard access.
+      const ta = document.createElement('textarea');
+      ta.value = url;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      if (!ok) throw new Error('execCommand copy failed');
+    }
+    showToast('Manifest URL copied', 'success');
+  } catch (e) {
+    showToast(`Copy failed: ${e.message}`, 'error');
   }
 }

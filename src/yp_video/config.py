@@ -27,6 +27,7 @@ ACTIONFORMER_DIR = PROJECT_ROOT / "actionformer"
 PROMPTS_DIR = PROJECT_ROOT / "prompts"
 VLLM_ENV_PATH = PROJECT_ROOT / "vllm.env"
 R2_ENV_PATH = PROJECT_ROOT / "r2.env"
+TOKENS_ENV_PATH = PROJECT_ROOT / "tokens.env"
 VENV_PYTHON = PROJECT_ROOT / ".venv" / "bin" / "python"
 
 # ── TAD paths ─────────────────────────────────────────────────────
@@ -150,6 +151,12 @@ def load_vllm_env() -> dict[str, str]:
 def load_r2_env() -> dict[str, str]:
     """Load key=value pairs from r2.env."""
     return _load_env_file(R2_ENV_PATH)
+
+
+def load_tokens_env() -> dict[str, str]:
+    """Load key=value pairs from tokens.env (iOS upload worker URL +
+    auth token + library user id, used by the app-export flow)."""
+    return _load_env_file(TOKENS_ENV_PATH)
 
 
 def load_prompt(filename: str) -> str:

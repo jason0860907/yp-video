@@ -18,6 +18,7 @@ from yp_video.config import (
     cut_kind_of,
     find_cut,
 )
+from yp_video.app_export import AppExportError, export_one_match
 from yp_video.core.jsonl import read_jsonl
 from yp_video.web.r2_client import r2_client, serve_video_or_r2_redirect, sync_to_r2
 
@@ -170,3 +171,25 @@ async def save_annotations(req: SaveAnnotationsRequest) -> dict:
     sync_to_r2(output_path, "rally-annotations")
 
     return {"saved": str(output_path), "count": len(req.annotations)}
+
+
+class PublishRequest(BaseModel):
+    video: str
+
+
+@router.post("/publish")
+async def publish_to_app(req: PublishRequest) -> dict:
+    """Mark a match complete and push it to the iOS app.
+
+    Uploads the cut video plus a single-match manifest to R2, then returns
+    the manifest URL the user pastes into VolleyIQ. Expects the rally
+    annotations to have been saved first (the Annotate UI saves before
+    calling this). Heavy network I/O runs off the event loop.
+    """
+    basename = Path(req.video).stem
+    try:
+        return await asyncio.to_thread(export_one_match, basename)
+    except AppExportError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:  # noqa: BLE001 — surface R2 / network failures
+        raise HTTPException(502, f"Export to app failed: {e}")

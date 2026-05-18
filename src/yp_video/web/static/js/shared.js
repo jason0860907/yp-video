@@ -137,6 +137,7 @@ export const API = {
     results: '/annotate/results',
     annotations: '/annotate/annotations',
     result: name => `/annotate/results/${encodeURIComponent(name)}`,
+    publish: '/annotate/publish',
   },
   review: {
     results: '/review/results',
