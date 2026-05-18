@@ -60,7 +60,11 @@ def list_videos(model: str = "base") -> list[dict]:
         results.append({
             "name": f.name,
             "kind": cut_kind_of(f),
-            "has_detection": (SEG_ANNOTATIONS_DIR / f"{stem}.jsonl").exists(),
+            # "Detected" means the whole video finished: rally-pre-annotations
+            # is only written after detection + convert-to-rally completes.
+            # seg-annotations is written incrementally, so a partial/aborted
+            # run would leave a file there and falsely look done.
+            "has_detection": (PRE_ANNOTATIONS_DIR / f"{stem}_annotations.jsonl").exists(),
             "has_pre_annotation": (PRE_ANNOTATIONS_DIR / f"{stem}_annotations.jsonl").exists(),
             "has_annotation": (ANNOTATIONS_DIR / f"{stem}_annotations.jsonl").exists(),
             "has_features": (feat_dir / f"{stem}.npy").exists(),
