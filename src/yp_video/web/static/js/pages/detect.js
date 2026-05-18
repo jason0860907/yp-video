@@ -1,7 +1,7 @@
 /**
  * Detect page — VLM rally detection + vlm_to_rally conversion.
  */
-import { api, API, SSEClient, card, pageHeader, sectionTitle, stepBadge, btnPrimary, btnSecondary, btnSmall, showToast, emptyState, inputCls, renderJobProgress } from '../shared.js';
+import { api, API, SSEClient, card, pageHeader, sectionTitle, btnPrimary, btnSmall, showToast, emptyState, inputCls, renderJobProgress } from '../shared.js';
 
 let sseClients = [];
 let state = { videos: [], jobs: [], kindFilter: 'all' };
@@ -31,10 +31,7 @@ export function render(container) {
 
       ${card(`
         <div class="space-y-5">
-          <div class="flex items-center gap-3">
-            ${stepBadge(1)}
-            ${sectionTitle('Detection Settings', 'Configure VLM sliding-window parameters')}
-          </div>
+          ${sectionTitle('Detection Settings', 'VLM sliding-window + rally conversion parameters')}
           <div class="ml-10 grid grid-cols-3 gap-4">
             <div>
               <label class="block text-[11px] text-text-muted mb-1.5 uppercase tracking-wider">Batch Size</label>
@@ -47,6 +44,14 @@ export function render(container) {
             <div>
               <label class="block text-[11px] text-text-muted mb-1.5 uppercase tracking-wider">Slide Interval</label>
               <input id="det-slide" type="number" value="2" min="0.5" step="0.5" class="w-full ${inputCls}">
+            </div>
+            <div>
+              <label class="block text-[11px] text-text-muted mb-1.5 uppercase tracking-wider">Min Duration (s)</label>
+              <input id="det-min-dur" type="number" value="3" min="0" step="0.5" class="w-full ${inputCls}">
+            </div>
+            <div>
+              <label class="block text-[11px] text-text-muted mb-1.5 uppercase tracking-wider">Min Score</label>
+              <input id="det-min-score" type="number" value="0.5" min="0" max="1" step="0.1" class="w-full ${inputCls}">
             </div>
           </div>
           <div class="ml-10 flex items-center gap-3 pt-1">
@@ -71,28 +76,6 @@ export function render(container) {
         `)}
       </div>
 
-      ${card(`
-        <div class="space-y-5">
-          <div class="flex items-center gap-3">
-            ${stepBadge(2, 'accent')}
-            ${sectionTitle('Convert to Rally', 'Merge clip detections into rally annotations (voting + smoothing)')}
-          </div>
-          <div class="ml-10 grid grid-cols-2 gap-4">
-            <div>
-              <label class="block text-[11px] text-text-muted mb-1.5 uppercase tracking-wider">Min Duration (s)</label>
-              <input id="det-min-dur" type="number" value="3" min="0" step="0.5" class="w-full ${inputCls}">
-            </div>
-            <div>
-              <label class="block text-[11px] text-text-muted mb-1.5 uppercase tracking-wider">Min Score</label>
-              <input id="det-min-score" type="number" value="0.5" min="0" max="1" step="0.1" class="w-full ${inputCls}">
-            </div>
-          </div>
-          <div class="ml-10 flex items-center gap-3 pt-1">
-            ${btnSecondary('Convert Detections', 'id="det-convert"')}
-          </div>
-        </div>
-      `)}
-
     </div>`;
 
   loadVideos();
@@ -108,7 +91,6 @@ export function deactivate() {
 function bindEvents() {
   document.getElementById('det-start').addEventListener('click', startDetection);
   document.getElementById('det-retry-failed').addEventListener('click', retryFailed);
-  document.getElementById('det-convert').addEventListener('click', convertDetections);
   // Bulk-select buttons act on the currently visible (filtered) tab so they
   // never toggle videos the user can't see.
   document.getElementById('det-select-all').addEventListener('click', () => {
@@ -281,26 +263,4 @@ function renderJobsProgress() {
   const el = document.getElementById('det-jobs-progress');
   if (!el) return;
   el.innerHTML = state.jobs.map(job => renderJobProgress(job)).join('');
-}
-
-async function convertDetections() {
-  const btn = document.getElementById('det-convert');
-  btn.disabled = true;
-  btn.textContent = 'Converting...';
-
-  try {
-    const res = await api(API.detect.convert, {
-      method: 'POST',
-      body: {
-        min_duration: parseFloat(document.getElementById('det-min-dur').value),
-        min_score: parseFloat(document.getElementById('det-min-score').value),
-      },
-    });
-    showToast(`Converted ${res.count} videos`, 'success');
-  } catch (e) {
-    showToast(`Conversion failed: ${e.message}`, 'error');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Convert Detections';
-  }
 }
