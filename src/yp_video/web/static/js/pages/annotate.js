@@ -16,6 +16,8 @@ const editor = new AnnotationEditor({
   saveEndpoint: API.annotate.annotations,
   videoStreamPath: vp => `/api/annotate/video/${encodeURIComponent(vp)}`,
   previewBackoff: 3,
+  // Saving also pushes the match to the app — see pushToApp().
+  onSaved: pushToApp,
 });
 
 let results = [];
@@ -34,29 +36,26 @@ export function render(container) {
         </select>
         ${btnSmall('Load', 'id="ann-load"', 'primary')}
         ${btnSmall('Download', 'id="ann-download"')}
-        ${btnSmall('✅ Mark Complete', 'id="ann-publish"', 'success')}
       `)}
-
-      <div id="ann-publish-result"
-           class="hidden rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 space-y-2">
-        <div class="text-sm font-medium">
-          ✅ Pushed to the app — paste this URL into VolleyIQ → Settings → Library manifest URL
-        </div>
-        <div class="flex gap-2 items-center">
-          <input id="ann-manifest-url" readonly class="${selectCls} flex-1 text-xs" />
-          ${btnSmall('Copy', 'id="ann-copy-url"', 'primary')}
-        </div>
-      </div>
 
       ${editor.bodyHTML()}
 
       ${kbdHint(ANNOTATION_KEYS)}
+
+      <!-- App-export footer. Saving pushes the match to the app; this row
+           keeps the resulting import URL handy without being in the way. -->
+      <div id="ann-app-export" class="hidden text-xs opacity-70 border-t border-white/10 pt-3">
+        <div>📲 App import URL — paste into VolleyIQ → Settings → Library manifest URL</div>
+        <div class="flex gap-2 items-center mt-1.5">
+          <input id="ann-manifest-url" readonly class="${selectCls} flex-1 text-xs" />
+          ${btnSmall('Copy', 'id="ann-copy-url"')}
+        </div>
+      </div>
     </div>`;
 
   editor.bindEvents();
   document.getElementById('ann-load').addEventListener('click', loadFile);
   document.getElementById('ann-download').addEventListener('click', () => editor.openDownloadModal());
-  document.getElementById('ann-publish').addEventListener('click', publishToApp);
   document.getElementById('ann-copy-url').addEventListener('click', copyManifestURL);
   document.getElementById('ann-kind').addEventListener('change', renderResultsDropdown);
 
@@ -107,40 +106,41 @@ async function loadFile() {
   try {
     const data = await api(API.annotate.result(name));
     editor.loadFromData(data);
-    document.getElementById('ann-publish-result').classList.add('hidden');
+    // Hide the previous match's import URL until this one is saved/pushed.
+    document.getElementById('ann-app-export').classList.add('hidden');
     showToast(`Loaded ${data.results?.length ?? 0} annotations`, 'success');
   } catch (e) {
     showToast(`Failed to load: ${e.message}`, 'error');
   }
 }
 
-// ── Mark complete → push to the iOS app ────────────────────────────────
+// ── Push to the app (runs automatically after every Save) ──────────────
 
-async function publishToApp() {
-  const video = editor.state.videoName;
-  if (!video) return showToast('Load a result file first', 'warning');
-
-  const btn = document.getElementById('ann-publish');
-  btn.disabled = true;
+/**
+ * Post-save hook: upload the just-saved match to the app's R2 library.
+ * The first push for a match also uploads its (large) cut video, so this
+ * can be slow once per match; later pushes only re-send the small
+ * manifest. Always notifies the user — success or failure — and never
+ * throws, so a push failure can't masquerade as a failed Save.
+ */
+async function pushToApp(state) {
+  if (!state.videoName) return;
+  showToast('Pushing this match to the app…', 'info');
   try {
-    // Save the current annotations first so the export reads fresh data —
-    // the export reads the on-disk rally-annotations file by basename.
-    await api(API.annotate.annotations, {
+    const res = await api(API.annotate.publish, {
       method: 'POST',
-      body: {
-        video,
-        duration: editor.state.duration,
-        annotations: editor.state.annotations,
-      },
+      body: { video: state.videoName },
     });
-    const res = await api(API.annotate.publish, { method: 'POST', body: { video } });
     document.getElementById('ann-manifest-url').value = res.manifest_url;
-    document.getElementById('ann-publish-result').classList.remove('hidden');
-    showToast(`Pushed ${res.rally_count} rallies to the app`, 'success');
+    document.getElementById('ann-app-export').classList.remove('hidden');
+    showToast(
+      res.video_uploaded
+        ? `Pushed to the app — video + ${res.rally_count} rallies uploaded`
+        : `Pushed to the app — ${res.rally_count} rallies updated (video unchanged)`,
+      'success',
+    );
   } catch (e) {
-    showToast(`Publish failed: ${e.message}`, 'error');
-  } finally {
-    btn.disabled = false;
+    showToast(`Saved locally, but push to app failed: ${e.message}`, 'error');
   }
 }
 

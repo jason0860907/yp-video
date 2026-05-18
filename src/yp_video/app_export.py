@@ -1,8 +1,8 @@
 """Push one hand-corrected match into the iOS app's R2 library.
 
-The Annotate page calls `export_one_match()` when the user marks a match
-"complete": it uploads the cut video to R2 and writes a single-match
-manifest the iOS app imports by URL.
+The Annotate page calls `export_one_match()` after every save: it uploads
+the cut video to R2 (skipped when the file is unchanged) and writes a
+single-match manifest the iOS app imports by URL.
 
 Each match gets its OWN manifest file (`library/<match_id>.json`) rather
 than one shared catalog. The iOS importer upserts per match and never
@@ -63,14 +63,30 @@ def export_one_match(basename: str) -> dict:
     entry_cache = cache.get(basename) or {"match_id": str(uuid.uuid4())}
     match_id = entry_cache["match_id"]
 
-    # 1. Upload the cut video to R2 via the worker's signed PUT URL.
-    signed = _post_json(
-        f"{endpoint}/upload-url",
-        token,
-        {"user_id": user_id, "match_id": match_id, "content_type": "video/mp4"},
-    )
-    _put_file(signed["upload_url"], mp4, "video/mp4")
-    public_video_url = signed["public_url"]
+    # 1. Upload the cut video to R2 — but skip it when the file is unchanged
+    #    since the last push (same size + mtime). The video is the slow part;
+    #    a re-publish after an annotation tweak then only re-sends the tiny
+    #    manifest. The first push for a match always uploads.
+    mp4_stat = mp4.stat()
+    video_size = mp4_stat.st_size
+    video_mtime = int(mp4_stat.st_mtime)
+    cached_url = entry_cache.get("video_url")
+    if (
+        cached_url
+        and entry_cache.get("video_size") == video_size
+        and entry_cache.get("video_mtime") == video_mtime
+    ):
+        public_video_url = cached_url
+        video_uploaded = False
+    else:
+        signed = _post_json(
+            f"{endpoint}/upload-url",
+            token,
+            {"user_id": user_id, "match_id": match_id, "content_type": "video/mp4"},
+        )
+        _put_file(signed["upload_url"], mp4, "video/mp4")
+        public_video_url = signed["public_url"]
+        video_uploaded = True
 
     # 2. Build this match's manifest entry. Rally UUIDs are keyed by
     #    (start, end) so a re-publish after a sub-0.1s tweak updates the
@@ -90,7 +106,14 @@ def export_one_match(basename: str) -> dict:
                 "end_seconds": r["end"],
             }
         )
-    cache[basename] = {"match_id": match_id, "rally_ids": rally_ids}
+    cache[basename] = {
+        "match_id": match_id,
+        "rally_ids": rally_ids,
+        # Recorded so the next push can skip the video upload if unchanged.
+        "video_size": video_size,
+        "video_mtime": video_mtime,
+        "video_url": public_video_url,
+    }
     _save_id_cache(cache)
 
     manifest = {
@@ -125,6 +148,7 @@ def export_one_match(basename: str) -> dict:
         "manifest_url": msigned["public_url"],
         "match_id": match_id,
         "rally_count": len(rallies),
+        "video_uploaded": video_uploaded,
     }
 
 

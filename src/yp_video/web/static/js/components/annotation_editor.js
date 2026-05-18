@@ -68,6 +68,10 @@ export class AnnotationEditor {
     this.rowExtras = opts.rowExtras || (() => '');
     this.previewBackoff = opts.previewBackoff ?? 3;
     this.unloadOnDeactivate = opts.unloadOnDeactivate ?? false;
+    // Optional async hook run after a successful save — Annotate uses it to
+    // push the finished match to the app. Must handle its own errors so a
+    // failure there doesn't surface as a (misleading) "Save failed".
+    this.onSaved = opts.onSaved || null;
 
     this.state = { annotations: [], videoName: '', duration: 0, dirty: false };
     this.videoEl = null;
@@ -324,6 +328,9 @@ export class AnnotationEditor {
       this.state.dirty = false;
       this._refreshDirtyIndicator();
       showToast('Annotations saved!', 'success');
+      // Keep the Save button disabled through the post-save hook so a slow
+      // upload reads as "still working" rather than "done".
+      if (this.onSaved) await this.onSaved(this.state);
     } catch (e) {
       showToast(`Save failed: ${e.message}`, 'error');
     } finally {
