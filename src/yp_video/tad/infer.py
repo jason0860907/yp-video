@@ -54,6 +54,7 @@ def run_inference(
     model_name: str = "base",
     on_message: "Callable[[str], None] | None" = None,
     on_progress: "Callable[[float], None] | None" = None,
+    on_batch_progress: "Callable[[int, int], None] | None" = None,
 ) -> list[dict]:
     """Run full inference pipeline on a video.
 
@@ -68,6 +69,10 @@ def run_inference(
         model_name: V-JEPA model size (base/large/giant/gigantic)
         on_message: Optional callback for step-level status updates
         on_progress: Optional callback ``(fraction) -> None`` for progress bar
+        on_batch_progress: Optional ``(done, total) -> None`` callback fired
+            once per ~1s during V-JEPA feature extraction. Lets long-running
+            callers (e.g. the selfhost worker) push live sub-progress into a
+            job queue instead of sitting silent for 5+ minutes.
 
     Returns:
         List of detection dicts (also written to ``output_path`` as JSONL).
@@ -111,6 +116,7 @@ def run_inference(
             features = extract_features_from_video(
                 video_path, model, torch_device,
                 feat_dim=mcfg.feat_dim,
+                on_batch_progress=on_batch_progress,
             )
         except Exception as exc:
             raise ExtractionError(
