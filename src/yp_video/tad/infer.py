@@ -52,6 +52,7 @@ def run_inference(
     confidence_threshold: float = 0.3,
     cut_dir: Path | None = None,
     model_name: str = "base",
+    feature_batch_size: int = 8,
     on_message: "Callable[[str], None] | None" = None,
     on_progress: "Callable[[float], None] | None" = None,
     on_batch_progress: "Callable[[int, int], None] | None" = None,
@@ -67,6 +68,7 @@ def run_inference(
         confidence_threshold: Minimum confidence for detections
         cut_dir: If set, export rally clips to this directory
         model_name: V-JEPA model size (base/large/giant/gigantic)
+        feature_batch_size: V-JEPA feature extraction batch size.
         on_message: Optional callback for step-level status updates
         on_progress: Optional callback ``(fraction) -> None`` for progress bar
         on_batch_progress: Optional ``(done, total) -> None`` callback fired
@@ -115,6 +117,7 @@ def run_inference(
             model = load_model(torch_device, model_name)
             features = extract_features_from_video(
                 video_path, model, torch_device,
+                batch_size=feature_batch_size,
                 feat_dim=mcfg.feat_dim,
                 on_batch_progress=on_batch_progress,
             )

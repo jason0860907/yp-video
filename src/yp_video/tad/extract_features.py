@@ -396,7 +396,7 @@ def extract_features_from_video(
     device: torch.device,
     clip_seconds: float = DEFAULT_CLIP_SECONDS,
     stride_seconds: float = DEFAULT_STRIDE_SECONDS,
-    batch_size: int = 16,
+    batch_size: int = 8,
     feat_dim: int = 768,
     on_batch_progress: Callable[[int, int], None] | None = None,
     should_stop: "threading.Event | None" = None,
