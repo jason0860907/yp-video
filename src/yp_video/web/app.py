@@ -2,7 +2,6 @@
 
 import logging
 import signal
-import sys
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -24,7 +23,19 @@ logging.getLogger("uvicorn.access").addFilter(_QuietPollFilter())
 
 from yp_video.config import STATIC_DIR
 from yp_video.web.r2_client import r2_client
-from yp_video.web.routers import download, cut, annotate, detect, train, predict, review, jobs, system, upload, vlm
+from yp_video.web.routers import (
+    action_annotate,
+    annotate,
+    cut,
+    detect,
+    download,
+    jobs,
+    predict,
+    review,
+    system,
+    train,
+    upload,
+)
 from yp_video.web.vllm_manager import vllm_manager
 
 
@@ -33,12 +44,8 @@ async def lifespan(app: FastAPI):
     """Handle startup and shutdown."""
     print("Starting YP Video Analysis...")
 
-    def handle_signal(signum, frame):
-        print(f"\nReceived signal {signum}, shutting down...")
-        sys.exit(0)
-
-    signal.signal(signal.SIGINT, handle_signal)
-    signal.signal(signal.SIGTERM, handle_signal)
+    # Let uvicorn own SIGINT/SIGTERM so Ctrl+C and `make dev` shutdown
+    # follow uvicorn's normal graceful server-close path.
     # Survive controlling-tty close (tmux pane exit, SSH disconnect without
     # nohup). Without this the default SIGHUP action terminates the process
     # mid-job and we lose hours of feature extraction.
@@ -63,6 +70,7 @@ app = FastAPI(title="YP Video Analysis", lifespan=lifespan)
 # Mount API routers
 app.include_router(download.router, prefix="/api/download", tags=["download"])
 app.include_router(cut.router, prefix="/api/cut", tags=["cut"])
+app.include_router(action_annotate.router, prefix="/api/action-annotate", tags=["action-annotate"])
 app.include_router(annotate.router, prefix="/api/annotate", tags=["annotate"])
 app.include_router(detect.router, prefix="/api/detect", tags=["detect"])
 app.include_router(train.router, prefix="/api/train", tags=["train"])
@@ -71,7 +79,6 @@ app.include_router(review.router, prefix="/api/review", tags=["review"])
 app.include_router(jobs.router, prefix="/api/jobs", tags=["jobs"])
 app.include_router(system.router, prefix="/api/system", tags=["system"])
 app.include_router(upload.router, prefix="/api/upload", tags=["upload"])
-app.include_router(vlm.router, prefix="/api/vlm", tags=["vlm"])
 
 # Mount static files
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

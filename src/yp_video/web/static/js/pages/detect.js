@@ -1,5 +1,5 @@
 /**
- * Detect page — VLM rally detection + vlm_to_rally conversion.
+ * Detect page — rally detection + conversion.
  */
 import { api, API, SSEClient, card, pageHeader, sectionTitle, btnPrimary, btnSmall, showToast, emptyState, inputCls, renderJobProgress } from '../shared.js';
 
@@ -9,7 +9,7 @@ let state = { videos: [], jobs: [], kindFilter: 'all' };
 export function render(container) {
   container.innerHTML = `
     <div class="max-w-screen-2xl mx-auto space-y-6">
-      ${pageHeader('VLM Predict', 'Run VLM rally detection on cut videos')}
+      ${pageHeader('Rally Predict', 'Run rally detection on cut videos')}
 
       ${card(`
         <div class="space-y-4">

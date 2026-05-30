@@ -29,6 +29,7 @@ from yp_video.config import (
     cut_kind_of,
     find_cut,
 )
+from yp_video.core.annotation_ids import rally_id
 from yp_video.core.ffmpeg import FFmpegError, export_segment
 from yp_video.core.jsonl import read_jsonl
 from yp_video.web.r2_client import serve_video_or_r2_redirect
@@ -146,6 +147,7 @@ def _load_eval_context() -> tuple[dict[str, str], dict[str, float]]:
 
 
 class Annotation(BaseModel):
+    id: str | None = None
     start: float
     end: float
     label: str
@@ -160,8 +162,17 @@ class SaveAnnotationsRequest(BaseModel):
 def _read_jsonl_as_dict(path: Path) -> dict:
     """Read JSONL and return as {**meta, results: [...]}."""
     meta, records = read_jsonl(path)
+    video = str(meta.get("video") or path.stem.removesuffix("_annotations"))
+    records = [_with_rally_id(video, r, i) for i, r in enumerate(records)]
     meta["results"] = records
     return meta
+
+
+def _with_rally_id(video: str, record: dict, index: int) -> dict:
+    return {
+        **record,
+        "id": rally_id(video, record, index),
+    }
 
 
 @router.get("/results")
@@ -371,8 +382,13 @@ def save_annotations(req: SaveAnnotationsRequest) -> dict:
         meta = {"_meta": True, "video": req.video, "duration": req.duration}
         f.write(json.dumps(meta, ensure_ascii=False) + "\n")
 
-        for a in req.annotations:
-            annotation = {"start": a.start, "end": a.end, "label": a.label}
+        for i, a in enumerate(req.annotations):
+            annotation = {
+                "id": a.id or rally_id(req.video, a.model_dump(mode="json"), i),
+                "start": a.start,
+                "end": a.end,
+                "label": a.label,
+            }
             f.write(json.dumps(annotation, ensure_ascii=False) + "\n")
 
     return {"saved": str(output_path), "count": len(req.annotations)}

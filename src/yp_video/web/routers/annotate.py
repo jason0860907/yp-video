@@ -19,6 +19,7 @@ from yp_video.config import (
     find_cut,
 )
 from yp_video.app_export import AppExportError, export_one_match
+from yp_video.core.annotation_ids import rally_id
 from yp_video.core.jsonl import read_jsonl
 from yp_video.web.r2_client import r2_client, serve_video_or_r2_redirect, sync_to_r2
 
@@ -26,6 +27,7 @@ router = APIRouter()
 
 
 class Annotation(BaseModel):
+    id: str | None = None
     start: float
     end: float
     label: str
@@ -40,8 +42,17 @@ class SaveAnnotationsRequest(BaseModel):
 def _read_jsonl_as_dict(path: Path) -> dict:
     """Read JSONL and return as {**meta, results: [...]}."""
     meta, records = read_jsonl(path)
+    video = str(meta.get("video") or path.stem.removesuffix("_annotations"))
+    records = [_with_rally_id(video, r, i) for i, r in enumerate(records)]
     meta["results"] = records
     return meta
+
+
+def _with_rally_id(video: str, record: dict, index: int) -> dict:
+    return {
+        **record,
+        "id": rally_id(video, record, index),
+    }
 
 
 @router.get("/results")
@@ -141,8 +152,13 @@ def _write_annotations_atomic(output_path: Path, video: str, duration: float, an
     with open(tmp_path, "w", encoding="utf-8") as f:
         meta = {"_meta": True, "video": video, "duration": duration}
         f.write(json.dumps(meta, ensure_ascii=False) + "\n")
-        for a in annotations:
-            annotation = {"start": a.start, "end": a.end, "label": a.label}
+        for i, a in enumerate(annotations):
+            annotation = {
+                "id": a.id or rally_id(video, a.model_dump(mode="json"), i),
+                "start": a.start,
+                "end": a.end,
+                "label": a.label,
+            }
             f.write(json.dumps(annotation, ensure_ascii=False) + "\n")
         f.flush()
         os.fsync(f.fileno())

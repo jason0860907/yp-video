@@ -1,5 +1,5 @@
 /**
- * Annotate page — Rally annotation with timeline visualization.
+ * Rally Label page — rally annotation with timeline visualization.
  *
  * Most of the editor (video player + timeline + annotation list + keyboard
  * shortcuts) lives in components/annotation_editor.js. This file owns the
@@ -25,7 +25,7 @@ let results = [];
 export function render(container) {
   container.innerHTML = `
     <div class="max-w-screen-2xl mx-auto space-y-5">
-      ${pageHeader('Annotate', 'Review and edit rally annotations', `
+      ${pageHeader('Rally Label', 'Review and edit rally annotations', `
         <select id="ann-kind" class="${selectCls}" title="Filter by cut kind">
           <option value="all">All kinds</option>
           <option value="broadcast">Broadcast only</option>

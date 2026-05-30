@@ -92,7 +92,7 @@
        extra room, so lift the cap and let content fill the full width. */
     body.sidebar-collapsed .max-w-screen-2xl { max-width: none; }
 
-    /* Video players (Review / Annotate / Cut — all ids end in -player) are
+    /* Video players (Review / Rally Label / Cut — all ids end in -player) are
        height-capped at ~45-50vh so the editor fits one screen. When the
        sidebar is collapsed, give the video more vertical room too. */
     body.sidebar-collapsed video[id$="-player"] { max-height: 72vh; }
@@ -191,22 +191,24 @@
       </a>
       <a href="#/detect" class="sidebar-link flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-text-secondary" data-page="detect">
         <svg class="w-[18px] h-[18px] flex-shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
-        VLM Predict
+        Rally Predict
       </a>
       <a href="#/annotate" class="sidebar-link flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-text-secondary" data-page="annotate">
         <svg class="w-[18px] h-[18px] flex-shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
-        Annotate
+        Rally Label
+      </a>
+      <p class="px-3 pt-5 pb-1.5 text-[10px] font-semibold uppercase tracking-widest text-text-muted">Action</p>
+
+      <a href="#/action-annotate" class="sidebar-link flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-text-secondary" data-page="action-annotate">
+        <svg class="w-[18px] h-[18px] flex-shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 10.5c0 7.5-7.5 11.25-7.5 11.25S4.5 18 4.5 10.5a7.5 7.5 0 1115 0z"/></svg>
+        Action Label
       </a>
 
-      <p class="px-3 pt-5 pb-1.5 text-[10px] font-semibold uppercase tracking-widest text-text-muted">Model</p>
+      <p class="px-3 pt-5 pb-1.5 text-[10px] font-semibold uppercase tracking-widest text-text-muted">TAD</p>
 
       <a href="#/train" class="sidebar-link flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-text-secondary" data-page="train">
         <svg class="w-[18px] h-[18px] flex-shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
         TAD Train
-      </a>
-      <a href="#/vlm" class="sidebar-link flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-text-secondary" data-page="vlm">
-        <svg class="w-[18px] h-[18px] flex-shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 001.5-1.5V6a1.5 1.5 0 00-1.5-1.5H3.75A1.5 1.5 0 002.25 6v12a1.5 1.5 0 001.5 1.5zm10.5-11.25h.008v.008h-.008V8.25zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z"/></svg>
-        VLM Train
       </a>
       <a href="#/predict" class="sidebar-link flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-text-secondary" data-page="predict">
         <svg class="w-[18px] h-[18px] flex-shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/></svg>

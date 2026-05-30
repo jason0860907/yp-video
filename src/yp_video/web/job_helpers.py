@@ -3,8 +3,8 @@
 Four duplicated patterns are factored out here:
 
 1. ``stream_subprocess`` — spawn a subprocess, stream stdout into job.logs,
-   parse lines for progress, and throttle SSE pushes. Used by TAD train +
-   VLM train. Subprocess cancel is automatic via ``process.terminate()``,
+   parse lines for progress, and throttle SSE pushes. Used by TAD train and
+   SPOT pre-label jobs. Subprocess cancel is automatic via ``process.terminate()``,
    which kills the child and lets the OS reclaim its VRAM.
 2. ``run_gpu_sync`` — run an in-process sync GPU function (V-JEPA / Action-
    Former) under the gpu_lock with a unified cancel + cache-flush flow.
@@ -19,7 +19,7 @@ Four duplicated patterns are factored out here:
 
 Cancel semantics across all GPU-using jobs:
 
-  Subprocess work (TAD train / VLM train):
+  Subprocess work (TAD train / SPOT pre-label):
       stream_subprocess catches CancelledError, calls process.terminate().
       OS reclaims subprocess VRAM. gpu_lock.__aexit__ then runs gc.collect
       + torch.cuda.empty_cache() in the parent.
@@ -43,6 +43,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import shlex
 import threading
 import time
 from collections.abc import Callable
@@ -82,6 +83,9 @@ async def stream_subprocess(
     parsers: list[ProgressParser] | None = None,
     is_key_line: Callable[[str], bool] | None = None,
     push_interval: float = 1.0,
+    tee_to_terminal: bool = False,
+    terminal_prefix: str = "",
+    log_path: Path | str | None = None,
 ) -> tuple[int, str]:
     """Spawn ``cmd``, stream its merged stdout/stderr, return ``(exit_code, last_line)``.
 
@@ -95,6 +99,19 @@ async def stream_subprocess(
     re-raised; the caller's outer except block is responsible for setting
     the cancelled status.
     """
+    log_fp = None
+    if log_path is not None:
+        log_file = Path(log_path)
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        log_fp = log_file.open("a", encoding="utf-8")
+
+    command_line = shlex.join(str(part) for part in cmd)
+    if tee_to_terminal:
+        print(f"{terminal_prefix}$ {command_line}", flush=True)
+    if log_fp is not None:
+        log_fp.write(f"$ {command_line}\n")
+        log_fp.flush()
+
     process = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.PIPE,
@@ -120,6 +137,11 @@ async def stream_subprocess(
             last_msg = text
             if job_obj is not None:
                 job_obj.logs.append(text)
+            if tee_to_terminal:
+                print(f"{terminal_prefix}{text}", flush=True)
+            if log_fp is not None:
+                log_fp.write(text + "\n")
+                log_fp.flush()
             state["message"] = text
             for p in parsers:
                 m = p.pattern.search(text)
@@ -139,6 +161,9 @@ async def stream_subprocess(
         if process.returncode is None:
             process.terminate()
         raise
+    finally:
+        if log_fp is not None:
+            log_fp.close()
 
 
 # ── Batch job finalization ────────────────────────────────────────────

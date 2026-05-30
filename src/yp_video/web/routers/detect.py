@@ -50,7 +50,7 @@ async def start_detection(req: DetectRequest):
     job = job_manager.create_job("vlm_detect", {
         "videos": req.videos,
         "batch_size": req.batch_size,
-    }, name=f"VLM Predict ({total} videos)")
+    }, name=f"Rally Predict ({total} videos)")
 
     async def run_all():
         from yp_video.core.vlm_segment import process_video, build_clip_specs
@@ -76,7 +76,7 @@ async def start_detection(req: DetectRequest):
                 try:
                     await job_manager.update_job(
                         job.id, status="running", progress=0.0,
-                        name=f"VLM Predict ({i + 1}/{total}) — {video_name}",
+                        name=f"Rally Predict ({i + 1}/{total}) — {video_name}",
                         message=f"{prefix} Counting clips for {video_name}...",
                     )
 
@@ -135,7 +135,7 @@ async def start_detection(req: DetectRequest):
                 await asyncio.sleep(2)
 
             await finalize_batch_job(
-                job.id, total, failed, name=f"VLM Predict ({total} videos)",
+                job.id, total, failed, name=f"Rally Predict ({total} videos)",
             )
 
     task = asyncio.create_task(run_all())
@@ -164,5 +164,4 @@ async def convert_to_rally(req: ConvertRequest):
     # Count output files
     count = len(list(PRE_ANNOTATIONS_DIR.glob("*.jsonl"))) if PRE_ANNOTATIONS_DIR.exists() else 0
     return {"ok": True, "count": count}
-
 

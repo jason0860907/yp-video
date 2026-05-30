@@ -24,6 +24,9 @@ PROJECT_ROOT = _find_project_root()
 
 # ── External dependencies (at project root) ──────────────────────
 ACTIONFORMER_DIR = PROJECT_ROOT / "actionformer"
+SPOT_DIR = Path.home() / "yp-spot"
+SPOT_PYTHON = SPOT_DIR / ".venv" / "bin" / "python"
+SPOT_INFERENCE_SCRIPT = SPOT_DIR / "inference_on_mp4.py"
 PROMPTS_DIR = PROJECT_ROOT / "prompts"
 VLLM_ENV_PATH = PROJECT_ROOT / "vllm.env"
 R2_ENV_PATH = PROJECT_ROOT / "r2.env"
@@ -46,6 +49,8 @@ CUTS_DIRS = (CUTS_BROADCAST_DIR, CUTS_SIDELINE_DIR)
 SEG_ANNOTATIONS_DIR = VIDEOS_DIR / "seg-annotations"
 PRE_ANNOTATIONS_DIR = VIDEOS_DIR / "rally-pre-annotations"
 ANNOTATIONS_DIR = VIDEOS_DIR / "rally-annotations"
+ACTION_ANNOTATIONS_DIR = VIDEOS_DIR / "action-annotations"
+SPOT_PRELABELS_DIR = VIDEOS_DIR / "spot-prelabels"
 PREDICTIONS_DIR = VIDEOS_DIR / "tad-predictions"
 RALLY_CLIPS_DIR = VIDEOS_DIR / "rally_clips"
 FEATURES_DIR = VIDEOS_DIR / "tad-features"
@@ -53,11 +58,6 @@ TAD_FEATURES_DIR = FEATURES_DIR / "vjepa-b"  # default (ViT-B); use tad_features
 TAD_CHECKPOINTS_DIR = VIDEOS_DIR / "tad-checkpoints"
 TAD_ANNOTATIONS_DIR = VIDEOS_DIR / "tad-annotations"
 TAD_ANNOTATIONS_FILE = TAD_ANNOTATIONS_DIR / "volleyball_anno.json"
-
-# ── VLM (Qwen3.5-VL fine-tune) paths ─────────────────────────────
-VLM_DIR = VIDEOS_DIR / "vlm"
-VLM_MANIFEST_FILE = VLM_DIR / "rally_windows.jsonl"
-VLM_CHECKPOINTS_DIR = VIDEOS_DIR / "vlm-checkpoints"
 
 # R2 category → local directory + glob pattern mapping
 class R2Category(NamedTuple):
@@ -71,11 +71,11 @@ R2_CATEGORIES: dict[str, R2Category] = {
     "seg-annotations": R2Category(SEG_ANNOTATIONS_DIR, "*.jsonl"),
     "rally-pre-annotations": R2Category(PRE_ANNOTATIONS_DIR, "*.jsonl"),
     "rally-annotations": R2Category(ANNOTATIONS_DIR, "*.jsonl"),
+    "action-annotations": R2Category(ACTION_ANNOTATIONS_DIR, "*.json"),
     "tad-predictions": R2Category(PREDICTIONS_DIR, "*.jsonl"),
     "tad-features": R2Category(FEATURES_DIR, "**/*.npy"),
     "rally_clips": R2Category(RALLY_CLIPS_DIR, "*.mp4"),
     "tad-checkpoints": R2Category(TAD_CHECKPOINTS_DIR, "**/*"),
-    "vlm-checkpoints": R2Category(VLM_CHECKPOINTS_DIR, "**/*"),
 }
 
 # Registry: kind → (local cuts dir, R2 category name). Single source of truth

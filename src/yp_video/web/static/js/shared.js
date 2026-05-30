@@ -139,6 +139,16 @@ export const API = {
     result: name => `/annotate/results/${encodeURIComponent(name)}`,
     publish: '/annotate/publish',
   },
+  actionAnnotate: {
+    labels: '/action-annotate/labels',
+    videos: '/action-annotate/videos',
+    spot: '/action-annotate/spot',
+    prelabel: '/action-annotate/prelabel',
+    annotations: '/action-annotate/annotations',
+    annotation: name => `/action-annotate/annotations/${encodeURIComponent(name)}`,
+    export: '/action-annotate/export',
+    video: name => `/action-annotate/video/${encodeURIComponent(name)}`,
+  },
   review: {
     results: '/review/results',
     annotations: '/review/annotations',
@@ -158,12 +168,6 @@ export const API = {
     status: (params = {}) => `/train/status${_q(params)}`,
     performance: (params = {}) => `/train/performance${_q(params)}`,
     checkpoints: (params = {}) => `/train/checkpoints${_q(params)}`,
-  },
-  vlm: {
-    status: '/vlm/status',
-    buildManifest: '/vlm/build-manifest',
-    start: '/vlm/start',
-    performance: '/vlm/performance',
   },
 };
 
@@ -815,7 +819,7 @@ async function pollSidebar() {
       const items = [
         ['Videos', stats.videos],
         ['Cuts', stats.cuts],
-        ['VLM-Pred', stats.pre_annotations],
+        ['Rally-Pred', stats.pre_annotations],
         ['Annotations', stats.annotations],
         ['VJEPA-B', stats.vjepa_b],
         ['VJEPA-L', stats.vjepa_l],
