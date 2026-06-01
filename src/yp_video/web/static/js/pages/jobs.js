@@ -1,7 +1,10 @@
 /**
  * Jobs page — Background task monitoring + vLLM control.
  */
-import { api, API, card, pageHeader, sectionTitle, btnPrimary, btnSecondary, btnSmall, btnDanger, createProgressBar, createStatusBadge, showToast, emptyState } from '../shared.js';
+import {
+  api, API, card, pageHeader, sectionTitle, btnPrimary, btnSecondary, btnSmall, btnDanger,
+  createProgressBar, createStatusBadge, showToast, emptyState, renderJobItems,
+} from '../shared.js';
 
 let pollTimer = null;
 
@@ -134,6 +137,7 @@ async function loadJobs() {
           ${isRunning ? createProgressBar(job.progress) : ''}
           ${job.message ? `<p class="text-[11px] text-text-muted truncate leading-relaxed">${job.message}</p>` : ''}
           ${job.error ? `<p class="text-[11px] text-red-400/80 truncate leading-relaxed">${job.error}</p>` : ''}
+          ${renderJobItems(job, { maxVisible: 16 })}
         </div>`;
     }).join('')}</div>`;
 

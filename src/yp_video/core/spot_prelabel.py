@@ -91,8 +91,9 @@ def build_command(
     batch_size: int,
     num_workers: int,
     clip_len: int,
+    use_amp: bool = True,
 ) -> list[str]:
-    return [
+    cmd = [
         str(SPOT_PYTHON),
         str(SPOT_INFERENCE_SCRIPT),
         "--video_path", str(video_path),
@@ -102,6 +103,8 @@ def build_command(
         "--num_workers", str(num_workers),
         "--clip_len", str(clip_len),
     ]
+    cmd.append("--amp" if use_amp else "--no-amp")
+    return cmd
 
 
 def predictions_path(job_id: str, video_stem: str) -> Path:

@@ -50,6 +50,7 @@ SEG_ANNOTATIONS_DIR = VIDEOS_DIR / "seg-annotations"
 PRE_ANNOTATIONS_DIR = VIDEOS_DIR / "rally-pre-annotations"
 ANNOTATIONS_DIR = VIDEOS_DIR / "rally-annotations"
 ACTION_ANNOTATIONS_DIR = VIDEOS_DIR / "action-annotations"
+ACTION_FRAMES_DIR = VIDEOS_DIR / "action-frames"
 SPOT_PRELABELS_DIR = VIDEOS_DIR / "spot-prelabels"
 PREDICTIONS_DIR = VIDEOS_DIR / "tad-predictions"
 RALLY_CLIPS_DIR = VIDEOS_DIR / "rally_clips"
@@ -71,7 +72,7 @@ R2_CATEGORIES: dict[str, R2Category] = {
     "seg-annotations": R2Category(SEG_ANNOTATIONS_DIR, "*.jsonl"),
     "rally-pre-annotations": R2Category(PRE_ANNOTATIONS_DIR, "*.jsonl"),
     "rally-annotations": R2Category(ANNOTATIONS_DIR, "*.jsonl"),
-    "action-annotations": R2Category(ACTION_ANNOTATIONS_DIR, "*.json"),
+    "action-annotations": R2Category(ACTION_ANNOTATIONS_DIR, "*.jsonl"),
     "tad-predictions": R2Category(PREDICTIONS_DIR, "*.jsonl"),
     "tad-features": R2Category(FEATURES_DIR, "**/*.npy"),
     "rally_clips": R2Category(RALLY_CLIPS_DIR, "*.mp4"),

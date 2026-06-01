@@ -41,6 +41,7 @@ Cancel semantics across all GPU-using jobs:
 from __future__ import annotations
 
 import asyncio
+import codecs
 import logging
 import re
 import shlex
@@ -86,6 +87,7 @@ async def stream_subprocess(
     tee_to_terminal: bool = False,
     terminal_prefix: str = "",
     log_path: Path | str | None = None,
+    update_job: bool = True,
 ) -> tuple[int, str]:
     """Spawn ``cmd``, stream its merged stdout/stderr, return ``(exit_code, last_line)``.
 
@@ -125,41 +127,80 @@ async def stream_subprocess(
     job_obj = job_manager.get_job(job_id)
     parsers = parsers or []
     is_key = is_key_line or (lambda _t: False)
+    decoder = codecs.getincrementaldecoder("utf-8")("replace")
+
+    async def handle_output(text: str) -> None:
+        nonlocal last_msg, last_push
+
+        text = text.rstrip()
+        if not text:
+            return
+        last_msg = text
+        if job_obj is not None:
+            job_obj.logs.append(text)
+        if tee_to_terminal:
+            print(f"{terminal_prefix}{text}", flush=True)
+        if log_fp is not None:
+            log_fp.write(text + "\n")
+            log_fp.flush()
+        state["message"] = text
+        for p in parsers:
+            m = p.pattern.search(text)
+            if m:
+                update = p.handler(m)
+                if update:
+                    state.update(update)
+        now = time.monotonic()
+        if update_job and (is_key(text) or now - last_push >= push_interval):
+            last_push = now
+            await job_manager.update_job(
+                job_id, message=state["message"], progress=state["progress"],
+            )
+
+    async def flush_completed_chunks(buffer: str) -> str:
+        while True:
+            newline_idx = buffer.find("\n")
+            carriage_idx = buffer.find("\r")
+            indexes = [idx for idx in (newline_idx, carriage_idx) if idx >= 0]
+            if not indexes:
+                return buffer
+            split_idx = min(indexes)
+            await handle_output(buffer[:split_idx])
+            buffer = buffer[split_idx + 1:]
+
+    async def stop_process() -> None:
+        if process.returncode is not None:
+            return
+        process.terminate()
+        try:
+            await asyncio.wait_for(process.wait(), timeout=5)
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
 
     try:
+        buffer = ""
+        max_buffer_chars = 64 * 1024
         while True:
-            line = await process.stdout.readline()
-            if not line:
+            chunk = await process.stdout.read(8192)
+            if not chunk:
                 break
-            text = line.decode().rstrip()
-            if not text:
-                continue
-            last_msg = text
-            if job_obj is not None:
-                job_obj.logs.append(text)
-            if tee_to_terminal:
-                print(f"{terminal_prefix}{text}", flush=True)
-            if log_fp is not None:
-                log_fp.write(text + "\n")
-                log_fp.flush()
-            state["message"] = text
-            for p in parsers:
-                m = p.pattern.search(text)
-                if m:
-                    update = p.handler(m)
-                    if update:
-                        state.update(update)
-            now = time.monotonic()
-            if is_key(text) or now - last_push >= push_interval:
-                last_push = now
-                await job_manager.update_job(
-                    job_id, message=state["message"], progress=state["progress"],
-                )
+            buffer += decoder.decode(chunk)
+            buffer = await flush_completed_chunks(buffer)
+            if len(buffer) >= max_buffer_chars:
+                await handle_output(buffer)
+                buffer = ""
+        buffer += decoder.decode(b"", final=True)
+        buffer = await flush_completed_chunks(buffer)
+        if buffer:
+            await handle_output(buffer)
         rc = await process.wait()
         return rc, last_msg
     except asyncio.CancelledError:
-        if process.returncode is None:
-            process.terminate()
+        await stop_process()
+        raise
+    except Exception:
+        await stop_process()
         raise
     finally:
         if log_fp is not None:

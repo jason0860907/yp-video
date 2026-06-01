@@ -144,10 +144,15 @@ export const API = {
     videos: '/action-annotate/videos',
     spot: '/action-annotate/spot',
     prelabel: '/action-annotate/prelabel',
+    prelabelBatch: '/action-annotate/prelabel-batch',
     annotations: '/action-annotate/annotations',
     annotation: name => `/action-annotate/annotations/${encodeURIComponent(name)}`,
     export: '/action-annotate/export',
     video: name => `/action-annotate/video/${encodeURIComponent(name)}`,
+  },
+  actionTrain: {
+    status: '/action-train/status',
+    start: '/action-train/start',
   },
   review: {
     results: '/review/results',
@@ -728,6 +733,67 @@ export function getJobStatusLabel(job) {
   if (job.status === 'cancelled') return 'cancelled';
   if (job.status === 'completed') return job.message?.includes('failed') ? 'partial' : 'done';
   return pct + '%';
+}
+
+export function renderJobItems(job, { maxVisible = 12 } = {}) {
+  const items = Array.isArray(job?.params?.items) ? job.params.items : [];
+  if (!items.length) return '';
+
+  const counts = {
+    completed: items.filter(item => item.status === 'completed').length,
+    failed: items.filter(item => item.status === 'failed').length,
+    running: items.filter(item => item.status === 'running').length,
+    pending: items.filter(item => item.status === 'pending').length,
+    cancelled: items.filter(item => item.status === 'cancelled').length,
+  };
+  const visible = items.slice(0, maxVisible);
+  const more = items.length - visible.length;
+  const statusClass = (status) => ({
+    completed: 'text-emerald-400 bg-emerald-500/10',
+    failed: 'text-red-400 bg-red-500/10',
+    running: 'text-primary-light bg-primary/10',
+    cancelled: 'text-amber-400 bg-amber-500/10',
+    pending: 'text-text-muted bg-white/5',
+  }[status] || 'text-text-muted bg-white/5');
+  const barClass = (status) => ({
+    completed: 'bg-emerald-400',
+    failed: 'bg-red-400',
+    running: 'bg-primary-light',
+    cancelled: 'bg-amber-400',
+    pending: 'bg-white/20',
+  }[status] || 'bg-white/20');
+
+  return `
+    <div class="mt-2 space-y-2">
+      <div class="flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-text-muted tabular-nums">
+        <span>${counts.completed}/${items.length} done</span>
+        ${counts.running ? `<span>${counts.running} running</span>` : ''}
+        ${counts.pending ? `<span>${counts.pending} pending</span>` : ''}
+        ${counts.failed ? `<span class="text-red-400">${counts.failed} failed</span>` : ''}
+        ${counts.cancelled ? `<span class="text-amber-400">${counts.cancelled} cancelled</span>` : ''}
+      </div>
+      <div class="space-y-1 max-h-56 overflow-y-auto pr-1">
+        ${visible.map(item => {
+          const progress = Math.max(0, Math.min(Number(item.progress || 0), 1));
+          const pct = Math.round(progress * 100);
+          return `
+            <div class="grid grid-cols-[minmax(0,1fr)_3.25rem] gap-2 items-center py-1">
+              <div class="min-w-0 space-y-1">
+                <div class="flex items-center gap-2 min-w-0">
+                  <span class="shrink-0 px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wide ${statusClass(item.status)}">${escapeHtml(item.status || 'pending')}</span>
+                  <span class="min-w-0 truncate text-[10px] text-text-secondary" title="${escapeHtml(item.video || '')}">${escapeHtml(item.video || '')}</span>
+                </div>
+                <div class="h-1 rounded-full bg-white/[0.06] overflow-hidden">
+                  <div class="h-full rounded-full transition-all duration-300 ${barClass(item.status)}" style="width: ${pct}%"></div>
+                </div>
+                ${item.message ? `<div class="truncate text-[9px] text-text-muted">${escapeHtml(item.message)}</div>` : ''}
+              </div>
+              <span class="text-right text-[10px] text-text-muted tabular-nums">${pct}%</span>
+            </div>`;
+        }).join('')}
+        ${more > 0 ? `<div class="text-[10px] text-text-muted">+${more} more video(s)</div>` : ''}
+      </div>
+    </div>`;
 }
 
 // Render a single job's progress row.

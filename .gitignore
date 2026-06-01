@@ -25,6 +25,7 @@ ENV/
 
 # Secrets
 r2.env
+tokens.env
 
 # Project specific
 *.json
@@ -33,11 +34,13 @@ r2.env
 !contracts/detector.schema.json
 
 # Large directories (use git submodule if needed)
+datasets/
 InternVideo/
 OpenTAD/
 
 # Logs
 logs/
 *.log
+.codex_write_test
 
 # TAD data and checkpoints

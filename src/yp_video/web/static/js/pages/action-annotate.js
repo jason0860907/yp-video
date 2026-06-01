@@ -14,7 +14,7 @@ const COLORS = {
   block: '#EF4444',
   score: '#FBBF24',
 };
-const MAX_VIDEO_OPTIONS = 80;
+const OUTSIDE_GROUP_ID = '__outside_actions__';
 
 let videos = [];
 let labels = ['serve', 'receive', 'set', 'spike', 'block', 'score'];
@@ -39,9 +39,12 @@ let state = {
   dirty: false,
 };
 let videoEl = null;
+let videoWrapEl = null;
 let overlayEl = null;
+let overlayResizeObserver = null;
 let selectedIdx = -1;
 let selectedRallyId = 'all';
+let expandedRallyIds = new Set();
 let tickTimer = null;
 let lastOverlayFrame = -1;
 let dragPoint = null;
@@ -50,32 +53,51 @@ let suppressOverlayClick = false;
 export function render(container) {
   container.innerHTML = `
     <div class="max-w-screen-2xl mx-auto space-y-5">
-      ${pageHeader('Action Label', 'Add action points on top of rally annotations', `
-        <select id="act-kind" class="${selectCls}" title="Filter by cut kind">
-          <option value="all">All kinds</option>
-          <option value="broadcast">Broadcast only</option>
-          <option value="sideline">Sideline only</option>
-        </select>
-        <select id="act-progress" class="${selectCls}" title="Filter by action label status">
-          <option value="all">All</option>
-          <option value="unlabeled">Unlabeled</option>
-          <option value="labeled">Labeled</option>
-        </select>
-        <div class="relative w-[18rem]" id="act-video-combo-wrap">
-          <input id="act-video-combo" class="${selectCls} w-full pr-8 truncate" role="combobox" aria-expanded="false" aria-controls="act-video-options" placeholder="Select cut video..." autocomplete="off">
-          <button id="act-video-clear" type="button" class="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary text-xs px-1" title="Clear video search">x</button>
-          <div id="act-video-options" class="hidden absolute z-40 left-0 right-0 top-full mt-1 max-h-72 overflow-auto rounded-xl border border-border bg-surface-100 shadow-2xl shadow-black/30 p-1"></div>
-        </div>
-        ${btnSmall('Load', 'id="act-load" title="Load selected video"', 'primary')}
-        ${btnSmall('Export JSON', 'id="act-export" title="Export saved action annotations"')}
-      `)}
+      ${pageHeader('Action Label', 'Add action points on top of rally annotations')}
 
-      <div class="flex flex-col lg:flex-row gap-5">
+      ${card(`
+        <div class="space-y-3">
+          <div class="grid grid-cols-1 lg:grid-cols-[8.5rem_8.5rem_minmax(20rem,1fr)_auto_auto] gap-3 items-end">
+            <label class="space-y-1.5 min-w-0">
+              <span class="text-[10px] uppercase tracking-widest text-text-muted font-semibold">Kind</span>
+              <select id="act-kind" class="${selectCls} w-full" title="Filter by cut kind">
+                <option value="all">All kinds</option>
+                <option value="broadcast">Broadcast only</option>
+                <option value="sideline">Sideline only</option>
+              </select>
+            </label>
+            <label class="space-y-1.5 min-w-0">
+              <span class="text-[10px] uppercase tracking-widest text-text-muted font-semibold">Status</span>
+              <select id="act-progress" class="${selectCls} w-full" title="Filter by action label status">
+                <option value="all">All</option>
+                <option value="unlabeled">Unlabeled</option>
+                <option value="labeled">Labeled</option>
+              </select>
+            </label>
+            <label class="space-y-1.5 min-w-0">
+              <span class="text-[10px] uppercase tracking-widest text-text-muted font-semibold">Video</span>
+              <div class="relative" id="act-video-combo-wrap">
+                <input id="act-video-combo" class="${selectCls} w-full pr-8 font-mono text-xs" role="combobox" aria-expanded="false" aria-controls="act-video-options" placeholder="Type to search full filename..." autocomplete="off">
+                <button id="act-video-clear" type="button" class="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary text-xs px-1" title="Clear video search">x</button>
+                <div id="act-video-options" class="hidden absolute z-[90] left-0 right-0 top-full mt-1 max-h-[24rem] overflow-auto rounded-xl border border-border bg-surface-100 shadow-2xl shadow-black/30 p-1"></div>
+              </div>
+            </label>
+            ${btnSmall('Load', 'id="act-load" title="Load selected video"', 'primary')}
+            ${btnSmall('Export JSONL', 'id="act-export" title="Export saved action annotations"')}
+          </div>
+          <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-text-muted font-heading tabular-nums">
+            <span id="act-video-count">Loading videos...</span>
+            <span id="act-export-summary"></span>
+          </div>
+        </div>
+      `, 'relative z-40 overflow-visible')}
+
+      <div class="relative z-0 flex flex-col lg:flex-row gap-5">
         <div class="flex-1 min-w-0 space-y-4">
           ${card(`
             <div class="space-y-4">
               <div id="act-video-wrap" class="relative bg-black rounded-2xl overflow-hidden ring-1 ring-white/[0.06] shadow-lg shadow-black/30">
-                <video id="act-player" class="w-full max-h-[45vh]" playsinline preload="metadata"></video>
+                <video id="act-player" class="block w-full max-h-[45vh] object-contain bg-black mx-auto" playsinline preload="metadata"></video>
                 <div id="act-overlay" class="absolute inset-0 pointer-events-none"></div>
               </div>
 
@@ -97,15 +119,13 @@ export function render(container) {
               </div>
 
               <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-text-muted font-heading tabular-nums">
-                <span id="act-video-count">Loading videos...</span>
-                <span id="act-export-summary"></span>
                 <span id="act-meta"></span>
               </div>
             </div>
           `)}
         </div>
 
-        <div class="lg:w-[420px] lg:flex-shrink-0">
+        <div class="lg:w-[420px] lg:flex-shrink-0 min-w-0">
           ${card(`
             <div class="space-y-4">
               ${sectionTitle(
@@ -131,11 +151,11 @@ export function render(container) {
               </div>
               <div class="h-px bg-border"></div>
               ${sectionTitle(
-                'Events <span id="act-count" class="text-text-muted font-normal">(0)</span>',
+                'Rallies <span id="act-count" class="text-text-muted font-normal">(0)</span>',
                 '',
                 `${btnSmall('Sort', 'id="act-sort"')}`,
               )}
-              <div id="act-events" class="space-y-1.5 max-h-[55vh] overflow-auto pr-1 scrollbar-thin"></div>
+              <div id="act-events" class="space-y-1.5 max-h-[55vh] overflow-y-auto overflow-x-hidden pr-1 scrollbar-thin"></div>
             </div>
           `)}
         </div>
@@ -164,7 +184,7 @@ export function render(container) {
           </label>
           <label class="space-y-1.5 min-w-0">
             <span class="text-[10px] uppercase tracking-widest text-text-muted font-semibold">Batch</span>
-            <input id="act-spot-batch" type="number" min="1" max="32" step="1" value="8" class="${inputCls} w-full">
+            <input id="act-spot-batch" type="number" min="1" max="128" step="1" value="8" class="${inputCls} w-full">
           </label>
           <label class="flex items-center gap-2 text-xs text-text-secondary pb-3 cursor-pointer">
             <input id="act-spot-stop-vllm" type="checkbox" class="accent-primary w-3.5 h-3.5">
@@ -193,12 +213,16 @@ export function deactivate() {
   document.removeEventListener('keydown', onKeydown);
   if (tickTimer) clearInterval(tickTimer);
   tickTimer = null;
+  overlayResizeObserver?.disconnect();
+  overlayResizeObserver = null;
+  window.removeEventListener('resize', onVideoGeometryChange);
   spotClient?.stop();
   spotClient = null;
   videoEl?.pause();
 }
 
 function bindEvents() {
+  videoWrapEl = document.getElementById('act-video-wrap');
   videoEl = document.getElementById('act-player');
   overlayEl = document.getElementById('act-overlay');
 
@@ -220,7 +244,7 @@ function bindEvents() {
   });
   combo.addEventListener('keydown', (e) => {
     const matches = filteredVideos();
-    const maxActive = Math.max(0, Math.min(matches.length, MAX_VIDEO_OPTIONS) - 1);
+    const maxActive = Math.max(0, matches.length - 1);
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       videoDropdownOpen = true;
@@ -293,20 +317,32 @@ function bindEvents() {
   document.getElementById('act-clear').addEventListener('click', clearEvents);
 
   videoEl.addEventListener('loadedmetadata', () => {
+    syncOverlayGeometry();
     refreshPlayhead();
     updatePlaybackButton();
   });
+  videoEl.addEventListener('loadeddata', onVideoGeometryChange);
+  videoEl.addEventListener('seeked', onVideoGeometryChange);
   videoEl.addEventListener('timeupdate', refreshPlayhead);
   videoEl.addEventListener('play', updatePlaybackButton);
   videoEl.addEventListener('pause', updatePlaybackButton);
   videoEl.addEventListener('ended', updatePlaybackButton);
   videoEl.addEventListener('click', (e) => {
     if (!state.video || !pointMode) return;
-    const rect = videoEl.getBoundingClientRect();
-    const x = clamp((e.clientX - rect.left) / rect.width, 0, 1);
-    const y = clamp((e.clientY - rect.top) / rect.height, 0, 1);
+    const point = clientToVideoPoint(e.clientX, e.clientY);
+    if (!point) return;
+    const [x, y] = point;
     addEvent(x, y);
   });
+
+  overlayResizeObserver?.disconnect();
+  if (window.ResizeObserver && videoWrapEl) {
+    overlayResizeObserver = new ResizeObserver(onVideoGeometryChange);
+    overlayResizeObserver.observe(videoWrapEl);
+    overlayResizeObserver.observe(videoEl);
+  }
+  window.removeEventListener('resize', onVideoGeometryChange);
+  window.addEventListener('resize', onVideoGeometryChange);
 
   document.getElementById('act-events').addEventListener('click', onEventClick);
   document.getElementById('act-events').addEventListener('change', onEventChange);
@@ -339,43 +375,60 @@ function renderVideoOptions() {
   const combo = document.getElementById('act-video-combo');
   const list = document.getElementById('act-video-options');
   const matches = filteredVideos();
-  if (activeVideoOption >= Math.min(matches.length, MAX_VIDEO_OPTIONS)) {
-    activeVideoOption = Math.max(0, Math.min(matches.length, MAX_VIDEO_OPTIONS) - 1);
+  if (activeVideoOption >= matches.length) {
+    activeVideoOption = Math.max(0, matches.length - 1);
   }
 
   if (combo && document.activeElement !== combo && selectedVideo && combo.value !== selectedVideo) {
     combo.value = selectedVideo;
   }
-  if (combo) combo.setAttribute('aria-expanded', String(videoDropdownOpen));
+  if (combo) {
+    combo.setAttribute('aria-expanded', String(videoDropdownOpen));
+    combo.title = combo.value || 'Type to search full filename';
+  }
 
   if (list) {
     list.classList.toggle('hidden', !videoDropdownOpen);
     if (!matches.length) {
       list.innerHTML = '<div class="px-3 py-2 text-xs text-text-muted">No videos match</div>';
     } else {
-      const visible = matches.slice(0, MAX_VIDEO_OPTIONS);
-      list.innerHTML = visible.map((v, idx) => {
+      list.innerHTML = matches.map((v, idx) => {
         const active = idx === activeVideoOption;
         const selected = v.name === selectedVideo;
         const status = v.has_action_annotation ? `${v.event_count} events` : 'unlabeled';
         const kind = v.kind === 'sideline' ? 'SIDE' : 'CAST';
+        const rallyTag = rallySourceTag(v);
+        const rallyTitle = rallySourceTitle(v);
         return `<button type="button" data-video-name="${escapeHtml(v.name)}"
-          class="w-full text-left px-3 py-2 rounded-lg text-xs transition-colors ${active || selected ? 'bg-primary/10 text-text-primary' : 'text-text-secondary hover:bg-white/[0.06] hover:text-text-primary'}">
-          <span class="flex items-center gap-2 min-w-0">
-            <span class="shrink-0 w-10 text-[10px] font-heading text-text-muted">${kind}</span>
-            <span class="truncate flex-1">${escapeHtml(v.name)}</span>
-            <span class="shrink-0 text-[10px] font-heading text-text-muted">${escapeHtml(status)}</span>
+          class="w-full text-left px-3 py-2.5 rounded-lg text-xs transition-colors ${active || selected ? 'bg-primary/10 text-text-primary' : 'text-text-secondary hover:bg-white/[0.06] hover:text-text-primary'}">
+          <span class="flex items-start gap-2 min-w-0">
+            <span class="shrink-0 px-1.5 py-0.5 rounded bg-white/5 text-[10px] font-heading text-text-muted">${kind}</span>
+            <span class="shrink-0 w-5 text-center" title="${escapeHtml(rallyTitle)}">${rallyTag}</span>
+            <span class="min-w-0 flex-1 whitespace-normal break-all leading-snug font-mono">${escapeHtml(v.name)}</span>
+            <span class="shrink-0 px-1.5 py-0.5 rounded bg-white/5 text-[10px] font-heading text-text-muted">${escapeHtml(status)}</span>
           </span>
         </button>`;
-      }).join('') + (matches.length > MAX_VIDEO_OPTIONS
-        ? `<div class="px-3 py-2 text-[11px] text-text-muted">Showing ${MAX_VIDEO_OPTIONS} of ${matches.length}. Keep typing to narrow results.</div>`
-        : '');
+      }).join('');
     }
   }
 
   const countEl = document.getElementById('act-video-count');
   if (countEl) countEl.textContent = `${matches.length} shown / ${videos.length} total`;
   renderExportSummary();
+}
+
+function rallySourceTag(video) {
+  const sources = video?.rally_sources || [];
+  if (sources.includes('annotation')) return '✅';
+  if (sources.includes('pre-annotation')) return '⚡';
+  return '—';
+}
+
+function rallySourceTitle(video) {
+  const sources = video?.rally_sources || [];
+  if (sources.includes('annotation')) return 'Rally annotation reviewed';
+  if (sources.includes('pre-annotation')) return 'Rally pre-label';
+  return 'No rally annotation';
 }
 
 function filteredVideos() {
@@ -651,6 +704,18 @@ function rallyEventCount(rallyId) {
   return state.events.filter(e => e.rally_id === rallyId).length;
 }
 
+function eventEntriesForRally(rallyId) {
+  return state.events
+    .map((event, idx) => ({ event, idx }))
+    .filter(({ event }) => event.rally_id === rallyId);
+}
+
+function outsideEventEntries() {
+  return state.events
+    .map((event, idx) => ({ event, idx }))
+    .filter(({ event }) => !event.rally_id);
+}
+
 function renderRallies() {
   const scope = document.getElementById('act-rally-scope');
   const summary = document.getElementById('act-rally-summary');
@@ -698,9 +763,10 @@ function renderRallies() {
   updateRallyNow();
 }
 
-function selectRally(rallyId, { seek = true } = {}) {
+function selectRally(rallyId, { seek = true, expand = true } = {}) {
   selectedRallyId = rallyId === 'all' ? 'all' : rallyId;
   normalizeSelectedRally();
+  if (expand && selectedRallyId !== 'all') expandedRallyIds.add(selectedRallyId);
   if (selectedIdx >= 0 && (!state.events[selectedIdx] || !eventVisibleInScope(state.events[selectedIdx]))) {
     selectedIdx = -1;
   }
@@ -775,6 +841,7 @@ async function loadSelectedVideo() {
     videoSearch = name;
     selectedIdx = -1;
     selectedRallyId = rallies[0]?.id || 'all';
+    expandedRallyIds = new Set(rallies[0]?.id ? [rallies[0].id] : []);
     lastOverlayFrame = -1;
     videoEl.pause();
     videoEl.src = `/api${API.actionAnnotate.video(state.video)}`;
@@ -857,6 +924,12 @@ function addEvent(x, y) {
   state.events.push(event);
   sortEvents();
   selectedIdx = state.events.indexOf(event);
+  if (event.rally_id) {
+    selectedRallyId = event.rally_id;
+    expandedRallyIds.add(event.rally_id);
+  } else {
+    expandedRallyIds.add(OUTSIDE_GROUP_ID);
+  }
   markDirty();
   renderEvents();
 }
@@ -888,6 +961,7 @@ async function clearEvents() {
   if (!ok) return;
   state.events = [];
   selectedIdx = -1;
+  expandedRallyIds = new Set(selectedRallyId !== 'all' ? [selectedRallyId] : []);
   markDirty();
   renderEvents();
 }
@@ -925,28 +999,16 @@ function renderEvents() {
   if (selectedIdx >= 0 && (!state.events[selectedIdx] || !eventVisibleInScope(state.events[selectedIdx]))) {
     selectedIdx = -1;
   }
-  const visibleEntries = visibleEventEntries();
-  const visibleCount = visibleEntries.length;
-  document.getElementById('act-count').textContent = selectedRallyId === 'all'
-    ? `(${state.events.length})`
-    : `(${visibleCount}/${state.events.length})`;
+  document.getElementById('act-count').textContent = state.rallies.length
+    ? `(${state.rallies.length} rally · ${state.events.length} action)`
+    : `(${state.events.length} action)`;
   updateDirtyUi();
 
   const el = document.getElementById('act-events');
-  if (!state.events.length) {
+  if (!state.video) {
     el.innerHTML = emptyState(
-      '<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>',
-      'No action events',
-      '',
-    );
-    renderOverlay();
-    renderTimeline();
-    return;
-  }
-  if (!visibleEntries.length) {
-    el.innerHTML = emptyState(
-      '<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3"/></svg>',
-      'No events in this rally',
+      '<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 10l4.55 2.28a1 1 0 010 1.44L15 16m-6 0l-4.55-2.28a1 1 0 010-1.44L9 10"/></svg>',
+      'No video loaded',
       '',
     );
     renderOverlay();
@@ -954,39 +1016,103 @@ function renderEvents() {
     return;
   }
 
-  el.innerHTML = `
-    <div class="grid grid-cols-[1.25rem_5.8rem_4rem_3.8rem_3.4rem_2.8rem] gap-1.5 min-w-[22rem] px-3 text-[10px] uppercase tracking-widest text-text-muted font-semibold">
-      <span>#</span>
-      <span>Label</span>
-      <span>Frame</span>
-      <span>Time</span>
-      <span>Rally</span>
-      <span></span>
-    </div>
-    ${visibleEntries.map(({ event, idx }, rowIdx) => eventRow(event, idx, rowIdx + 1)).join('')}`;
+  const outsideEntries = outsideEventEntries();
+  if (!state.rallies.length && !outsideEntries.length) {
+    el.innerHTML = emptyState(
+      '<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>',
+      'No rally annotations',
+      '',
+    );
+    renderOverlay();
+    renderTimeline();
+    return;
+  }
+
+  const rallyRows = state.rallies.map((rally, idx) => rallyRow(rally, idx)).join('');
+  const outsideRow = outsideEntries.length ? outsideActionsRow(outsideEntries) : '';
+  el.innerHTML = rallyRows + outsideRow;
   renderOverlay();
   renderTimeline();
+}
+
+function rallyRow(rally, idx) {
+  const selected = rally.id === selectedRallyId;
+  const expanded = expandedRallyIds.has(rally.id);
+  const entries = eventEntriesForRally(rally.id);
+  const rowCls = selected
+    ? 'border-emerald-500/40 bg-emerald-500/[0.08]'
+    : 'border-emerald-500/15 bg-emerald-500/[0.04] hover:bg-emerald-500/[0.08]';
+  const durationSec = Math.max(0, rally.end - rally.start).toFixed(1);
+  return `
+    <div class="space-y-1.5">
+      <div class="act-rally-row flex items-center gap-2.5 px-3 py-2.5 rounded-xl border ${rowCls} cursor-pointer transition-all duration-200 group" data-rally-id="${escapeHtml(rally.id)}">
+        <span class="text-[10px] font-heading text-text-muted/60 w-4 text-right select-none">${idx + 1}</span>
+        <button class="flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/25 hover:bg-emerald-500/30 cursor-pointer transition-colors duration-200" data-action="toggle-rally" aria-expanded="${expanded}" title="${expanded ? 'Hide action labels' : 'Show action labels'}">
+          <svg class="w-3 h-3 pointer-events-none transition-transform duration-150 ${expanded ? 'rotate-90' : ''}" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+          <span class="pointer-events-none">actions</span>
+          <span class="pointer-events-none text-emerald-200/70">${entries.length}</span>
+        </button>
+        <div class="flex items-center gap-1.5 ml-auto">
+          <span class="bg-transparent border-b border-white/10 text-text-primary text-[11px] w-14 text-center font-heading tabular-nums">${formatSeconds(rally.start)}</span>
+          <span class="text-text-muted/40 text-[10px]">→</span>
+          <span class="bg-transparent border-b border-white/10 text-text-primary text-[11px] w-14 text-center font-heading tabular-nums">${formatSeconds(rally.end)}</span>
+        </div>
+        <span class="text-[10px] text-text-muted font-heading tabular-nums bg-surface-200/40 px-1.5 py-0.5 rounded">${durationSec}s</span>
+        <button class="text-primary-light hover:text-white cursor-pointer transition-colors duration-200" data-action="preview-rally" title="Jump to rally end">
+          <svg class="w-4 h-4 pointer-events-none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 5l7 7-7 7M5 5l7 7-7 7"/></svg>
+        </button>
+      </div>
+      ${expanded ? actionPanel(entries, 'No actions in this rally') : ''}
+    </div>`;
+}
+
+function outsideActionsRow(entries) {
+  const expanded = expandedRallyIds.has(OUTSIDE_GROUP_ID);
+  return `
+    <div class="space-y-1.5">
+      <div class="act-rally-row flex items-center gap-2.5 px-3 py-2.5 rounded-xl border border-amber-500/20 bg-amber-500/[0.04] hover:bg-amber-500/[0.08] cursor-pointer transition-all duration-200" data-rally-id="${OUTSIDE_GROUP_ID}">
+        <span class="text-[10px] font-heading text-text-muted/60 w-4 text-right select-none">out</span>
+        <button class="flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/25 hover:bg-amber-500/25 cursor-pointer transition-colors duration-200" data-action="toggle-rally" aria-expanded="${expanded}" title="${expanded ? 'Hide outside actions' : 'Show outside actions'}">
+          <svg class="w-3 h-3 pointer-events-none transition-transform duration-150 ${expanded ? 'rotate-90' : ''}" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+          <span class="pointer-events-none">outside</span>
+          <span class="pointer-events-none text-amber-100/70">${entries.length}</span>
+        </button>
+        <span class="ml-auto text-[11px] text-text-muted font-heading">outside rally</span>
+      </div>
+      ${expanded ? actionPanel(entries, 'No outside actions') : ''}
+    </div>`;
+}
+
+function actionPanel(entries, emptyText) {
+  return `
+    <div class="ml-6 rounded-xl border border-white/[0.06] bg-surface-100/35 p-2 space-y-1.5">
+      ${entries.length ? `
+        <div class="grid grid-cols-[1rem_minmax(5.2rem,1fr)_3.8rem_2.8rem_2.35rem] gap-1.5 px-2 text-[10px] uppercase tracking-widest text-text-muted font-semibold">
+          <span class="text-right">#</span>
+          <span class="pl-4">Label</span>
+          <span class="text-center">Frame</span>
+          <span class="text-center">Time</span>
+          <span></span>
+        </div>
+        ${entries.map(({ event, idx }, rowIdx) => eventRow(event, idx, rowIdx + 1)).join('')}
+      ` : `<div class="px-3 py-2 text-xs text-text-muted">${emptyText}</div>`}
+    </div>`;
 }
 
 function eventRow(event, idx, rowNumber = idx + 1) {
   const selected = idx === selectedIdx;
   const color = COLORS[event.label] || '#818CF8';
   const labelOptions = labels.map(label => `<option value="${escapeHtml(label)}" ${label === event.label ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('');
-  const rallyText = rallyLabel(event);
-  const rallyTitle = event.rally_id
-    ? `${event.rally_id}${Number.isInteger(event.relative_frame) ? ` / +${event.relative_frame}f` : ''}`
-    : 'Outside rally annotations';
   return `
-    <div class="act-event grid grid-cols-[1.25rem_5.8rem_4rem_3.8rem_3.4rem_2.8rem] items-center gap-1.5 min-w-[22rem] px-3 py-2 rounded-xl border cursor-pointer transition-colors duration-150 ${selected ? 'bg-primary/10 border-primary/[0.35]' : 'bg-white/[0.035] border-border hover:bg-white/[0.06]'}" data-idx="${idx}" title="${escapeHtml(event.id || '')}">
+    <div class="act-event grid grid-cols-[1rem_minmax(5.2rem,1fr)_3.8rem_2.8rem_2.35rem] items-center gap-1.5 px-2 py-1.5 rounded-lg border cursor-pointer transition-colors duration-150 ${selected ? 'bg-primary/10 border-primary/[0.35]' : 'bg-white/[0.035] border-border hover:bg-white/[0.06]'}" data-idx="${idx}" title="${escapeHtml(event.id || '')}">
       <span class="text-right text-[10px] font-heading text-text-muted/70">${rowNumber}</span>
       <span class="flex items-center gap-1.5 min-w-0">
         <span class="w-2.5 h-2.5 rounded-full flex-shrink-0" style="background:${color}"></span>
         <select class="min-w-0 w-full bg-surface-100 border border-border rounded-lg px-1.5 py-1 text-xs text-text-primary" data-field="label" data-idx="${idx}">${labelOptions}</select>
       </span>
-      <input class="bg-transparent border-b border-white/10 text-text-primary text-[11px] w-full text-center font-heading tabular-nums focus:border-primary-light outline-none" data-field="frame" data-idx="${idx}" value="${event.frame}">
+      <input class="w-full bg-transparent border-b border-white/10 text-text-primary text-[11px] text-center font-heading tabular-nums focus:border-primary-light outline-none" data-field="frame" data-idx="${idx}" value="${event.frame}">
       <span class="text-[10px] text-text-muted font-heading tabular-nums text-center">${formatSeconds(event.frame / state.fps)}</span>
-      <span class="text-[10px] ${event.rally_id ? 'text-emerald-300/90 bg-emerald-500/10 border-emerald-500/20' : 'text-text-muted bg-white/[0.035] border-white/10'} border rounded-md px-1.5 py-0.5 text-center font-heading tabular-nums" title="${escapeHtml(rallyTitle)}">${escapeHtml(rallyText)}</span>
-      <span class="flex items-center justify-end gap-1.5">
+      <span class="flex items-center justify-end gap-1">
         <button class="text-primary-light hover:text-white cursor-pointer" data-action="jump" title="Jump to event">
           <svg class="w-4 h-4 pointer-events-none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14m0 0l-5-5m5 5l-5 5"/></svg>
         </button>
@@ -999,21 +1125,66 @@ function eventRow(event, idx, rowNumber = idx + 1) {
 
 function onEventClick(e) {
   const row = e.target.closest('.act-event');
-  if (!row) return;
-  const idx = Number(row.dataset.idx);
-  if (e.target.closest('[data-action="delete"]')) {
-    state.events.splice(idx, 1);
+  if (row) {
+    const idx = Number(row.dataset.idx);
+    if (e.target.closest('[data-action="delete"]')) {
+      state.events.splice(idx, 1);
+      selectedIdx = -1;
+      markDirty();
+      renderEvents();
+      return;
+    }
+    const editingField = ['INPUT', 'SELECT'].includes(e.target.tagName);
+    jumpToEvent(idx, { renderList: !editingField });
+    return;
+  }
+
+  const rallyRowEl = e.target.closest('.act-rally-row');
+  if (!rallyRowEl) return;
+  const rallyId = rallyRowEl.dataset.rallyId;
+  const action = e.target.closest('[data-action]')?.dataset.action || '';
+  if (action === 'toggle-rally') {
+    toggleRallyExpanded(rallyId);
+    selectRallyFromRow(rallyId, { seek: true, expand: false });
+  } else if (action === 'preview-rally') {
+    jumpToRallyEnd(rallyId);
+  } else {
+    selectRallyFromRow(rallyId, { seek: true });
+  }
+}
+
+function toggleRallyExpanded(rallyId) {
+  if (expandedRallyIds.has(rallyId)) {
+    expandedRallyIds.delete(rallyId);
+  } else {
+    expandedRallyIds.add(rallyId);
+  }
+}
+
+function selectRallyFromRow(rallyId, { seek = true, expand = true } = {}) {
+  if (rallyId === OUTSIDE_GROUP_ID) {
+    selectedRallyId = 'all';
     selectedIdx = -1;
-    markDirty();
+    if (seek) {
+      const firstOutside = outsideEventEntries()[0]?.event;
+      if (firstOutside) seekFrame(firstOutside.frame);
+    }
     renderEvents();
     return;
   }
-  selectedIdx = idx;
-  if (['INPUT', 'SELECT'].includes(e.target.tagName)) {
-    renderOverlay();
-    return;
-  }
-  jumpToEvent(idx);
+  selectRally(rallyId, { seek, expand });
+}
+
+function jumpToRallyEnd(rallyId) {
+  const rally = state.rallies.find(r => r.id === rallyId);
+  if (!rally) return;
+  selectedRallyId = rally.id;
+  expandedRallyIds.add(rally.id);
+  selectedIdx = -1;
+  videoEl?.pause();
+  seekFrame(Math.max(0, Math.ceil(rally.end * state.fps) - 1));
+  updatePlaybackButton();
+  renderEvents();
 }
 
 function onEventChange(e) {
@@ -1025,14 +1196,80 @@ function onEventChange(e) {
   else if (field === 'frame') {
     event.frame = clamp(Math.round(Number(e.target.value) || 0), 0, Math.max(0, state.numFrames - 1));
     Object.assign(event, withRallyFields(event));
+    if (event.rally_id) {
+      selectedRallyId = event.rally_id;
+      expandedRallyIds.add(event.rally_id);
+    } else {
+      expandedRallyIds.add(OUTSIDE_GROUP_ID);
+    }
   }
   markDirty();
   renderOverlay();
   if (e.type === 'change') renderEvents();
 }
 
+function onVideoGeometryChange() {
+  syncOverlayGeometry();
+  refreshPlayhead();
+  renderOverlay();
+}
+
+function videoMediaRect() {
+  if (!videoEl) return null;
+  const rect = videoEl.getBoundingClientRect();
+  if (!rect.width || !rect.height) return null;
+
+  const videoWidth = videoEl.videoWidth || 0;
+  const videoHeight = videoEl.videoHeight || 0;
+  if (!videoWidth || !videoHeight) return rect;
+
+  const mediaRatio = videoWidth / videoHeight;
+  const boxRatio = rect.width / rect.height;
+  let width = rect.width;
+  let height = rect.height;
+  let left = rect.left;
+  let top = rect.top;
+
+  if (boxRatio > mediaRatio) {
+    width = rect.height * mediaRatio;
+    left += (rect.width - width) / 2;
+  } else if (boxRatio < mediaRatio) {
+    height = rect.width / mediaRatio;
+    top += (rect.height - height) / 2;
+  }
+
+  return {
+    left,
+    top,
+    width,
+    height,
+    right: left + width,
+    bottom: top + height,
+  };
+}
+
+function syncOverlayGeometry() {
+  if (!overlayEl || !videoWrapEl || !videoEl) return null;
+  const wrapRect = videoWrapEl.getBoundingClientRect();
+  const mediaRect = videoMediaRect();
+  if (!mediaRect || !wrapRect.width || !wrapRect.height) return null;
+
+  overlayEl.style.left = `${mediaRect.left - wrapRect.left}px`;
+  overlayEl.style.top = `${mediaRect.top - wrapRect.top}px`;
+  overlayEl.style.width = `${mediaRect.width}px`;
+  overlayEl.style.height = `${mediaRect.height}px`;
+  overlayEl.style.right = 'auto';
+  overlayEl.style.bottom = 'auto';
+
+  return {
+    width: mediaRect.width,
+    height: mediaRect.height,
+  };
+}
+
 function renderOverlay() {
   if (!overlayEl) return;
+  syncOverlayGeometry();
   const frame = currentFrame();
   overlayEl.innerHTML = state.events.map((event, idx) => ({ event, idx }))
     .filter(({ event }) => eventVisibleInScope(event) && Math.abs(event.frame - frame) <= 2)
@@ -1099,7 +1336,9 @@ function onPointDragMove(e) {
   const moved = Math.abs(e.clientX - dragPoint.startX) + Math.abs(e.clientY - dragPoint.startY) > 2;
   dragPoint.moved = dragPoint.moved || moved;
 
-  const [x, y] = clientToVideoPoint(e.clientX, e.clientY);
+  const point = clientToVideoPoint(e.clientX, e.clientY);
+  if (!point) return;
+  const [x, y] = point;
   const event = state.events[dragPoint.idx];
   event.xy = [x, y];
   dragPoint.btn.style.left = `${x * 100}%`;
@@ -1122,7 +1361,8 @@ function onPointDragEnd() {
 }
 
 function clientToVideoPoint(clientX, clientY) {
-  const rect = videoEl.getBoundingClientRect();
+  const rect = videoMediaRect();
+  if (!rect || !rect.width || !rect.height) return null;
   return [
     round4(clamp((clientX - rect.left) / rect.width, 0, 1)),
     round4(clamp((clientY - rect.top) / rect.height, 0, 1)),
@@ -1194,6 +1434,18 @@ function refreshPlayhead() {
   }
   updateRallyNow(frame);
   updateTimelinePlayhead();
+  autoPauseAtRallyEnd(t);
+}
+
+function autoPauseAtRallyEnd(t) {
+  if (!videoEl || videoEl.paused || selectedRallyId === 'all') return;
+  const rally = currentRally();
+  if (!rally || !Number.isFinite(rally.end)) return;
+  if (t < rally.end) return;
+
+  videoEl.pause();
+  videoEl.currentTime = Math.min(rally.end, videoEl.duration || rally.end);
+  updatePlaybackButton();
 }
 
 function togglePlayback() {
@@ -1224,18 +1476,33 @@ function currentFrame() {
 
 function seekFrame(frame) {
   if (!videoEl || !state.fps) return;
-  videoEl.currentTime = Math.max(0, frame / state.fps);
+  const maxFrame = Math.max(0, state.numFrames - 1);
+  const targetFrame = clamp(Math.round(Number(frame) || 0), 0, maxFrame);
+  videoEl.currentTime = targetFrame / state.fps;
   refreshPlayhead();
+  requestAnimationFrame(refreshPlayhead);
 }
 
-function jumpToEvent(idx) {
+function jumpToEvent(idx, { renderList = true } = {}) {
   const event = state.events[idx];
   if (!event) return;
   selectedIdx = idx;
+  if (event.rally_id) {
+    selectedRallyId = event.rally_id;
+    expandedRallyIds.add(event.rally_id);
+  } else {
+    selectedRallyId = 'all';
+    expandedRallyIds.add(OUTSIDE_GROUP_ID);
+  }
   videoEl?.pause();
   seekFrame(event.frame);
   updatePlaybackButton();
-  renderEvents();
+  if (renderList) {
+    renderEvents();
+  } else {
+    renderOverlay();
+    renderTimeline();
+  }
 }
 
 function stepFrame(delta) {

@@ -1,5 +1,5 @@
 /**
- * Review page — Review TAD predictions and save corrected annotations.
+ * TAD Label page — review TAD predictions and save corrected annotations.
  *
  * Editor mechanics live in components/annotation_editor.js. This file owns
  * the page chrome: the multi-axis filter dropdown (split / quality / kind),
@@ -18,7 +18,7 @@ const editor = new AnnotationEditor({
   // TAD predictions carry a confidence score; render it as a colored pill.
   rowExtras: rowExtras,
   previewBackoff: 5,
-  // Review's source dropdown switches files frequently; releasing the buffer
+  // TAD Label's source dropdown switches files frequently; releasing the buffer
   // on page leave avoids holding stale streams open.
   unloadOnDeactivate: true,
 });
@@ -28,7 +28,7 @@ let results = [];
 export function render(container) {
   container.innerHTML = `
     <div class="max-w-screen-2xl mx-auto space-y-5">
-      ${pageHeader('Review', 'Review TAD predictions and correct annotations', `
+      ${pageHeader('TAD Label', 'Label TAD predictions and correct annotations', `
         <select id="rev-filter" class="${selectCls}" title="Filter by split / quality / kind">
           <option value="all">All files</option>
           <option value="val">Validation only</option>
@@ -145,4 +145,3 @@ async function loadFile() {
     showToast(`Failed to load: ${e.message}`, 'error');
   }
 }
-
