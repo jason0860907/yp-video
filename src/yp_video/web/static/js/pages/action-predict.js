@@ -62,7 +62,7 @@ export function render(container) {
                 </label>
                 <label class="block space-y-1.5">
                   <span class="text-[11px] text-text-muted uppercase tracking-wider font-medium">Batch</span>
-                  <input id="act-pred-batch" type="number" min="1" max="128" step="1" value="8" class="w-full ${inputCls}">
+                  <input id="act-pred-batch" type="number" min="1" max="128" step="1" value="64" class="w-full ${inputCls}">
                 </label>
               </div>
               <div class="grid grid-cols-2 gap-3">
@@ -72,7 +72,7 @@ export function render(container) {
                 </label>
                 <label class="block space-y-1.5">
                   <span class="text-[11px] text-text-muted uppercase tracking-wider font-medium">Workers</span>
-                  <input id="act-pred-workers" type="number" min="0" max="16" step="1" value="4" class="w-full ${inputCls}">
+                  <input id="act-pred-workers" type="number" min="0" max="16" step="1" value="8" class="w-full ${inputCls}">
                 </label>
               </div>
               <div class="space-y-2">
@@ -253,7 +253,7 @@ async function runSelected() {
         videos: names,
         checkpoint: document.getElementById('act-pred-checkpoint').value,
         min_score: Number(document.getElementById('act-pred-score').value) || 0.15,
-        batch_size: Number(document.getElementById('act-pred-batch').value) || 8,
+        batch_size: Number(document.getElementById('act-pred-batch').value) || 64,
         num_workers: Number(document.getElementById('act-pred-workers').value),
         clip_len: Number(document.getElementById('act-pred-clip-len').value) || 64,
         use_amp: true,

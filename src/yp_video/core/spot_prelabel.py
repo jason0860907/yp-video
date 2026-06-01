@@ -85,20 +85,25 @@ def resolve_checkpoint(value: str | None) -> Path:
 
 def build_command(
     *,
-    video_path: Path,
+    video_path: Path | list[Path],
     checkpoint_path: Path,
-    save_dir: Path,
+    save_dir: Path | list[Path],
     batch_size: int,
     num_workers: int,
     clip_len: int,
     use_amp: bool = True,
 ) -> list[str]:
+    video_paths = [video_path] if isinstance(video_path, Path) else list(video_path)
+    save_dirs = [save_dir] if isinstance(save_dir, Path) else list(save_dir)
+    if len(save_dirs) not in (1, len(video_paths)):
+        raise ValueError("save_dir must contain one path or one path per video")
+
     cmd = [
         str(SPOT_PYTHON),
         str(SPOT_INFERENCE_SCRIPT),
-        "--video_path", str(video_path),
+        "--video_path", *(str(path) for path in video_paths),
         "--checkpoint_path", str(checkpoint_path),
-        "--save_dir", str(save_dir),
+        "--save_dir", *(str(path) for path in save_dirs),
         "--batch_size", str(batch_size),
         "--num_workers", str(num_workers),
         "--clip_len", str(clip_len),
@@ -153,6 +158,7 @@ def predictions_to_annotation(
             "frame": frame,
             "label": label,
             "xy": [round(x, 4), round(y, 4)],
+            "visible": True,
         })
 
     events.sort(key=lambda e: (e["frame"], e["label"]))

@@ -147,6 +147,7 @@ export const API = {
     prelabelBatch: '/action-annotate/prelabel-batch',
     annotations: '/action-annotate/annotations',
     annotation: name => `/action-annotate/annotations/${encodeURIComponent(name)}`,
+    waveform: name => `/action-annotate/waveform/${encodeURIComponent(name)}`,
     export: '/action-annotate/export',
     video: name => `/action-annotate/video/${encodeURIComponent(name)}`,
   },

@@ -3,7 +3,7 @@
  */
 import {
   api, API, SSEClient, pageHeader, card, sectionTitle, btnSmall,
-  showToast, showConfirm, emptyState, escapeHtml, selectCls, inputCls, kbdHint, renderJobProgress,
+  showToast, showConfirm, emptyState, escapeHtml, selectCls, inputCls, renderJobProgress,
 } from '../shared.js';
 
 const COLORS = {
@@ -15,6 +15,15 @@ const COLORS = {
   score: '#FBBF24',
 };
 const OUTSIDE_GROUP_ID = '__outside_actions__';
+const WAVEFORM_POINTS_PER_SECOND = 120;
+const WAVEFORM_MIN_POINTS = 2400;
+const WAVEFORM_MAX_POINTS = 96000;
+const WAVEFORM_SCALE_PERCENTILE = 0.98;
+const WAVEFORM_SCALE_HEADROOM = 1.35;
+const WAVEFORM_MIN_SCALE = 0.02;
+const WAVEFORM_VERTICAL_FILL = 0.40;
+const WAVEFORM_PEAK_GAIN = 0.55;
+const WAVEFORM_RMS_GAIN = 1.15;
 
 let videos = [];
 let labels = ['serve', 'receive', 'set', 'spike', 'block', 'score'];
@@ -29,6 +38,8 @@ let pointMode = false;
 let spotInfo = { available: false, checkpoints: [], default_checkpoint: '' };
 let spotJob = null;
 let spotClient = null;
+let waveform = { video: '', loading: false, error: '', hasAudio: false, duration: 0, peaks: [], rms: [] };
+let waveformRequestId = 0;
 let state = {
   video: '',
   duration: 0,
@@ -44,11 +55,33 @@ let overlayEl = null;
 let overlayResizeObserver = null;
 let selectedIdx = -1;
 let selectedRallyId = 'all';
+let timelineScope = 'rally';
 let expandedRallyIds = new Set();
 let tickTimer = null;
 let lastOverlayFrame = -1;
+let presentedMediaTime = null;
+let videoFrameCallbackId = null;
 let dragPoint = null;
 let suppressOverlayClick = false;
+
+function actionKbdHint() {
+  const rows = [
+    [['1-6', 'label'], ['Space', 'play/pause'], ['Left/Right', '1 frame'], ['Shift+Left/Right', '10 frames'], ['Enter', 'add center'], ['Right click', 'hidden'], ['Del', 'remove']],
+    [['P', 'point mode'], ['O', 'timeline']],
+  ];
+  const renderShortcut = ([key, label]) => (
+    `<span class="inline-flex items-center gap-1">
+      <kbd class="px-1.5 py-0.5 rounded bg-surface-200 border border-border text-[10px] font-heading text-text-secondary">${key}</kbd>
+      ${label}
+    </span>`
+  );
+  return `<div class="grid grid-cols-[2.5rem_minmax(0,1fr)] gap-x-3 gap-y-1 text-[11px] text-text-muted px-1">
+    <span class="font-heading text-text-secondary">Keys:</span>
+    <div class="flex flex-wrap items-center gap-x-4 gap-y-1">${rows[0].map(renderShortcut).join('')}</div>
+    <span aria-hidden="true"></span>
+    <div class="flex flex-wrap items-center gap-x-4 gap-y-1">${rows[1].map(renderShortcut).join('')}</div>
+  </div>`;
+}
 
 export function render(container) {
   container.innerHTML = `
@@ -106,8 +139,17 @@ export function render(container) {
                   <div id="act-timeline-playhead" class="absolute top-0 bottom-0 w-px bg-accent z-20 pointer-events-none" style="left:0%"></div>
                   <div id="act-timeline-markers" class="absolute inset-0"></div>
                 </div>
-                <div class="flex items-center justify-between px-0.5 gap-3">
-                  <span id="act-time" class="text-sm font-heading text-text-primary tabular-nums bg-surface-200/50 px-2.5 py-1 rounded-lg border border-border">00:00</span>
+                <div id="act-waveform-wrap" class="relative h-14 rounded-xl overflow-hidden ring-1 ring-white/[0.06] bg-surface-100/45 cursor-pointer touch-manipulation" title="Click to seek" aria-label="Audio waveform">
+                  <canvas id="act-waveform" class="absolute inset-0 w-full h-full"></canvas>
+                  <div id="act-waveform-playhead" class="absolute top-0 bottom-0 w-px bg-accent/80 z-10 pointer-events-none" style="left:0%"></div>
+                  <div id="act-waveform-status" class="absolute left-2 top-1.5 text-[10px] text-text-muted font-heading pointer-events-none"></div>
+                </div>
+                <div class="flex flex-wrap items-center justify-between px-0.5 gap-3">
+                  <div class="flex flex-wrap items-center gap-2 min-w-0">
+                    <span id="act-time" class="shrink-0 text-sm font-heading text-text-primary tabular-nums bg-surface-200/50 px-2.5 py-1 rounded-lg border border-border">00:00</span>
+                    ${btnSmall('Current rally', 'id="act-timeline-scope" title="Timeline range"')}
+                    <span id="act-timeline-range" class="text-[11px] text-text-muted font-heading tabular-nums truncate max-w-[13rem]"></span>
+                  </div>
                   <div class="flex flex-wrap items-center justify-end gap-2">
                     ${btnSmall('<svg id="act-play-icon" class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>', 'id="act-play-toggle" title="Play / pause"')}
                     ${btnSmall('<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>', 'id="act-prev-frame" title="Previous frame"')}
@@ -123,6 +165,8 @@ export function render(container) {
               </div>
             </div>
           `)}
+
+          ${actionKbdHint()}
         </div>
 
         <div class="lg:w-[420px] lg:flex-shrink-0 min-w-0">
@@ -161,8 +205,6 @@ export function render(container) {
         </div>
       </div>
 
-      ${kbdHint([['1-6', 'label'], ['Space', 'play/pause'], ['Left/Right', '1 frame'], ['Shift+Left/Right', '10 frames'], ['Enter', 'add center'], ['P', 'point mode'], ['Del', 'remove']])}
-
       <details id="act-spot-tools" class="rounded-xl border border-border bg-surface-100/40 px-3 py-2">
         <summary class="cursor-pointer list-none text-xs font-heading text-text-secondary hover:text-text-primary select-none">
           <span class="inline-flex flex-wrap items-center gap-2">
@@ -184,7 +226,7 @@ export function render(container) {
           </label>
           <label class="space-y-1.5 min-w-0">
             <span class="text-[10px] uppercase tracking-widest text-text-muted font-semibold">Batch</span>
-            <input id="act-spot-batch" type="number" min="1" max="128" step="1" value="8" class="${inputCls} w-full">
+            <input id="act-spot-batch" type="number" min="1" max="128" step="1" value="64" class="${inputCls} w-full">
           </label>
           <label class="flex items-center gap-2 text-xs text-text-secondary pb-3 cursor-pointer">
             <input id="act-spot-stop-vllm" type="checkbox" class="accent-primary w-3.5 h-3.5">
@@ -206,6 +248,7 @@ export function render(container) {
 export function activate() {
   document.addEventListener('keydown', onKeydown);
   tickTimer = setInterval(refreshPlayhead, 100);
+  startVideoFrameClock();
   refreshPlayhead();
 }
 
@@ -218,6 +261,7 @@ export function deactivate() {
   window.removeEventListener('resize', onVideoGeometryChange);
   spotClient?.stop();
   spotClient = null;
+  stopVideoFrameClock();
   videoEl?.pause();
 }
 
@@ -288,7 +332,9 @@ function bindEvents() {
   document.getElementById('act-rally-scope').addEventListener('change', (e) => selectRally(e.target.value));
   document.getElementById('act-rally-prev').addEventListener('click', () => stepRally(-1));
   document.getElementById('act-rally-next').addEventListener('click', () => stepRally(1));
+  document.getElementById('act-timeline-scope').addEventListener('click', toggleTimelineScope);
   document.getElementById('act-timeline').addEventListener('click', onTimelineClick);
+  document.getElementById('act-waveform-wrap').addEventListener('click', onTimelineClick);
   document.getElementById('act-kind').addEventListener('change', (e) => {
     kindFilter = e.target.value;
     activeVideoOption = 0;
@@ -317,14 +363,23 @@ function bindEvents() {
   document.getElementById('act-clear').addEventListener('click', clearEvents);
 
   videoEl.addEventListener('loadedmetadata', () => {
+    presentedMediaTime = null;
+    startVideoFrameClock();
     syncOverlayGeometry();
     refreshPlayhead();
     updatePlaybackButton();
   });
   videoEl.addEventListener('loadeddata', onVideoGeometryChange);
-  videoEl.addEventListener('seeked', onVideoGeometryChange);
+  videoEl.addEventListener('seeked', () => {
+    presentedMediaTime = videoEl.currentTime || 0;
+    startVideoFrameClock();
+    onVideoGeometryChange();
+  });
   videoEl.addEventListener('timeupdate', refreshPlayhead);
-  videoEl.addEventListener('play', updatePlaybackButton);
+  videoEl.addEventListener('play', () => {
+    startVideoFrameClock();
+    updatePlaybackButton();
+  });
   videoEl.addEventListener('pause', updatePlaybackButton);
   videoEl.addEventListener('ended', updatePlaybackButton);
   videoEl.addEventListener('click', (e) => {
@@ -334,6 +389,7 @@ function bindEvents() {
     const [x, y] = point;
     addEvent(x, y);
   });
+  videoWrapEl.addEventListener('contextmenu', onVideoContextMenu);
 
   overlayResizeObserver?.disconnect();
   if (window.ResizeObserver && videoWrapEl) {
@@ -395,17 +451,19 @@ function renderVideoOptions() {
       list.innerHTML = matches.map((v, idx) => {
         const active = idx === activeVideoOption;
         const selected = v.name === selectedVideo;
-        const status = v.has_action_annotation ? `${v.event_count} events` : 'unlabeled';
+        const status = actionStatusText(v);
         const kind = v.kind === 'sideline' ? 'SIDE' : 'CAST';
         const rallyTag = rallySourceTag(v);
         const rallyTitle = rallySourceTitle(v);
+        const actionTag = actionStatusTag(v);
         return `<button type="button" data-video-name="${escapeHtml(v.name)}"
           class="w-full text-left px-3 py-2.5 rounded-lg text-xs transition-colors ${active || selected ? 'bg-primary/10 text-text-primary' : 'text-text-secondary hover:bg-white/[0.06] hover:text-text-primary'}">
-          <span class="flex items-start gap-2 min-w-0">
-            <span class="shrink-0 px-1.5 py-0.5 rounded bg-white/5 text-[10px] font-heading text-text-muted">${kind}</span>
-            <span class="shrink-0 w-5 text-center" title="${escapeHtml(rallyTitle)}">${rallyTag}</span>
-            <span class="min-w-0 flex-1 whitespace-normal break-all leading-snug font-mono">${escapeHtml(v.name)}</span>
-            <span class="shrink-0 px-1.5 py-0.5 rounded bg-white/5 text-[10px] font-heading text-text-muted">${escapeHtml(status)}</span>
+          <span class="flex items-center gap-2 min-w-0">
+            <span class="shrink-0 inline-flex h-5 min-w-9 items-center justify-center px-1.5 rounded bg-white/5 text-[10px] leading-none font-heading text-text-muted">${kind}</span>
+            <span class="shrink-0 inline-flex w-5 h-5 items-center justify-center" title="${escapeHtml(rallyTitle)}">${rallyTag}</span>
+            ${actionTag}
+            <span class="min-w-0 flex-1 whitespace-normal break-all leading-5 font-mono">${escapeHtml(v.name)}</span>
+            <span class="shrink-0 inline-flex h-5 items-center px-1.5 rounded bg-white/5 text-[10px] leading-none font-heading text-text-muted">${escapeHtml(status)}</span>
           </span>
         </button>`;
       }).join('');
@@ -413,8 +471,42 @@ function renderVideoOptions() {
   }
 
   const countEl = document.getElementById('act-video-count');
-  if (countEl) countEl.textContent = `${matches.length} shown / ${videos.length} total`;
+  if (countEl) {
+    const labeled = videos.filter(v => v.action_reviewed).length;
+    countEl.textContent = `${matches.length} shown / ${videos.length} total · ${labeled} action labeled`;
+  }
   renderExportSummary();
+}
+
+function actionStatusText(video) {
+  const count = Math.max(0, Number(video?.event_count) || 0);
+  if (video?.action_reviewed) return `${count} labeled`;
+  if (video?.has_action_annotation) return `${count} pre-label`;
+  return 'unlabeled';
+}
+
+function actionStatusTag(video) {
+  const reviewed = Boolean(video?.action_reviewed);
+  const hasPrelabel = Boolean(video?.has_action_annotation);
+  const count = Math.max(0, Number(video?.event_count) || 0);
+  const title = reviewed
+    ? `Action labeled: ${count} event(s)`
+    : hasPrelabel
+      ? `SPOT pre-label only: ${count} event(s)`
+      : 'Action not labeled';
+  if (reviewed) {
+    return `<span class="shrink-0 inline-flex w-5 h-5 items-center justify-center rounded-full bg-emerald-500/16 text-emerald-300 ring-1 ring-emerald-400/30 leading-none" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">
+      <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"></path>
+      </svg>
+    </span>`;
+  }
+  if (hasPrelabel) {
+    return `<span class="shrink-0 inline-flex w-5 h-5 items-center justify-center rounded-full bg-amber-500/12 text-amber-300 ring-1 ring-amber-400/30 font-heading text-[10px] leading-none" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">P</span>`;
+  }
+  return `<span class="shrink-0 inline-flex w-5 h-5 items-center justify-center rounded-full ring-1 ring-white/10 leading-none" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">
+    <span class="w-2 h-2 rounded-full border border-text-muted/60"></span>
+  </span>`;
 }
 
 function rallySourceTag(video) {
@@ -435,8 +527,8 @@ function filteredVideos() {
   const needle = videoSearch.trim().toLowerCase();
   return videos.filter(v => {
     if (kindFilter !== 'all' && v.kind !== kindFilter) return false;
-    if (progressFilter === 'unlabeled' && v.has_action_annotation) return false;
-    if (progressFilter === 'labeled' && !v.has_action_annotation) return false;
+    if (progressFilter === 'unlabeled' && v.action_reviewed) return false;
+    if (progressFilter === 'labeled' && !v.action_reviewed) return false;
     return !needle || v.name.toLowerCase().includes(needle);
   });
 }
@@ -598,8 +690,8 @@ async function startSpotPrelabel() {
       body: {
         video: name,
         checkpoint: document.getElementById('act-spot-checkpoint').value,
-        batch_size: Number(document.getElementById('act-spot-batch').value) || 8,
-        num_workers: 4,
+        batch_size: Number(document.getElementById('act-spot-batch').value) || 64,
+        num_workers: 8,
         clip_len: 64,
         min_score: Number(document.getElementById('act-spot-score').value) || 0.15,
         overwrite: true,
@@ -844,10 +936,13 @@ async function loadSelectedVideo() {
     expandedRallyIds = new Set(rallies[0]?.id ? [rallies[0].id] : []);
     lastOverlayFrame = -1;
     videoEl.pause();
+    stopVideoFrameClock();
     videoEl.src = `/api${API.actionAnnotate.video(state.video)}`;
     videoEl.load();
+    startVideoFrameClock();
     updatePlaybackButton();
     renderEvents();
+    loadWaveform(state.video);
     refreshPlayhead();
     showToast(`Loaded ${state.events.length} event(s)`, 'success');
   } catch (e) {
@@ -907,11 +1002,19 @@ function normalizeEvents(events, context = state) {
       clamp(Number(e.xy?.[0] ?? e.x ?? 0.5), 0, 1),
       clamp(Number(e.xy?.[1] ?? e.y ?? 0.5), 0, 1),
     ],
+    visible: parseEventVisible(e.visible),
   })).map(e => withRallyFields(e, context))
     .sort((a, b) => a.frame - b.frame || a.label.localeCompare(b.label) || a.id.localeCompare(b.id));
 }
 
-function addEvent(x, y) {
+function parseEventVisible(value) {
+  if (typeof value === 'string') {
+    return !['0', 'false', 'no', 'off'].includes(value.trim().toLowerCase());
+  }
+  return value !== false;
+}
+
+function addEvent(x, y, { visible = true } = {}) {
   if (!state.video) return showToast('Load a video first', 'warning');
   const frame = frameForNewEvent();
   if (frame !== currentFrame()) seekFrame(frame);
@@ -920,6 +1023,7 @@ function addEvent(x, y) {
     frame,
     label: selectedLabel,
     xy: [round4(x), round4(y)],
+    visible: Boolean(visible),
   });
   state.events.push(event);
   sortEvents();
@@ -972,7 +1076,7 @@ async function save() {
   btn.disabled = true;
   btn.textContent = 'Saving...';
   try {
-    await api(API.actionAnnotate.annotations, {
+    const result = await api(API.actionAnnotate.annotations, {
       method: 'POST',
       body: {
         video: state.video,
@@ -984,6 +1088,7 @@ async function save() {
     state.dirty = false;
     renderEvents();
     videos = await api(API.actionAnnotate.videos);
+    markVideoActionReviewed(state.video, Number(result?.count) || state.events.length);
     renderVideoOptions();
     showToast('Action annotations saved', 'success');
   } catch (e) {
@@ -992,6 +1097,14 @@ async function save() {
     btn.disabled = false;
     document.getElementById('act-save').textContent = state.dirty ? 'Save *' : 'Save';
   }
+}
+
+function markVideoActionReviewed(videoName, eventCount) {
+  const item = videos.find(v => v.name === videoName);
+  if (!item) return;
+  item.has_action_annotation = true;
+  item.action_reviewed = true;
+  item.event_count = Math.max(0, Number(eventCount) || 0);
 }
 
 function renderEvents() {
@@ -1013,6 +1126,7 @@ function renderEvents() {
     );
     renderOverlay();
     renderTimeline();
+    renderWaveform();
     return;
   }
 
@@ -1025,6 +1139,7 @@ function renderEvents() {
     );
     renderOverlay();
     renderTimeline();
+    renderWaveform();
     return;
   }
 
@@ -1033,6 +1148,7 @@ function renderEvents() {
   el.innerHTML = rallyRows + outsideRow;
   renderOverlay();
   renderTimeline();
+  renderWaveform();
 }
 
 function rallyRow(rally, idx) {
@@ -1102,12 +1218,19 @@ function actionPanel(entries, emptyText) {
 function eventRow(event, idx, rowNumber = idx + 1) {
   const selected = idx === selectedIdx;
   const color = COLORS[event.label] || '#818CF8';
+  const visible = event.visible !== false;
   const labelOptions = labels.map(label => `<option value="${escapeHtml(label)}" ${label === event.label ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('');
+  const dotStyle = visible
+    ? `background:${color}`
+    : `background:transparent; border-color:${color}`;
+  const rowTitle = visible
+    ? (event.id || '')
+    : `${event.id ? `${event.id} · ` : ''}non-visible`;
   return `
-    <div class="act-event grid grid-cols-[1rem_minmax(5.2rem,1fr)_3.8rem_2.8rem_2.35rem] items-center gap-1.5 px-2 py-1.5 rounded-lg border cursor-pointer transition-colors duration-150 ${selected ? 'bg-primary/10 border-primary/[0.35]' : 'bg-white/[0.035] border-border hover:bg-white/[0.06]'}" data-idx="${idx}" title="${escapeHtml(event.id || '')}">
+    <div class="act-event grid grid-cols-[1rem_minmax(5.2rem,1fr)_3.8rem_2.8rem_2.35rem] items-center gap-1.5 px-2 py-1.5 rounded-lg border cursor-pointer transition-colors duration-150 ${selected ? 'bg-primary/10 border-primary/[0.35]' : 'bg-white/[0.035] border-border hover:bg-white/[0.06]'}" data-idx="${idx}" title="${escapeHtml(rowTitle)}">
       <span class="text-right text-[10px] font-heading text-text-muted/70">${rowNumber}</span>
       <span class="flex items-center gap-1.5 min-w-0">
-        <span class="w-2.5 h-2.5 rounded-full flex-shrink-0" style="background:${color}"></span>
+        <span class="w-2.5 h-2.5 rounded-full flex-shrink-0 ${visible ? '' : 'border'}" title="${visible ? 'Visible point' : 'Non-visible event'}" style="${dotStyle}"></span>
         <select class="min-w-0 w-full bg-surface-100 border border-border rounded-lg px-1.5 py-1 text-xs text-text-primary" data-field="label" data-idx="${idx}">${labelOptions}</select>
       </span>
       <input class="w-full bg-transparent border-b border-white/10 text-text-primary text-[11px] text-center font-heading tabular-nums focus:border-primary-light outline-none" data-field="frame" data-idx="${idx}" value="${event.frame}">
@@ -1208,10 +1331,28 @@ function onEventChange(e) {
   if (e.type === 'change') renderEvents();
 }
 
+function onVideoContextMenu(e) {
+  e.preventDefault();
+  if (!state.video || e.target.closest('button[data-idx]')) return;
+  const mediaRect = videoMediaRect();
+  if (
+    !mediaRect
+    || e.clientX < mediaRect.left
+    || e.clientX > mediaRect.right
+    || e.clientY < mediaRect.top
+    || e.clientY > mediaRect.bottom
+  ) return;
+  const point = clientToVideoPoint(e.clientX, e.clientY);
+  if (!point) return;
+  const [x, y] = point;
+  addEvent(x, y, { visible: false });
+}
+
 function onVideoGeometryChange() {
   syncOverlayGeometry();
   refreshPlayhead();
   renderOverlay();
+  renderWaveform();
 }
 
 function videoMediaRect() {
@@ -1272,15 +1413,20 @@ function renderOverlay() {
   syncOverlayGeometry();
   const frame = currentFrame();
   overlayEl.innerHTML = state.events.map((event, idx) => ({ event, idx }))
-    .filter(({ event }) => eventVisibleInScope(event) && Math.abs(event.frame - frame) <= 2)
+    .filter(({ event }) => event.visible !== false && eventVisibleInScope(event) && Math.abs(event.frame - frame) <= 2)
     .map(({ event, idx }) => {
     const color = COLORS[event.label] || '#818CF8';
-    const active = idx === selectedIdx;
+    const exactFrame = event.frame === frame;
+    const eventFrameRing = exactFrame
+      ? `<span class="absolute left-1/2 top-1/2 w-5 h-5 rounded-full border-2 border-white/90 pointer-events-none -translate-x-1/2 -translate-y-1/2"
+          style="box-shadow:0 0 0 1px ${color}88"></span>`
+      : '';
     return `<button type="button" data-idx="${idx}" title="${escapeHtml(event.label)} frame ${event.frame}"
-      class="absolute w-5 h-5 -ml-2.5 -mt-2.5 rounded-full pointer-events-auto cursor-grab active:cursor-grabbing touch-none group"
+      class="absolute w-6 h-6 -ml-3 -mt-3 rounded-full pointer-events-auto cursor-grab active:cursor-grabbing touch-none group"
       style="left:${event.xy[0] * 100}%; top:${event.xy[1] * 100}%;">
-      <span class="absolute left-1/2 top-1/2 rounded-full border pointer-events-none transition-transform duration-150 -translate-x-1/2 -translate-y-1/2 ${active ? 'w-3.5 h-3.5 border-2 border-white scale-110' : 'w-2.5 h-2.5 border-white/90 group-hover:scale-125'}"
-        style="background:${color}; box-shadow:0 0 0 ${active ? 2 : 1}px ${color}55"></span>
+      ${eventFrameRing}
+      <span class="absolute left-1/2 top-1/2 w-2 h-2 rounded-full border border-white/85 pointer-events-none -translate-x-1/2 -translate-y-1/2"
+        style="background:${color}; box-shadow:0 0 0 1px ${color}55"></span>
     </button>`;
   }).join('');
   overlayEl.querySelectorAll('button[data-idx]').forEach(btn => {
@@ -1316,7 +1462,6 @@ function startPointDrag(e, btn) {
     moved: false,
   };
   btn.setPointerCapture?.(e.pointerId);
-  btn.classList.add('scale-125');
   document.addEventListener('pointermove', onPointDragMove);
   document.addEventListener('pointerup', onPointDragEnd, { once: true });
   document.addEventListener('pointercancel', onPointDragEnd, { once: true });
@@ -1369,30 +1514,281 @@ function clientToVideoPoint(clientX, clientY) {
   ];
 }
 
+function timelineRange() {
+  const fps = Number(state.fps) || 30;
+  const maxFrame = Math.max(0, state.numFrames - 1);
+  const rally = currentRally();
+  if (timelineScope === 'rally' && rally) {
+    const startFrame = clamp(Math.round(rally.start * fps), 0, maxFrame);
+    const endFrame = clamp(Math.max(startFrame, Math.ceil(rally.end * fps) - 1), 0, maxFrame);
+    return {
+      scope: 'rally',
+      startFrame,
+      endFrame,
+      startTime: rally.start,
+      endTime: rally.end,
+      rally,
+    };
+  }
+  return {
+    scope: 'video',
+    startFrame: 0,
+    endFrame: maxFrame,
+    startTime: 0,
+    endTime: state.duration || (fps ? maxFrame / fps : 0),
+    rally: null,
+  };
+}
+
+function frameToTimelinePct(frame, range = timelineRange()) {
+  const width = Math.max(1, range.endFrame - range.startFrame);
+  return clamp((frame - range.startFrame) / width, 0, 1) * 100;
+}
+
+function timelinePctToFrame(pct, range = timelineRange()) {
+  const width = Math.max(0, range.endFrame - range.startFrame);
+  return Math.round(range.startFrame + clamp(pct, 0, 1) * width);
+}
+
+function eventInTimelineRange(event, range = timelineRange()) {
+  return event.frame >= range.startFrame && event.frame <= range.endFrame;
+}
+
+function toggleTimelineScope() {
+  if (!state.video || !state.numFrames) return;
+  if (timelineScope === 'rally') {
+    timelineScope = 'video';
+  } else if (currentRally()) {
+    timelineScope = 'rally';
+  }
+  renderTimeline();
+  renderWaveform();
+  refreshPlayhead();
+}
+
+function updateTimelineScopeUi(range = timelineRange()) {
+  const btn = document.getElementById('act-timeline-scope');
+  if (btn) {
+    const hasSelectedRally = Boolean(currentRally());
+    const effectiveScope = hasSelectedRally ? timelineScope : 'video';
+    btn.textContent = effectiveScope === 'rally' ? 'Current rally' : 'Full video';
+    btn.style.minWidth = '7rem';
+    btn.title = effectiveScope === 'rally'
+      ? 'Timeline range: current rally'
+      : 'Timeline range: full video';
+    btn.setAttribute('aria-pressed', String(effectiveScope === 'rally'));
+    btn.disabled = !state.video || !state.numFrames || !hasSelectedRally;
+    btn.classList.toggle('ring-2', effectiveScope === 'rally');
+    btn.classList.toggle('ring-emerald-400/40', effectiveScope === 'rally');
+    btn.style.background = effectiveScope === 'rally' ? 'rgba(34, 197, 94, 0.14)' : '';
+    btn.style.borderColor = effectiveScope === 'rally' ? 'rgba(34, 197, 94, 0.32)' : '';
+    btn.style.color = effectiveScope === 'rally' ? '#86EFAC' : '';
+  }
+
+  const label = document.getElementById('act-timeline-range');
+  if (!label) return;
+  if (!state.video || !state.numFrames) {
+    label.textContent = '';
+    return;
+  }
+  if (range.scope === 'rally' && range.rally) {
+    const idx = selectedRallyIndex();
+    label.textContent = `R${idx + 1} ${formatSeconds(range.startTime)}-${formatSeconds(range.endTime)}`;
+  } else {
+    label.textContent = `Video ${formatSeconds(range.startTime)}-${formatSeconds(range.endTime)}`;
+  }
+}
+
+async function loadWaveform(videoName) {
+  const requestId = ++waveformRequestId;
+  waveform = { video: videoName, loading: true, error: '', hasAudio: false, duration: 0, peaks: [], rms: [] };
+  renderWaveform();
+  try {
+    const points = waveformPointCount(state.duration);
+    const data = await api(`${API.actionAnnotate.waveform(videoName)}?points=${points}`);
+    if (requestId !== waveformRequestId || videoName !== state.video) return;
+    const peaks = Array.isArray(data.peaks) ? data.peaks.map(v => clamp(Number(v) || 0, 0, 1)) : [];
+    const rms = Array.isArray(data.rms) && data.rms.length === peaks.length
+      ? data.rms.map(v => clamp(Number(v) || 0, 0, 1))
+      : peaks;
+    waveform = {
+      video: videoName,
+      loading: false,
+      error: '',
+      hasAudio: Boolean(data.has_audio),
+      duration: Number(data.duration) || state.duration || 0,
+      peaks,
+      rms,
+    };
+  } catch (e) {
+    if (requestId !== waveformRequestId || videoName !== state.video) return;
+    waveform = { video: videoName, loading: false, error: e.message, hasAudio: false, duration: 0, peaks: [], rms: [] };
+  }
+  renderWaveform();
+}
+
+function waveformPointCount(durationSeconds) {
+  const duration = Math.max(0, Number(durationSeconds) || 0);
+  const points = Math.ceil(duration * WAVEFORM_POINTS_PER_SECOND);
+  return clamp(points || WAVEFORM_MIN_POINTS, WAVEFORM_MIN_POINTS, WAVEFORM_MAX_POINTS);
+}
+
+function renderWaveform() {
+  const canvas = document.getElementById('act-waveform');
+  const status = document.getElementById('act-waveform-status');
+  if (!canvas) return;
+  const rect = canvas.getBoundingClientRect();
+  const width = Math.max(1, Math.floor(rect.width));
+  const height = Math.max(1, Math.floor(rect.height));
+  const dpr = window.devicePixelRatio || 1;
+  const pixelWidth = Math.max(1, Math.floor(width * dpr));
+  const pixelHeight = Math.max(1, Math.floor(height * dpr));
+  if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+    canvas.width = pixelWidth;
+    canvas.height = pixelHeight;
+  }
+
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, width, height);
+
+  const gradient = ctx.createLinearGradient(0, 0, 0, height);
+  gradient.addColorStop(0, 'rgba(56, 189, 248, 0.12)');
+  gradient.addColorStop(1, 'rgba(249, 115, 22, 0.06)');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, width, height);
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, height / 2);
+  ctx.lineTo(width, height / 2);
+  ctx.stroke();
+
+  if (status) {
+    if (!state.video) status.textContent = '';
+    else if (waveform.loading) status.textContent = 'Loading audio...';
+    else if (waveform.error) status.textContent = 'Audio unavailable';
+    else if (!waveform.hasAudio || !waveform.peaks.length) status.textContent = 'No audio';
+    else status.textContent = 'Audio';
+  }
+  if (!state.video || waveform.loading || !waveform.hasAudio || !waveform.peaks.length) {
+    updateTimelinePlayhead();
+    return;
+  }
+
+  const range = timelineRange();
+  const duration = waveform.duration || state.duration || 1;
+  const startIndex = clamp(Math.floor((range.startTime / duration) * waveform.peaks.length), 0, waveform.peaks.length - 1);
+  const endIndex = clamp(Math.ceil((range.endTime / duration) * waveform.peaks.length), startIndex + 1, waveform.peaks.length);
+  const visiblePeaks = waveform.peaks.slice(startIndex, endIndex);
+  const visibleRms = waveform.rms.length ? waveform.rms.slice(startIndex, endIndex) : visiblePeaks;
+  const scaleAmp = waveformScaleAmp(visibleRms);
+  const center = height / 2;
+  const usableHeight = Math.max(8, height - 10);
+  const halfHeight = usableHeight * WAVEFORM_VERTICAL_FILL;
+
+  const valueAtPixel = (values, x) => {
+    if (!values.length) return 0;
+    if (values.length < width * 1.5) {
+      const pos = (x / Math.max(1, width - 1)) * Math.max(0, values.length - 1);
+      const left = Math.floor(pos);
+      const right = Math.min(values.length - 1, left + 1);
+      const mix = pos - left;
+      return (values[left] || 0) * (1 - mix) + (values[right] || 0) * mix;
+    }
+
+    const from = Math.floor((x / width) * values.length);
+    const to = Math.max(from + 1, Math.ceil(((x + 1) / width) * values.length));
+    let value = 0;
+    for (let i = from; i < to; i += 1) {
+      value = Math.max(value, values[i] || 0);
+    }
+    return value;
+  };
+
+  const compressedAmp = (value, multiplier = 1) => Math.sqrt(clamp((value * multiplier) / scaleAmp, 0, 1));
+
+  ctx.fillStyle = 'rgba(56, 189, 248, 0.12)';
+  ctx.beginPath();
+  ctx.moveTo(0, center);
+  for (let x = 0; x < width; x += 1) {
+    const amp = compressedAmp(valueAtPixel(visiblePeaks, x), WAVEFORM_PEAK_GAIN) * halfHeight;
+    ctx.lineTo(x, center - amp);
+  }
+  for (let x = width - 1; x >= 0; x -= 1) {
+    const amp = compressedAmp(valueAtPixel(visiblePeaks, x), WAVEFORM_PEAK_GAIN) * halfHeight;
+    ctx.lineTo(x, center + amp);
+  }
+  ctx.closePath();
+  ctx.fill();
+
+  const rmsGradient = ctx.createLinearGradient(0, 0, width, 0);
+  rmsGradient.addColorStop(0, 'rgba(56, 189, 248, 0.72)');
+  rmsGradient.addColorStop(0.58, 'rgba(129, 140, 248, 0.76)');
+  rmsGradient.addColorStop(1, 'rgba(249, 115, 22, 0.68)');
+  ctx.fillStyle = rmsGradient;
+  ctx.beginPath();
+  ctx.moveTo(0, center);
+  for (let x = 0; x < width; x += 1) {
+    const amp = compressedAmp(valueAtPixel(visibleRms, x), WAVEFORM_RMS_GAIN) * halfHeight;
+    ctx.lineTo(x, center - amp);
+  }
+  for (let x = width - 1; x >= 0; x -= 1) {
+    const amp = compressedAmp(valueAtPixel(visibleRms, x), WAVEFORM_RMS_GAIN) * halfHeight;
+    ctx.lineTo(x, center + amp);
+  }
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, center);
+  ctx.lineTo(width, center);
+  ctx.stroke();
+  updateTimelinePlayhead();
+}
+
+function waveformScaleAmp(values) {
+  const active = values.filter(v => v > 0.001).sort((a, b) => a - b);
+  if (!active.length) return 0.03;
+  const idx = clamp(Math.floor((active.length - 1) * WAVEFORM_SCALE_PERCENTILE), 0, active.length - 1);
+  return Math.max(WAVEFORM_MIN_SCALE, active[idx] * WAVEFORM_SCALE_HEADROOM);
+}
+
 function renderTimeline() {
   const markers = document.getElementById('act-timeline-markers');
   if (!markers) return;
+  const range = timelineRange();
+  updateTimelineScopeUi(range);
   if (!state.video || !state.numFrames) {
     markers.innerHTML = '';
     updateTimelinePlayhead();
     return;
   }
-  const maxFrame = Math.max(1, state.numFrames - 1);
-  const rallyBands = state.rallies.map((rally, idx) => {
-    const startPct = clamp((rally.start * state.fps) / maxFrame, 0, 1) * 100;
-    const endPct = clamp((rally.end * state.fps) / maxFrame, 0, 1) * 100;
-    const active = rally.id === selectedRallyId;
-    return `<div class="absolute top-0 bottom-0 rounded-sm ${active ? 'bg-emerald-400/[0.18] border-x border-emerald-300/50' : 'bg-emerald-500/[0.08] border-x border-emerald-400/[0.15]'}"
-      title="R${idx + 1} ${formatSeconds(rally.start)}-${formatSeconds(rally.end)}"
-      style="left:${startPct}%; width:${Math.max(0.2, endPct - startPct)}%"></div>`;
-  }).join('');
-  const eventButtons = visibleEventEntries().map(({ event, idx }) => {
-    const pct = clamp(event.frame / maxFrame, 0, 1) * 100;
+  const rallyBands = range.scope === 'rally' && range.rally
+    ? `<div class="absolute top-0 bottom-0 rounded-sm bg-emerald-400/[0.18] border-x border-emerald-300/50"
+        title="R${selectedRallyIndex() + 1} ${formatSeconds(range.startTime)}-${formatSeconds(range.endTime)}"
+        style="left:0%; width:100%"></div>`
+    : state.rallies.map((rally, idx) => {
+      const startFrame = Math.round(rally.start * state.fps);
+      const endFrame = Math.round(rally.end * state.fps);
+      const startPct = frameToTimelinePct(startFrame, range);
+      const endPct = frameToTimelinePct(endFrame, range);
+      const active = rally.id === selectedRallyId;
+      return `<div class="absolute top-0 bottom-0 rounded-sm ${active ? 'bg-emerald-400/[0.18] border-x border-emerald-300/50' : 'bg-emerald-500/[0.08] border-x border-emerald-400/[0.15]'}"
+        title="R${idx + 1} ${formatSeconds(rally.start)}-${formatSeconds(rally.end)}"
+        style="left:${startPct}%; width:${Math.max(0.2, endPct - startPct)}%"></div>`;
+    }).join('');
+  const eventButtons = visibleEventEntries().filter(({ event }) => eventInTimelineRange(event, range)).map(({ event, idx }) => {
+    const pct = frameToTimelinePct(event.frame, range);
     const color = COLORS[event.label] || '#818CF8';
     const active = idx === selectedIdx;
+    const visible = event.visible !== false;
     return `<button type="button" data-idx="${idx}" title="${escapeHtml(event.label)} frame ${event.frame}"
       class="absolute top-1/2 -translate-y-1/2 rounded-full border border-black/50 transition-transform ${active ? 'w-3 h-5 -ml-1.5 scale-110' : 'w-1.5 h-4 -ml-px hover:scale-125'}"
-      style="left:${pct}%; background:${color}"></button>`;
+      style="left:${pct}%; background:${visible ? color : 'transparent'}; border-color:${visible ? 'rgba(0,0,0,0.5)' : color}"></button>`;
   }).join('');
   markers.innerHTML = rallyBands + eventButtons;
   markers.querySelectorAll('button[data-idx]').forEach(btn => {
@@ -1405,11 +1801,47 @@ function renderTimeline() {
 }
 
 function updateTimelinePlayhead() {
-  const playhead = document.getElementById('act-timeline-playhead');
-  if (!playhead) return;
-  const maxFrame = Math.max(1, state.numFrames - 1);
-  const pct = state.video ? clamp(currentFrame() / maxFrame, 0, 1) * 100 : 0;
-  playhead.style.left = `${pct}%`;
+  const pct = state.video ? frameToTimelinePct(currentFrame(), timelineRange()) : 0;
+  const timelinePlayhead = document.getElementById('act-timeline-playhead');
+  const waveformPlayhead = document.getElementById('act-waveform-playhead');
+  if (timelinePlayhead) timelinePlayhead.style.left = `${pct}%`;
+  if (waveformPlayhead) waveformPlayhead.style.left = `${pct}%`;
+}
+
+function hasVideoFrameClock() {
+  return Boolean(videoEl?.requestVideoFrameCallback);
+}
+
+function currentMediaTime() {
+  const t = hasVideoFrameClock() && Number.isFinite(presentedMediaTime)
+    ? presentedMediaTime
+    : (videoEl?.currentTime || 0);
+  if (state.duration > 0) return clamp(t, 0, state.duration);
+  return Math.max(0, t);
+}
+
+function startVideoFrameClock() {
+  if (!hasVideoFrameClock()) {
+    presentedMediaTime = null;
+    return;
+  }
+  if (videoFrameCallbackId !== null) return;
+  videoFrameCallbackId = videoEl.requestVideoFrameCallback((_now, metadata) => {
+    videoFrameCallbackId = null;
+    if (Number.isFinite(metadata?.mediaTime)) {
+      presentedMediaTime = metadata.mediaTime;
+    }
+    refreshPlayhead();
+    startVideoFrameClock();
+  });
+}
+
+function stopVideoFrameClock() {
+  if (videoFrameCallbackId !== null && videoEl?.cancelVideoFrameCallback) {
+    videoEl.cancelVideoFrameCallback(videoFrameCallbackId);
+  }
+  videoFrameCallbackId = null;
+  presentedMediaTime = null;
 }
 
 function onTimelineClick(e) {
@@ -1417,12 +1849,12 @@ function onTimelineClick(e) {
   if (e.target.closest('button[data-idx]')) return;
   const rect = e.currentTarget.getBoundingClientRect();
   const pct = clamp((e.clientX - rect.left) / rect.width, 0, 1);
-  seekFrame(Math.round(pct * Math.max(0, state.numFrames - 1)));
+  seekFrame(timelinePctToFrame(pct, timelineRange()));
 }
 
 function refreshPlayhead() {
   if (!videoEl) return;
-  const t = videoEl.currentTime || 0;
+  const t = currentMediaTime();
   const frame = currentFrame();
   document.getElementById('act-time').textContent = `${formatSeconds(t)} / f${frame}`;
   document.getElementById('act-meta').textContent = state.video
@@ -1443,8 +1875,11 @@ function autoPauseAtRallyEnd(t) {
   if (!rally || !Number.isFinite(rally.end)) return;
   if (t < rally.end) return;
 
+  const endTime = Math.min(rally.end, videoEl.duration || rally.end);
+  presentedMediaTime = endTime;
   videoEl.pause();
-  videoEl.currentTime = Math.min(rally.end, videoEl.duration || rally.end);
+  videoEl.currentTime = endTime;
+  startVideoFrameClock();
   updatePlaybackButton();
 }
 
@@ -1471,14 +1906,17 @@ function updatePlaybackButton() {
 
 function currentFrame() {
   const maxFrame = Math.max(0, state.numFrames - 1);
-  return clamp(Math.round((videoEl?.currentTime || 0) * state.fps), 0, maxFrame);
+  return clamp(Math.round(currentMediaTime() * state.fps), 0, maxFrame);
 }
 
 function seekFrame(frame) {
   if (!videoEl || !state.fps) return;
   const maxFrame = Math.max(0, state.numFrames - 1);
   const targetFrame = clamp(Math.round(Number(frame) || 0), 0, maxFrame);
-  videoEl.currentTime = targetFrame / state.fps;
+  const targetTime = targetFrame / state.fps;
+  presentedMediaTime = targetTime;
+  videoEl.currentTime = targetTime;
+  startVideoFrameClock();
   refreshPlayhead();
   requestAnimationFrame(refreshPlayhead);
 }
@@ -1556,6 +1994,9 @@ function onKeydown(e) {
   } else if (e.key.toLowerCase() === 'p') {
     e.preventDefault();
     togglePointMode();
+  } else if (e.key.toLowerCase() === 'o') {
+    e.preventDefault();
+    toggleTimelineScope();
   } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIdx >= 0) {
     state.events.splice(selectedIdx, 1);
     selectedIdx = -1;
