@@ -49,6 +49,8 @@ ID_CACHE_PATH = Path(__file__).resolve().parent.parent / ".export_to_app_ids.jso
 
 DEFAULT_BASENAMES = [f"20260426-小窩-{i:02d}" for i in range(1, 13)]
 ANGLE_FOR_SIDELINE = "phoneSideline"  # matches CameraAngle enum on iOS
+TOOL_LIBRARY_VIDEO_UPLOAD_PATH = "/tools/library/video-upload-url"
+TOOL_LIBRARY_MANIFEST_UPLOAD_PATH = "/tools/library/manifest-upload-url"
 
 
 def parse_match_date(basename: str) -> str | None:
@@ -115,7 +117,7 @@ def parse_rally_annotations(path: Path) -> tuple[float, list[dict]]:
 
 def fetch_signed_url(endpoint: str, token: str, payload: dict) -> dict:
     r = requests.post(
-        f"{endpoint.rstrip('/')}/upload-url",
+        f"{endpoint.rstrip('/')}{TOOL_LIBRARY_VIDEO_UPLOAD_PATH}",
         json=payload,
         headers={
             "Authorization": f"Bearer {token}",
@@ -129,7 +131,7 @@ def fetch_signed_url(endpoint: str, token: str, payload: dict) -> dict:
 
 def fetch_manifest_signed_url(endpoint: str, token: str) -> dict:
     r = requests.post(
-        f"{endpoint.rstrip('/')}/manifest-url",
+        f"{endpoint.rstrip('/')}{TOOL_LIBRARY_MANIFEST_UPLOAD_PATH}",
         headers={"Authorization": f"Bearer {token}"},
         timeout=30,
     )

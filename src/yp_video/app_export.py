@@ -30,6 +30,8 @@ from yp_video.config import ANNOTATIONS_DIR, PROJECT_ROOT, find_cut, load_tokens
 # small annotation tweak reuses the same iOS rows instead of duplicating.
 ID_CACHE_PATH = PROJECT_ROOT / ".export_to_app_ids.json"
 ANGLE_FOR_SIDELINE = "phoneSideline"  # matches the iOS CameraAngle enum
+TOOL_LIBRARY_VIDEO_UPLOAD_PATH = "/tools/library/video-upload-url"
+TOOL_LIBRARY_MANIFEST_UPLOAD_PATH = "/tools/library/manifest-upload-url"
 _UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 )
@@ -80,7 +82,7 @@ def export_one_match(basename: str) -> dict:
         video_uploaded = False
     else:
         signed = _post_json(
-            f"{endpoint}/upload-url",
+            f"{endpoint}{TOOL_LIBRARY_VIDEO_UPLOAD_PATH}",
             token,
             {"user_id": user_id, "match_id": match_id, "content_type": "video/mp4"},
         )
@@ -135,7 +137,11 @@ def export_one_match(basename: str) -> dict:
 
     # 3. Upload a per-match manifest (library/<match_id>.json) so the user
     #    imports exactly this match by its own URL.
-    msigned = _post_json(f"{endpoint}/manifest-url", token, {"name": match_id})
+    msigned = _post_json(
+        f"{endpoint}{TOOL_LIBRARY_MANIFEST_UPLOAD_PATH}",
+        token,
+        {"name": match_id},
+    )
     resp = requests.put(
         msigned["upload_url"],
         data=json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8"),
