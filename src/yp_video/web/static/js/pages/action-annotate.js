@@ -104,6 +104,7 @@ export function render(container) {
               <select id="act-progress" class="${selectCls} w-full" title="Filter by action label status">
                 <option value="all">All</option>
                 <option value="unlabeled">Unlabeled</option>
+                <option value="pre-labeled">Pre-Labeled</option>
                 <option value="labeled">Labeled</option>
               </select>
             </label>
@@ -226,13 +227,13 @@ export function render(container) {
           </label>
           <label class="space-y-1.5 min-w-0">
             <span class="text-[10px] uppercase tracking-widest text-text-muted font-semibold">Batch</span>
-            <input id="act-spot-batch" type="number" min="1" max="128" step="1" value="64" class="${inputCls} w-full">
+            <input id="act-spot-batch" type="number" min="1" max="128" step="1" value="32" class="${inputCls} w-full">
           </label>
           <label class="flex items-center gap-2 text-xs text-text-secondary pb-3 cursor-pointer">
             <input id="act-spot-stop-vllm" type="checkbox" class="accent-primary w-3.5 h-3.5">
             Stop vLLM
           </label>
-          ${btnSmall('Run SPOT', 'id="act-spot-run" title="Run ~/yp-spot model and overwrite saved action labels"', 'primary')}
+          ${btnSmall('Run SPOT', 'id="act-spot-run" title="Run ~/yp-spot model and create an action pre-label"', 'primary')}
         </div>
         <div id="act-spot-progress" class="hidden mt-4 pt-4 border-t border-border"></div>
       </details>
@@ -472,7 +473,7 @@ function renderVideoOptions() {
 
   const countEl = document.getElementById('act-video-count');
   if (countEl) {
-    const labeled = videos.filter(v => v.action_reviewed).length;
+    const labeled = videos.filter(hasFinalActionAnnotation).length;
     countEl.textContent = `${matches.length} shown / ${videos.length} total · ${labeled} action labeled`;
   }
   renderExportSummary();
@@ -480,14 +481,14 @@ function renderVideoOptions() {
 
 function actionStatusText(video) {
   const count = Math.max(0, Number(video?.event_count) || 0);
-  if (video?.action_reviewed) return `${count} labeled`;
-  if (video?.has_action_annotation) return `${count} pre-label`;
+  if (hasFinalActionAnnotation(video)) return `${count} labeled`;
+  if (hasActionPrelabel(video)) return `${count} pre-label`;
   return 'unlabeled';
 }
 
 function actionStatusTag(video) {
-  const reviewed = Boolean(video?.action_reviewed);
-  const hasPrelabel = Boolean(video?.has_action_annotation);
+  const reviewed = hasFinalActionAnnotation(video);
+  const hasPrelabel = hasActionPrelabel(video);
   const count = Math.max(0, Number(video?.event_count) || 0);
   const title = reviewed
     ? `Action labeled: ${count} event(s)`
@@ -509,6 +510,18 @@ function actionStatusTag(video) {
   </span>`;
 }
 
+function hasActiveActionAnnotation(video) {
+  return Boolean(video?.has_action_annotation || video?.has_action_final_annotation || video?.has_action_pre_annotation);
+}
+
+function hasFinalActionAnnotation(video) {
+  return Boolean(video?.action_reviewed);
+}
+
+function hasActionPrelabel(video) {
+  return hasActiveActionAnnotation(video) && !hasFinalActionAnnotation(video);
+}
+
 function rallySourceTag(video) {
   const sources = video?.rally_sources || [];
   if (sources.includes('annotation')) return '✅';
@@ -527,8 +540,9 @@ function filteredVideos() {
   const needle = videoSearch.trim().toLowerCase();
   return videos.filter(v => {
     if (kindFilter !== 'all' && v.kind !== kindFilter) return false;
-    if (progressFilter === 'unlabeled' && v.action_reviewed) return false;
-    if (progressFilter === 'labeled' && !v.action_reviewed) return false;
+    if (progressFilter === 'unlabeled' && hasActiveActionAnnotation(v)) return false;
+    if (progressFilter === 'pre-labeled' && !hasActionPrelabel(v)) return false;
+    if (progressFilter === 'labeled' && !hasFinalActionAnnotation(v)) return false;
     return !needle || v.name.toLowerCase().includes(needle);
   });
 }
@@ -580,8 +594,10 @@ function renderExportSummary() {
 
 function datasetStats() {
   return videos.reduce((acc, v) => {
-    if (v.has_action_annotation) acc.videos += 1;
-    acc.events += Math.max(0, Number(v.event_count) || 0);
+    if (hasFinalActionAnnotation(v)) {
+      acc.videos += 1;
+      acc.events += Math.max(0, Number(v.event_count) || 0);
+    }
     return acc;
   }, { videos: 0, events: 0 });
 }
@@ -642,7 +658,7 @@ async function startSpotPrelabel() {
   if (state.dirty) {
     const ok = await showConfirm({
       title: 'Discard unsaved changes?',
-      body: 'SPOT pre-label will replace the saved action labels for the selected video.',
+      body: 'SPOT pre-label will discard unsaved changes in this view.',
       confirmText: 'Discard & Run',
       variant: 'danger',
     });
@@ -651,11 +667,11 @@ async function startSpotPrelabel() {
     updateDirtyUi();
   }
 
-  const existing = videos.find(v => v.name === name)?.has_action_annotation;
+  const existing = hasActiveActionAnnotation(videos.find(v => v.name === name));
   if (existing) {
     const ok = await showConfirm({
-      title: 'Overwrite saved action labels?',
-      body: `${name}\n\nThe SPOT pre-label result will replace the saved action annotation file.`,
+      title: 'Overwrite action pre-label?',
+      body: `${name}\n\nThis will replace the active action pre-label. If a saved action label exists, it will be replaced by the new pre-label.`,
       confirmText: 'Overwrite',
       variant: 'warning',
     });
@@ -690,7 +706,7 @@ async function startSpotPrelabel() {
       body: {
         video: name,
         checkpoint: document.getElementById('act-spot-checkpoint').value,
-        batch_size: Number(document.getElementById('act-spot-batch').value) || 64,
+        batch_size: Number(document.getElementById('act-spot-batch').value) || 32,
         num_workers: 8,
         clip_len: 64,
         min_score: Number(document.getElementById('act-spot-score').value) || 0.15,
@@ -764,20 +780,20 @@ function renderLabels() {
 
 function normalizeSelectedRally() {
   if (selectedRallyId === 'all') return;
-  if (!state.rallies.some(r => r.id === selectedRallyId)) {
-    selectedRallyId = state.rallies[0]?.id || 'all';
+  if (!state.rallies.some(r => r.rally_id === selectedRallyId)) {
+    selectedRallyId = state.rallies[0]?.rally_id || 'all';
   }
 }
 
 function currentRally() {
   normalizeSelectedRally();
   if (selectedRallyId === 'all') return null;
-  return state.rallies.find(r => r.id === selectedRallyId) || null;
+  return state.rallies.find(r => r.rally_id === selectedRallyId) || null;
 }
 
 function selectedRallyIndex() {
   normalizeSelectedRally();
-  return state.rallies.findIndex(r => r.id === selectedRallyId);
+  return state.rallies.findIndex(r => r.rally_id === selectedRallyId);
 }
 
 function eventVisibleInScope(event) {
@@ -825,11 +841,11 @@ function renderRallies() {
   const options = [
     `<option value="all">All rallies (${state.events.length})</option>`,
     ...state.rallies.map((rally, idx) => (
-      `<option value="${escapeHtml(rally.id)}">R${idx + 1} · ${formatSeconds(rally.start)}-${formatSeconds(rally.end)} · ${rallyEventCount(rally.id)}</option>`
+      `<option value="${rally.rally_id}">R${idx + 1} · ${formatSeconds(rally.start)}-${formatSeconds(rally.end)} · ${rallyEventCount(rally.rally_id)}</option>`
     )),
   ].join('');
   if (scope.innerHTML !== options) scope.innerHTML = options;
-  scope.value = selectedRallyId;
+  scope.value = selectedRallyId === 'all' ? 'all' : String(selectedRallyId);
   scope.disabled = !hasVideo;
 
   if (!hasVideo) {
@@ -841,7 +857,7 @@ function renderRallies() {
       summary.innerHTML = `
         <span class="text-emerald-300">R${selectedIdxForUi + 1}</span>
         <span class="text-text-muted mx-1">${formatSeconds(selected.start)}-${formatSeconds(selected.end)}</span>
-        <span>${rallyEventCount(selected.id)} event(s)</span>`;
+        <span>${rallyEventCount(selected.rally_id)} event(s)</span>`;
     } else {
       summary.innerHTML = `
         <span class="text-text-primary">All rallies</span>
@@ -856,7 +872,7 @@ function renderRallies() {
 }
 
 function selectRally(rallyId, { seek = true, expand = true } = {}) {
-  selectedRallyId = rallyId === 'all' ? 'all' : rallyId;
+  selectedRallyId = rallyId === 'all' ? 'all' : normalizeRallyId(rallyId);
   normalizeSelectedRally();
   if (expand && selectedRallyId !== 'all') expandedRallyIds.add(selectedRallyId);
   if (selectedIdx >= 0 && (!state.events[selectedIdx] || !eventVisibleInScope(state.events[selectedIdx]))) {
@@ -876,7 +892,7 @@ function stepRally(delta) {
   const nextIdx = idx < 0
     ? (delta > 0 ? 0 : state.rallies.length - 1)
     : clamp(idx + delta, 0, state.rallies.length - 1);
-  selectRally(state.rallies[nextIdx].id);
+  selectRally(state.rallies[nextIdx].rally_id);
 }
 
 function updateRallyNow(frame = currentFrame()) {
@@ -889,7 +905,7 @@ function updateRallyNow(frame = currentFrame()) {
 
   const selected = currentRally();
   const atFrame = findRallyForFrame(frame);
-  const atIdx = atFrame ? rallyIndex(atFrame.id) : -1;
+  const atIdx = atFrame ? rallyIndex(atFrame.rally_id) : -1;
   const frameText = atIdx >= 0 ? `now R${atIdx + 1}` : 'now outside';
   if (selected) {
     const idx = selectedRallyIndex();
@@ -932,8 +948,8 @@ async function loadSelectedVideo() {
     selectedVideo = name;
     videoSearch = name;
     selectedIdx = -1;
-    selectedRallyId = rallies[0]?.id || 'all';
-    expandedRallyIds = new Set(rallies[0]?.id ? [rallies[0].id] : []);
+    selectedRallyId = rallies[0]?.rally_id || 'all';
+    expandedRallyIds = new Set(rallies[0]?.rally_id ? [rallies[0].rally_id] : []);
     lastOverlayFrame = -1;
     videoEl.pause();
     stopVideoFrameClock();
@@ -983,17 +999,17 @@ function updateDirtyUi() {
 
 function normalizeRallies(rallies) {
   return (rallies || []).map((r, idx) => ({
-    id: r.id || `rally_${idx + 1}`,
+    rally_id: normalizeRallyId(r.rally_id) || idx + 1,
     start: Number(r.start) || 0,
     end: Number(r.end) || 0,
     label: r.label || 'rally',
-  })).sort((a, b) => a.start - b.start || a.end - b.end || a.id.localeCompare(b.id));
+  })).sort((a, b) => a.start - b.start || a.end - b.end || a.rally_id - b.rally_id);
 }
 
 function normalizeEvents(events, context = state) {
   return events.map(e => ({
     id: e.id || makeClientId('act'),
-    rally_id: e.rally_id || null,
+    rally_id: normalizeRallyId(e.rally_id),
     frame: Math.max(0, Math.round(Number(e.frame) || 0)),
     time: Number(e.time) || null,
     relative_frame: Number.isInteger(e.relative_frame) ? e.relative_frame : null,
@@ -1103,6 +1119,8 @@ function markVideoActionReviewed(videoName, eventCount) {
   const item = videos.find(v => v.name === videoName);
   if (!item) return;
   item.has_action_annotation = true;
+  item.has_action_final_annotation = true;
+  item.action_annotation_source = 'action-annotations';
   item.action_reviewed = true;
   item.event_count = Math.max(0, Number(eventCount) || 0);
 }
@@ -1152,16 +1170,16 @@ function renderEvents() {
 }
 
 function rallyRow(rally, idx) {
-  const selected = rally.id === selectedRallyId;
-  const expanded = expandedRallyIds.has(rally.id);
-  const entries = eventEntriesForRally(rally.id);
+  const selected = rally.rally_id === selectedRallyId;
+  const expanded = expandedRallyIds.has(rally.rally_id);
+  const entries = eventEntriesForRally(rally.rally_id);
   const rowCls = selected
     ? 'border-emerald-500/40 bg-emerald-500/[0.08]'
     : 'border-emerald-500/15 bg-emerald-500/[0.04] hover:bg-emerald-500/[0.08]';
   const durationSec = Math.max(0, rally.end - rally.start).toFixed(1);
   return `
     <div class="space-y-1.5">
-      <div class="act-rally-row flex items-center gap-2.5 px-3 py-2.5 rounded-xl border ${rowCls} cursor-pointer transition-all duration-200 group" data-rally-id="${escapeHtml(rally.id)}">
+      <div class="act-rally-row flex items-center gap-2.5 px-3 py-2.5 rounded-xl border ${rowCls} cursor-pointer transition-all duration-200 group" data-rally-id="${rally.rally_id}">
         <span class="text-[10px] font-heading text-text-muted/60 w-4 text-right select-none">${idx + 1}</span>
         <button class="flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/25 hover:bg-emerald-500/30 cursor-pointer transition-colors duration-200" data-action="toggle-rally" aria-expanded="${expanded}" title="${expanded ? 'Hide action labels' : 'Show action labels'}">
           <svg class="w-3 h-3 pointer-events-none transition-transform duration-150 ${expanded ? 'rotate-90' : ''}" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
@@ -1277,10 +1295,12 @@ function onEventClick(e) {
 }
 
 function toggleRallyExpanded(rallyId) {
-  if (expandedRallyIds.has(rallyId)) {
-    expandedRallyIds.delete(rallyId);
+  const key = rallyId === OUTSIDE_GROUP_ID ? OUTSIDE_GROUP_ID : normalizeRallyId(rallyId);
+  if (!key) return;
+  if (expandedRallyIds.has(key)) {
+    expandedRallyIds.delete(key);
   } else {
-    expandedRallyIds.add(rallyId);
+    expandedRallyIds.add(key);
   }
 }
 
@@ -1299,10 +1319,11 @@ function selectRallyFromRow(rallyId, { seek = true, expand = true } = {}) {
 }
 
 function jumpToRallyEnd(rallyId) {
-  const rally = state.rallies.find(r => r.id === rallyId);
+  const parsedRallyId = normalizeRallyId(rallyId);
+  const rally = state.rallies.find(r => r.rally_id === parsedRallyId);
   if (!rally) return;
-  selectedRallyId = rally.id;
-  expandedRallyIds.add(rally.id);
+  selectedRallyId = rally.rally_id;
+  expandedRallyIds.add(rally.rally_id);
   selectedIdx = -1;
   videoEl?.pause();
   seekFrame(Math.max(0, Math.ceil(rally.end * state.fps) - 1));
@@ -1776,7 +1797,7 @@ function renderTimeline() {
       const endFrame = Math.round(rally.end * state.fps);
       const startPct = frameToTimelinePct(startFrame, range);
       const endPct = frameToTimelinePct(endFrame, range);
-      const active = rally.id === selectedRallyId;
+      const active = rally.rally_id === selectedRallyId;
       return `<div class="absolute top-0 bottom-0 rounded-sm ${active ? 'bg-emerald-400/[0.18] border-x border-emerald-300/50' : 'bg-emerald-500/[0.08] border-x border-emerald-400/[0.15]'}"
         title="R${idx + 1} ${formatSeconds(rally.start)}-${formatSeconds(rally.end)}"
         style="left:${startPct}%; width:${Math.max(0.2, endPct - startPct)}%"></div>`;
@@ -2017,6 +2038,11 @@ function makeClientId(prefix) {
   return `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function normalizeRallyId(value) {
+  const n = Number(value);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
 function findRallyForFrame(frame, context = state) {
   const fps = Number(context.fps) || 30;
   const time = frame / fps;
@@ -2024,8 +2050,9 @@ function findRallyForFrame(frame, context = state) {
 }
 
 function rallyIndex(id) {
-  if (!id) return -1;
-  return (state.rallies || []).findIndex(r => r.id === id);
+  const parsedId = normalizeRallyId(id);
+  if (!parsedId) return -1;
+  return (state.rallies || []).findIndex(r => r.rally_id === parsedId);
 }
 
 function rallyLabel(event) {
@@ -2042,7 +2069,7 @@ function withRallyFields(event, context = state) {
     ...event,
     frame,
     time: round4(time),
-    rally_id: rally?.id || null,
+    rally_id: rally?.rally_id || null,
     relative_frame: rally ? Math.max(0, Math.round((time - rally.start) * fps)) : null,
   };
 }

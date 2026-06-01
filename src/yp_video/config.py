@@ -32,6 +32,8 @@ VLLM_ENV_PATH = PROJECT_ROOT / "vllm.env"
 R2_ENV_PATH = PROJECT_ROOT / "r2.env"
 TOKENS_ENV_PATH = PROJECT_ROOT / "tokens.env"
 VENV_PYTHON = PROJECT_ROOT / ".venv" / "bin" / "python"
+LOGS_DIR = PROJECT_ROOT / "logs"
+APP_LOG_PATH = LOGS_DIR / "yp-app.log"
 
 # ── TAD paths ─────────────────────────────────────────────────────
 TAD_PKG_DIR = Path(__file__).resolve().parent / "tad"
@@ -50,9 +52,9 @@ SEG_ANNOTATIONS_DIR = VIDEOS_DIR / "seg-annotations"
 PRE_ANNOTATIONS_DIR = VIDEOS_DIR / "rally-pre-annotations"
 ANNOTATIONS_DIR = VIDEOS_DIR / "rally-annotations"
 ACTION_ANNOTATIONS_DIR = VIDEOS_DIR / "action-annotations"
+ACTION_PRE_ANNOTATIONS_DIR = VIDEOS_DIR / "action-pre-annotations"
 ACTION_FRAMES_DIR = VIDEOS_DIR / "action-frames"
 ACTION_WAVEFORMS_DIR = VIDEOS_DIR / "action-waveforms"
-SPOT_PRELABELS_DIR = VIDEOS_DIR / "spot-prelabels"
 PREDICTIONS_DIR = VIDEOS_DIR / "tad-predictions"
 RALLY_CLIPS_DIR = VIDEOS_DIR / "rally_clips"
 FEATURES_DIR = VIDEOS_DIR / "tad-features"
@@ -73,6 +75,7 @@ R2_CATEGORIES: dict[str, R2Category] = {
     "seg-annotations": R2Category(SEG_ANNOTATIONS_DIR, "*.jsonl"),
     "rally-pre-annotations": R2Category(PRE_ANNOTATIONS_DIR, "*.jsonl"),
     "rally-annotations": R2Category(ANNOTATIONS_DIR, "*.jsonl"),
+    "action-pre-annotations": R2Category(ACTION_PRE_ANNOTATIONS_DIR, "*.jsonl"),
     "action-annotations": R2Category(ACTION_ANNOTATIONS_DIR, "*.jsonl"),
     "tad-predictions": R2Category(PREDICTIONS_DIR, "*.jsonl"),
     "tad-features": R2Category(FEATURES_DIR, "**/*.npy"),

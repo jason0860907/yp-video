@@ -3,25 +3,13 @@
 import logging
 import signal
 from contextlib import asynccontextmanager
+from logging.handlers import RotatingFileHandler
 
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-
-class _QuietPollFilter(logging.Filter):
-    """Suppress uvicorn access logs for high-frequency polling endpoints."""
-
-    _QUIET_PATHS = ("/api/system/stats", "/api/jobs/active-count", "/api/system/vllm/status")
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        msg = record.getMessage()
-        return not any(p in msg for p in self._QUIET_PATHS)
-
-
-logging.getLogger("uvicorn.access").addFilter(_QuietPollFilter())
-
-from yp_video.config import STATIC_DIR
+from yp_video.config import APP_LOG_PATH, LOGS_DIR, STATIC_DIR
 from yp_video.web.r2_client import r2_client
 from yp_video.web.routers import (
     action_annotate,
@@ -38,6 +26,38 @@ from yp_video.web.routers import (
     upload,
 )
 from yp_video.web.vllm_manager import vllm_manager
+
+
+class _QuietPollFilter(logging.Filter):
+    """Suppress uvicorn access logs for high-frequency polling endpoints."""
+
+    _QUIET_PATHS = ("/api/system/stats", "/api/jobs/active-count", "/api/system/vllm/status")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        return not any(p in msg for p in self._QUIET_PATHS)
+
+
+def _configure_logging() -> None:
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    target = str(APP_LOG_PATH.resolve())
+    for handler in root.handlers:
+        if isinstance(handler, logging.FileHandler) and getattr(handler, "baseFilename", None) == target:
+            return
+    handler = RotatingFileHandler(
+        APP_LOG_PATH,
+        maxBytes=5_000_000,
+        backupCount=3,
+        encoding="utf-8",
+    )
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    root.addHandler(handler)
+
+
+_configure_logging()
+logging.getLogger("uvicorn.access").addFilter(_QuietPollFilter())
 
 
 @asynccontextmanager

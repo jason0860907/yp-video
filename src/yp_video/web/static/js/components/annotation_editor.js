@@ -39,9 +39,9 @@ async function postForBlob(path, body) {
   return res.blob();
 }
 
-function makeClientId(prefix) {
-  if (globalThis.crypto?.randomUUID) return `${prefix}_${globalThis.crypto.randomUUID().replaceAll('-', '').slice(0, 16)}`;
-  return `${prefix}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+function normalizeRallyId(value) {
+  const n = Number(value);
+  return Number.isInteger(n) && n > 0 ? n : null;
 }
 
 
@@ -231,7 +231,7 @@ export class AnnotationEditor {
     }
 
     this.state.annotations = (data.results || []).map(r => ({
-      id: r.id || makeClientId('rally'),
+      rally_id: normalizeRallyId(r.rally_id),
       start: r.start ?? r.start_time ?? r.segment?.[0] ?? 0,
       end: r.end ?? r.end_time ?? r.segment?.[1] ?? 0,
       label: 'rally',
@@ -260,7 +260,7 @@ export class AnnotationEditor {
     if (this._markStart == null) return showToast('Mark start first with [', 'warning');
     const end = this.videoEl.currentTime;
     if (end <= this._markStart) return showToast('End must be after start', 'warning');
-    this.state.annotations.push({ id: makeClientId('rally'), start: this._markStart, end, label: 'rally' });
+    this.state.annotations.push({ rally_id: null, start: this._markStart, end, label: 'rally' });
     this.state.annotations.sort((a, b) => a.start - b.start);
     this._markStart = null;
     document.getElementById(`${this.prefix}-mark-info`).classList.add('hidden');
@@ -441,7 +441,7 @@ export class AnnotationEditor {
     }
     // Snapshot so later edits in the editor don't desync the open modal.
     const segments = this.state.annotations.map(
-      a => ({ id: a.id, start: a.start, end: a.end, label: a.label }),
+      a => ({ rally_id: a.rally_id, start: a.start, end: a.end, label: a.label }),
     );
     let busy = false;
 

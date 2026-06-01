@@ -14,6 +14,7 @@ const CATEGORIES = [
   { key: 'tad-features', label: 'TAD-Features' },
   { key: 'tad-checkpoints', label: 'TAD-Checkpoints' },
   { key: 'rally-annotations', label: 'Annotations' },
+  { key: 'action-pre-annotations', label: 'Action Pre-Annotations' },
   { key: 'action-annotations', label: 'Action Annotations' },
   { key: 'rally_clips', label: 'Rally Clips' },
 ];

@@ -62,7 +62,7 @@ export function render(container) {
                 </label>
                 <label class="block space-y-1.5">
                   <span class="text-[11px] text-text-muted uppercase tracking-wider font-medium">Batch</span>
-                  <input id="act-pred-batch" type="number" min="1" max="128" step="1" value="64" class="w-full ${inputCls}">
+                  <input id="act-pred-batch" type="number" min="1" max="128" step="1" value="32" class="w-full ${inputCls}">
                 </label>
               </div>
               <div class="grid grid-cols-2 gap-3">
@@ -78,7 +78,7 @@ export function render(container) {
               <div class="space-y-2">
                 <label class="flex items-center gap-2 text-xs text-text-secondary cursor-pointer">
                   <input id="act-pred-overwrite" type="checkbox" class="accent-primary w-3.5 h-3.5">
-                  Overwrite existing labels
+                  Overwrite existing action labels
                 </label>
                 <label class="flex items-center gap-2 text-xs text-text-secondary cursor-pointer">
                   <input id="act-pred-stop-vllm" type="checkbox" class="accent-primary w-3.5 h-3.5">
@@ -153,10 +153,14 @@ async function loadInitial() {
 function visibleVideos() {
   return videos.filter(video => {
     if (kindFilter !== 'all' && video.kind !== kindFilter) return false;
-    if (statusFilter === 'unlabeled' && video.has_action_annotation) return false;
-    if (statusFilter === 'labeled' && !video.has_action_annotation) return false;
+    if (statusFilter === 'unlabeled' && hasActiveActionAnnotation(video)) return false;
+    if (statusFilter === 'labeled' && !hasActiveActionAnnotation(video)) return false;
     return true;
   });
+}
+
+function hasActiveActionAnnotation(video) {
+  return Boolean(video?.has_action_annotation || video?.has_action_final_annotation || video?.has_action_pre_annotation);
 }
 
 function renderSpotControls() {
@@ -211,7 +215,7 @@ function renderVideos() {
       <input type="checkbox" class="act-pred-video accent-primary w-3.5 h-3.5" value="${escapeHtml(video.name)}" ${selectedVideos.has(video.name) ? 'checked' : ''}>
       <span class="w-2 h-2 rounded-full ${video.kind === 'broadcast' ? 'bg-primary-light' : 'bg-accent-light'} flex-shrink-0"></span>
       <span class="min-w-0 flex-1 truncate text-sm text-text-primary">${escapeHtml(video.name)}</span>
-      <span class="text-[11px] ${video.has_action_annotation ? 'text-emerald-300' : 'text-text-muted'} font-heading tabular-nums">${video.event_count || 0}</span>
+      <span class="text-[11px] ${hasActiveActionAnnotation(video) ? 'text-emerald-300' : 'text-text-muted'} font-heading tabular-nums">${video.event_count || 0}</span>
     </label>
   `).join('');
 
@@ -228,16 +232,16 @@ async function runSelected() {
   const names = [...selectedVideos];
   if (!names.length) return showToast('Select at least one video', 'warning');
   const selectedRecords = names.map(name => videos.find(v => v.name === name)).filter(Boolean);
-  const existing = selectedRecords.filter(video => video.has_action_annotation);
+  const existing = selectedRecords.filter(hasActiveActionAnnotation);
   const overwrite = document.getElementById('act-pred-overwrite').checked;
   if (existing.length && !overwrite) {
-    showToast(`${existing.length} selected video(s) already have labels`, 'warning');
+    showToast(`${existing.length} selected video(s) already have action labels`, 'warning');
     return;
   }
   if (existing.length && overwrite) {
     const ok = await showConfirm({
       title: 'Overwrite action labels?',
-      body: `This will replace saved action labels for ${existing.length} video(s).`,
+      body: `This will replace the active action labels for ${existing.length} video(s). Saved labels will be replaced by new pre-labels.`,
       confirmText: 'Overwrite',
       variant: 'danger',
     });
@@ -253,7 +257,7 @@ async function runSelected() {
         videos: names,
         checkpoint: document.getElementById('act-pred-checkpoint').value,
         min_score: Number(document.getElementById('act-pred-score').value) || 0.15,
-        batch_size: Number(document.getElementById('act-pred-batch').value) || 64,
+        batch_size: Number(document.getElementById('act-pred-batch').value) || 32,
         num_workers: Number(document.getElementById('act-pred-workers').value),
         clip_len: Number(document.getElementById('act-pred-clip-len').value) || 64,
         use_amp: true,

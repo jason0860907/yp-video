@@ -7,7 +7,7 @@ import math
 import re
 from pathlib import Path
 
-from yp_video.config import SPOT_DIR, SPOT_INFERENCE_SCRIPT, SPOT_PRELABELS_DIR, SPOT_PYTHON
+from yp_video.config import SPOT_DIR, SPOT_INFERENCE_SCRIPT, SPOT_PYTHON
 
 ACTION_LABELS = {"serve", "receive", "set", "spike", "block", "score"}
 _CHECKPOINT_RE = re.compile(r"checkpoint_(\d+)\.pt$")
@@ -112,16 +112,11 @@ def build_command(
     return cmd
 
 
-def predictions_path(job_id: str, video_stem: str) -> Path:
-    safe_stem = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in video_stem)
-    return SPOT_PRELABELS_DIR / f"{safe_stem}-{job_id}" / "predictions.json"
-
-
 def load_predictions(path: Path) -> list[dict]:
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
     if not isinstance(data, list):
-        raise ValueError("SPOT predictions.json must contain a list")
+        raise ValueError("SPOT prediction output must contain a list")
     return data
 
 

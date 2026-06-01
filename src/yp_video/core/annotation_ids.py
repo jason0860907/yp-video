@@ -13,14 +13,9 @@ def stable_id(prefix: str, *parts: Any) -> str:
     return f"{prefix}_{digest}"
 
 
-def rally_id(video: str, record: dict, index: int = 0) -> str:
-    existing = record.get("id")
-    if isinstance(existing, str) and existing:
-        return existing
-    start = round(float(record.get("start", record.get("start_time", 0)) or 0), 3)
-    end = round(float(record.get("end", record.get("end_time", 0)) or 0), 3)
-    label = record.get("label", "rally")
-    return stable_id("rally", video, index, start, end, label)
+def rally_id(video: str, record: dict, index: int = 0) -> int:
+    """Return the per-video rally number used by rally/action annotations."""
+    return index + 1
 
 
 def action_id(video: str, record: dict, index: int = 0) -> str:

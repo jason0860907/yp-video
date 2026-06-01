@@ -4,6 +4,8 @@ from fastapi import APIRouter
 
 from yp_video.config import (
     ANNOTATIONS_DIR,
+    ACTION_ANNOTATIONS_DIR,
+    ACTION_PRE_ANNOTATIONS_DIR,
     FEATURES_DIR,
     PREDICTIONS_DIR,
     PRE_ANNOTATIONS_DIR,
@@ -82,6 +84,8 @@ def get_stats():
         "detections": count_files(SEG_ANNOTATIONS_DIR, "*.jsonl"),
         "pre_annotations": count_files(PRE_ANNOTATIONS_DIR, "*.jsonl"),
         "annotations": count_files(ANNOTATIONS_DIR, "*.jsonl"),
+        "action_pre_annotations": count_files(ACTION_PRE_ANNOTATIONS_DIR, "*.jsonl"),
+        "actions": count_files(ACTION_ANNOTATIONS_DIR, "*.jsonl"),
         "predictions": count_files(PREDICTIONS_DIR, "*.jsonl"),
         "vjepa_b": count_files(FEATURES_DIR / "vjepa-b", "*.npy"),
         "vjepa_l": count_files(FEATURES_DIR / "vjepa-l", "*.npy"),

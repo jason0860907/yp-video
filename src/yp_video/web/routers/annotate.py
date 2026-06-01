@@ -28,6 +28,7 @@ router = APIRouter()
 
 class Annotation(BaseModel):
     id: str | None = None
+    rally_id: int | None = None
     start: float
     end: float
     label: str
@@ -43,15 +44,21 @@ def _read_jsonl_as_dict(path: Path) -> dict:
     """Read JSONL and return as {**meta, results: [...]}."""
     meta, records = read_jsonl(path)
     video = str(meta.get("video") or path.stem.removesuffix("_annotations"))
+    records.sort(key=lambda r: (
+        float(r.get("start", r.get("start_time", 0)) or 0),
+        float(r.get("end", r.get("end_time", 0)) or 0),
+        str(r.get("label", "rally")),
+    ))
     records = [_with_rally_id(video, r, i) for i, r in enumerate(records)]
     meta["results"] = records
     return meta
 
 
 def _with_rally_id(video: str, record: dict, index: int) -> dict:
+    normalized = {k: v for k, v in record.items() if k != "id"}
     return {
-        **record,
-        "id": rally_id(video, record, index),
+        **normalized,
+        "rally_id": rally_id(video, record, index),
     }
 
 
@@ -152,12 +159,13 @@ def _write_annotations_atomic(output_path: Path, video: str, duration: float, an
     with open(tmp_path, "w", encoding="utf-8") as f:
         meta = {"_meta": True, "video": video, "duration": duration}
         f.write(json.dumps(meta, ensure_ascii=False) + "\n")
-        for i, a in enumerate(annotations):
+        ordered = sorted(annotations, key=lambda ann: (ann.start, ann.end, ann.label))
+        for i, a in enumerate(ordered):
             annotation = {
-                "id": a.id or rally_id(video, a.model_dump(mode="json"), i),
                 "start": a.start,
                 "end": a.end,
                 "label": a.label,
+                "rally_id": rally_id(video, a.model_dump(mode="json"), i),
             }
             f.write(json.dumps(annotation, ensure_ascii=False) + "\n")
         f.flush()

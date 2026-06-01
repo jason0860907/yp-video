@@ -887,9 +887,10 @@ async function pollSidebar() {
         ['Videos', stats.videos],
         ['Cuts', stats.cuts],
         ['Rally-Pred', stats.pre_annotations],
-        ['Annotations', stats.annotations],
+        ['Rally Labels', stats.annotations],
+        ['Action-Pred', stats.action_pre_annotations],
+        ['Action Labels', stats.actions],
         ['VJEPA-B', stats.vjepa_b],
-        ['VJEPA-L', stats.vjepa_l],
         ['TAD-Pred', stats.predictions],
       ];
       statsEl.innerHTML = items.map(([k, v]) => `

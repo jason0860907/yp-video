@@ -7,6 +7,7 @@ import logging
 import math
 import os
 import subprocess
+import tempfile
 import traceback
 from fractions import Fraction
 from pathlib import Path
@@ -19,12 +20,12 @@ from pydantic import BaseModel, Field, field_validator
 
 from yp_video.config import (
     ACTION_ANNOTATIONS_DIR,
+    ACTION_PRE_ANNOTATIONS_DIR,
     ANNOTATIONS_DIR,
     ACTION_WAVEFORMS_DIR,
     CUT_R2_CATEGORIES,
     PRE_ANNOTATIONS_DIR,
     SPOT_DIR,
-    SPOT_PRELABELS_DIR,
     cut_kind_of,
     find_cut,
     iter_all_cuts,
@@ -48,7 +49,7 @@ AUDIO_WAVEFORM_CACHE_VERSION = 7
 
 class ActionEvent(BaseModel):
     id: str | None = None
-    rally_id: str | None = None
+    rally_id: int | None = None
     frame: int = Field(ge=0)
     time: float | None = None
     relative_frame: int | None = None
@@ -81,7 +82,7 @@ class SaveActionAnnotationsRequest(BaseModel):
 
 class SpotPrelabelOptions(BaseModel):
     checkpoint: str | None = None
-    batch_size: int = Field(default=64, ge=1, le=128)
+    batch_size: int = Field(default=32, ge=1, le=128)
     num_workers: int = Field(default=8, ge=0, le=16)
     clip_len: int = Field(default=64, ge=8, le=256)
     min_score: float = Field(default=0.15, ge=0, le=1)
@@ -100,6 +101,22 @@ class SpotPrelabelBatchRequest(SpotPrelabelOptions):
 
 def _annotation_path(video_name: str) -> Path:
     return ACTION_ANNOTATIONS_DIR / f"{Path(video_name).stem}_actions.jsonl"
+
+
+def _pre_annotation_path(video_name: str) -> Path:
+    return ACTION_PRE_ANNOTATIONS_DIR / f"{Path(video_name).stem}_actions.jsonl"
+
+
+def _active_annotation_path(video_name: str) -> Path:
+    final_path = _annotation_path(video_name)
+    pre_path = _pre_annotation_path(video_name)
+    if final_path.exists():
+        try:
+            if _annotation_reviewed(_load_annotation(final_path)):
+                return final_path
+        except HTTPException:
+            return final_path
+    return pre_path if pre_path.exists() else final_path
 
 
 def _rally_annotation_path(video_name: str) -> Path | None:
@@ -132,6 +149,8 @@ def _parse_rate(rate: str | None) -> float:
 
 def _parse_optional_float(value: object) -> float | None:
     if value in (None, "", "N/A"):
+        return None
+    if not isinstance(value, (int, float, str)):
         return None
     try:
         return float(value)
@@ -412,32 +431,49 @@ def _load_rallies(video: Path) -> list[dict]:
         return []
     meta, records = read_jsonl(path)
     source_video = str(meta.get("video") or video.name)
-    rallies: list[dict] = []
-    for i, record in enumerate(records):
+    parsed_records = []
+    for record in records:
         start = float(record.get("start", record.get("start_time", 0)) or 0)
         end = float(record.get("end", record.get("end_time", 0)) or 0)
+        parsed_records.append((start, end, record.get("label", "rally"), record))
+    parsed_records.sort(key=lambda r: (r[0], r[1], str(r[2])))
+
+    rallies: list[dict] = []
+    for i, (start, end, label, record) in enumerate(parsed_records):
         rallies.append({
-            "id": rally_id(source_video, record, i),
+            "rally_id": rally_id(source_video, record, i),
             "start": start,
             "end": end,
-            "label": record.get("label", "rally"),
+            "label": label,
         })
-    rallies.sort(key=lambda r: (r["start"], r["end"], r["id"]))
     return rallies
 
 
 def _rally_for_event(event: dict, fps: float, rallies: list[dict]) -> dict | None:
     if not rallies:
         return None
-    time = float(event.get("time") if event.get("time") is not None else event.get("frame", 0) / fps)
+    explicit_time = _parse_optional_float(event.get("time"))
+    if explicit_time is not None:
+        time = explicit_time
+    else:
+        frame = _parse_optional_float(event.get("frame")) or 0.0
+        time = frame / fps if fps > 0 else 0.0
     for rally in rallies:
         if rally["start"] <= time < rally["end"]:
             return rally
-    existing_id = event.get("rally_id")
+    existing_id = _coerce_rally_id(event.get("rally_id"))
     if existing_id:
         for rally in rallies:
-            if rally["id"] == existing_id:
+            if rally["rally_id"] == existing_id:
                 return rally
+    return None
+
+
+def _coerce_rally_id(value: object) -> int | None:
+    if isinstance(value, int) and value > 0:
+        return value
+    if isinstance(value, str) and value.isdigit() and int(value) > 0:
+        return int(value)
     return None
 
 
@@ -454,7 +490,7 @@ def _normalize_events(video_stem: str, events: list[dict], *, fps: float, num_fr
         event["visible"] = _truthy_event_visible(event.get("visible", True))
         rally = _rally_for_event(event, fps, rallies)
         if rally:
-            event["rally_id"] = rally["id"]
+            event["rally_id"] = rally["rally_id"]
             event["relative_frame"] = max(0, int(round((time - rally["start"]) * fps)))
         else:
             event["rally_id"] = None
@@ -481,6 +517,45 @@ def _write_annotation_atomic(output_path: Path, data: dict) -> None:
         f.flush()
         os.fsync(f.fileno())
     os.replace(tmp_path, output_path)
+
+
+async def _save_spot_action_annotation(
+    *,
+    video: Path,
+    ann_path: Path,
+    meta: dict,
+    pred_file: Path,
+    checkpoint: Path,
+    min_score: float,
+    replace_final: bool = False,
+) -> dict:
+    predictions = await asyncio.to_thread(spot_prelabel.load_predictions, pred_file)
+    data = spot_prelabel.predictions_to_annotation(
+        predictions,
+        video_path=video,
+        metadata=meta,
+        checkpoint_path=checkpoint,
+        min_score=min_score,
+    )
+    data["reviewed"] = False
+    rallies = await asyncio.to_thread(_load_rallies, video)
+    data["rallies"] = rallies
+    data["events"] = _normalize_events(
+        video.stem,
+        data.get("events", []),
+        fps=float(data.get("fps") or meta["fps"]),
+        num_frames=int(data.get("num_frames") or meta["num_frames"]),
+        rallies=rallies,
+    )
+    data["num_events"] = len(data["events"])
+    ann_path.parent.mkdir(parents=True, exist_ok=True)
+    await asyncio.to_thread(_write_annotation_atomic, ann_path, data)
+    if replace_final:
+        final_path = _annotation_path(video.name)
+        if final_path != ann_path:
+            final_path.unlink(missing_ok=True)
+    sync_to_r2(ann_path, "action-pre-annotations")
+    return data
 
 
 _TERMINAL_ITEM_STATUSES = {"completed", "failed", "cancelled"}
@@ -537,7 +612,7 @@ async def _update_batch_item(
     }
     update: dict = {"params": params}
     if overall_progress is not None:
-        update["progress"] = overall_progress
+        update["progress"] = max(float(job.progress), overall_progress)
     if overall_message is not None:
         update["message"] = overall_message
     await job_manager.update_job(job_id, **update)
@@ -558,11 +633,12 @@ def _resolve_prelabel_entries(names: list[str], *, overwrite: bool) -> list[tupl
         if video is None:
             missing.append(name)
             continue
-        ann_path = _annotation_path(video.name)
-        if ann_path.exists() and not overwrite:
+        final_path = _annotation_path(video.name)
+        pre_path = _pre_annotation_path(video.name)
+        if (final_path.exists() or pre_path.exists()) and not overwrite:
             existing.append(video.name)
             continue
-        entries.append((video, ann_path))
+        entries.append((video, pre_path))
 
     if missing:
         sample = ", ".join(missing[:5])
@@ -571,10 +647,62 @@ def _resolve_prelabel_entries(names: list[str], *, overwrite: bool) -> list[tupl
     if existing:
         sample = ", ".join(existing[:5])
         suffix = "" if len(existing) <= 5 else f" and {len(existing) - 5} more"
-        raise HTTPException(409, f"Action annotation already exists for: {sample}{suffix}; set overwrite=true")
+        raise HTTPException(409, f"Action pre-label already exists for: {sample}{suffix}; set overwrite=true")
     if not entries:
         raise HTTPException(400, "No valid videos selected")
     return entries
+
+
+def _parse_spot_progress(raw: str) -> dict | None:
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict) or data.get("phase") != "inference":
+        return None
+    return data
+
+
+def _spot_progress_fraction(data: dict, *, start: float, span: float, cap: float) -> float:
+    clips_done = int(data.get("clips_done") or 0)
+    clips_total = int(data.get("clips_total") or 0)
+    if clips_total > 0:
+        ratio = clips_done / clips_total
+    else:
+        end_frame = int(data.get("end_frame") or 0)
+        total_frames = max(1, int(data.get("total_frames") or 1))
+        ratio = end_frame / total_frames
+    return min(cap, start + span * max(0.0, min(float(ratio), 1.0)))
+
+
+def _spot_progress_message(data: dict) -> str:
+    end_frame = int(data.get("end_frame") or 0)
+    total_frames = int(data.get("total_frames") or 0)
+    batch_done = int(data.get("batch_done") or 0)
+    batch_total = int(data.get("batch_total") or 0)
+    clips_done = int(data.get("clips_done") or 0)
+    clips_total = int(data.get("clips_total") or 0)
+    frame_text = f"frame {min(end_frame, total_frames)}/{total_frames}" if total_frames > 0 else ""
+    batch_text = f"batch {batch_done}/{batch_total}" if batch_total > 0 else ""
+    clip_text = f"clip {clips_done}/{clips_total}" if clips_total > 0 else ""
+    parts = [part for part in (batch_text, clip_text, frame_text) if part]
+    return "SPOT inference " + " · ".join(parts)
+
+
+def _spot_app_log_line(job_id: str, line: str) -> str | None:
+    if line.startswith("SPOT_PROGRESS "):
+        data = _parse_spot_progress(line.removeprefix("SPOT_PROGRESS "))
+        if data is None:
+            return None
+        video = data.get("video_basename") or Path(str(data.get("video") or "")).name
+        return f"[SPOT {job_id}] {video}: {_spot_progress_message(data)}"
+    if line.startswith("Starting inference"):
+        return f"[SPOT {job_id}] {line}"
+    if line.startswith("Timing "):
+        return f"[SPOT {job_id}] {line}"
+    if line.startswith(("Saved predictions", "Failed inference", "Failure summary", "Warning:", "Decode pipeline:")):
+        return f"[SPOT {job_id}] {line}"
+    return None
 
 
 @router.get("/labels")
@@ -598,7 +726,9 @@ def spot_status() -> dict:
 def list_videos() -> list[dict]:
     results = []
     for video in sorted(iter_all_cuts(), key=lambda p: p.name):
-        ann_path = _annotation_path(video.name)
+        final_path = _annotation_path(video.name)
+        pre_path = _pre_annotation_path(video.name)
+        ann_path = _active_annotation_path(video.name)
         ann = None
         event_count = 0
         if ann_path.exists():
@@ -607,12 +737,17 @@ def list_videos() -> list[dict]:
                 event_count = len((ann or {}).get("events", []))
             except HTTPException:
                 event_count = -1
+        reviewed = _annotation_reviewed(ann)
+        has_active = ann_path.exists()
         results.append({
             "name": video.name,
             "kind": cut_kind_of(video),
             "rally_sources": _rally_sources(video.name),
-            "has_action_annotation": ann_path.exists(),
-            "action_reviewed": _annotation_reviewed(ann),
+            "has_action_annotation": has_active,
+            "has_action_pre_annotation": has_active and not reviewed,
+            "has_action_final_annotation": has_active and reviewed,
+            "action_annotation_source": "action-annotations" if ann_path == final_path and has_active else ("action-pre-annotations" if has_active else ""),
+            "action_reviewed": reviewed,
             "event_count": event_count,
             "frame_cache": inspect_action_frame_cache(video),
         })
@@ -628,7 +763,7 @@ async def get_annotations(name: str) -> dict:
 
     meta = await asyncio.to_thread(_video_metadata, video)
     rallies = await asyncio.to_thread(_load_rallies, video)
-    ann = _load_annotation(_annotation_path(video.name))
+    ann = _load_annotation(_active_annotation_path(video.name))
     if ann is not None:
         ann.setdefault("video", video.stem)
         ann["source_video"] = video.name
@@ -707,9 +842,10 @@ async def start_spot_prelabel(req: SpotPrelabelRequest) -> dict:
     if video is None:
         raise HTTPException(404, "Video not found")
 
-    ann_path = _annotation_path(video.name)
-    if ann_path.exists() and not req.overwrite:
-        raise HTTPException(409, "Action annotation already exists; set overwrite=true")
+    final_path = _annotation_path(video.name)
+    pre_path = _pre_annotation_path(video.name)
+    if (final_path.exists() or pre_path.exists()) and not req.overwrite:
+        raise HTTPException(409, "Action pre-label already exists; set overwrite=true")
 
     try:
         checkpoint = spot_prelabel.resolve_checkpoint(req.checkpoint)
@@ -742,75 +878,79 @@ async def start_spot_prelabel(req: SpotPrelabelRequest) -> dict:
                 progress=0.05,
                 message="Waiting for GPU...",
             )
-            pred_file = spot_prelabel.predictions_path(job.id, video.stem)
-            run_log = pred_file.parent / "run.log"
-            cmd = spot_prelabel.build_command(
-                video_path=video,
-                checkpoint_path=checkpoint,
-                save_dir=pred_file.parent,
-                batch_size=req.batch_size,
-                num_workers=req.num_workers,
-                clip_len=req.clip_len,
-                use_amp=req.use_amp,
-            )
 
-            def progress_handler(match):
-                end_frame = int(match.group(2))
-                total_frames = max(1, int(meta.get("num_frames") or 1))
-                frac = min(0.9, 0.08 + 0.82 * (end_frame / total_frames))
+            def start_handler(_match):
                 return {
-                    "progress": frac,
-                    "message": f"SPOT inference frame {min(end_frame, total_frames)}/{total_frames}",
+                    "progress": 0.08,
+                    "message": "Preparing first batch (decoding frames)...",
                 }
 
-            parsers = [ProgressParser(r"Processed .* from (\d+) to (\d+)", progress_handler)]
+            def progress_handler(match):
+                data = _parse_spot_progress(match.group(1))
+                if data is None:
+                    return None
+                return {
+                    "progress": _spot_progress_fraction(data, start=0.08, span=0.82, cap=0.9),
+                    "message": _spot_progress_message(data),
+                }
 
-            async with stop_vllm_for_job(job.id, when=req.stop_vllm):
-                async with job_manager.gpu_lock:
-                    await job_manager.update_job(
-                        job.id,
-                        progress=0.08,
-                        message="Running SPOT inference...",
-                    )
-                    rc, last_line = await stream_subprocess(
-                        job.id,
-                        cmd,
-                        SPOT_DIR,
-                        parsers=parsers,
-                        is_key_line=lambda line: line.startswith("Saved predictions"),
-                        push_interval=1.0,
-                        tee_to_terminal=True,
-                        terminal_prefix=f"[SPOT {job.id} {video.name}] ",
-                        log_path=run_log,
-                    )
-            if rc != 0:
-                raise RuntimeError(last_line or f"SPOT exited with code {rc}")
-            if not pred_file.exists():
-                raise RuntimeError(f"SPOT did not create predictions.json at {pred_file}")
+            parsers = [
+                ProgressParser(r"Starting inference \d+/\d+: .+", start_handler),
+                ProgressParser(r"SPOT_PROGRESS (.+)", progress_handler),
+            ]
 
-            await job_manager.update_job(job.id, progress=0.93, message="Converting predictions...")
-            predictions = await asyncio.to_thread(spot_prelabel.load_predictions, pred_file)
-            data = spot_prelabel.predictions_to_annotation(
-                predictions,
-                video_path=video,
-                metadata=meta,
-                checkpoint_path=checkpoint,
-                min_score=req.min_score,
-            )
-            data["reviewed"] = False
-            rallies = await asyncio.to_thread(_load_rallies, video)
-            data["rallies"] = rallies
-            data["events"] = _normalize_events(
-                video.stem,
-                data.get("events", []),
-                fps=float(data.get("fps") or meta["fps"]),
-                num_frames=int(data.get("num_frames") or meta["num_frames"]),
-                rallies=rallies,
-            )
-            data["num_events"] = len(data["events"])
-            ACTION_ANNOTATIONS_DIR.mkdir(parents=True, exist_ok=True)
-            await asyncio.to_thread(_write_annotation_atomic, ann_path, data)
-            sync_to_r2(ann_path, "action-annotations")
+            with tempfile.TemporaryDirectory(prefix=f"yp-spot-{job.id}-") as tmp_root:
+                pred_file = Path(tmp_root) / "predictions.json"
+                cmd = spot_prelabel.build_command(
+                    video_path=video,
+                    checkpoint_path=checkpoint,
+                    save_dir=pred_file.parent,
+                    batch_size=req.batch_size,
+                    num_workers=req.num_workers,
+                    clip_len=req.clip_len,
+                    use_amp=req.use_amp,
+                )
+
+                async with stop_vllm_for_job(job.id, when=req.stop_vllm):
+                    async with job_manager.gpu_lock:
+                        await job_manager.update_job(
+                            job.id,
+                            progress=0.08,
+                            message="Launching SPOT inference...",
+                        )
+                        rc, last_line = await stream_subprocess(
+                            job.id,
+                            cmd,
+                            SPOT_DIR,
+                            env={**os.environ, "PYTHONUNBUFFERED": "1"},
+                            parsers=parsers,
+                            is_key_line=lambda line: (
+                                line.startswith("Starting inference")
+                                or line.startswith("SPOT_PROGRESS ")
+                                or line.startswith("Saved predictions")
+                            ),
+                            push_interval=1.0,
+                            tee_to_terminal=True,
+                            terminal_prefix=f"[SPOT {job.id} {video.name}] ",
+                            log_command=f"[SPOT {job.id}] start single video={video.name} batch={req.batch_size} workers={req.num_workers}",
+                            log_line=lambda line: _spot_app_log_line(job.id, line),
+                        )
+                if rc != 0:
+                    raise RuntimeError(last_line or f"SPOT exited with code {rc}")
+                if not pred_file.exists():
+                    raise RuntimeError("SPOT did not create prediction output")
+
+                await job_manager.update_job(job.id, progress=0.93, message="Saving action pre-label...")
+                data = await _save_spot_action_annotation(
+                    video=video,
+                    ann_path=pre_path,
+                    meta=meta,
+                    pred_file=pred_file,
+                    checkpoint=checkpoint,
+                    min_score=req.min_score,
+                    replace_final=req.overwrite,
+                )
+                log.info("[SPOT %s] saved %s (%d event(s))", job.id, pre_path.name, data["num_events"])
             await job_manager.update_job(
                 job.id,
                 status="completed",
@@ -819,9 +959,7 @@ async def start_spot_prelabel(req: SpotPrelabelRequest) -> dict:
                 params={
                     **job.params,
                     "count": data["num_events"],
-                    "saved": str(ann_path),
-                    "predictions": str(pred_file),
-                    "run_log": str(run_log),
+                    "saved": str(pre_path),
                 },
             )
         except asyncio.CancelledError:
@@ -945,186 +1083,212 @@ async def _run_prelabel_batch_subprocess(
 ) -> int:
     total = len(entries)
     metas: list[dict] = []
-    pred_files: list[Path] = []
 
-    for idx, (video, _ann_path) in enumerate(entries):
-        await job_manager.update_job(
-            job_id,
-            progress=_batch_progress(idx, 0.01, total),
-            message=f"{video.name}: reading metadata",
+    with tempfile.TemporaryDirectory(prefix=f"yp-spot-batch-{job_id}-") as tmp_root:
+        tmp_root_path = Path(tmp_root)
+        pred_files: list[Path] = []
+        for idx, (video, _ann_path) in enumerate(entries):
+            await job_manager.update_job(
+                job_id,
+                progress=0.02 + 0.04 * ((idx + 1) / total),
+                message=f"{video.name}: reading metadata",
+            )
+            metas.append(await asyncio.to_thread(_video_metadata, video))
+            pred_file = tmp_root_path / f"{idx:05d}" / "predictions.json"
+            pred_file.parent.mkdir(parents=True, exist_ok=True)
+            pred_files.append(pred_file)
+
+        cmd = spot_prelabel.build_command(
+            video_path=[video for video, _ann_path in entries],
+            checkpoint_path=checkpoint,
+            save_dir=[pred_file.parent for pred_file in pred_files],
+            batch_size=req.batch_size,
+            num_workers=req.num_workers,
+            clip_len=req.clip_len,
+            use_amp=req.use_amp,
         )
-        meta = await asyncio.to_thread(_video_metadata, video)
-        metas.append(meta)
-        pred_file = spot_prelabel.predictions_path(job_id, video.stem)
-        pred_files.append(pred_file)
+        idx_by_video = {str(video): idx for idx, (video, _ann_path) in enumerate(entries)}
+        idx_by_video_basename = {video.name: idx for idx, (video, _ann_path) in enumerate(entries)}
+        idx_by_prediction = {str(pred_file): idx for idx, pred_file in enumerate(pred_files)}
+        conversion_tasks: dict[int, asyncio.Task[bool]] = {}
 
-    run_log = SPOT_PRELABELS_DIR / f"batch-{job_id}" / "run.log"
-    cmd = spot_prelabel.build_command(
-        video_path=[video for video, _ann_path in entries],
-        checkpoint_path=checkpoint,
-        save_dir=[pred_file.parent for pred_file in pred_files],
-        batch_size=req.batch_size,
-        num_workers=req.num_workers,
-        clip_len=req.clip_len,
-        use_amp=req.use_amp,
-    )
-    idx_by_video = {str(video): idx for idx, (video, _ann_path) in enumerate(entries)}
-    idx_by_prediction = {str(pred_file): idx for idx, pred_file in enumerate(pred_files)}
+        async def convert_predictions(idx: int) -> bool:
+            video, ann_path = entries[idx]
+            meta = metas[idx]
+            pred_file = pred_files[idx]
+            try:
+                if not pred_file.exists():
+                    raise RuntimeError("SPOT did not create prediction output")
+                await _update_batch_item(
+                    job_id,
+                    items,
+                    idx,
+                    progress=0.92,
+                    message="Inference complete; saving pre-label",
+                    overall_progress=_batch_progress(idx, 0.92, total),
+                    overall_message=f"{video.name}: saving pre-label",
+                )
+                data = await _save_spot_action_annotation(
+                    video=video,
+                    ann_path=ann_path,
+                    meta=meta,
+                    pred_file=pred_file,
+                    checkpoint=checkpoint,
+                    min_score=req.min_score,
+                    replace_final=req.overwrite,
+                )
+                log.info("[SPOT %s] saved %s (%d event(s))", job_id, ann_path.name, data["num_events"])
+                await _update_batch_item(
+                    job_id,
+                    items,
+                    idx,
+                    status="completed",
+                    progress=1.0,
+                    message=f"Complete: {data['num_events']} event(s)",
+                    overall_progress=_batch_progress(idx, 1.0, total),
+                    overall_message=f"{video.name}: complete",
+                    extra={
+                        "count": data["num_events"],
+                        "saved": str(ann_path),
+                    },
+                )
+                return True
+            except Exception as exc:  # noqa: BLE001
+                tb = traceback.format_exc()
+                log.error("SPOT batch conversion failed for %s:\n%s", video.name, tb)
+                job_obj = job_manager.get_job(job_id)
+                if job_obj:
+                    job_obj.logs.append(f"[{video.name}] {type(exc).__name__}: {exc}")
+                    job_obj.logs.extend(tb.splitlines())
+                await _update_batch_item(
+                    job_id,
+                    items,
+                    idx,
+                    status="failed",
+                    progress=1.0,
+                    message="Failed",
+                    error=f"{type(exc).__name__}: {exc}",
+                    overall_progress=_batch_progress(idx, 1.0, total),
+                    overall_message=f"{video.name}: failed",
+                )
+                return False
 
-    def start_handler(match):
-        video_path = match.group(3)
-        idx = idx_by_video.get(video_path)
-        if idx is None:
+        def schedule_conversion(idx: int) -> None:
+            if idx not in conversion_tasks:
+                conversion_tasks[idx] = asyncio.create_task(convert_predictions(idx))
+
+        def start_handler(match):
+            video_path = match.group(3)
+            idx = idx_by_video.get(video_path)
+            if idx is None:
+                return None
+            video = entries[idx][0]
+            asyncio.create_task(
+                _update_batch_item(
+                    job_id,
+                    items,
+                    idx,
+                    status="running",
+                    progress=0.10,
+                    message="Preparing first batch (decoding frames)",
+                    overall_progress=_batch_progress(idx, 0.10, total),
+                    overall_message=f"{video.name}: preparing first batch",
+                )
+            )
             return None
-        video = entries[idx][0]
-        asyncio.create_task(
-            _update_batch_item(
-                job_id,
-                items,
-                idx,
-                status="running",
-                progress=0.10,
-                message="Starting SPOT inference",
-                overall_progress=_batch_progress(idx, 0.10, total),
-                overall_message=f"{video.name}: starting SPOT inference",
-                extra={"predictions": str(pred_files[idx])},
-            )
-        )
-        return None
 
-    def progress_handler(match):
-        video_path = match.group(1)
-        idx = idx_by_video.get(video_path)
-        if idx is None:
+        def progress_handler(match):
+            data = _parse_spot_progress(match.group(1))
+            if data is None:
+                return None
+            video_path = str(data.get("video") or "")
+            idx = idx_by_video.get(video_path)
+            if idx is None:
+                basename = str(data.get("video_basename") or Path(video_path).name)
+                idx = idx_by_video_basename.get(basename)
+            if idx is None:
+                return None
+            item_progress = _spot_progress_fraction(data, start=0.12, span=0.78, cap=0.9)
+            video = entries[idx][0]
+            message = _spot_progress_message(data)
+            asyncio.create_task(
+                _update_batch_item(
+                    job_id,
+                    items,
+                    idx,
+                    status="running",
+                    progress=item_progress,
+                    message=message,
+                    overall_progress=_batch_progress(idx, item_progress, total),
+                    overall_message=f"{video.name}: {message}",
+                    extra={
+                        "current_frame": int(data.get("end_frame") or 0),
+                        "total_frames": int(data.get("total_frames") or 0),
+                        "clips_done": int(data.get("clips_done") or 0),
+                        "clips_total": int(data.get("clips_total") or 0),
+                    },
+                )
+            )
             return None
-        end_frame = int(match.group(3))
-        meta = metas[idx]
-        total_frames = max(1, int(meta.get("num_frames") or 1))
-        item_progress = min(0.9, 0.12 + 0.78 * (end_frame / total_frames))
-        video = entries[idx][0]
-        message = f"SPOT inference frame {min(end_frame, total_frames)}/{total_frames}"
-        asyncio.create_task(
-            _update_batch_item(
-                job_id,
-                items,
-                idx,
-                status="running",
-                progress=item_progress,
-                message=message,
-                overall_progress=_batch_progress(idx, item_progress, total),
-                overall_message=f"{video.name}: {message}",
-            )
-        )
-        return None
 
-    def saved_handler(match):
-        pred_path = match.group(1)
-        idx = idx_by_prediction.get(pred_path)
-        if idx is None:
+        def saved_handler(match):
+            pred_path = match.group(1)
+            idx = idx_by_prediction.get(pred_path)
+            if idx is None:
+                return None
+            schedule_conversion(idx)
             return None
-        video = entries[idx][0]
-        asyncio.create_task(
-            _update_batch_item(
-                job_id,
-                items,
-                idx,
-                progress=0.92,
-                message="Inference complete",
-                overall_progress=_batch_progress(idx, 0.92, total),
-                overall_message=f"{video.name}: inference complete",
-            )
-        )
-        return None
 
-    async with job_manager.gpu_lock:
-        await job_manager.update_job(job_id, message="Running SPOT inference", progress=0.08)
-        rc, last_line = await stream_subprocess(
-            job_id,
-            cmd,
-            SPOT_DIR,
-            parsers=[
-                ProgressParser(r"Starting inference (\d+)/(\d+): (.+)", start_handler),
-                ProgressParser(r"Processed (.+) from (\d+) to (\d+)", progress_handler),
-                ProgressParser(r"Saved predictions to (.+)", saved_handler),
-            ],
-            is_key_line=lambda line: (
-                line.startswith("Starting inference")
-                or line.startswith("Saved predictions")
-                or line.startswith("Timing ")
-            ),
-            push_interval=1.0,
-            tee_to_terminal=True,
-            terminal_prefix=f"[SPOT {job_id}] ",
-            log_path=run_log,
-            update_job=False,
-        )
-
-    subprocess_error = rc != 0
-    if subprocess_error:
-        job_obj = job_manager.get_job(job_id)
-        if job_obj:
-            job_obj.logs.append(last_line or f"SPOT exited with code {rc}")
-
-    failed = 0
-    for idx, ((video, ann_path), meta, pred_file) in enumerate(zip(entries, metas, pred_files)):
-        try:
-            if not pred_file.exists():
-                raise RuntimeError(f"SPOT did not create predictions.json at {pred_file}")
-            await _update_batch_item(
+        async with job_manager.gpu_lock:
+            await job_manager.update_job(job_id, message="Running SPOT inference", progress=0.08)
+            rc, last_line = await stream_subprocess(
                 job_id,
-                items,
-                idx,
-                progress=0.93,
-                message="Converting predictions",
-                overall_progress=_batch_progress(idx, 0.93, total),
-                overall_message=f"{video.name}: converting predictions",
+                cmd,
+                SPOT_DIR,
+                env={**os.environ, "PYTHONUNBUFFERED": "1"},
+                parsers=[
+                    ProgressParser(r"Starting inference (\d+)/(\d+): (.+)", start_handler),
+                    ProgressParser(r"SPOT_PROGRESS (.+)", progress_handler),
+                    ProgressParser(r"Saved predictions to (.+)", saved_handler),
+                ],
+                is_key_line=lambda line: (
+                    line.startswith("Starting inference")
+                    or line.startswith("SPOT_PROGRESS ")
+                    or line.startswith("Saved predictions")
+                    or line.startswith("Timing ")
+                ),
+                push_interval=1.0,
+                tee_to_terminal=True,
+                terminal_prefix=f"[SPOT {job_id}] ",
+                log_command=f"[SPOT {job_id}] start batch videos={total} batch={req.batch_size} workers={req.num_workers}",
+                log_line=lambda line: _spot_app_log_line(job_id, line),
+                update_job=False,
             )
-            predictions = await asyncio.to_thread(spot_prelabel.load_predictions, pred_file)
-            data = spot_prelabel.predictions_to_annotation(
-                predictions,
-                video_path=video,
-                metadata=meta,
-                checkpoint_path=checkpoint,
-                min_score=req.min_score,
-            )
-            data["reviewed"] = False
-            rallies = await asyncio.to_thread(_load_rallies, video)
-            data["rallies"] = rallies
-            data["events"] = _normalize_events(
-                video.stem,
-                data.get("events", []),
-                fps=float(data.get("fps") or meta["fps"]),
-                num_frames=int(data.get("num_frames") or meta["num_frames"]),
-                rallies=rallies,
-            )
-            data["num_events"] = len(data["events"])
-            ACTION_ANNOTATIONS_DIR.mkdir(parents=True, exist_ok=True)
-            await asyncio.to_thread(_write_annotation_atomic, ann_path, data)
-            sync_to_r2(ann_path, "action-annotations")
-            await _update_batch_item(
-                job_id,
-                items,
-                idx,
-                status="completed",
-                progress=1.0,
-                message=f"Complete: {data['num_events']} event(s)",
-                overall_progress=_batch_progress(idx, 1.0, total),
-                overall_message=f"{video.name}: complete",
-                extra={
-                    "count": data["num_events"],
-                    "saved": str(ann_path),
-                    "predictions": str(pred_file),
-                    "run_log": str(run_log),
-                },
-            )
-        except Exception as exc:  # noqa: BLE001
-            failed += 1
-            tb = traceback.format_exc()
-            log.error("SPOT batch conversion failed for %s:\n%s", video.name, tb)
+
+        subprocess_error = rc != 0
+        if subprocess_error:
             job_obj = job_manager.get_job(job_id)
             if job_obj:
-                job_obj.logs.append(f"[{video.name}] {type(exc).__name__}: {exc}")
-                job_obj.logs.extend(tb.splitlines())
+                job_obj.logs.append(last_line or f"SPOT exited with code {rc}")
+
+        for idx, pred_file in enumerate(pred_files):
+            if idx not in conversion_tasks and pred_file.exists():
+                schedule_conversion(idx)
+
+        conversion_results: dict[int, bool] = {}
+        if conversion_tasks:
+            results = await asyncio.gather(*conversion_tasks.values())
+            conversion_results = dict(zip(conversion_tasks.keys(), results))
+
+        failed = sum(1 for ok in conversion_results.values() if not ok)
+        for idx, ((video, _ann_path), _meta, _pred_file) in enumerate(zip(entries, metas, pred_files)):
+            if idx in conversion_results:
+                continue
+            failed += 1
+            error = "SPOT did not create prediction output"
+            job_obj = job_manager.get_job(job_id)
+            if job_obj:
+                job_obj.logs.append(f"[{video.name}] RuntimeError: {error}")
             await _update_batch_item(
                 job_id,
                 items,
@@ -1132,13 +1296,13 @@ async def _run_prelabel_batch_subprocess(
                 status="failed",
                 progress=1.0,
                 message="Failed",
-                error=f"{type(exc).__name__}: {exc}",
+                error=error,
                 overall_progress=_batch_progress(idx, 1.0, total),
                 overall_message=f"{video.name}: failed",
             )
-    if subprocess_error and failed == 0:
-        raise RuntimeError(last_line or f"SPOT exited with code {rc}")
-    return failed
+        if subprocess_error and failed == 0:
+            raise RuntimeError(last_line or f"SPOT exited with code {rc}")
+        return failed
 
 
 @router.get("/export")

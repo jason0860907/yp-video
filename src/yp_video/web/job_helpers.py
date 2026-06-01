@@ -87,6 +87,8 @@ async def stream_subprocess(
     tee_to_terminal: bool = False,
     terminal_prefix: str = "",
     log_path: Path | str | None = None,
+    log_line: Callable[[str], str | None] | None = None,
+    log_command: str | None = None,
     update_job: bool = True,
 ) -> tuple[int, str]:
     """Spawn ``cmd``, stream its merged stdout/stderr, return ``(exit_code, last_line)``.
@@ -110,6 +112,8 @@ async def stream_subprocess(
     command_line = shlex.join(str(part) for part in cmd)
     if tee_to_terminal:
         print(f"{terminal_prefix}$ {command_line}", flush=True)
+    if log_command:
+        log.info("%s", log_command)
     if log_fp is not None:
         log_fp.write(f"$ {command_line}\n")
         log_fp.flush()
@@ -140,6 +144,10 @@ async def stream_subprocess(
             job_obj.logs.append(text)
         if tee_to_terminal:
             print(f"{terminal_prefix}{text}", flush=True)
+        if log_line is not None:
+            log_text = log_line(text)
+            if log_text:
+                log.info("%s", log_text)
         if log_fp is not None:
             log_fp.write(text + "\n")
             log_fp.flush()
