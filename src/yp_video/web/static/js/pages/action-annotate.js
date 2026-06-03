@@ -214,26 +214,53 @@ export function render(container) {
             <span class="text-text-muted font-normal">checkpoint, score threshold, GPU handoff</span>
           </span>
         </summary>
-        <div class="mt-3 grid grid-cols-1 md:grid-cols-[minmax(16rem,1fr)_7rem_7rem_auto_auto] gap-2.5 items-end">
-          <label class="space-y-1.5 min-w-0">
-            <span class="text-[10px] uppercase tracking-widest text-text-muted font-semibold">Checkpoint</span>
-            <select id="act-spot-checkpoint" class="${selectCls} w-full">
-              <option value="">Loading SPOT...</option>
-            </select>
-          </label>
-          <label class="space-y-1.5 min-w-0">
-            <span class="text-[10px] uppercase tracking-widest text-text-muted font-semibold">Min score</span>
-            <input id="act-spot-score" type="number" min="0" max="1" step="0.05" value="0.15" class="${inputCls} w-full">
-          </label>
-          <label class="space-y-1.5 min-w-0">
-            <span class="text-[10px] uppercase tracking-widest text-text-muted font-semibold">Batch</span>
-            <input id="act-spot-batch" type="number" min="1" max="128" step="1" value="32" class="${inputCls} w-full">
-          </label>
-          <label class="flex items-center gap-2 text-xs text-text-secondary pb-3 cursor-pointer">
-            <input id="act-spot-stop-vllm" type="checkbox" class="accent-primary w-3.5 h-3.5">
-            Stop vLLM
-          </label>
-          ${btnSmall('Run SPOT', 'id="act-spot-run" title="Run ~/yp-spot model and create an action pre-label"', 'primary')}
+        <div class="mt-3 space-y-2.5">
+          <div class="grid grid-cols-1 md:grid-cols-[minmax(16rem,1fr)_7rem_7rem_auto_auto] gap-2.5 items-end">
+            <label class="space-y-1.5 min-w-0">
+              <span class="text-[10px] uppercase tracking-widest text-text-muted font-semibold">Checkpoint</span>
+              <select id="act-spot-checkpoint" class="${selectCls} w-full">
+                <option value="">Loading SPOT...</option>
+              </select>
+            </label>
+            <label class="space-y-1.5 min-w-0">
+              <span class="text-[10px] uppercase tracking-widest text-text-muted font-semibold">Min score</span>
+              <input id="act-spot-score" type="number" min="0" max="1" step="0.05" value="0.15" class="${inputCls} w-full">
+            </label>
+            <label class="space-y-1.5 min-w-0">
+              <span class="text-[10px] uppercase tracking-widest text-text-muted font-semibold">Batch</span>
+              <input id="act-spot-batch" type="number" min="1" max="128" step="1" value="64" class="${inputCls} w-full">
+            </label>
+            <label class="flex items-center gap-2 text-xs text-text-secondary pb-3 cursor-pointer">
+              <input id="act-spot-stop-vllm" type="checkbox" class="accent-primary w-3.5 h-3.5">
+              Stop vLLM
+            </label>
+            ${btnSmall('Run SPOT', 'id="act-spot-run" title="Run ~/yp-spot model and create an action pre-label"', 'primary')}
+          </div>
+          <div class="grid grid-cols-2 md:grid-cols-5 gap-2.5 items-end">
+            <label class="space-y-1.5 min-w-0">
+              <span class="text-[10px] uppercase tracking-widest text-text-muted font-semibold">Decoder</span>
+              <select id="act-spot-decoder" class="${selectCls} w-full">
+                <option value="opencv" selected>OpenCV</option>
+                <option value="nvdec">NVDEC (GPU)</option>
+              </select>
+            </label>
+            <label class="space-y-1.5 min-w-0">
+              <span class="text-[10px] uppercase tracking-widest text-text-muted font-semibold">Producers</span>
+              <input id="act-spot-producers" type="number" min="1" max="8" step="1" value="2" class="${inputCls} w-full">
+            </label>
+            <label class="space-y-1.5 min-w-0">
+              <span class="text-[10px] uppercase tracking-widest text-text-muted font-semibold">Threads</span>
+              <input id="act-spot-threads" type="number" min="1" max="8" step="1" value="1" class="${inputCls} w-full">
+            </label>
+            <label class="space-y-1.5 min-w-0">
+              <span class="text-[10px] uppercase tracking-widest text-text-muted font-semibold">Prefetch</span>
+              <input id="act-spot-prefetch" type="number" min="1" max="8" step="1" value="2" class="${inputCls} w-full">
+            </label>
+            <label class="space-y-1.5 min-w-0">
+              <span class="text-[10px] uppercase tracking-widest text-text-muted font-semibold">Chunk</span>
+              <input id="act-spot-chunk" type="number" min="1" max="512" step="16" value="256" class="${inputCls} w-full">
+            </label>
+          </div>
         </div>
         <div id="act-spot-progress" class="hidden mt-4 pt-4 border-t border-border"></div>
       </details>
@@ -701,14 +728,20 @@ async function startSpotPrelabel() {
   spotClient = null;
 
   try {
+    const decodeProducers = Number(document.getElementById('act-spot-producers').value) || 2;
     const job = await api(API.actionAnnotate.prelabel, {
       method: 'POST',
       body: {
         video: name,
         checkpoint: document.getElementById('act-spot-checkpoint').value,
-        batch_size: Number(document.getElementById('act-spot-batch').value) || 32,
-        num_workers: 8,
+        batch_size: Number(document.getElementById('act-spot-batch').value) || 64,
+        num_workers: decodeProducers,
         clip_len: 64,
+        decoder: document.getElementById('act-spot-decoder').value,
+        decode_producers: decodeProducers,
+        decoder_threads: Number(document.getElementById('act-spot-threads').value) || 1,
+        prefetch_factor: Number(document.getElementById('act-spot-prefetch').value) || 2,
+        decode_chunk_frames: Number(document.getElementById('act-spot-chunk').value) || 256,
         min_score: Number(document.getElementById('act-spot-score').value) || 0.15,
         overwrite: true,
         stop_vllm: stopVllm,

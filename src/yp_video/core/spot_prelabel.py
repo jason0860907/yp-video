@@ -91,6 +91,7 @@ def build_command(
     batch_size: int,
     num_workers: int,
     clip_len: int,
+    prefetch_factor: int | None = None,
     use_amp: bool = True,
 ) -> list[str]:
     video_paths = [video_path] if isinstance(video_path, Path) else list(video_path)
@@ -108,6 +109,8 @@ def build_command(
         "--num_workers", str(num_workers),
         "--clip_len", str(clip_len),
     ]
+    if prefetch_factor is not None:
+        cmd.extend(["--prefetch_factor", str(prefetch_factor)])
     cmd.append("--amp" if use_amp else "--no-amp")
     return cmd
 

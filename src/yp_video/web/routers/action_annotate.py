@@ -11,6 +11,7 @@ import tempfile
 import traceback
 from fractions import Fraction
 from pathlib import Path
+from typing import Literal
 from urllib.parse import unquote
 
 import numpy as np
@@ -45,6 +46,12 @@ ACTION_LABELS = ("serve", "receive", "set", "spike", "block", "score")
 AUDIO_WAVEFORM_SAMPLE_RATE = 32000
 AUDIO_WAVEFORM_CHANNELS = 2
 AUDIO_WAVEFORM_CACHE_VERSION = 7
+SPOT_DEFAULT_DECODER: Literal["opencv", "nvdec"] = "opencv"
+SPOT_DEFAULT_DECODE_PRODUCERS = 2
+SPOT_DEFAULT_DECODER_THREADS = 1
+SPOT_DEFAULT_PREFETCH_FACTOR = 2
+SPOT_DEFAULT_DECODE_CHUNK_FRAMES = 256
+SPOT_DEFAULT_NVIDIA_VIDEO_LIB_DIR = Path.home() / ".local/lib/nvidia-video"
 
 
 class ActionEvent(BaseModel):
@@ -82,9 +89,14 @@ class SaveActionAnnotationsRequest(BaseModel):
 
 class SpotPrelabelOptions(BaseModel):
     checkpoint: str | None = None
-    batch_size: int = Field(default=32, ge=1, le=128)
-    num_workers: int = Field(default=8, ge=0, le=16)
+    batch_size: int = Field(default=64, ge=1, le=128)
+    num_workers: int = Field(default=2, ge=0, le=16)
     clip_len: int = Field(default=64, ge=8, le=256)
+    decoder: Literal["opencv", "nvdec"] = SPOT_DEFAULT_DECODER
+    decode_producers: int = Field(default=SPOT_DEFAULT_DECODE_PRODUCERS, ge=1, le=8)
+    decoder_threads: int = Field(default=SPOT_DEFAULT_DECODER_THREADS, ge=1, le=8)
+    prefetch_factor: int = Field(default=SPOT_DEFAULT_PREFETCH_FACTOR, ge=1, le=8)
+    decode_chunk_frames: int = Field(default=SPOT_DEFAULT_DECODE_CHUNK_FRAMES, ge=1, le=512)
     min_score: float = Field(default=0.15, ge=0, le=1)
     overwrite: bool = False
     stop_vllm: bool = False
@@ -705,6 +717,40 @@ def _spot_app_log_line(job_id: str, line: str) -> str | None:
     return None
 
 
+def _spot_subprocess_env(req: SpotPrelabelOptions) -> dict[str, str]:
+    env = {
+        **os.environ,
+        "PYTHONUNBUFFERED": "1",
+        "SPOT_DECODER": req.decoder,
+        "SPOT_NUM_PRODUCERS": str(req.decode_producers),
+        "SPOT_DECODER_THREADS": str(req.decoder_threads),
+        "SPOT_DECODE_CHUNK_FRAMES": str(req.decode_chunk_frames),
+    }
+    if req.decoder == "nvdec":
+        env["SPOT_ENABLE_EXPERIMENTAL_NVDEC"] = "1"
+        env["SPOT_NVDEC_GPU_PREPROCESS"] = "1"
+    env.setdefault("MALLOC_ARENA_MAX", "2")
+    video_lib_dir = os.environ.get("SPOT_NVIDIA_VIDEO_LIB_DIR")
+    if not video_lib_dir and SPOT_DEFAULT_NVIDIA_VIDEO_LIB_DIR.exists():
+        video_lib_dir = str(SPOT_DEFAULT_NVIDIA_VIDEO_LIB_DIR)
+    if video_lib_dir:
+        current = env.get("LD_LIBRARY_PATH")
+        env["LD_LIBRARY_PATH"] = (
+            f"{video_lib_dir}:{current}" if current else video_lib_dir
+        )
+    return env
+
+
+def _spot_decode_settings_text(req: SpotPrelabelOptions) -> str:
+    return (
+        f"decoder={req.decoder} "
+        f"prefetch={req.prefetch_factor} "
+        f"producers={req.decode_producers} "
+        f"threads={req.decoder_threads} "
+        f"chunk={req.decode_chunk_frames}"
+    )
+
+
 @router.get("/labels")
 def labels() -> dict:
     return {"labels": list(ACTION_LABELS)}
@@ -908,6 +954,7 @@ async def start_spot_prelabel(req: SpotPrelabelRequest) -> dict:
                     batch_size=req.batch_size,
                     num_workers=req.num_workers,
                     clip_len=req.clip_len,
+                    prefetch_factor=req.prefetch_factor,
                     use_amp=req.use_amp,
                 )
 
@@ -922,7 +969,7 @@ async def start_spot_prelabel(req: SpotPrelabelRequest) -> dict:
                             job.id,
                             cmd,
                             SPOT_DIR,
-                            env={**os.environ, "PYTHONUNBUFFERED": "1"},
+                            env=_spot_subprocess_env(req),
                             parsers=parsers,
                             is_key_line=lambda line: (
                                 line.startswith("Starting inference")
@@ -932,7 +979,11 @@ async def start_spot_prelabel(req: SpotPrelabelRequest) -> dict:
                             push_interval=1.0,
                             tee_to_terminal=True,
                             terminal_prefix=f"[SPOT {job.id} {video.name}] ",
-                            log_command=f"[SPOT {job.id}] start single video={video.name} batch={req.batch_size} workers={req.num_workers}",
+                            log_command=(
+                                f"[SPOT {job.id}] start single video={video.name} "
+                                f"batch={req.batch_size} workers={req.num_workers} "
+                                f"{_spot_decode_settings_text(req)}"
+                            ),
                             log_line=lambda line: _spot_app_log_line(job.id, line),
                         )
                 if rc != 0:
@@ -1098,20 +1149,6 @@ async def _run_prelabel_batch_subprocess(
             pred_file.parent.mkdir(parents=True, exist_ok=True)
             pred_files.append(pred_file)
 
-        cmd = spot_prelabel.build_command(
-            video_path=[video for video, _ann_path in entries],
-            checkpoint_path=checkpoint,
-            save_dir=[pred_file.parent for pred_file in pred_files],
-            batch_size=req.batch_size,
-            num_workers=req.num_workers,
-            clip_len=req.clip_len,
-            use_amp=req.use_amp,
-        )
-        idx_by_video = {str(video): idx for idx, (video, _ann_path) in enumerate(entries)}
-        idx_by_video_basename = {video.name: idx for idx, (video, _ann_path) in enumerate(entries)}
-        idx_by_prediction = {str(pred_file): idx for idx, pred_file in enumerate(pred_files)}
-        conversion_tasks: dict[int, asyncio.Task[bool]] = {}
-
         async def convert_predictions(idx: int) -> bool:
             video, ann_path = entries[idx]
             meta = metas[idx]
@@ -1173,135 +1210,140 @@ async def _run_prelabel_batch_subprocess(
                 )
                 return False
 
-        def schedule_conversion(idx: int) -> None:
-            if idx not in conversion_tasks:
-                conversion_tasks[idx] = asyncio.create_task(convert_predictions(idx))
+        def missing_output_error(rc: int, last_line: str, failure_lines: list[str]) -> str:
+            detail = failure_lines[-1] if failure_lines else last_line
+            if detail:
+                return f"SPOT failed before creating prediction output: {detail}"
+            if rc != 0:
+                return f"SPOT exited with code {rc} before creating prediction output"
+            return "SPOT did not create prediction output"
 
-        def start_handler(match):
-            video_path = match.group(3)
-            idx = idx_by_video.get(video_path)
-            if idx is None:
-                return None
-            video = entries[idx][0]
-            asyncio.create_task(
-                _update_batch_item(
-                    job_id,
-                    items,
-                    idx,
-                    status="running",
-                    progress=0.10,
-                    message="Preparing first batch (decoding frames)",
-                    overall_progress=_batch_progress(idx, 0.10, total),
-                    overall_message=f"{video.name}: preparing first batch",
-                )
-            )
-            return None
-
-        def progress_handler(match):
-            data = _parse_spot_progress(match.group(1))
-            if data is None:
-                return None
-            video_path = str(data.get("video") or "")
-            idx = idx_by_video.get(video_path)
-            if idx is None:
-                basename = str(data.get("video_basename") or Path(video_path).name)
-                idx = idx_by_video_basename.get(basename)
-            if idx is None:
-                return None
-            item_progress = _spot_progress_fraction(data, start=0.12, span=0.78, cap=0.9)
-            video = entries[idx][0]
-            message = _spot_progress_message(data)
-            asyncio.create_task(
-                _update_batch_item(
-                    job_id,
-                    items,
-                    idx,
-                    status="running",
-                    progress=item_progress,
-                    message=message,
-                    overall_progress=_batch_progress(idx, item_progress, total),
-                    overall_message=f"{video.name}: {message}",
-                    extra={
-                        "current_frame": int(data.get("end_frame") or 0),
-                        "total_frames": int(data.get("total_frames") or 0),
-                        "clips_done": int(data.get("clips_done") or 0),
-                        "clips_total": int(data.get("clips_total") or 0),
-                    },
-                )
-            )
-            return None
-
-        def saved_handler(match):
-            pred_path = match.group(1)
-            idx = idx_by_prediction.get(pred_path)
-            if idx is None:
-                return None
-            schedule_conversion(idx)
-            return None
-
+        failed = 0
         async with job_manager.gpu_lock:
             await job_manager.update_job(job_id, message="Running SPOT inference", progress=0.08)
-            rc, last_line = await stream_subprocess(
-                job_id,
-                cmd,
-                SPOT_DIR,
-                env={**os.environ, "PYTHONUNBUFFERED": "1"},
-                parsers=[
-                    ProgressParser(r"Starting inference (\d+)/(\d+): (.+)", start_handler),
-                    ProgressParser(r"SPOT_PROGRESS (.+)", progress_handler),
-                    ProgressParser(r"Saved predictions to (.+)", saved_handler),
-                ],
-                is_key_line=lambda line: (
-                    line.startswith("Starting inference")
-                    or line.startswith("SPOT_PROGRESS ")
-                    or line.startswith("Saved predictions")
-                    or line.startswith("Timing ")
-                ),
-                push_interval=1.0,
-                tee_to_terminal=True,
-                terminal_prefix=f"[SPOT {job_id}] ",
-                log_command=f"[SPOT {job_id}] start batch videos={total} batch={req.batch_size} workers={req.num_workers}",
-                log_line=lambda line: _spot_app_log_line(job_id, line),
-                update_job=False,
-            )
+            for idx, ((video, _ann_path), pred_file) in enumerate(zip(entries, pred_files)):
+                failure_lines: list[str] = []
 
-        subprocess_error = rc != 0
-        if subprocess_error:
-            job_obj = job_manager.get_job(job_id)
-            if job_obj:
-                job_obj.logs.append(last_line or f"SPOT exited with code {rc}")
+                await _update_batch_item(
+                    job_id,
+                    items,
+                    idx,
+                    status="running",
+                    progress=0.08,
+                    message="Launching SPOT inference",
+                    overall_progress=_batch_progress(idx, 0.08, total),
+                    overall_message=f"{video.name}: launching SPOT inference",
+                )
 
-        for idx, pred_file in enumerate(pred_files):
-            if idx not in conversion_tasks and pred_file.exists():
-                schedule_conversion(idx)
+                def start_handler(_match, *, item_idx: int = idx, item_video: Path = video):
+                    asyncio.create_task(
+                        _update_batch_item(
+                            job_id,
+                            items,
+                            item_idx,
+                            status="running",
+                            progress=0.10,
+                            message="Preparing first batch (decoding frames)",
+                            overall_progress=_batch_progress(item_idx, 0.10, total),
+                            overall_message=f"{item_video.name}: preparing first batch",
+                        )
+                    )
+                    return None
 
-        conversion_results: dict[int, bool] = {}
-        if conversion_tasks:
-            results = await asyncio.gather(*conversion_tasks.values())
-            conversion_results = dict(zip(conversion_tasks.keys(), results))
+                def progress_handler(match, *, item_idx: int = idx, item_video: Path = video):
+                    data = _parse_spot_progress(match.group(1))
+                    if data is None:
+                        return None
+                    item_progress = _spot_progress_fraction(data, start=0.12, span=0.78, cap=0.9)
+                    message = _spot_progress_message(data)
+                    asyncio.create_task(
+                        _update_batch_item(
+                            job_id,
+                            items,
+                            item_idx,
+                            status="running",
+                            progress=item_progress,
+                            message=message,
+                            overall_progress=_batch_progress(item_idx, item_progress, total),
+                            overall_message=f"{item_video.name}: {message}",
+                            extra={
+                                "current_frame": int(data.get("end_frame") or 0),
+                                "total_frames": int(data.get("total_frames") or 0),
+                                "clips_done": int(data.get("clips_done") or 0),
+                                "clips_total": int(data.get("clips_total") or 0),
+                            },
+                        )
+                    )
+                    return None
 
-        failed = sum(1 for ok in conversion_results.values() if not ok)
-        for idx, ((video, _ann_path), _meta, _pred_file) in enumerate(zip(entries, metas, pred_files)):
-            if idx in conversion_results:
+                def failure_handler(match):
+                    failure_lines.append(match.group(1))
+                    return None
+
+                cmd = spot_prelabel.build_command(
+                    video_path=video,
+                    checkpoint_path=checkpoint,
+                    save_dir=pred_file.parent,
+                    batch_size=req.batch_size,
+                    num_workers=req.num_workers,
+                    clip_len=req.clip_len,
+                    prefetch_factor=req.prefetch_factor,
+                    use_amp=req.use_amp,
+                )
+
+                rc, last_line = await stream_subprocess(
+                    job_id,
+                    cmd,
+                    SPOT_DIR,
+                    env=_spot_subprocess_env(req),
+                    parsers=[
+                        ProgressParser(r"Starting inference (\d+)/(\d+): (.+)", start_handler),
+                        ProgressParser(r"SPOT_PROGRESS (.+)", progress_handler),
+                        ProgressParser(r"((?:Failed inference \d+/\d+|Failure summary): .+)", failure_handler),
+                    ],
+                    is_key_line=lambda line: (
+                        line.startswith("Starting inference")
+                        or line.startswith("SPOT_PROGRESS ")
+                        or line.startswith("Saved predictions")
+                        or line.startswith("Timing ")
+                        or line.startswith("Failed inference")
+                        or line.startswith("Failure summary")
+                    ),
+                    push_interval=1.0,
+                    tee_to_terminal=True,
+                    terminal_prefix=f"[SPOT {job_id}] ",
+                    log_command=(
+                        f"[SPOT {job_id}] start video {idx + 1}/{total}: {video.name} "
+                        f"batch={req.batch_size} workers={req.num_workers} "
+                        f"{_spot_decode_settings_text(req)}"
+                    ),
+                    log_line=lambda line: _spot_app_log_line(job_id, line),
+                    update_job=False,
+                )
+
+                if not pred_file.exists():
+                    failed += 1
+                    error = missing_output_error(rc, last_line, failure_lines)
+                    job_obj = job_manager.get_job(job_id)
+                    if job_obj:
+                        job_obj.logs.append(f"[{video.name}] RuntimeError: {error}")
+                    await _update_batch_item(
+                        job_id,
+                        items,
+                        idx,
+                        status="failed",
+                        progress=1.0,
+                        message="Failed",
+                        error=error,
+                        overall_progress=_batch_progress(idx, 1.0, total),
+                        overall_message=f"{video.name}: failed",
+                    )
+                    continue
+
+                if not await convert_predictions(idx):
+                    failed += 1
                 continue
-            failed += 1
-            error = "SPOT did not create prediction output"
-            job_obj = job_manager.get_job(job_id)
-            if job_obj:
-                job_obj.logs.append(f"[{video.name}] RuntimeError: {error}")
-            await _update_batch_item(
-                job_id,
-                items,
-                idx,
-                status="failed",
-                progress=1.0,
-                message="Failed",
-                error=error,
-                overall_progress=_batch_progress(idx, 1.0, total),
-                overall_message=f"{video.name}: failed",
-            )
-        if subprocess_error and failed == 0:
-            raise RuntimeError(last_line or f"SPOT exited with code {rc}")
+
         return failed
 
 

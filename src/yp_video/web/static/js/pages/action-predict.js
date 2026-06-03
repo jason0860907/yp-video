@@ -62,7 +62,7 @@ export function render(container) {
                 </label>
                 <label class="block space-y-1.5">
                   <span class="text-[11px] text-text-muted uppercase tracking-wider font-medium">Batch</span>
-                  <input id="act-pred-batch" type="number" min="1" max="128" step="1" value="32" class="w-full ${inputCls}">
+                  <input id="act-pred-batch" type="number" min="1" max="128" step="1" value="64" class="w-full ${inputCls}">
                 </label>
               </div>
               <div class="grid grid-cols-2 gap-3">
@@ -71,8 +71,31 @@ export function render(container) {
                   <input id="act-pred-clip-len" type="number" min="8" max="256" step="8" value="64" class="w-full ${inputCls}">
                 </label>
                 <label class="block space-y-1.5">
-                  <span class="text-[11px] text-text-muted uppercase tracking-wider font-medium">Workers</span>
-                  <input id="act-pred-workers" type="number" min="0" max="16" step="1" value="8" class="w-full ${inputCls}">
+                  <span class="text-[11px] text-text-muted uppercase tracking-wider font-medium">Decoder</span>
+                  <select id="act-pred-decoder" class="w-full ${selectCls}">
+                    <option value="opencv" selected>OpenCV</option>
+                    <option value="nvdec">NVDEC (GPU)</option>
+                  </select>
+                </label>
+              </div>
+              <div class="grid grid-cols-2 gap-3">
+                <label class="block space-y-1.5">
+                  <span class="text-[11px] text-text-muted uppercase tracking-wider font-medium">Producers</span>
+                  <input id="act-pred-producers" type="number" min="1" max="8" step="1" value="2" class="w-full ${inputCls}">
+                </label>
+                <label class="block space-y-1.5">
+                  <span class="text-[11px] text-text-muted uppercase tracking-wider font-medium">Threads</span>
+                  <input id="act-pred-threads" type="number" min="1" max="8" step="1" value="1" class="w-full ${inputCls}">
+                </label>
+              </div>
+              <div class="grid grid-cols-2 gap-3">
+                <label class="block space-y-1.5">
+                  <span class="text-[11px] text-text-muted uppercase tracking-wider font-medium">Prefetch</span>
+                  <input id="act-pred-prefetch" type="number" min="1" max="8" step="1" value="2" class="w-full ${inputCls}">
+                </label>
+                <label class="block space-y-1.5">
+                  <span class="text-[11px] text-text-muted uppercase tracking-wider font-medium">Chunk</span>
+                  <input id="act-pred-chunk" type="number" min="1" max="512" step="16" value="256" class="w-full ${inputCls}">
                 </label>
               </div>
               <div class="space-y-2">
@@ -251,15 +274,21 @@ async function runSelected() {
   const btn = document.getElementById('act-pred-run');
   btn.disabled = true;
   try {
+    const decodeProducers = Number(document.getElementById('act-pred-producers').value) || 2;
     const job = await api(API.actionAnnotate.prelabelBatch, {
       method: 'POST',
       body: {
         videos: names,
         checkpoint: document.getElementById('act-pred-checkpoint').value,
         min_score: Number(document.getElementById('act-pred-score').value) || 0.15,
-        batch_size: Number(document.getElementById('act-pred-batch').value) || 32,
-        num_workers: Number(document.getElementById('act-pred-workers').value),
+        batch_size: Number(document.getElementById('act-pred-batch').value) || 64,
         clip_len: Number(document.getElementById('act-pred-clip-len').value) || 64,
+        num_workers: decodeProducers,
+        decoder: document.getElementById('act-pred-decoder').value,
+        decode_producers: decodeProducers,
+        decoder_threads: Number(document.getElementById('act-pred-threads').value) || 1,
+        prefetch_factor: Number(document.getElementById('act-pred-prefetch').value) || 2,
+        decode_chunk_frames: Number(document.getElementById('act-pred-chunk').value) || 256,
         use_amp: true,
         overwrite,
         stop_vllm: document.getElementById('act-pred-stop-vllm').checked,
