@@ -15,8 +15,8 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from yp_video.config import ACTION_ANNOTATIONS_DIR, ACTION_FRAMES_DIR, SPOT_DIR, SPOT_PYTHON, find_cut
-from yp_video.core.action_frames import ensure_action_frame_caches
-from yp_video.core.jsonl import read_jsonl
+from yp_video.core.action_frames import ensure_action_frame_caches, inspect_action_frame_cache
+from yp_video.core.jsonl import read_jsonl, write_jsonl
 from yp_video.web.job_helpers import ProgressParser, stop_vllm_for_job, stream_subprocess
 from yp_video.web.jobs import JobStatus, job_manager
 
@@ -75,6 +75,12 @@ def _safe_run_name(dataset: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", dataset).strip("._") or "actions"
 
 
+def _resolve_save_dir(req: ActionTrainRequest, dataset: str | None = None) -> Path:
+    dataset = dataset or req.dataset or _default_dataset(req.source)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return _spot_path(req.save_dir or (Path("exp") / f"{_safe_run_name(dataset)}_{stamp}"))
+
+
 def _count_jsonl_records(path: Path) -> tuple[int, int]:
     if not path.exists():
         return 0, 0
@@ -117,14 +123,86 @@ def _action_frame_items() -> list[tuple[Path, int | None]]:
             missing.append(f"{stem}.mp4")
             continue
 
-        num_frames = int(meta.get("num_frames") or 0) or None
-        items.append((video_path, num_frames))
+        # Action JSONL metadata can inherit an over-reported MP4 frame count.
+        # The training labels are normalized against the extracted cache later.
+        items.append((video_path, None))
 
     if missing:
         sample = ", ".join(missing[:5])
         suffix = "" if len(missing) <= 5 else f" and {len(missing) - 5} more"
         raise RuntimeError(f"Missing source video(s) for action labels: {sample}{suffix}")
     return items
+
+
+def _prepare_action_training_labels(*, frame_dir: Path, save_dir: Path) -> dict:
+    """Write run-local label copies whose frame counts match the SPOT cache."""
+
+    label_files = sorted(ACTION_ANNOTATIONS_DIR.glob("*_actions.jsonl"))
+    if not label_files:
+        raise RuntimeError(f"No action JSONL labels found in {ACTION_ANNOTATIONS_DIR}")
+
+    label_dir = save_dir / "labels" / "action-annotations"
+    label_dir.mkdir(parents=True, exist_ok=True)
+    for stale in label_dir.glob("*_actions.jsonl"):
+        stale.unlink()
+
+    videos = 0
+    events = 0
+    adjusted: list[dict] = []
+    for path in label_files:
+        try:
+            meta, records = read_jsonl(path)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"Cannot read action labels: {path.name}") from exc
+
+        stem = str(meta.get("video") or path.stem.removesuffix("_actions"))
+        video_path = find_cut(f"{stem}.mp4")
+        if video_path is None:
+            raise RuntimeError(f"Missing source video for action labels: {stem}.mp4")
+
+        cache = inspect_action_frame_cache(video_path, cache_root=frame_dir)
+        cache_frames = int(cache.get("frame_count") or 0)
+        if cache_frames <= 0:
+            raise RuntimeError(f"Missing action frame cache for {stem}")
+
+        out_of_range = [
+            int(round(float(event.get("frame", 0) or 0)))
+            for event in records
+            if int(round(float(event.get("frame", 0) or 0))) >= cache_frames
+        ]
+        if out_of_range:
+            sample = ", ".join(str(frame) for frame in out_of_range[:5])
+            suffix = "" if len(out_of_range) <= 5 else f" and {len(out_of_range) - 5} more"
+            raise RuntimeError(
+                f"{path.name} has action frame(s) beyond the frame cache "
+                f"({cache_frames} frames): {sample}{suffix}"
+            )
+
+        original_frames = int(meta.get("num_frames") or 0)
+        training_meta = {
+            **meta,
+            "num_frames": cache_frames,
+            "training_num_frames_source": "action_frame_cache",
+        }
+        if original_frames and original_frames != cache_frames:
+            training_meta["source_num_frames"] = original_frames
+            adjusted.append({
+                "video": stem,
+                "source_num_frames": original_frames,
+                "training_num_frames": cache_frames,
+            })
+
+        write_jsonl(label_dir / path.name, training_meta, records)
+        videos += 1
+        events += len(records)
+
+    return {
+        "label_dir": str(label_dir),
+        "source_label_dir": str(ACTION_ANNOTATIONS_DIR),
+        "videos": videos,
+        "events": events,
+        "adjusted": adjusted,
+    }
 
 
 def _vnl_stats() -> dict:
@@ -173,7 +251,12 @@ def status() -> dict:
     }
 
 
-def _build_command(req: ActionTrainRequest) -> tuple[list[str], Path, dict]:
+def _build_command(
+    req: ActionTrainRequest,
+    *,
+    save_dir: Path | None = None,
+    action_label_dir: Path | None = None,
+) -> tuple[list[str], Path, dict]:
     if not SPOT_DIR.exists():
         raise HTTPException(503, "SPOT is not available at ~/yp-spot")
     if not SPOT_PYTHON.exists():
@@ -196,8 +279,7 @@ def _build_command(req: ActionTrainRequest) -> tuple[list[str], Path, dict]:
     else:
         init_checkpoint = None
 
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    save_dir = _spot_path(req.save_dir or (Path("exp") / f"{_safe_run_name(dataset)}_{stamp}"))
+    save_dir = save_dir or _resolve_save_dir(req, dataset)
     save_dir.mkdir(parents=True, exist_ok=True)
 
     cmd = [
@@ -238,11 +320,12 @@ def _build_command(req: ActionTrainRequest) -> tuple[list[str], Path, dict]:
     if req.epoch_num_frames is not None:
         cmd.extend(["--epoch_num_frames", str(req.epoch_num_frames)])
     if req.source == "action_annotations":
-        if not any(ACTION_ANNOTATIONS_DIR.glob("*_actions.jsonl")):
-            raise HTTPException(400, f"No action JSONL labels found in {ACTION_ANNOTATIONS_DIR}")
+        label_dir = action_label_dir or ACTION_ANNOTATIONS_DIR
+        if not any(label_dir.glob("*_actions.jsonl")):
+            raise HTTPException(400, f"No action JSONL labels found in {label_dir}")
         cmd.extend([
             "--label_dir",
-            str(ACTION_ANNOTATIONS_DIR),
+            str(label_dir),
             "--val_ratio",
             str(req.val_ratio),
             "--split_seed",
@@ -260,16 +343,20 @@ def _build_command(req: ActionTrainRequest) -> tuple[list[str], Path, dict]:
         "feature_arch": req.feature_arch,
         "criterion": req.criterion,
     }
+    if req.source == "action_annotations":
+        params["label_dir"] = str(action_label_dir or ACTION_ANNOTATIONS_DIR)
     return cmd, save_dir, params
 
 
 @router.post("/start")
 async def start(req: ActionTrainRequest) -> dict:
     dataset = req.dataset or _default_dataset(req.source)
+    save_dir = _resolve_save_dir(req, dataset)
     initial_params = {
         "source": req.source,
         "dataset": dataset,
         "frame_dir": str(_spot_path(req.frame_dir or _default_frame_dir(req.source))),
+        "save_dir": str(save_dir),
         "gpu": req.gpu,
         "epochs": req.num_epochs,
         "feature_arch": req.feature_arch,
@@ -285,6 +372,7 @@ async def start(req: ActionTrainRequest) -> dict:
         try:
             await job_manager.update_job(job.id, status="running", message="Preparing action training...")
             frame_dir = _spot_path(req.frame_dir or _default_frame_dir(req.source))
+            action_label_dir = None
             if req.source == "action_annotations":
                 items = await asyncio.to_thread(_action_frame_items)
                 if not items:
@@ -316,8 +404,24 @@ async def start(req: ActionTrainRequest) -> dict:
                     message="Frame cache ready.",
                     params={**job.params, "frame_cache": summary},
                 )
+                label_summary = await asyncio.to_thread(
+                    _prepare_action_training_labels,
+                    frame_dir=frame_dir,
+                    save_dir=save_dir,
+                )
+                action_label_dir = Path(label_summary["label_dir"])
+                await job_manager.update_job(
+                    job.id,
+                    progress=0.2,
+                    message="Training labels validated.",
+                    params={**job.params, "training_labels": label_summary},
+                )
 
-            cmd, save_dir, params = _build_command(req)
+            cmd, resolved_save_dir, params = _build_command(
+                req,
+                save_dir=save_dir,
+                action_label_dir=action_label_dir,
+            )
             await job_manager.update_job(
                 job.id,
                 params={**job.params, **params},
@@ -369,14 +473,14 @@ async def start(req: ActionTrainRequest) -> dict:
                         ),
                         tee_to_terminal=True,
                         terminal_prefix="[action-train] ",
-                        log_path=save_dir / "terminal.log",
+                        log_path=resolved_save_dir / "terminal.log",
                     )
             if rc == 0:
                 await job_manager.update_job(
                     job.id,
                     status="completed",
                     progress=1.0,
-                    message=f"Training complete: {save_dir}",
+                    message=f"Training complete: {resolved_save_dir}",
                 )
             else:
                 raise RuntimeError(last_line or f"SPOT training exited with code {rc}")

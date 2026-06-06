@@ -12,6 +12,7 @@ from yp_video.config import SPOT_DIR, SPOT_INFERENCE_SCRIPT, SPOT_PYTHON
 ACTION_LABELS = {"serve", "receive", "set", "spike", "block", "score"}
 _CHECKPOINT_RE = re.compile(r"checkpoint_(\d+)\.pt$")
 _BEST_CHECKPOINT = "checkpoint_best.pt"
+_PREFERRED_EXPERIMENT_PREFIXES = ("yp_actions_20260602",)
 
 
 def spot_available() -> bool:
@@ -50,14 +51,29 @@ def default_checkpoint() -> Path | None:
     checkpoints = list_checkpoints()
     if not checkpoints:
         return None
+    preferred_best = [
+        c for c in checkpoints
+        if c["is_best"] and _is_preferred_experiment(c["experiment"])
+    ]
     official_best = [
         c for c in checkpoints
         if c["experiment"] == "vnl15_official_150" and c["is_best"]
     ]
+    preferred = [
+        c for c in checkpoints
+        if _is_preferred_experiment(c["experiment"])
+    ]
     any_best = [c for c in checkpoints if c["is_best"]]
     official = [c for c in checkpoints if c["experiment"] == "vnl15_official_150"]
-    chosen = (official_best or any_best or official or checkpoints)[0]
+    chosen = (preferred_best or preferred or official_best or any_best or official or checkpoints)[0]
     return resolve_checkpoint(chosen["path"])
+
+
+def _is_preferred_experiment(experiment: str) -> bool:
+    return any(
+        experiment == prefix or experiment.startswith(f"{prefix}-")
+        for prefix in _PREFERRED_EXPERIMENT_PREFIXES
+    )
 
 
 def resolve_checkpoint(value: str | None) -> Path:

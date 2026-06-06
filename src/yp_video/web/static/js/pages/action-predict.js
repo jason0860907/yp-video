@@ -73,8 +73,8 @@ export function render(container) {
                 <label class="block space-y-1.5">
                   <span class="text-[11px] text-text-muted uppercase tracking-wider font-medium">Decoder</span>
                   <select id="act-pred-decoder" class="w-full ${selectCls}">
-                    <option value="opencv" selected>OpenCV</option>
-                    <option value="nvdec">NVDEC (GPU)</option>
+                    <option value="opencv">OpenCV</option>
+                    <option value="nvdec" selected>NVDEC (GPU)</option>
                   </select>
                 </label>
               </div>

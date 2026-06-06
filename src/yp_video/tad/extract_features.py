@@ -61,8 +61,11 @@ except ImportError:
 try:
     import PyNvVideoCodec as nvc
     HAS_NVDEC = True
-except ImportError:
+    NVDEC_IMPORT_ERROR: Exception | None = None
+except Exception as exc:  # noqa: BLE001 - driver video libs can fail at import time
+    nvc = None
     HAS_NVDEC = False
+    NVDEC_IMPORT_ERROR = exc
 
 # V-JEPA 2.1 constants (fixed by model design)
 VJEPA_CLIP_FRAMES = 64   # frames per clip

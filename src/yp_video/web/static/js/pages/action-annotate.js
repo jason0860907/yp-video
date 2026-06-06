@@ -130,6 +130,11 @@ export function render(container) {
         <div class="flex-1 min-w-0 space-y-4">
           ${card(`
             <div class="space-y-4">
+              <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <h3 class="text-sm font-heading font-semibold text-text-primary">Action Labels</h3>
+                <div id="act-labels" class="grid grid-cols-3 sm:grid-cols-6 gap-2 sm:min-w-[29rem]"></div>
+              </div>
+
               <div id="act-video-wrap" class="relative bg-black rounded-2xl overflow-hidden ring-1 ring-white/[0.06] shadow-lg shadow-black/30">
                 <video id="act-player" class="block w-full max-h-[45vh] object-contain bg-black mx-auto" playsinline preload="metadata"></video>
                 <div id="act-overlay" class="absolute inset-0 pointer-events-none"></div>
@@ -172,35 +177,26 @@ export function render(container) {
 
         <div class="lg:w-[420px] lg:flex-shrink-0 min-w-0">
           ${card(`
-            <div class="space-y-4">
+            <div class="space-y-3">
               ${sectionTitle(
-                'Action Labels',
+                'Rallies <span id="act-count" class="text-text-muted font-normal">(0)</span>',
                 '',
                 `${btnSmall('Save', 'id="act-save"', 'success')} ${btnSmall('Clear', 'id="act-clear"', 'danger')}`,
               )}
-              <div class="flex items-center justify-between gap-2 text-[11px] text-text-muted">
-                <span id="act-rally-now" class="font-heading tabular-nums">No rally selected</span>
-                <span id="act-dirty"></span>
-              </div>
-              <div id="act-labels" class="grid grid-cols-3 gap-2"></div>
-              <div class="h-px bg-border"></div>
               <div class="space-y-2">
                 <div class="flex items-center gap-2">
-                  <select id="act-rally-scope" class="${selectCls} flex-1 text-xs" title="Choose rally scope">
+                  <select id="act-rally-scope" class="${selectCls} flex-1 text-xs" title="Choose rally">
                     <option value="all">All rallies</option>
                   </select>
                   ${btnSmall('Prev', 'id="act-rally-prev" title="Previous rally"')}
                   ${btnSmall('Next', 'id="act-rally-next" title="Next rally"')}
                 </div>
-                <div id="act-rally-summary" class="rounded-lg border border-border bg-surface-100/45 px-3 py-2 text-xs text-text-secondary font-heading tabular-nums">No video loaded</div>
+                <div class="min-h-4 text-right text-[11px] text-text-muted">
+                  <span id="act-dirty"></span>
+                </div>
               </div>
               <div class="h-px bg-border"></div>
-              ${sectionTitle(
-                'Rallies <span id="act-count" class="text-text-muted font-normal">(0)</span>',
-                '',
-                `${btnSmall('Sort', 'id="act-sort"')}`,
-              )}
-              <div id="act-events" class="space-y-1.5 max-h-[55vh] overflow-y-auto overflow-x-hidden pr-1 scrollbar-thin"></div>
+              <div id="act-events" class="space-y-1.5 max-h-[65vh] lg:max-h-[calc(100vh-16rem)] overflow-y-auto overflow-x-hidden pr-1 scrollbar-thin"></div>
             </div>
           `)}
         </div>
@@ -382,12 +378,6 @@ function bindEvents() {
   document.getElementById('act-play-toggle').addEventListener('click', togglePlayback);
   document.getElementById('act-prev-frame').addEventListener('click', () => stepFrame(-1));
   document.getElementById('act-next-frame').addEventListener('click', () => stepFrame(1));
-  document.getElementById('act-sort').addEventListener('click', () => {
-    if (!state.video || state.events.length < 2) return;
-    sortEvents();
-    markDirty();
-    renderEvents();
-  });
   document.getElementById('act-clear').addEventListener('click', clearEvents);
 
   videoEl.addEventListener('loadedmetadata', () => {
@@ -857,19 +847,20 @@ function outsideEventEntries() {
     .filter(({ event }) => !event.rally_id);
 }
 
+function setExpandedRally(rallyId) {
+  const key = rallyId === OUTSIDE_GROUP_ID ? OUTSIDE_GROUP_ID : normalizeRallyId(rallyId);
+  expandedRallyIds = key ? new Set([key]) : new Set();
+}
+
 function renderRallies() {
   const scope = document.getElementById('act-rally-scope');
-  const summary = document.getElementById('act-rally-summary');
   const prev = document.getElementById('act-rally-prev');
   const next = document.getElementById('act-rally-next');
-  if (!scope || !summary) return;
+  if (!scope) return;
 
   normalizeSelectedRally();
   const hasVideo = Boolean(state.video);
   const hasRallies = state.rallies.length > 0;
-  const outsideCount = state.events.filter(e => !e.rally_id).length;
-  const selected = currentRally();
-  const selectedIdxForUi = selectedRallyIndex();
 
   const options = [
     `<option value="all">All rallies (${state.events.length})</option>`,
@@ -881,33 +872,14 @@ function renderRallies() {
   scope.value = selectedRallyId === 'all' ? 'all' : String(selectedRallyId);
   scope.disabled = !hasVideo;
 
-  if (!hasVideo) {
-    summary.textContent = 'No video loaded';
-  } else if (!hasRallies) {
-    summary.textContent = `${state.events.length} event(s) / no rally annotation`;
-  } else {
-    if (selected) {
-      summary.innerHTML = `
-        <span class="text-emerald-300">R${selectedIdxForUi + 1}</span>
-        <span class="text-text-muted mx-1">${formatSeconds(selected.start)}-${formatSeconds(selected.end)}</span>
-        <span>${rallyEventCount(selected.rally_id)} event(s)</span>`;
-    } else {
-      summary.innerHTML = `
-        <span class="text-text-primary">All rallies</span>
-        <span class="text-text-muted mx-1">${state.events.length} event(s)</span>
-        <span class="${outsideCount ? 'text-amber-300' : 'text-text-muted'}">${outsideCount} outside</span>`;
-    }
-  }
-
   if (prev) prev.disabled = !hasRallies;
   if (next) next.disabled = !hasRallies;
-  updateRallyNow();
 }
 
 function selectRally(rallyId, { seek = true, expand = true } = {}) {
   selectedRallyId = rallyId === 'all' ? 'all' : normalizeRallyId(rallyId);
   normalizeSelectedRally();
-  if (expand && selectedRallyId !== 'all') expandedRallyIds.add(selectedRallyId);
+  if (expand) setExpandedRally(selectedRallyId !== 'all' ? selectedRallyId : null);
   if (selectedIdx >= 0 && (!state.events[selectedIdx] || !eventVisibleInScope(state.events[selectedIdx]))) {
     selectedIdx = -1;
   }
@@ -926,26 +898,6 @@ function stepRally(delta) {
     ? (delta > 0 ? 0 : state.rallies.length - 1)
     : clamp(idx + delta, 0, state.rallies.length - 1);
   selectRally(state.rallies[nextIdx].rally_id);
-}
-
-function updateRallyNow(frame = currentFrame()) {
-  const el = document.getElementById('act-rally-now');
-  if (!el) return;
-  if (!state.video) {
-    el.textContent = 'No video loaded';
-    return;
-  }
-
-  const selected = currentRally();
-  const atFrame = findRallyForFrame(frame);
-  const atIdx = atFrame ? rallyIndex(atFrame.rally_id) : -1;
-  const frameText = atIdx >= 0 ? `now R${atIdx + 1}` : 'now outside';
-  if (selected) {
-    const idx = selectedRallyIndex();
-    el.textContent = `Scope R${idx + 1} · ${formatSeconds(selected.start)}-${formatSeconds(selected.end)} · ${frameText}`;
-  } else {
-    el.textContent = `Scope all rallies · ${frameText}`;
-  }
 }
 
 async function loadSelectedVideo() {
@@ -1079,9 +1031,9 @@ function addEvent(x, y, { visible = true } = {}) {
   selectedIdx = state.events.indexOf(event);
   if (event.rally_id) {
     selectedRallyId = event.rally_id;
-    expandedRallyIds.add(event.rally_id);
+    setExpandedRally(event.rally_id);
   } else {
-    expandedRallyIds.add(OUTSIDE_GROUP_ID);
+    setExpandedRally(OUTSIDE_GROUP_ID);
   }
   markDirty();
   renderEvents();
@@ -1114,7 +1066,7 @@ async function clearEvents() {
   if (!ok) return;
   state.events = [];
   selectedIdx = -1;
-  expandedRallyIds = new Set(selectedRallyId !== 'all' ? [selectedRallyId] : []);
+  setExpandedRally(selectedRallyId !== 'all' ? selectedRallyId : null);
   markDirty();
   renderEvents();
 }
@@ -1331,9 +1283,9 @@ function toggleRallyExpanded(rallyId) {
   const key = rallyId === OUTSIDE_GROUP_ID ? OUTSIDE_GROUP_ID : normalizeRallyId(rallyId);
   if (!key) return;
   if (expandedRallyIds.has(key)) {
-    expandedRallyIds.delete(key);
+    setExpandedRally(null);
   } else {
-    expandedRallyIds.add(key);
+    setExpandedRally(key);
   }
 }
 
@@ -1341,6 +1293,7 @@ function selectRallyFromRow(rallyId, { seek = true, expand = true } = {}) {
   if (rallyId === OUTSIDE_GROUP_ID) {
     selectedRallyId = 'all';
     selectedIdx = -1;
+    if (expand) setExpandedRally(OUTSIDE_GROUP_ID);
     if (seek) {
       const firstOutside = outsideEventEntries()[0]?.event;
       if (firstOutside) seekFrame(firstOutside.frame);
@@ -1356,7 +1309,7 @@ function jumpToRallyEnd(rallyId) {
   const rally = state.rallies.find(r => r.rally_id === parsedRallyId);
   if (!rally) return;
   selectedRallyId = rally.rally_id;
-  expandedRallyIds.add(rally.rally_id);
+  setExpandedRally(rally.rally_id);
   selectedIdx = -1;
   videoEl?.pause();
   seekFrame(Math.max(0, Math.ceil(rally.end * state.fps) - 1));
@@ -1375,9 +1328,9 @@ function onEventChange(e) {
     Object.assign(event, withRallyFields(event));
     if (event.rally_id) {
       selectedRallyId = event.rally_id;
-      expandedRallyIds.add(event.rally_id);
+      setExpandedRally(event.rally_id);
     } else {
-      expandedRallyIds.add(OUTSIDE_GROUP_ID);
+      setExpandedRally(OUTSIDE_GROUP_ID);
     }
   }
   markDirty();
@@ -1918,7 +1871,6 @@ function refreshPlayhead() {
     lastOverlayFrame = frame;
     renderOverlay();
   }
-  updateRallyNow(frame);
   updateTimelinePlayhead();
   autoPauseAtRallyEnd(t);
 }
@@ -1981,10 +1933,10 @@ function jumpToEvent(idx, { renderList = true } = {}) {
   selectedIdx = idx;
   if (event.rally_id) {
     selectedRallyId = event.rally_id;
-    expandedRallyIds.add(event.rally_id);
+    setExpandedRally(event.rally_id);
   } else {
     selectedRallyId = 'all';
-    expandedRallyIds.add(OUTSIDE_GROUP_ID);
+    setExpandedRally(OUTSIDE_GROUP_ID);
   }
   videoEl?.pause();
   seekFrame(event.frame);
