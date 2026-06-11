@@ -2,11 +2,10 @@
  * Action Train page - SPOT training for action labels.
  */
 import {
-  api, API, SSEClient, card, pageHeader, sectionTitle, btnSmall, emptyState,
+  api, API, SSEClient, card, pageHeader, sectionTitle, btnSmall,
   escapeHtml, showToast, inputCls, selectCls, renderJobProgress,
 } from '../shared.js';
 
-let videos = [];
 let status = null;
 let source = 'vnl_1_5';
 let job = null;
@@ -17,52 +16,29 @@ export function render(container) {
     <div class="max-w-screen-2xl mx-auto space-y-6">
       ${pageHeader('Action Train', 'Train SPOT action labels from JSONL datasets', `
         ${btnSmall('Export JSONL', 'id="act-train-export" title="Download action annotation dataset"')}
-        ${btnSmall('Open Label', 'id="act-train-label" title="Open Action Label"', 'primary')}
       `)}
 
-      <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_27rem] gap-5">
-        ${card(`
+      ${card(`
+        <div class="space-y-5">
           <div class="space-y-4">
-            ${sectionTitle('Datasets', '', `${btnSmall('Refresh', 'id="act-train-refresh"')}`)}
+            ${sectionTitle('Dataset', '', `${btnSmall('Refresh', 'id="act-train-refresh"')}`)}
             <div id="act-train-stats" class="grid grid-cols-2 md:grid-cols-4 gap-3"></div>
             <div id="act-train-source-summary" class="rounded-xl border border-border bg-surface-100/35 p-3"></div>
-            <div id="act-train-videos" class="space-y-1 max-h-[48vh] overflow-y-auto pr-1"></div>
           </div>
-        `)}
 
-        ${card(`
-          <div class="space-y-4">
+          <div class="border-t border-border pt-5 space-y-4">
             ${sectionTitle('Training', '', `<span id="act-train-ready" class="text-[11px] text-text-muted"></span>`)}
 
             <div class="space-y-3">
-              <label class="block space-y-1.5">
-                <span class="text-[10px] uppercase tracking-widest text-text-muted font-semibold">Source</span>
-                <select id="act-train-source" class="${selectCls} w-full">
+              <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2">
+                ${field('Source', 'act-train-source', select(`
                   <option value="vnl_1_5">VNL 1.5 JSONL</option>
                   <option value="action_annotations">YP Action Labels</option>
-                </select>
-              </label>
-
-              <div class="grid grid-cols-1 gap-2">
-                <label class="block space-y-1.5">
-                  <span class="text-[10px] uppercase tracking-widest text-text-muted font-semibold">Dataset</span>
-                  <input id="act-train-dataset" class="${inputCls} w-full" value="vnl_1.5">
-                </label>
-                <label class="block space-y-1.5">
-                  <span class="text-[10px] uppercase tracking-widest text-text-muted font-semibold">Frames</span>
-                  <input id="act-train-frame-dir" class="${inputCls} w-full font-mono text-[11px]" value="data/vnl_1.5/frames_224p">
-                </label>
-                <label class="block space-y-1.5">
-                  <span class="text-[10px] uppercase tracking-widest text-text-muted font-semibold">Output</span>
-                  <input id="act-train-save-dir" class="${inputCls} w-full font-mono text-[11px]" placeholder="auto: ~/yp-spot/exp/...">
-                </label>
-                <label class="block space-y-1.5">
-                  <span class="text-[10px] uppercase tracking-widest text-text-muted font-semibold">Init Checkpoint</span>
-                  <input id="act-train-init-checkpoint" class="${inputCls} w-full font-mono text-[11px]" value="exp/vnl15_official_150/checkpoint_best.pt">
-                </label>
-              </div>
-
-              <div class="grid grid-cols-2 gap-2">
+                `), 'md:col-span-2 xl:col-span-1')}
+                ${field('Dataset', 'act-train-dataset', input('text', 'vnl_1.5'))}
+                ${field('Frames', 'act-train-frame-dir', input('text', 'data/vnl_1.5/frames_224p', '', '', '1', '', 'font-mono text-[11px]'), 'md:col-span-2 xl:col-span-2')}
+                ${field('Checkpoint Dir', 'act-train-checkpoint-dir', input('text', '', '', '', '1', 'auto: ~/videos/action-checkpoints/...', 'font-mono text-[11px]'), 'md:col-span-2')}
+                ${field('Init Checkpoint', 'act-train-init-checkpoint', input('text', 'exp/vnl15_official_150/checkpoint_best.pt', '', '', '1', '', 'font-mono text-[11px]'), 'md:col-span-2')}
                 ${field('Feature', 'act-train-feature', select(`
                   <option value="rny008_gsm">rny008_gsm</option>
                   <option value="rny002_gsm">rny002_gsm</option>
@@ -88,11 +64,18 @@ export function render(container) {
                 `))}
                 ${field('Start Val', 'act-train-start-val', input('number', '0', '0', '1000'))}
                 ${field('Epoch Frames', 'act-train-epoch-frames', input('number', '', '1', '', '1', 'optional'))}
-              </div>
 
-              <div class="grid grid-cols-2 gap-2" id="act-train-split-fields">
-                ${field('Val Ratio', 'act-train-val-ratio', input('number', '0.2', '0.01', '0.9', '0.01'))}
-                ${field('Split Seed', 'act-train-split-seed', input('number', '42'))}
+                <div id="act-train-mode-wrap" class="contents">
+                  ${field('Data Mode', 'act-train-training-mode', select(`
+                    <option value="split">Train/Test Split</option>
+                    <option value="all">All Data</option>
+                  `))}
+                </div>
+
+                <div id="act-train-split-fields" class="contents">
+                  ${field('Val Ratio', 'act-train-val-ratio', input('number', '0.2', '0.01', '0.9', '0.01'))}
+                  ${field('Split Seed', 'act-train-split-seed', input('number', '42'))}
+                </div>
               </div>
 
               <div class="flex flex-wrap items-center gap-3 text-xs text-text-secondary">
@@ -114,16 +97,19 @@ export function render(container) {
 
             <div id="act-train-job" class="hidden rounded-xl border border-border bg-surface-100/35 p-3 space-y-2"></div>
           </div>
-        `)}
-      </div>
+        </div>
+      `)}
     </div>`;
 
   document.getElementById('act-train-refresh').addEventListener('click', loadData);
   document.getElementById('act-train-export').addEventListener('click', exportDataset);
-  document.getElementById('act-train-label').addEventListener('click', () => { window.location.hash = '#/action-annotate'; });
   document.getElementById('act-train-source').addEventListener('change', (e) => {
     source = e.target.value;
     applySourceDefaults();
+    renderDataset();
+  });
+  document.getElementById('act-train-training-mode').addEventListener('change', () => {
+    updateTrainingModeControls();
     renderDataset();
   });
   document.getElementById('act-train-start').addEventListener('click', startTraining);
@@ -138,16 +124,19 @@ export function deactivate() {
   client = null;
 }
 
-function field(label, id, control) {
+function field(label, id, control, extraClass = '') {
   return `
-    <label class="block space-y-1.5 min-w-0">
+    <label class="block space-y-1.5 min-w-0 ${extraClass}">
       <span class="text-[10px] uppercase tracking-widest text-text-muted font-semibold">${label}</span>
       ${control.replace('__ID__', id)}
     </label>`;
 }
 
-function input(type, value, min = '', max = '', step = '1', placeholder = '') {
-  return `<input id="__ID__" type="${type}" value="${escapeHtml(value)}" ${min !== '' ? `min="${min}"` : ''} ${max !== '' ? `max="${max}"` : ''} step="${step}" placeholder="${escapeHtml(placeholder)}" class="${inputCls} w-full">`;
+function input(type, value, min = '', max = '', step = '1', placeholder = '', extraClass = '') {
+  const numberAttrs = type === 'number'
+    ? `${min !== '' ? ` min="${min}"` : ''}${max !== '' ? ` max="${max}"` : ''}${step !== '' ? ` step="${step}"` : ''}`
+    : '';
+  return `<input id="__ID__" type="${type}" value="${escapeHtml(value)}"${numberAttrs} placeholder="${escapeHtml(placeholder)}" class="${inputCls} w-full ${extraClass}">`;
 }
 
 function select(options) {
@@ -156,12 +145,7 @@ function select(options) {
 
 async function loadData() {
   try {
-    const [videoData, statusData] = await Promise.all([
-      api(API.actionAnnotate.videos),
-      api(API.actionTrain.status),
-    ]);
-    videos = videoData;
-    status = statusData;
+    status = await api(API.actionTrain.status);
     if (status?.active_job) {
       job = status.active_job;
       if (job.params?.source) source = job.params.source;
@@ -180,6 +164,8 @@ function applySourceDefaults() {
   const datasetEl = document.getElementById('act-train-dataset');
   const framesEl = document.getElementById('act-train-frame-dir');
   const initEl = document.getElementById('act-train-init-checkpoint');
+  const modeEl = document.getElementById('act-train-training-mode');
+  const modeWrap = document.getElementById('act-train-mode-wrap');
   const splitEl = document.getElementById('act-train-split-fields');
   const defaultInit = status?.default_init_checkpoint || 'exp/vnl15_official_150/checkpoint_best.pt';
   if (initEl && (!initEl.value || initEl.value === 'exp/vnl15_official_150/checkpoint_best.pt')) {
@@ -188,24 +174,37 @@ function applySourceDefaults() {
   if (source === 'vnl_1_5') {
     datasetEl.value = 'vnl_1.5';
     framesEl.value = 'data/vnl_1.5/frames_224p';
+    modeWrap.classList.add('hidden');
     splitEl.classList.add('hidden');
   } else {
     datasetEl.value = 'yp_actions';
     framesEl.value = '~/videos/action-frames';
-    splitEl.classList.remove('hidden');
+    if (job?.params?.training_mode && modeEl) modeEl.value = job.params.training_mode;
+    modeWrap.classList.remove('hidden');
+    updateTrainingModeControls();
   }
   updateStartState();
 }
 
+function trainingMode() {
+  return document.getElementById('act-train-training-mode')?.value || 'split';
+}
+
+function updateTrainingModeControls() {
+  const splitEl = document.getElementById('act-train-split-fields');
+  if (!splitEl) return;
+  const showSplit = source === 'action_annotations' && trainingMode() === 'split';
+  splitEl.classList.toggle('hidden', !showSplit);
+}
+
 function datasetStats() {
-  return videos.reduce((acc, video) => {
-    const count = Math.max(0, Number(video.event_count) || 0);
-    if (video.has_action_annotation) acc.videos += 1;
-    acc.actions += count;
-    if (video.kind === 'broadcast') acc.broadcast += count;
-    if (video.kind === 'sideline') acc.sideline += count;
-    return acc;
-  }, { videos: 0, actions: 0, broadcast: 0, sideline: 0 });
+  const action = status?.action_annotations || {};
+  return {
+    videos: Math.max(0, Number(action.videos) || 0),
+    actions: Math.max(0, Number(action.events) || 0),
+    broadcast: 0,
+    sideline: 0,
+  };
 }
 
 function sourceReady() {
@@ -227,34 +226,6 @@ function renderDataset() {
 
   const summary = document.getElementById('act-train-source-summary');
   summary.innerHTML = source === 'vnl_1_5' ? vnlSummary(vnl) : actionSummary(stats);
-
-  const list = document.getElementById('act-train-videos');
-  const labeled = videos.filter(v => v.has_action_annotation);
-  if (!labeled.length) {
-    list.innerHTML = emptyState(
-      '<svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/></svg>',
-      'No action labels',
-      '',
-    );
-    updateStartState();
-    return;
-  }
-
-  list.innerHTML = labeled
-    .sort((a, b) => b.event_count - a.event_count || a.name.localeCompare(b.name))
-    .map(video => `
-      <button type="button" class="w-full flex items-center gap-3 px-3 py-2 rounded-lg border border-border bg-white/[0.035] hover:bg-white/[0.06] text-left transition-colors duration-150" data-video="${escapeHtml(video.name)}">
-        <span class="w-2 h-2 rounded-full ${video.kind === 'broadcast' ? 'bg-primary-light' : 'bg-accent-light'} flex-shrink-0"></span>
-        <span class="min-w-0 flex-1 truncate text-sm text-text-primary">${escapeHtml(video.name)}</span>
-        <span class="text-[11px] text-text-muted font-heading tabular-nums">${video.event_count} action</span>
-      </button>
-    `).join('');
-
-  list.querySelectorAll('[data-video]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      window.location.hash = '#/action-annotate';
-    });
-  });
   updateStartState();
 }
 
@@ -279,6 +250,7 @@ function vnlSummary(vnl) {
 function actionSummary(stats) {
   const rows = [
     ['Labels', `${stats.videos} videos / ${stats.actions} events`],
+    ['Mode', trainingMode() === 'all' ? 'all data' : 'train/test split'],
     ['Source', status?.action_annotations?.label_dir || '~/videos/action-annotations'],
     ['Frames', document.getElementById('act-train-frame-dir')?.value || '~/videos/action-frames'],
   ];
@@ -339,9 +311,10 @@ async function startTraining() {
   try {
     const body = {
       source,
+      training_mode: source === 'action_annotations' ? trainingMode() : 'split',
       dataset: textValue('act-train-dataset'),
       frame_dir: textValue('act-train-frame-dir'),
-      save_dir: textValue('act-train-save-dir', null),
+      checkpoint_dir: textValue('act-train-checkpoint-dir', null),
       init_checkpoint: textValue('act-train-init-checkpoint', null),
       gpu: numberValue('act-train-gpu', 0),
       feature_arch: textValue('act-train-feature', 'rny008_gsm'),
@@ -400,10 +373,52 @@ function renderJob() {
     return;
   }
   el.classList.remove('hidden');
+  const detail = actionTrainDetail(job);
   el.innerHTML = `
-    ${renderJobProgress(job, { showLogs: true, truncateMsg: false })}
+    ${renderJobProgress(job, { detail, showLogs: true, truncateMsg: false })}
     ${logPanel(job)}
   `;
+}
+
+function actionTrainDetail(jobData) {
+  const p = jobData?.params?.action_train_progress;
+  if (!p) return '';
+  const phaseProgress = Number.isFinite(Number(p.phase_progress))
+    ? `${Math.round(Number(p.phase_progress) * 100)}%`
+    : '';
+  const step = Number.isFinite(Number(p.step)) && Number.isFinite(Number(p.total))
+    ? `${p.step}/${p.total}${phaseProgress ? ` (${phaseProgress})` : ''}`
+    : '';
+  const latestMap = Number.isFinite(Number(p.latest_val_map))
+    ? `${(Number(p.latest_val_map) * 100).toFixed(2)}%`
+    : '';
+  const best = Number.isFinite(Number(p.best_value))
+    ? `${p.best_epoch != null ? `E${Number(p.best_epoch) + 1} ` : ''}${p.best_value <= 1 ? (Number(p.best_value) * 100).toFixed(2) + '%' : Number(p.best_value).toFixed(4)}`
+    : '';
+  const rows = [
+    ['Epoch', `${p.epoch_display || 1}/${p.epochs || jobData?.params?.epochs || '?'}`],
+    ['Phase', p.phase_label || p.phase || ''],
+    ['Step', step],
+    ['Current Loss', formatMetric(p.current_loss)],
+    ['Last Train', formatMetric(p.latest_train_loss)],
+    ['Last Val', formatMetric(p.latest_val_loss)],
+    ['Last mAP', latestMap],
+    ['Best', best],
+  ].filter(([, value]) => value !== '' && value != null);
+  return `
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+      ${rows.map(([label, value]) => `
+        <div class="rounded-lg border border-border bg-surface-200/35 px-2.5 py-2 min-w-0">
+          <div class="text-[9px] uppercase tracking-wider text-text-muted">${escapeHtml(label)}</div>
+          <div class="mt-0.5 text-[11px] text-text-secondary font-heading tabular-nums truncate" title="${escapeHtml(value)}">${escapeHtml(value)}</div>
+        </div>
+      `).join('')}
+    </div>`;
+}
+
+function formatMetric(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n.toFixed(4) : '';
 }
 
 function logPanel(jobData) {

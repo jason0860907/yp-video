@@ -7,12 +7,17 @@ import math
 import re
 from pathlib import Path
 
-from yp_video.config import SPOT_DIR, SPOT_INFERENCE_SCRIPT, SPOT_PYTHON
+from yp_video.config import (
+    ACTION_CHECKPOINTS_DIR,
+    SPOT_DIR,
+    SPOT_INFERENCE_SCRIPT,
+    SPOT_PYTHON,
+    VIDEOS_DIR,
+)
 
 ACTION_LABELS = {"serve", "receive", "set", "spike", "block", "score"}
 _CHECKPOINT_RE = re.compile(r"checkpoint_(\d+)\.pt$")
 _BEST_CHECKPOINT = "checkpoint_best.pt"
-_PREFERRED_EXPERIMENT_PREFIXES = ("yp_actions_20260602",)
 
 
 def spot_available() -> bool:
@@ -20,10 +25,8 @@ def spot_available() -> bool:
 
 
 def list_checkpoints() -> list[dict]:
-    if not SPOT_DIR.exists():
-        return []
     checkpoints = []
-    for path in SPOT_DIR.glob("exp/*/checkpoint_*.pt"):
+    for path in _iter_checkpoint_paths():
         if not path.is_file():
             continue
         match = _CHECKPOINT_RE.match(path.name)
@@ -31,9 +34,9 @@ def list_checkpoints() -> list[dict]:
         best_metadata = _load_best_metadata(path.parent) if is_best else {}
         epoch = int(match.group(1)) if match else int(best_metadata.get("epoch", -1))
         stat = path.stat()
-        rel = path.relative_to(SPOT_DIR)
+        rel = _checkpoint_ref(path)
         checkpoints.append({
-            "path": str(rel),
+            "path": rel,
             "name": f"{path.parent.name}/{path.name}",
             "experiment": path.parent.name,
             "epoch": epoch,
@@ -42,6 +45,7 @@ def list_checkpoints() -> list[dict]:
             "best_value": best_metadata.get("value"),
             "mtime": stat.st_mtime,
             "size_mb": stat.st_size / (1024 * 1024),
+            "source": "action-checkpoints",
         })
     checkpoints.sort(key=lambda c: (c["is_best"], c["mtime"], c["epoch"]), reverse=True)
     return checkpoints
@@ -51,52 +55,66 @@ def default_checkpoint() -> Path | None:
     checkpoints = list_checkpoints()
     if not checkpoints:
         return None
-    preferred_best = [
-        c for c in checkpoints
-        if c["is_best"] and _is_preferred_experiment(c["experiment"])
-    ]
-    official_best = [
-        c for c in checkpoints
-        if c["experiment"] == "vnl15_official_150" and c["is_best"]
-    ]
-    preferred = [
-        c for c in checkpoints
-        if _is_preferred_experiment(c["experiment"])
-    ]
-    any_best = [c for c in checkpoints if c["is_best"]]
-    official = [c for c in checkpoints if c["experiment"] == "vnl15_official_150"]
-    chosen = (preferred_best or preferred or official_best or any_best or official or checkpoints)[0]
+    chosen = checkpoints[0]
     return resolve_checkpoint(chosen["path"])
-
-
-def _is_preferred_experiment(experiment: str) -> bool:
-    return any(
-        experiment == prefix or experiment.startswith(f"{prefix}-")
-        for prefix in _PREFERRED_EXPERIMENT_PREFIXES
-    )
 
 
 def resolve_checkpoint(value: str | None) -> Path:
     if value:
-        path = Path(value).expanduser()
-        if not path.is_absolute():
-            path = SPOT_DIR / path
+        path = _resolve_checkpoint_value(value)
     else:
         path = default_checkpoint()
         if path is None:
-            raise FileNotFoundError("No SPOT checkpoint found under ~/yp-spot/exp")
+            raise FileNotFoundError(f"No SPOT checkpoint found under {ACTION_CHECKPOINTS_DIR}")
 
     resolved = path.resolve()
-    spot_root = SPOT_DIR.resolve()
-    try:
-        resolved.relative_to(spot_root)
-    except ValueError as exc:
-        raise ValueError("SPOT checkpoint must live under ~/yp-spot") from exc
+    if not _is_action_checkpoint(resolved):
+        raise ValueError("SPOT checkpoint must live under ~/videos/action-checkpoints")
     if not resolved.exists():
         raise FileNotFoundError(f"SPOT checkpoint not found: {resolved}")
     if resolved.suffix != ".pt":
         raise ValueError("SPOT checkpoint must be a .pt file")
     return resolved
+
+
+def _iter_checkpoint_paths() -> list[Path]:
+    if ACTION_CHECKPOINTS_DIR.exists():
+        return list(ACTION_CHECKPOINTS_DIR.glob("*/checkpoint_*.pt"))
+    return []
+
+
+def _resolve_checkpoint_value(value: str) -> Path:
+    path = Path(value).expanduser()
+    if path.is_absolute():
+        return path
+    parts = path.parts
+    if parts and parts[0] == ACTION_CHECKPOINTS_DIR.name:
+        return VIDEOS_DIR / path
+    return ACTION_CHECKPOINTS_DIR / path
+
+
+def _is_action_checkpoint(path: Path) -> bool:
+    try:
+        path.resolve().relative_to(ACTION_CHECKPOINTS_DIR.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _checkpoint_ref(path: Path) -> str:
+    resolved = path.resolve()
+    try:
+        return str(resolved.relative_to(SPOT_DIR.resolve()))
+    except ValueError:
+        pass
+    try:
+        return str(resolved.relative_to(VIDEOS_DIR.resolve()))
+    except ValueError:
+        return str(resolved)
+
+
+def checkpoint_ref(path: Path) -> str:
+    return _checkpoint_ref(path)
 
 
 def build_command(
@@ -183,7 +201,7 @@ def predictions_to_annotation(
         "num_events": len(events),
         "source": {
             "type": "spot",
-            "checkpoint": str(checkpoint_path.relative_to(SPOT_DIR)),
+            "checkpoint": _checkpoint_ref(checkpoint_path),
             "min_score": min_score,
             "prediction_video": record.get("video"),
         },
@@ -202,13 +220,19 @@ def _finite_float(value, *, default: float) -> float:
 def _load_best_metadata(experiment_dir: Path) -> dict:
     path = experiment_dir / "checkpoint_best.json"
     if not path.exists():
+        path = experiment_dir / "manifest.json"
+    if not path.exists():
         return {}
     try:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, json.JSONDecodeError):
         return {}
-    return data if isinstance(data, dict) else {}
+    if not isinstance(data, dict):
+        return {}
+    if "best" in data and isinstance(data["best"], dict):
+        return data["best"]
+    return data
 
 
 def _clamp(value: float, low: float, high: float) -> float:

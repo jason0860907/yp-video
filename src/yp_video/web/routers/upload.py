@@ -38,6 +38,27 @@ class DeleteR2Request(BaseModel):
 # Categories that skip R2 upload (local-only)
 LOCAL_ONLY_CATEGORIES = {"videos"}
 
+ACTION_CHECKPOINT_PACKAGE_FILES = {
+    "checkpoint_best.pt",
+    "checkpoint_best.json",
+    "config.json",
+    "loss.json",
+    "terminal.log",
+    "manifest.json",
+}
+
+
+def _is_action_checkpoint_package_file(path: Path, base_dir: Path) -> bool:
+    rel = path.relative_to(base_dir)
+    if len(rel.parts) == 2 and rel.name in ACTION_CHECKPOINT_PACKAGE_FILES:
+        return True
+    return (
+        len(rel.parts) == 4
+        and rel.parts[1] == "labels"
+        and rel.parts[2] == "action-annotations"
+        and rel.name.endswith("_actions.jsonl")
+    )
+
 
 @router.get("/status")
 def get_status():
@@ -108,6 +129,20 @@ def list_local_files(category: str = "cuts-broadcast") -> list[dict]:
                     "name": f.name,
                     "path": rel,
                     "group": group,
+                    "size": f.stat().st_size,
+                    "r2_key": r2_key,
+                    "uploaded": r2_key in r2_keys,
+                })
+    elif category == "action-checkpoints":
+        # Nested: {run}/checkpoint_best.pt + metadata/log + label snapshot.
+        for f in sorted(base_dir.rglob("*")):
+            if f.is_file() and _is_action_checkpoint_package_file(f, base_dir):
+                rel = str(f.relative_to(base_dir))
+                r2_key = f"{category}/{rel}"
+                files.append({
+                    "name": f.name,
+                    "path": rel,
+                    "group": f.relative_to(base_dir).parts[0],
                     "size": f.stat().st_size,
                     "r2_key": r2_key,
                     "uploaded": r2_key in r2_keys,

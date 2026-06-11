@@ -65,9 +65,9 @@ class ProgressParser:
 
     The handler receives the match object and returns either ``None`` (no
     update) or a dict of fields to merge into the throttled state. Typical
-    fields are ``progress`` (0.0–1.0) and/or ``message``. If the handler
-    needs to remember state across lines (e.g. capture total epochs from one
-    line and use it on later lines), close over it in the function.
+    fields are ``progress`` (0.0–1.0), ``message``, and/or ``params``. If the
+    handler needs to remember state across lines (e.g. capture total epochs
+    from one line and use it on later lines), close over it in the function.
     """
 
     def __init__(self, pattern: str | re.Pattern, handler: Callable[[re.Match], dict | None]):
@@ -125,7 +125,7 @@ async def stream_subprocess(
         cwd=str(cwd),
         env=env,
     )
-    state = {"progress": 0.0, "message": ""}
+    state: dict = {"progress": 0.0, "message": "", "params": {}}
     last_msg = ""
     last_push = 0.0
     job_obj = job_manager.get_job(job_id)
@@ -157,13 +157,21 @@ async def stream_subprocess(
             if m:
                 update = p.handler(m)
                 if update:
+                    params_update = update.pop("params", None)
+                    if params_update:
+                        state["params"] = {**state["params"], **params_update}
                     state.update(update)
         now = time.monotonic()
         if update_job and (is_key(text) or now - last_push >= push_interval):
             last_push = now
-            await job_manager.update_job(
-                job_id, message=state["message"], progress=state["progress"],
-            )
+            update_kwargs = {
+                "message": state["message"],
+                "progress": state["progress"],
+            }
+            if state["params"]:
+                current_params = job_obj.params if job_obj is not None else {}
+                update_kwargs["params"] = {**current_params, **state["params"]}
+            await job_manager.update_job(job_id, **update_kwargs)
 
     async def flush_completed_chunks(buffer: str) -> str:
         while True:

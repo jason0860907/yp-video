@@ -763,7 +763,7 @@ def spot_status() -> dict:
     return {
         "available": spot_prelabel.spot_available(),
         "spot_dir": str(SPOT_DIR),
-        "default_checkpoint": str(default.relative_to(SPOT_DIR)) if default else "",
+        "default_checkpoint": spot_prelabel.checkpoint_ref(default) if default else "",
         "checkpoints": checkpoints,
     }
 
@@ -777,6 +777,14 @@ def list_videos() -> list[dict]:
         ann_path = _active_annotation_path(video.name)
         ann = None
         event_count = 0
+        training_event_count = 0
+        has_training_annotation = final_path.exists()
+        if has_training_annotation:
+            try:
+                final_ann = _load_annotation(final_path)
+                training_event_count = len((final_ann or {}).get("events", []))
+            except HTTPException:
+                training_event_count = -1
         if ann_path.exists():
             try:
                 ann = _load_annotation(ann_path)
@@ -792,9 +800,11 @@ def list_videos() -> list[dict]:
             "has_action_annotation": has_active,
             "has_action_pre_annotation": has_active and not reviewed,
             "has_action_final_annotation": has_active and reviewed,
+            "has_action_training_annotation": has_training_annotation,
             "action_annotation_source": "action-annotations" if ann_path == final_path and has_active else ("action-pre-annotations" if has_active else ""),
             "action_reviewed": reviewed,
             "event_count": event_count,
+            "training_event_count": training_event_count,
             "frame_cache": inspect_action_frame_cache(video),
         })
     return results
@@ -904,7 +914,7 @@ async def start_spot_prelabel(req: SpotPrelabelRequest) -> dict:
         "spot-prelabel",
         {
             "video": video.name,
-            "checkpoint": str(checkpoint.relative_to(SPOT_DIR)),
+            "checkpoint": spot_prelabel.checkpoint_ref(checkpoint),
             "min_score": req.min_score,
         },
         name=f"SPOT pre-label — {video.name}",
@@ -1063,7 +1073,7 @@ async def start_spot_prelabel_batch(req: SpotPrelabelBatchRequest) -> dict:
         "spot-prelabel-batch",
         {
             "videos": [video.name for video, _ann_path in entries],
-            "checkpoint": str(checkpoint.relative_to(SPOT_DIR)),
+            "checkpoint": spot_prelabel.checkpoint_ref(checkpoint),
             "min_score": req.min_score,
             "total": total,
             "completed": 0,
