@@ -358,8 +358,16 @@ def load_model(device: torch.device, model_name: str = "base") -> torch.nn.Modul
         encoder = encoder.to(device=device, dtype=torch.bfloat16,
                              memory_format=torch.channels_last_3d)
         encoder.eval()
-        print("Compiling model (first time ~30-60s, cached thereafter)...")
-        encoder = torch.compile(encoder, mode="max-autotune")
+        # Keep Triton kernel autotuning (the real speedup) but disable CUDA
+        # graphs: cudagraph-trees keep global recording state in-process, and in
+        # the long-lived web server that state leaks across predict jobs and
+        # threads, raising "beginAllocateToPool: already recording to mempool_id"
+        # on the second run. The CLI (fresh process per run) was unaffected.
+        # Override with TAD_COMPILE_MODE if you want cudagraphs back for a
+        # one-shot CLI run.
+        compile_mode = os.environ.get("TAD_COMPILE_MODE", "max-autotune-no-cudagraphs")
+        print(f"Compiling model (mode={compile_mode}, first time ~30-60s, cached thereafter)...")
+        encoder = torch.compile(encoder, mode=compile_mode)
         _model_cache[cache_key] = encoder
         return encoder
 
