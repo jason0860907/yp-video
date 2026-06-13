@@ -7,7 +7,7 @@ import {
 } from '../shared.js';
 
 let status = null;
-let source = 'vnl_1_5';
+let source = 'action_annotations';
 let job = null;
 let client = null;
 
@@ -67,8 +67,8 @@ export function render(container) {
 
                 <div id="act-train-mode-wrap" class="contents">
                   ${field('Data Mode', 'act-train-training-mode', select(`
+                    <option value="all" selected>All Data</option>
                     <option value="split">Train/Test Split</option>
-                    <option value="all">All Data</option>
                   `))}
                 </div>
 

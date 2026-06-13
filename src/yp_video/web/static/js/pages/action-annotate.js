@@ -61,6 +61,8 @@ let tickTimer = null;
 let lastOverlayFrame = -1;
 let presentedMediaTime = null;
 let videoFrameCallbackId = null;
+let frameClockGeneration = 0;
+let lockedFrame = null;
 let dragPoint = null;
 let suppressOverlayClick = false;
 
@@ -179,9 +181,9 @@ export function render(container) {
           ${card(`
             <div class="space-y-3">
               ${sectionTitle(
-                'Rallies <span id="act-count" class="text-text-muted font-normal">(0)</span>',
-                '',
-                `${btnSmall('Save', 'id="act-save"', 'success')} ${btnSmall('Clear', 'id="act-clear"', 'danger')}`,
+                'Rallies',
+                '<span id="act-count" class="text-sm">(0)</span>',
+                `${btnSmall('Save<span id="act-save-star" class="invisible absolute right-2 top-1/2 -translate-y-1/2">*</span>', 'id="act-save" style="position:relative;min-width:4.5rem" title="Save action labels"', 'success')} ${btnSmall('Clear', 'id="act-clear" style="min-width:4.5rem"', 'danger')}`,
               )}
               <div class="space-y-2">
                 <div class="flex items-center gap-2">
@@ -295,14 +297,19 @@ function bindEvents() {
   overlayEl = document.getElementById('act-overlay');
 
   const combo = document.getElementById('act-video-combo');
-  combo.addEventListener('focus', () => {
+  const openVideoDropdown = () => {
+    // Clear the leftover filename so the dropdown shows every video again
+    // (otherwise the previously-loaded name filters the list down to one).
+    if (videoSearch) {
+      videoSearch = '';
+      combo.value = '';
+      activeVideoOption = 0;
+    }
     videoDropdownOpen = true;
     renderVideoOptions();
-  });
-  combo.addEventListener('click', () => {
-    videoDropdownOpen = true;
-    renderVideoOptions();
-  });
+  };
+  combo.addEventListener('focus', openVideoDropdown);
+  combo.addEventListener('click', openVideoDropdown);
   combo.addEventListener('input', (e) => {
     videoSearch = e.target.value;
     selectedVideo = '';
@@ -381,7 +388,8 @@ function bindEvents() {
   document.getElementById('act-clear').addEventListener('click', clearEvents);
 
   videoEl.addEventListener('loadedmetadata', () => {
-    presentedMediaTime = null;
+    lockedFrame = null;
+    stopVideoFrameClock();
     startVideoFrameClock();
     syncOverlayGeometry();
     refreshPlayhead();
@@ -389,13 +397,17 @@ function bindEvents() {
   });
   videoEl.addEventListener('loadeddata', onVideoGeometryChange);
   videoEl.addEventListener('seeked', () => {
-    presentedMediaTime = videoEl.currentTime || 0;
+    presentedMediaTime = lockedFrame !== null && state.fps
+      ? lockedFrame / state.fps
+      : videoEl.currentTime || 0;
     startVideoFrameClock();
     onVideoGeometryChange();
   });
-  videoEl.addEventListener('timeupdate', refreshPlayhead);
+  videoEl.addEventListener('timeupdate', onVideoTimeUpdate);
   videoEl.addEventListener('play', () => {
-    startVideoFrameClock();
+    lockedFrame = null;
+    presentedMediaTime = videoEl.currentTime || presentedMediaTime;
+    restartVideoFrameClock();
     updatePlaybackButton();
   });
   videoEl.addEventListener('pause', updatePlaybackButton);
@@ -585,7 +597,14 @@ function selectVideo(name) {
 function closeVideoDropdown() {
   videoDropdownOpen = false;
   const combo = document.getElementById('act-video-combo');
-  if (combo) combo.setAttribute('aria-expanded', 'false');
+  if (combo) {
+    combo.setAttribute('aria-expanded', 'false');
+    // Restore the loaded video's name if the box was cleared without picking a new one.
+    if (selectedVideo && combo.value !== selectedVideo) {
+      combo.value = selectedVideo;
+      videoSearch = selectedVideo;
+    }
+  }
   document.getElementById('act-video-options')?.classList.add('hidden');
 }
 
@@ -977,9 +996,9 @@ function markDirty() {
 
 function updateDirtyUi() {
   const dirty = document.getElementById('act-dirty');
-  const saveBtn = document.getElementById('act-save');
+  const star = document.getElementById('act-save-star');
   if (dirty) dirty.textContent = state.dirty ? 'Unsaved changes' : '';
-  if (saveBtn) saveBtn.textContent = state.dirty ? 'Save *' : 'Save';
+  if (star) star.classList.toggle('invisible', !state.dirty);
 }
 
 function normalizeRallies(rallies) {
@@ -1075,7 +1094,6 @@ async function save() {
   if (!state.video) return showToast('No video loaded', 'warning');
   const btn = document.getElementById('act-save');
   btn.disabled = true;
-  btn.textContent = 'Saving...';
   try {
     const result = await api(API.actionAnnotate.annotations, {
       method: 'POST',
@@ -1096,7 +1114,7 @@ async function save() {
     showToast(`Save failed: ${e.message}`, 'error');
   } finally {
     btn.disabled = false;
-    document.getElementById('act-save').textContent = state.dirty ? 'Save *' : 'Save';
+    updateDirtyUi();
   }
 }
 
@@ -1233,7 +1251,7 @@ function eventRow(event, idx, rowNumber = idx + 1) {
     <div class="act-event grid grid-cols-[1rem_minmax(5.2rem,1fr)_3.8rem_2.8rem_2.35rem] items-center gap-1.5 px-2 py-1.5 rounded-lg border cursor-pointer transition-colors duration-150 ${selected ? 'bg-primary/10 border-primary/[0.35]' : 'bg-white/[0.035] border-border hover:bg-white/[0.06]'}" data-idx="${idx}" title="${escapeHtml(rowTitle)}">
       <span class="text-right text-[10px] font-heading text-text-muted/70">${rowNumber}</span>
       <span class="flex items-center gap-1.5 min-w-0">
-        <span class="w-2.5 h-2.5 rounded-full flex-shrink-0 ${visible ? '' : 'border'}" title="${visible ? 'Visible point' : 'Non-visible event'}" style="${dotStyle}"></span>
+        <button class="w-2.5 h-2.5 rounded-full flex-shrink-0 cursor-pointer ${visible ? '' : 'border'}" data-action="toggle-visible" title="${visible ? 'Visible point — click to mark non-visible' : 'Non-visible event — click to mark visible'}" style="${dotStyle}"></button>
         <select class="min-w-0 w-full bg-surface-100 border border-border rounded-lg px-1.5 py-1 text-xs text-text-primary" data-field="label" data-idx="${idx}">${labelOptions}</select>
       </span>
       <input class="w-full bg-transparent border-b border-white/10 text-text-primary text-[11px] text-center font-heading tabular-nums focus:border-primary-light outline-none" data-field="frame" data-idx="${idx}" value="${event.frame}">
@@ -1258,6 +1276,16 @@ function onEventClick(e) {
       selectedIdx = -1;
       markDirty();
       renderEvents();
+      return;
+    }
+    if (e.target.closest('[data-action="toggle-visible"]')) {
+      const event = state.events[idx];
+      if (event) {
+        event.visible = event.visible === false;
+        markDirty();
+        renderOverlay();
+        renderEvents();
+      }
       return;
     }
     const editingField = ['INPUT', 'SELECT'].includes(e.target.tagName);
@@ -1820,11 +1848,28 @@ function hasVideoFrameClock() {
 }
 
 function currentMediaTime() {
+  if (lockedFrame !== null && state.fps) {
+    return lockedFrame / state.fps;
+  }
   const t = hasVideoFrameClock() && Number.isFinite(presentedMediaTime)
     ? presentedMediaTime
     : (videoEl?.currentTime || 0);
   if (state.duration > 0) return clamp(t, 0, state.duration);
   return Math.max(0, t);
+}
+
+function invalidateVideoFrameClock({ clearPresented = false } = {}) {
+  frameClockGeneration += 1;
+  if (videoFrameCallbackId !== null && videoEl?.cancelVideoFrameCallback) {
+    videoEl.cancelVideoFrameCallback(videoFrameCallbackId);
+  }
+  videoFrameCallbackId = null;
+  if (clearPresented) presentedMediaTime = null;
+}
+
+function restartVideoFrameClock({ clearPresented = false } = {}) {
+  invalidateVideoFrameClock({ clearPresented });
+  startVideoFrameClock();
 }
 
 function startVideoFrameClock() {
@@ -1833,22 +1878,40 @@ function startVideoFrameClock() {
     return;
   }
   if (videoFrameCallbackId !== null) return;
-  videoFrameCallbackId = videoEl.requestVideoFrameCallback((_now, metadata) => {
-    videoFrameCallbackId = null;
+  const callbackGeneration = frameClockGeneration;
+  let callbackId = null;
+  callbackId = videoEl.requestVideoFrameCallback((_now, metadata) => {
+    if (videoFrameCallbackId === callbackId) {
+      videoFrameCallbackId = null;
+    }
+    if (callbackGeneration !== frameClockGeneration) {
+      if (videoFrameCallbackId === null) startVideoFrameClock();
+      return;
+    }
+    if (!videoEl.paused) {
+      lockedFrame = null;
+    }
     if (Number.isFinite(metadata?.mediaTime)) {
-      presentedMediaTime = metadata.mediaTime;
+      if (lockedFrame === null || !videoEl.paused) {
+        presentedMediaTime = metadata.mediaTime;
+      }
     }
     refreshPlayhead();
     startVideoFrameClock();
   });
+  videoFrameCallbackId = callbackId;
 }
 
 function stopVideoFrameClock() {
-  if (videoFrameCallbackId !== null && videoEl?.cancelVideoFrameCallback) {
-    videoEl.cancelVideoFrameCallback(videoFrameCallbackId);
+  invalidateVideoFrameClock({ clearPresented: true });
+  lockedFrame = null;
+}
+
+function onVideoTimeUpdate() {
+  if (videoEl && !videoEl.paused) {
+    lockedFrame = null;
   }
-  videoFrameCallbackId = null;
-  presentedMediaTime = null;
+  refreshPlayhead();
 }
 
 function onTimelineClick(e) {
@@ -1911,16 +1974,26 @@ function updatePlaybackButton() {
 }
 
 function currentFrame() {
-  const maxFrame = Math.max(0, state.numFrames - 1);
-  return clamp(Math.round(currentMediaTime() * state.fps), 0, maxFrame);
+  if (lockedFrame !== null) return clampFrame(lockedFrame);
+  return clampFrame(Math.round(currentMediaTime() * state.fps));
 }
 
 function seekFrame(frame) {
   if (!videoEl || !state.fps) return;
-  const maxFrame = Math.max(0, state.numFrames - 1);
-  const targetFrame = clamp(Math.round(Number(frame) || 0), 0, maxFrame);
-  const targetTime = targetFrame / state.fps;
-  presentedMediaTime = targetTime;
+  const targetFrame = clampFrame(frame);
+  // Seek to the middle of the frame's display interval, not its leading edge.
+  // currentTime = N/fps lands exactly on the N-1 / N boundary, which different
+  // decoders resolve to either side (off-by-one vs the 0-based ffmpeg cache).
+  // (N + 0.5)/fps lands unambiguously inside frame N on every browser.
+  const seekTime = (targetFrame + 0.5) / state.fps;
+  const targetTime = state.duration > 0
+    ? clamp(seekTime, 0, state.duration)
+    : Math.max(0, seekTime);
+  lockedFrame = targetFrame;
+  // Report the frame's nominal time (N/fps) for the rounding-based readback,
+  // even though we seek to the interval midpoint above.
+  presentedMediaTime = targetFrame / state.fps;
+  invalidateVideoFrameClock();
   videoEl.currentTime = targetTime;
   startVideoFrameClock();
   refreshPlayhead();
@@ -1952,7 +2025,8 @@ function jumpToEvent(idx, { renderList = true } = {}) {
 function stepFrame(delta) {
   if (!state.video || !state.fps) return;
   videoEl.pause();
-  seekFrame(currentFrame() + delta);
+  const baseFrame = lockedFrame !== null ? lockedFrame : currentFrame();
+  seekFrame(baseFrame + delta);
 }
 
 function togglePointMode() {
@@ -2065,4 +2139,10 @@ function clamp(value, min, max) {
 
 function round4(value) {
   return Math.round(value * 10000) / 10000;
+}
+
+function clampFrame(frame) {
+  const maxFrame = Math.max(0, state.numFrames - 1);
+  const n = Math.round(Number(frame));
+  return clamp(Number.isFinite(n) ? n : 0, 0, maxFrame);
 }
