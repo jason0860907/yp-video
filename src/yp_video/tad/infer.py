@@ -53,6 +53,10 @@ def run_inference(
     cut_dir: Path | None = None,
     model_name: str = "base",
     feature_batch_size: int = 8,
+    trim_with_actions: bool = False,
+    action_predictions: Path | None = None,
+    serve_pad: float = 1.0,
+    score_pad: float = 1.0,
     on_message: "Callable[[str], None] | None" = None,
     on_progress: "Callable[[float], None] | None" = None,
     on_batch_progress: "Callable[[int, int], None] | None" = None,
@@ -156,6 +160,22 @@ def run_inference(
 
     print(f"  Found {len(detections)} detections")
     _prog(0.9)
+
+    # Optional: refine TAD rallies with SPOT action serve/score boundaries.
+    # Independent, swappable module — imported lazily so the core flow does not
+    # depend on it and it can be removed without touching this pipeline.
+    if trim_with_actions:
+        from .action_trim import refine_detections
+
+        _msg("Refining rallies with SPOT action serve/score boundaries...")
+        detections = refine_detections(
+            detections,
+            video_path.stem,
+            action_path=action_predictions,
+            serve_pad=serve_pad,
+            score_pad=score_pad,
+            on_message=on_message,
+        )
 
     # Step 3: Convert to JSONL
     _msg(f"Step 3/3: Saving {len(detections)} detections...")
@@ -410,6 +430,32 @@ def main():
         action="store_true",
         help="Export detected rallies as individual video clips",
     )
+    parser.add_argument(
+        "--trim-with-actions",
+        action="store_true",
+        help="Refine TAD rallies using SPOT action predictions: trim each rally "
+             "to first serve - serve_pad .. last score + score_pad.",
+    )
+    parser.add_argument(
+        "--action-predictions",
+        type=Path,
+        default=None,
+        help="Path to the video's SPOT *_actions.jsonl (default: "
+             "~/videos/action-pre-annotations/{video_stem}_actions.jsonl). "
+             "Only used with --trim-with-actions.",
+    )
+    parser.add_argument(
+        "--serve-pad",
+        type=float,
+        default=1.0,
+        help="[trim] seconds of lead-in kept before the serve",
+    )
+    parser.add_argument(
+        "--score-pad",
+        type=float,
+        default=1.0,
+        help="[trim] seconds of tail kept after the score",
+    )
     args = parser.parse_args()
 
     if not args.video.exists():
@@ -436,6 +482,10 @@ def main():
         args.threshold,
         cut_dir,
         args.model,
+        trim_with_actions=args.trim_with_actions,
+        action_predictions=args.action_predictions,
+        serve_pad=args.serve_pad,
+        score_pad=args.score_pad,
     )
 
 
