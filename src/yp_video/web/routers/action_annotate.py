@@ -26,6 +26,7 @@ from yp_video.config import (
     ACTION_WAVEFORMS_DIR,
     CUT_R2_CATEGORIES,
     PRE_ANNOTATIONS_DIR,
+    PREDICTIONS_DIR,
     SPOT_DIR,
     cut_kind_of,
     find_cut,
@@ -132,8 +133,12 @@ def _active_annotation_path(video_name: str) -> Path:
 
 
 def _rally_annotation_path(video_name: str) -> Path | None:
+    # Priority: manual rally annotations, then rally pre-annotations, then
+    # tad-predictions (also a rally pre-annotation, but lower quality) as a
+    # last-resort fallback so Action Label still works when only raw TAD
+    # predictions exist.
     filename = f"{Path(video_name).stem}_annotations.jsonl"
-    for directory in (ANNOTATIONS_DIR, PRE_ANNOTATIONS_DIR):
+    for directory in (ANNOTATIONS_DIR, PRE_ANNOTATIONS_DIR, PREDICTIONS_DIR):
         path = directory / filename
         if path.exists():
             return path
@@ -147,6 +152,8 @@ def _rally_sources(video_name: str) -> list[str]:
         sources.append("annotation")
     if (PRE_ANNOTATIONS_DIR / filename).exists():
         sources.append("pre-annotation")
+    if (PREDICTIONS_DIR / filename).exists():
+        sources.append("tad-prediction")
     return sources
 
 

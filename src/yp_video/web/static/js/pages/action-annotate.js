@@ -555,6 +555,7 @@ function rallySourceTag(video) {
   const sources = video?.rally_sources || [];
   if (sources.includes('annotation')) return '✅';
   if (sources.includes('pre-annotation')) return '⚡';
+  if (sources.includes('tad-prediction')) return '🤖';
   return '—';
 }
 
@@ -562,6 +563,7 @@ function rallySourceTitle(video) {
   const sources = video?.rally_sources || [];
   if (sources.includes('annotation')) return 'Rally annotation reviewed';
   if (sources.includes('pre-annotation')) return 'Rally pre-label';
+  if (sources.includes('tad-prediction')) return 'Raw TAD prediction (lower quality)';
   return 'No rally annotation';
 }
 
