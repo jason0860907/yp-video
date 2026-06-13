@@ -37,6 +37,12 @@ class PredictRequest(BaseModel):
     cut_rallies: bool = False
     model: str = "base"
     stop_vllm: bool = False
+    # Refine TAD rallies to serve/score boundaries using SPOT action
+    # predictions. Default on; falls back to untrimmed rallies for videos
+    # that have no action predictions yet.
+    trim_with_actions: bool = True
+    serve_pad: float = 1.0
+    score_pad: float = 1.0
 
 
 @router.get("/videos")
@@ -133,6 +139,9 @@ async def start_prediction(req: PredictRequest):
                         video_path, checkpoint_path, config_path,
                         output_path, req.device, req.threshold, cut_dir,
                         model_name=req.model,
+                        trim_with_actions=req.trim_with_actions,
+                        serve_pad=req.serve_pad,
+                        score_pad=req.score_pad,
                         on_message=msg_cb,
                         on_progress=prog_cb,
                     )

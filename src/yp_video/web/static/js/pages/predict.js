@@ -104,6 +104,13 @@ export function render(container) {
                 Cut rallies
               </label>
             </div>
+            <div class="flex items-end pb-1">
+              <label class="flex items-center gap-2.5 cursor-pointer text-sm text-text-secondary hover:text-text-primary transition-colors duration-200"
+                     title="Trim each TAD rally to its serve/score boundaries using SPOT action predictions. Videos without action predictions are left untrimmed.">
+                <input id="pred-trim-actions" type="checkbox" checked class="accent-primary cursor-pointer w-4 h-4 rounded">
+                Trim with actions
+              </label>
+            </div>
           </div>
           <div class="ml-10 flex items-center gap-3 pt-1">
             ${btnPrimary('Start Prediction', 'id="pred-start"')}
@@ -305,6 +312,7 @@ async function startPrediction() {
         cut_rallies: document.getElementById('pred-cut').checked,
         model: document.getElementById('pred-model').value,
         stop_vllm: stopVllm,
+        trim_with_actions: document.getElementById('pred-trim-actions').checked,
       },
     });
 
