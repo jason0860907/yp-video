@@ -25,7 +25,7 @@ from yp_video.config import (
     VIDEOS_DIR,
     find_cut,
 )
-from yp_video.core.action_frames import ensure_action_frame_caches, inspect_action_frame_cache
+from yp_video.action.frames import ensure_action_frame_caches, inspect_action_frame_cache
 from yp_video.core.jsonl import read_jsonl, write_jsonl
 from yp_video.web.job_helpers import ProgressParser, stop_vllm_for_job, stream_subprocess
 from yp_video.web.jobs import JobStatus, job_manager

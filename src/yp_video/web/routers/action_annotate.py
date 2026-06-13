@@ -31,8 +31,8 @@ from yp_video.config import (
     find_cut,
     iter_all_cuts,
 )
-from yp_video.core import spot_prelabel
-from yp_video.core.action_frames import inspect_action_frame_cache
+from yp_video.action import prelabel as spot_prelabel
+from yp_video.action.frames import inspect_action_frame_cache
 from yp_video.core.annotation_ids import action_id, rally_id
 from yp_video.core.jsonl import read_jsonl
 from yp_video.web.job_helpers import ProgressParser, finalize_batch_job, stop_vllm_for_job, stream_subprocess
