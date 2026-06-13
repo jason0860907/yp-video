@@ -256,18 +256,50 @@ def open_video(
     use_gpu: bool = False,
     cache_window: int = _DEFAULT_CACHE_FRAMES,
 ) -> DecordReader | Cv2Reader | NvdecReader:
-    """Open a video with the best available decoder."""
+    """Open a video with the requested decoder.
+
+    When ``use_gpu`` is set (the default on CUDA), NVDEC GPU decode is
+    *required*: we do NOT silently fall back to CPU decode, because CPU decode
+    of HD video buffers frames in host RAM and can exhaust memory / crash the
+    machine. If NVDEC is unavailable or fails to initialize we raise with an
+    actionable message. Set ``TAD_ALLOW_CPU_DECODE=1`` to explicitly opt into
+    CPU decode anyway.
+    """
     if HAS_DECORD:
         reader = DecordReader(video_path)
     else:
         reader = Cv2Reader(video_path)
 
-    if use_gpu and HAS_NVDEC:
-        try:
-            return NvdecReader(video_path, num_frames=len(reader), cache_window=cache_window)
-        except Exception:
-            pass
-    return reader
+    if not use_gpu:
+        return reader
+
+    allow_cpu = os.environ.get("TAD_ALLOW_CPU_DECODE", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+    if not HAS_NVDEC:
+        msg = (
+            "GPU decode requested but NVDEC is unavailable "
+            f"(PyNvVideoCodec import failed: {NVDEC_IMPORT_ERROR}). "
+            "Install PyNvVideoCodec and the NVIDIA video codec libraries. "
+            "CPU decode of HD video can exhaust RAM and crash the machine, so it "
+            "is NOT used automatically. Set TAD_ALLOW_CPU_DECODE=1 to force it."
+        )
+        if allow_cpu:
+            print(f"WARNING: {msg}")
+            return reader
+        raise RuntimeError(msg)
+
+    try:
+        return NvdecReader(video_path, num_frames=len(reader), cache_window=cache_window)
+    except Exception as exc:
+        msg = f"NVDEC GPU decode failed to initialize for {video_path}: {exc!r}."
+        if allow_cpu:
+            print(f"WARNING: {msg} Falling back to CPU decode (TAD_ALLOW_CPU_DECODE=1).")
+            return reader
+        raise RuntimeError(
+            msg + " Set TAD_ALLOW_CPU_DECODE=1 to allow CPU decode."
+        ) from exc
 
 
 # ── Model ──────────────────────────────────────────────────────────────
