@@ -25,6 +25,7 @@ from .prelabel import (
     load_predictions,
     predictions_to_annotation,
     resolve_checkpoint,
+    resolve_checkpoint_path,
     spot_available,
 )
 from .frames import (
@@ -44,6 +45,7 @@ __all__ = [
     "load_predictions",
     "predictions_to_annotation",
     "resolve_checkpoint",
+    "resolve_checkpoint_path",
     "spot_available",
     "ActionFrameCacheError",
     "action_frame_dir",

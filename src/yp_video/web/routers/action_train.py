@@ -22,10 +22,10 @@ from yp_video.config import (
     ACTION_FRAMES_DIR,
     SPOT_DIR,
     SPOT_PYTHON,
-    VIDEOS_DIR,
     find_cut,
 )
 from yp_video.action.frames import ensure_action_frame_caches, inspect_action_frame_cache
+from yp_video.action.prelabel import resolve_checkpoint_path
 from yp_video.core.jsonl import read_jsonl, write_jsonl
 from yp_video.web.job_helpers import ProgressParser, stop_vllm_for_job, stream_subprocess
 from yp_video.web.jobs import JobStatus, job_manager
@@ -41,7 +41,9 @@ class ActionTrainRequest(BaseModel):
     frame_dir: str | None = None
     save_dir: str | None = None
     checkpoint_dir: str | None = None
-    init_checkpoint: str | None = "exp/vnl15_official_150/checkpoint_best.pt"
+    # None → fall back to the VNL base (_default_init_checkpoint); "" → train
+    # from scratch; an explicit path → that checkpoint.
+    init_checkpoint: str | None = None
     gpu: int = Field(default=0, ge=0)
     feature_arch: str = "rny008_gsm"
     temporal_arch: str = "gru"
@@ -94,13 +96,7 @@ def _resolve_save_dir(req: ActionTrainRequest, dataset: str | None = None) -> Pa
 
 
 def _action_checkpoint_path(path: str | Path) -> Path:
-    p = Path(os.path.expanduser(str(path)))
-    if not p.is_absolute():
-        if p.parts and p.parts[0] == ACTION_CHECKPOINTS_DIR.name:
-            p = VIDEOS_DIR / p
-        else:
-            p = ACTION_CHECKPOINTS_DIR / p
-    return _validate_action_checkpoint_dir(p)
+    return _validate_action_checkpoint_dir(resolve_checkpoint_path(path))
 
 
 def _validate_action_checkpoint_dir(path: Path) -> Path:
@@ -492,8 +488,9 @@ def _build_command(
         for rel in ("data/vnl_1.5/train.jsonl", "data/vnl_1.5/val.jsonl"):
             if not (SPOT_DIR / rel).exists():
                 raise HTTPException(400, f"Missing VNL JSONL labels: {SPOT_DIR / rel}")
-    if req.init_checkpoint:
-        init_checkpoint = _spot_path(req.init_checkpoint)
+    init_value = _default_init_checkpoint() if req.init_checkpoint is None else req.init_checkpoint
+    if init_value:
+        init_checkpoint = _spot_path(init_value)
         if not init_checkpoint.exists():
             raise HTTPException(400, f"Init checkpoint not found: {init_checkpoint}")
     else:

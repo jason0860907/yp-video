@@ -59,6 +59,17 @@ let timelineScope = 'rally';
 let expandedRallyIds = new Set();
 let tickTimer = null;
 let lastOverlayFrame = -1;
+// Frame-clock state model (three interacting variables):
+//   lockedFrame          — when paused/stepping, the exact frame we are pinned
+//                          to. While set, it is the source of truth for the
+//                          current frame and overrides presentedMediaTime;
+//                          cleared (null) whenever the video is playing.
+//   presentedMediaTime   — mediaTime of the last frame the compositor actually
+//                          presented, reported by requestVideoFrameCallback;
+//                          used for the readback when not locked.
+//   frameClockGeneration — monotonically bumped on every seek/reset so that a
+//                          still-pending requestVideoFrameCallback from before
+//                          the seek can detect it is stale and bail out.
 let presentedMediaTime = null;
 let videoFrameCallbackId = null;
 let frameClockGeneration = 0;

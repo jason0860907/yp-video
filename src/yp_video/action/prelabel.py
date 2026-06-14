@@ -34,7 +34,7 @@ def list_checkpoints() -> list[dict]:
         best_metadata = _load_best_metadata(path.parent) if is_best else {}
         epoch = int(match.group(1)) if match else int(best_metadata.get("epoch", -1))
         stat = path.stat()
-        rel = _checkpoint_ref(path)
+        rel = checkpoint_ref(path)
         checkpoints.append({
             "path": rel,
             "name": f"{path.parent.name}/{path.name}",
@@ -61,7 +61,7 @@ def default_checkpoint() -> Path | None:
 
 def resolve_checkpoint(value: str | None) -> Path:
     if value:
-        path = _resolve_checkpoint_value(value)
+        path = resolve_checkpoint_path(value)
     else:
         path = default_checkpoint()
         if path is None:
@@ -83,12 +83,18 @@ def _iter_checkpoint_paths() -> list[Path]:
     return []
 
 
-def _resolve_checkpoint_value(value: str) -> Path:
-    path = Path(value).expanduser()
+def resolve_checkpoint_path(value: str | Path) -> Path:
+    """Resolve a possibly-relative action checkpoint path to an absolute one.
+
+    Absolute paths pass through unchanged. A relative path whose first segment is
+    the action-checkpoints dir name is taken relative to ``VIDEOS_DIR``; any other
+    relative path is taken relative to ``ACTION_CHECKPOINTS_DIR``. Performs no
+    existence/containment checks — callers validate.
+    """
+    path = Path(str(value)).expanduser()
     if path.is_absolute():
         return path
-    parts = path.parts
-    if parts and parts[0] == ACTION_CHECKPOINTS_DIR.name:
+    if path.parts and path.parts[0] == ACTION_CHECKPOINTS_DIR.name:
         return VIDEOS_DIR / path
     return ACTION_CHECKPOINTS_DIR / path
 
@@ -101,20 +107,17 @@ def _is_action_checkpoint(path: Path) -> bool:
         return False
 
 
-def _checkpoint_ref(path: Path) -> str:
+def checkpoint_ref(path: Path) -> str:
+    """Display ref for a checkpoint: path relative to ``VIDEOS_DIR`` if possible.
+
+    All action checkpoints live under ``ACTION_CHECKPOINTS_DIR`` (itself under
+    ``VIDEOS_DIR``), so this normally yields ``action-checkpoints/<run>/...``.
+    """
     resolved = path.resolve()
-    try:
-        return str(resolved.relative_to(SPOT_DIR.resolve()))
-    except ValueError:
-        pass
     try:
         return str(resolved.relative_to(VIDEOS_DIR.resolve()))
     except ValueError:
         return str(resolved)
-
-
-def checkpoint_ref(path: Path) -> str:
-    return _checkpoint_ref(path)
 
 
 def build_command(
@@ -201,7 +204,7 @@ def predictions_to_annotation(
         "num_events": len(events),
         "source": {
             "type": "spot",
-            "checkpoint": _checkpoint_ref(checkpoint_path),
+            "checkpoint": checkpoint_ref(checkpoint_path),
             "min_score": min_score,
             "prediction_video": record.get("video"),
         },

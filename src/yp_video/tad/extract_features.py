@@ -277,29 +277,28 @@ def open_video(
         "1", "true", "yes", "on",
     }
 
+    def _cpu_or_raise(msg: str, cause: Exception | None = None):
+        """Opt-in CPU fallback or fail loud — never a silent downgrade."""
+        if allow_cpu:
+            print(f"WARNING: {msg} Falling back to CPU decode (TAD_ALLOW_CPU_DECODE=1).")
+            return reader
+        raise RuntimeError(f"{msg} Set TAD_ALLOW_CPU_DECODE=1 to allow CPU decode.") from cause
+
     if not HAS_NVDEC:
-        msg = (
+        return _cpu_or_raise(
             "GPU decode requested but NVDEC is unavailable "
             f"(PyNvVideoCodec import failed: {NVDEC_IMPORT_ERROR}). "
             "Install PyNvVideoCodec and the NVIDIA video codec libraries. "
-            "CPU decode of HD video can exhaust RAM and crash the machine, so it "
-            "is NOT used automatically. Set TAD_ALLOW_CPU_DECODE=1 to force it."
+            "CPU decode of HD video can exhaust RAM and crash the machine."
         )
-        if allow_cpu:
-            print(f"WARNING: {msg}")
-            return reader
-        raise RuntimeError(msg)
 
     try:
         return NvdecReader(video_path, num_frames=len(reader), cache_window=cache_window)
     except Exception as exc:
-        msg = f"NVDEC GPU decode failed to initialize for {video_path}: {exc!r}."
-        if allow_cpu:
-            print(f"WARNING: {msg} Falling back to CPU decode (TAD_ALLOW_CPU_DECODE=1).")
-            return reader
-        raise RuntimeError(
-            msg + " Set TAD_ALLOW_CPU_DECODE=1 to allow CPU decode."
-        ) from exc
+        return _cpu_or_raise(
+            f"NVDEC GPU decode failed to initialize for {video_path}: {exc!r}.",
+            cause=exc,
+        )
 
 
 # ── Model ──────────────────────────────────────────────────────────────

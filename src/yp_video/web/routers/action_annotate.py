@@ -32,7 +32,7 @@ from yp_video.config import (
     find_cut,
     iter_all_cuts,
 )
-from yp_video.action import prelabel as spot_prelabel
+from yp_video.action import prelabel
 from yp_video.action.frames import inspect_action_frame_cache
 from yp_video.core.annotation_ids import action_id, rally_id
 from yp_video.core.jsonl import read_jsonl
@@ -548,8 +548,8 @@ async def _save_spot_action_annotation(
     min_score: float,
     replace_final: bool = False,
 ) -> dict:
-    predictions = await asyncio.to_thread(spot_prelabel.load_predictions, pred_file)
-    data = spot_prelabel.predictions_to_annotation(
+    predictions = await asyncio.to_thread(prelabel.load_predictions, pred_file)
+    data = prelabel.predictions_to_annotation(
         predictions,
         video_path=video,
         metadata=meta,
@@ -765,12 +765,12 @@ def labels() -> dict:
 
 @router.get("/spot")
 def spot_status() -> dict:
-    checkpoints = spot_prelabel.list_checkpoints()
-    default = spot_prelabel.default_checkpoint()
+    checkpoints = prelabel.list_checkpoints()
+    default = prelabel.default_checkpoint()
     return {
-        "available": spot_prelabel.spot_available(),
+        "available": prelabel.spot_available(),
         "spot_dir": str(SPOT_DIR),
-        "default_checkpoint": spot_prelabel.checkpoint_ref(default) if default else "",
+        "default_checkpoint": prelabel.checkpoint_ref(default) if default else "",
         "checkpoints": checkpoints,
     }
 
@@ -898,7 +898,7 @@ async def save_annotations(req: SaveActionAnnotationsRequest) -> dict:
 
 @router.post("/prelabel")
 async def start_spot_prelabel(req: SpotPrelabelRequest) -> dict:
-    if not spot_prelabel.spot_available():
+    if not prelabel.spot_available():
         raise HTTPException(503, "SPOT is not available at ~/yp-spot")
 
     video = find_cut(Path(req.video).name)
@@ -911,7 +911,7 @@ async def start_spot_prelabel(req: SpotPrelabelRequest) -> dict:
         raise HTTPException(409, "Action pre-label already exists; set overwrite=true")
 
     try:
-        checkpoint = spot_prelabel.resolve_checkpoint(req.checkpoint)
+        checkpoint = prelabel.resolve_checkpoint(req.checkpoint)
     except FileNotFoundError as exc:
         raise HTTPException(404, str(exc)) from exc
     except ValueError as exc:
@@ -921,7 +921,7 @@ async def start_spot_prelabel(req: SpotPrelabelRequest) -> dict:
         "spot-prelabel",
         {
             "video": video.name,
-            "checkpoint": spot_prelabel.checkpoint_ref(checkpoint),
+            "checkpoint": prelabel.checkpoint_ref(checkpoint),
             "min_score": req.min_score,
         },
         name=f"SPOT pre-label — {video.name}",
@@ -964,7 +964,7 @@ async def start_spot_prelabel(req: SpotPrelabelRequest) -> dict:
 
             with tempfile.TemporaryDirectory(prefix=f"yp-spot-{job.id}-") as tmp_root:
                 pred_file = Path(tmp_root) / "predictions.json"
-                cmd = spot_prelabel.build_command(
+                cmd = prelabel.build_command(
                     video_path=video,
                     checkpoint_path=checkpoint,
                     save_dir=pred_file.parent,
@@ -1054,13 +1054,13 @@ async def start_spot_prelabel(req: SpotPrelabelRequest) -> dict:
 
 @router.post("/prelabel-batch")
 async def start_spot_prelabel_batch(req: SpotPrelabelBatchRequest) -> dict:
-    if not spot_prelabel.spot_available():
+    if not prelabel.spot_available():
         raise HTTPException(503, "SPOT is not available at ~/yp-spot")
 
     entries = _resolve_prelabel_entries(req.videos, overwrite=req.overwrite)
 
     try:
-        checkpoint = spot_prelabel.resolve_checkpoint(req.checkpoint)
+        checkpoint = prelabel.resolve_checkpoint(req.checkpoint)
     except FileNotFoundError as exc:
         raise HTTPException(404, str(exc)) from exc
     except ValueError as exc:
@@ -1080,7 +1080,7 @@ async def start_spot_prelabel_batch(req: SpotPrelabelBatchRequest) -> dict:
         "spot-prelabel-batch",
         {
             "videos": [video.name for video, _ann_path in entries],
-            "checkpoint": spot_prelabel.checkpoint_ref(checkpoint),
+            "checkpoint": prelabel.checkpoint_ref(checkpoint),
             "min_score": req.min_score,
             "total": total,
             "completed": 0,
@@ -1297,7 +1297,7 @@ async def _run_prelabel_batch_subprocess(
                     failure_lines.append(match.group(1))
                     return None
 
-                cmd = spot_prelabel.build_command(
+                cmd = prelabel.build_command(
                     video_path=video,
                     checkpoint_path=checkpoint,
                     save_dir=pred_file.parent,

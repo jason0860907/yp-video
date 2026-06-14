@@ -18,8 +18,9 @@ different strategy or deleted without touching the TAD pipeline.
 """
 from __future__ import annotations
 
-import json
 from pathlib import Path
+
+from yp_video.core.jsonl import read_jsonl
 
 ACTION_PRE_DIR = Path.home() / "videos" / "action-pre-annotations"
 
@@ -32,21 +33,10 @@ def default_action_path(video_stem: str) -> Path:
 def load_action_events(path: Path) -> tuple[dict, list[dict]]:
     """Return ``(meta, events)`` from a SPOT action pre-annotation JSONL.
 
-    The first ``{"_meta": true, ...}`` line is the metadata header (fps,
-    num_frames, ...); the remaining lines are per-frame action events.
+    The first line is the ``_meta`` header (fps, num_frames, ...); the remaining
+    lines are per-frame action events, returned sorted by frame.
     """
-    meta: dict = {}
-    events: list[dict] = []
-    with open(path, encoding="utf-8") as f:
-        for i, line in enumerate(f):
-            line = line.strip()
-            if not line:
-                continue
-            obj = json.loads(line)
-            if i == 0 and (obj.get("_meta") or ("frame" not in obj and "label" not in obj)):
-                meta = obj
-                continue
-            events.append(obj)
+    meta, events = read_jsonl(path)
     events.sort(key=lambda e: e.get("frame", 0))
     return meta, events
 
