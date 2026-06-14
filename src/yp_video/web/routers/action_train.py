@@ -48,9 +48,9 @@ class ActionTrainRequest(BaseModel):
     pred_loc_arch: str = "mlp"
     clip_len: int = Field(default=64, ge=8, le=256)
     batch_size: int = Field(default=8, ge=1, le=64)
-    num_epochs: int = Field(default=150, ge=1, le=1000)
+    num_epochs: int = Field(default=100, ge=1, le=1000)
     warm_up_epochs: int = Field(default=3, ge=0, le=100)
-    learning_rate: float = Field(default=0.001, gt=0)
+    learning_rate: float = Field(default=0.0008, gt=0)
     num_workers: int = Field(default=4, ge=0, le=32)
     criterion: str = Field(default="map", pattern="^(map|loss)$")
     start_val_epoch: int = Field(default=0, ge=0)
@@ -412,6 +412,31 @@ def _vnl_stats() -> dict:
     }
 
 
+def _init_checkpoint_options() -> list[dict]:
+    """Selectable init-checkpoint options: the VNL base plus packaged action runs.
+
+    Action checkpoints live under ACTION_CHECKPOINTS_DIR/<run>/checkpoint_best.pt
+    and are returned as absolute paths (passed through _spot_path unchanged). The
+    VNL base stays SPOT-relative so it resolves under SPOT_DIR.
+    """
+    options: list[dict] = []
+    default = _default_init_checkpoint()
+    if default:
+        options.append({"label": "VNL 1.5 base (vnl15_official_150)", "value": default})
+    if ACTION_CHECKPOINTS_DIR.exists():
+        for run_dir in sorted(ACTION_CHECKPOINTS_DIR.iterdir(), reverse=True):
+            ckpt = run_dir / "checkpoint_best.pt"
+            if not run_dir.is_dir() or not ckpt.is_file():
+                continue
+            best = _load_json_file(run_dir / "checkpoint_best.json")
+            value = best.get("value") if isinstance(best, dict) else None
+            label = run_dir.name
+            if isinstance(value, (int, float)):
+                label = f"{run_dir.name} (mAP {value:.3f})"
+            options.append({"label": label, "value": str(ckpt)})
+    return options
+
+
 def _action_checkpoint_stats() -> dict:
     count = 0
     if ACTION_CHECKPOINTS_DIR.exists():
@@ -437,6 +462,7 @@ def status() -> dict:
         "spot_dir": str(SPOT_DIR),
         "spot_python": str(SPOT_PYTHON),
         "default_init_checkpoint": _default_init_checkpoint(),
+        "init_checkpoints": _init_checkpoint_options(),
         "vnl_1_5": _vnl_stats(),
         "action_annotations": _action_annotation_stats(),
         "action_checkpoints": _action_checkpoint_stats(),

@@ -38,7 +38,7 @@ export function render(container) {
                 ${field('Dataset', 'act-train-dataset', input('text', 'vnl_1.5'))}
                 ${field('Frames', 'act-train-frame-dir', input('text', 'data/vnl_1.5/frames_224p', '', '', '1', '', 'font-mono text-[11px]'), 'md:col-span-2 xl:col-span-2')}
                 ${field('Checkpoint Dir', 'act-train-checkpoint-dir', input('text', '', '', '', '1', 'auto: ~/videos/action-checkpoints/...', 'font-mono text-[11px]'), 'md:col-span-2')}
-                ${field('Init Checkpoint', 'act-train-init-checkpoint', input('text', 'exp/vnl15_official_150/checkpoint_best.pt', '', '', '1', '', 'font-mono text-[11px]'), 'md:col-span-2')}
+                ${field('Init Checkpoint', 'act-train-init-checkpoint', select('<option value="">Loading…</option>'), 'md:col-span-2')}
                 ${field('Feature', 'act-train-feature', select(`
                   <option value="rny008_gsm">rny008_gsm</option>
                   <option value="rny002_gsm">rny002_gsm</option>
@@ -51,12 +51,12 @@ export function render(container) {
                   <option value="mstcn">mstcn</option>
                   <option value="asformer">asformer</option>
                 `))}
-                ${field('Epochs', 'act-train-epochs', input('number', '150', '1', '1000'))}
+                ${field('Epochs', 'act-train-epochs', input('number', '100', '1', '1000'))}
                 ${field('Batch', 'act-train-batch', input('number', '8', '1', '64'))}
                 ${field('Clip Len', 'act-train-clip', input('number', '64', '8', '256'))}
                 ${field('Workers', 'act-train-workers', input('number', '4', '0', '32'))}
                 ${field('GPU', 'act-train-gpu', input('number', '0', '0', '7'))}
-                ${field('LR', 'act-train-lr', input('number', '0.001', '0', '', 'any'))}
+                ${field('LR', 'act-train-lr', input('number', '0.0008', '0', '', 'any'))}
                 ${field('Warmup', 'act-train-warmup', input('number', '3', '0', '100'))}
                 ${field('Criterion', 'act-train-criterion', select(`
                   <option value="map">map</option>
@@ -163,14 +163,10 @@ function applySourceDefaults() {
   document.getElementById('act-train-source').value = source;
   const datasetEl = document.getElementById('act-train-dataset');
   const framesEl = document.getElementById('act-train-frame-dir');
-  const initEl = document.getElementById('act-train-init-checkpoint');
   const modeEl = document.getElementById('act-train-training-mode');
   const modeWrap = document.getElementById('act-train-mode-wrap');
   const splitEl = document.getElementById('act-train-split-fields');
-  const defaultInit = status?.default_init_checkpoint || 'exp/vnl15_official_150/checkpoint_best.pt';
-  if (initEl && (!initEl.value || initEl.value === 'exp/vnl15_official_150/checkpoint_best.pt')) {
-    initEl.value = defaultInit;
-  }
+  populateInitCheckpoints();
   if (source === 'vnl_1_5') {
     datasetEl.value = 'vnl_1.5';
     framesEl.value = 'data/vnl_1.5/frames_224p';
@@ -184,6 +180,25 @@ function applySourceDefaults() {
     updateTrainingModeControls();
   }
   updateStartState();
+}
+
+function populateInitCheckpoints() {
+  const initEl = document.getElementById('act-train-init-checkpoint');
+  if (!initEl) return;
+  const opts = Array.isArray(status?.init_checkpoints) ? status.init_checkpoints : [];
+  const prev = initEl.value;
+  if (!opts.length) {
+    initEl.innerHTML = '<option value="">No checkpoints found</option>';
+    return;
+  }
+  initEl.innerHTML = opts
+    .map((o) => `<option value="${escapeHtml(o.value)}">${escapeHtml(o.label)}</option>`)
+    .join('');
+  const values = opts.map((o) => o.value);
+  const defaultInit = status?.default_init_checkpoint || '';
+  if (prev && values.includes(prev)) initEl.value = prev;
+  else if (defaultInit && values.includes(defaultInit)) initEl.value = defaultInit;
+  else initEl.value = values[0];
 }
 
 function trainingMode() {
@@ -323,9 +338,9 @@ async function startTraining() {
       temporal_arch: textValue('act-train-temporal', 'gru'),
       clip_len: numberValue('act-train-clip', 64),
       batch_size: numberValue('act-train-batch', 8),
-      num_epochs: numberValue('act-train-epochs', 150),
+      num_epochs: numberValue('act-train-epochs', 100),
       warm_up_epochs: numberValue('act-train-warmup', 3),
-      learning_rate: numberValue('act-train-lr', 0.001),
+      learning_rate: numberValue('act-train-lr', 0.0008),
       num_workers: numberValue('act-train-workers', 4),
       criterion: textValue('act-train-criterion', 'map'),
       start_val_epoch: numberValue('act-train-start-val', 0),
