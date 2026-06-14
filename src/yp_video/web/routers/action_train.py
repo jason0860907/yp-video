@@ -131,18 +131,21 @@ def _action_annotation_stats() -> dict:
     ACTION_ANNOTATIONS_DIR.mkdir(parents=True, exist_ok=True)
     videos = 0
     events = 0
+    frames = 0
     for path in sorted(ACTION_ANNOTATIONS_DIR.glob("*_actions.jsonl")):
         try:
-            _meta, records = read_jsonl(path)
+            meta, records = read_jsonl(path)
         except (OSError, json.JSONDecodeError):
             continue
         videos += 1
         events += len(records)
+        frames += int(meta.get("num_frames") or 0)
     return {
         "label_dir": str(ACTION_ANNOTATIONS_DIR),
         "frame_dir": str(ACTION_FRAMES_DIR),
         "videos": videos,
         "events": events,
+        "frames": frames,
         "exists": ACTION_ANNOTATIONS_DIR.exists(),
     }
 
@@ -173,6 +176,34 @@ def _action_frame_items() -> list[tuple[Path, int | None]]:
     return items
 
 
+# Seconds of slack added on each side of the match window so clips straddling
+# the first/last rally boundary are not clipped too tightly.
+RALLY_SAMPLE_MARGIN_S = 2.0
+
+
+def _rally_match_span(meta: dict, num_frames: int) -> tuple[int, int] | None:
+    """Frame span ``[first_rally_start, last_rally_end]`` (± margin) for sampling.
+
+    Restricting training clips to this match window keeps the in-rally actions
+    *and* the genuine dead time between rallies (real background), while
+    excluding the warm-up / post-match regions whose real-but-unlabelled actions
+    would otherwise be sampled as background and confuse the model. Returns
+    ``None`` when the video has no rallies, so non-rally datasets fall back to
+    whole-video sampling.
+    """
+    rallies = meta.get("rallies") or []
+    fps = float(meta.get("fps") or 30.0)
+    starts = [float(r["start"]) for r in rallies if r.get("start") is not None]
+    ends = [float(r["end"]) for r in rallies if r.get("end") is not None]
+    if not starts or not ends:
+        return None
+    start = max(0, int(round((min(starts) - RALLY_SAMPLE_MARGIN_S) * fps)))
+    end = min(num_frames, int(round((max(ends) + RALLY_SAMPLE_MARGIN_S) * fps)))
+    if end <= start:
+        return None
+    return start, end
+
+
 def _prepare_action_training_labels(*, frame_dir: Path, save_dir: Path) -> dict:
     """Write run-local label copies whose frame counts match the SPOT cache."""
 
@@ -187,6 +218,8 @@ def _prepare_action_training_labels(*, frame_dir: Path, save_dir: Path) -> dict:
 
     videos = 0
     events = 0
+    total_frames = 0
+    span_frames = 0
     adjusted: list[dict] = []
     for path in label_files:
         try:
@@ -231,15 +264,25 @@ def _prepare_action_training_labels(*, frame_dir: Path, save_dir: Path) -> dict:
                 "training_num_frames": cache_frames,
             })
 
+        match_span = _rally_match_span(meta, cache_frames)
+        if match_span is not None:
+            training_meta["sample_spans"] = [list(match_span)]
+            span_frames += match_span[1] - match_span[0]
+        else:
+            span_frames += cache_frames
+
         write_jsonl(label_dir / path.name, training_meta, records)
         videos += 1
         events += len(records)
+        total_frames += cache_frames
 
     return {
         "label_dir": str(label_dir),
         "source_label_dir": str(ACTION_ANNOTATIONS_DIR),
         "videos": videos,
         "events": events,
+        "frames": total_frames,
+        "sample_frames": span_frames,
         "adjusted": adjusted,
     }
 

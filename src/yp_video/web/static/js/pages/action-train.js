@@ -22,7 +22,7 @@ export function render(container) {
         <div class="space-y-5">
           <div class="space-y-4">
             ${sectionTitle('Dataset', '', `${btnSmall('Refresh', 'id="act-train-refresh"')}`)}
-            <div id="act-train-stats" class="grid grid-cols-2 md:grid-cols-4 gap-3"></div>
+            <div id="act-train-stats" class="grid grid-cols-2 md:grid-cols-5 gap-3"></div>
             <div id="act-train-source-summary" class="rounded-xl border border-border bg-surface-100/35 p-3"></div>
           </div>
 
@@ -202,6 +202,7 @@ function datasetStats() {
   return {
     videos: Math.max(0, Number(action.videos) || 0),
     actions: Math.max(0, Number(action.events) || 0),
+    frames: Math.max(0, Number(action.frames) || 0),
     broadcast: 0,
     sideline: 0,
   };
@@ -220,6 +221,7 @@ function renderDataset() {
   document.getElementById('act-train-stats').innerHTML = [
     statCell('Action Videos', stats.videos),
     statCell('Action Labels', stats.actions),
+    statCell('Action Frames', stats.frames.toLocaleString()),
     statCell('VNL Train', vnl.train_events || 0),
     statCell('VNL Val', vnl.val_events || 0),
   ].join('');
@@ -249,7 +251,7 @@ function vnlSummary(vnl) {
 
 function actionSummary(stats) {
   const rows = [
-    ['Labels', `${stats.videos} videos / ${stats.actions} events`],
+    ['Labels', `${stats.videos} videos / ${stats.actions} events / ${stats.frames.toLocaleString()} frames`],
     ['Mode', trainingMode() === 'all' ? 'all data' : 'train/test split'],
     ['Source', status?.action_annotations?.label_dir || '~/videos/action-annotations'],
     ['Frames', document.getElementById('act-train-frame-dir')?.value || '~/videos/action-frames'],
