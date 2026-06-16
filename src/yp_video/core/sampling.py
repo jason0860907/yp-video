@@ -10,7 +10,10 @@ trades accuracy for skipping a subprocess in tight loops.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_FPS = 30.0
 
@@ -21,20 +24,39 @@ def get_fps(video_path: Path | str) -> float:
     decord is preferred when available because it returns the average fps
     rather than the (sometimes wrong) header value cv2 reads. Falls back to
     cv2, then to a 30 Hz default for files that fail to open.
+
+    decord/cv2 simply being absent is expected and stays quiet, but a probe
+    that *errors* (corrupt/unreadable file) is logged before we fall back —
+    a silently-wrong fps scales every frame↔time conversion downstream.
     """
     try:
         from decord import VideoReader, cpu  # type: ignore
-        return float(VideoReader(str(video_path), ctx=cpu(0)).get_avg_fps())
-    except Exception:
+    except ImportError:
         pass
+    else:
+        try:
+            return float(VideoReader(str(video_path), ctx=cpu(0)).get_avg_fps())
+        except Exception as exc:  # noqa: BLE001 — decord raises bare RuntimeError on bad files
+            logger.warning("decord failed to read fps from %s: %s; trying cv2", video_path, exc)
+
     try:
         import cv2  # type: ignore
+    except ImportError:
+        logger.warning("neither decord nor cv2 available; assuming %.1f fps for %s", DEFAULT_FPS, video_path)
+        return DEFAULT_FPS
+
+    try:
         cap = cv2.VideoCapture(str(video_path))
         fps = cap.get(cv2.CAP_PROP_FPS)
         cap.release()
-        return float(fps) if fps and fps > 0 else DEFAULT_FPS
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("cv2 failed to read fps from %s: %s; assuming %.1f fps", video_path, exc, DEFAULT_FPS)
         return DEFAULT_FPS
+
+    if fps and fps > 0:
+        return float(fps)
+    logger.warning("cv2 reported non-positive fps for %s; assuming %.1f fps", video_path, DEFAULT_FPS)
+    return DEFAULT_FPS
 
 
 def get_video_duration_cv2(video_path: Path | str) -> float:

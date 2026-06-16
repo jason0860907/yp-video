@@ -12,27 +12,12 @@ import torch.nn as nn
 
 from yp_video.core.jsonl import append_jsonl, write_meta_header
 from yp_video.config import (
-    ACTIONFORMER_DIR,
     FEATURES_DIR,
     PROJECT_ROOT,
     TAD_CHECKPOINTS_DIR,
     TAD_CONFIGS_DIR,
 )
-
-
-def _setup_actionformer():
-    """Add ActionFormer to sys.path for imports."""
-    af_dir = str(ACTIONFORMER_DIR)
-    af_utils = str(ACTIONFORMER_DIR / "libs" / "utils")
-    if af_dir not in sys.path:
-        sys.path.insert(0, af_dir)
-    if af_utils not in sys.path:
-        sys.path.insert(0, af_utils)
-
-
-def check_actionformer_installed() -> bool:
-    """Check if ActionFormer submodule is present."""
-    return (ACTIONFORMER_DIR / "libs" / "modeling" / "meta_archs.py").exists()
+from yp_video.tad._actionformer import check_actionformer_installed, setup_actionformer
 
 
 def _run_validation(val_loader, model, det_eval, det_eval_by_src, val_videos_by_src):
@@ -149,10 +134,11 @@ def _build_balanced_loader(train_dataset, rng_generator, alpha: float, loader_cf
     return loader, info
 
 
-def _apply_config_overrides(cfg: dict, args: argparse.Namespace) -> str:
+def _apply_config_overrides(cfg: dict, args: argparse.Namespace):
     """Apply CLI overrides to the loaded ActionFormer YAML config in-place.
 
-    Returns the resolved V-JEPA model name (used downstream for run dirs etc.).
+    Returns ``(model_name, mcfg)`` — the resolved V-JEPA model name and its
+    feature config, both used downstream for run dirs / manifests.
     Encapsulates the dataset path expansion + opt/loader/schedule overrides
     + per-model feature dir routing so main() reads top-down without 30 lines
     of conditional cfg[key] assignments.
@@ -189,7 +175,7 @@ def _apply_config_overrides(cfg: dict, args: argparse.Namespace) -> str:
         cfg["dataset"]["input_dim"] = mcfg.feat_dim
         cfg["model"]["input_dim"] = mcfg.feat_dim
         print(f"Model override: feat_folder={feat_folder}, input_dim={mcfg.feat_dim}")
-    return model_name
+    return model_name, mcfg
 
 
 def main():
@@ -297,7 +283,7 @@ def main():
     # Set GPU before any CUDA operations
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
 
-    _setup_actionformer()
+    setup_actionformer()
 
     from libs.core import load_config
     from libs.datasets import make_dataset, make_data_loader
@@ -314,7 +300,7 @@ def main():
     )
 
     cfg = load_config(str(args.config))
-    model_name = _apply_config_overrides(cfg, args)
+    model_name, mcfg = _apply_config_overrides(cfg, args)
 
     # Override output folder
     if not args.work_dir:

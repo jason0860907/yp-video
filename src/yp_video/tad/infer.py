@@ -14,7 +14,6 @@ import numpy as np
 import torch
 
 from yp_video.config import (
-    ACTIONFORMER_DIR,
     FEATURES_DIR,
     TAD_CHECKPOINTS_DIR,
     TAD_CONFIGS_DIR,
@@ -28,6 +27,7 @@ from yp_video.contracts import (
 )
 from yp_video.core.sampling import frame_to_time, get_fps
 
+from ._actionformer import setup_actionformer
 from .extract_features import MODEL_CONFIGS, extract_features_from_video, load_model, open_video
 from .output_converter import convert_tad_output_to_jsonl
 
@@ -57,6 +57,7 @@ def run_inference(
     action_predictions: Path | None = None,
     serve_pad: float = 1.0,
     score_pad: float = 1.0,
+    max_gap_s: float = 3.0,
     on_message: "Callable[[str], None] | None" = None,
     on_progress: "Callable[[float], None] | None" = None,
     on_batch_progress: "Callable[[int, int], None] | None" = None,
@@ -174,6 +175,7 @@ def run_inference(
             action_path=action_predictions,
             serve_pad=serve_pad,
             score_pad=score_pad,
+            max_gap_s=max_gap_s,
             on_message=on_message,
         )
 
@@ -275,16 +277,6 @@ def simple_inference(
     return detections
 
 
-def _setup_actionformer():
-    """Add ActionFormer to sys.path for imports."""
-    af_dir = str(ACTIONFORMER_DIR)
-    af_utils = str(ACTIONFORMER_DIR / "libs" / "utils")
-    if af_dir not in sys.path:
-        sys.path.insert(0, af_dir)
-    if af_utils not in sys.path:
-        sys.path.insert(0, af_utils)
-
-
 def actionformer_inference(
     features: np.ndarray,
     checkpoint_path: Path,
@@ -296,7 +288,7 @@ def actionformer_inference(
     model_name: str = "base",
 ) -> list[dict]:
     """Run ActionFormer inference on extracted features."""
-    _setup_actionformer()
+    setup_actionformer()
 
     from libs.core import load_config
     from libs.modeling import make_meta_arch
@@ -456,6 +448,13 @@ def main():
         default=1.0,
         help="[trim] seconds of tail kept after the score",
     )
+    parser.add_argument(
+        "--max-gap",
+        type=float,
+        default=3.0,
+        help="[trim] how far outside a TAD segment a serve/score anchor may sit; "
+             "beyond this it's treated as not detected and the TAD boundary is kept",
+    )
     args = parser.parse_args()
 
     if not args.video.exists():
@@ -486,6 +485,7 @@ def main():
         action_predictions=args.action_predictions,
         serve_pad=args.serve_pad,
         score_pad=args.score_pad,
+        max_gap_s=args.max_gap,
     )
 
 

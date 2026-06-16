@@ -454,8 +454,11 @@ async def _run_pipeline_async(
                     try: os.remove(clip_path)
                     except OSError: pass
                     return
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 — one bad clip (e.g. malformed response) shouldn't kill the run
+                logging.getLogger(__name__).warning(
+                    "Dropping clip %d (%.1f–%.1fs): analysis failed",
+                    idx, start_time, end_time, exc_info=True,
+                )
             finally:
                 try: os.remove(clip_path)
                 except OSError: pass

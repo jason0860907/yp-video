@@ -10,6 +10,7 @@ import re
 import shutil
 import traceback
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -32,6 +33,26 @@ from yp_video.web.jobs import JobStatus, job_manager
 
 log = logging.getLogger(__name__)
 router = APIRouter()
+
+
+@dataclass(slots=True)
+class _TrainProgress:
+    """Mutable running state for a SPOT training job's progress parsers.
+
+    A dataclass (not a dict) so a mis-typed field raises AttributeError instead
+    of silently creating a dead key — the parsers below all mutate this from
+    different regex callbacks.
+    """
+
+    epochs: int
+    completed_epoch: int = -1
+    current_epoch: int = 0
+    train_total: int = 0
+    latest_train_loss: float | None = None
+    latest_val_loss: float | None = None
+    latest_val_map: float | None = None
+    best_epoch: int | None = None
+    best_value: float | None = None
 
 
 class ActionTrainRequest(BaseModel):
@@ -668,32 +689,22 @@ async def start(req: ActionTrainRequest) -> dict:
             async with stop_vllm_for_job(job.id, when=req.stop_vllm):
                 async with job_manager.gpu_lock:
                     await job_manager.update_job(job.id, message="Starting SPOT training...")
-                    ctx = {
-                        "epochs": req.num_epochs,
-                        "completed_epoch": -1,
-                        "current_epoch": 0,
-                        "train_total": 0,
-                        "latest_train_loss": None,
-                        "latest_val_loss": None,
-                        "latest_val_map": None,
-                        "best_epoch": None,
-                        "best_value": None,
-                    }
+                    ctx = _TrainProgress(epochs=req.num_epochs)
                     checkpoint_export_lock = asyncio.Lock()
                     checkpoint_export_tasks: set[asyncio.Task] = set()
 
                     def training_params(**extra) -> dict:
                         return {
                             "action_train_progress": {
-                                "epoch": ctx["current_epoch"],
-                                "epoch_display": ctx["current_epoch"] + 1,
-                                "epochs": max(1, ctx["epochs"]),
-                                "completed_epoch": ctx["completed_epoch"],
-                                "latest_train_loss": ctx["latest_train_loss"],
-                                "latest_val_loss": ctx["latest_val_loss"],
-                                "latest_val_map": ctx["latest_val_map"],
-                                "best_epoch": ctx["best_epoch"],
-                                "best_value": ctx["best_value"],
+                                "epoch": ctx.current_epoch,
+                                "epoch_display": ctx.current_epoch + 1,
+                                "epochs": max(1, ctx.epochs),
+                                "completed_epoch": ctx.completed_epoch,
+                                "latest_train_loss": ctx.latest_train_loss,
+                                "latest_val_loss": ctx.latest_val_loss,
+                                "latest_val_map": ctx.latest_val_map,
+                                "best_epoch": ctx.best_epoch,
+                                "best_value": ctx.best_value,
                                 **extra,
                             }
                         }
@@ -703,13 +714,13 @@ async def start(req: ActionTrainRequest) -> dict:
                         phase_weights = {"train": 0.78, "val": 0.16, "map": 0.06}
                         frac = step / max(1, total)
                         epoch_frac = phase_offsets[phase] + phase_weights[phase] * frac
-                        total_epochs = max(1, ctx["epochs"])
+                        total_epochs = max(1, ctx.epochs)
                         return min(0.99, 0.2 + 0.79 * ((epoch + epoch_frac) / total_epochs))
 
                     def on_epoch(match: re.Match) -> dict:
                         epoch = int(match.group(1))
-                        ctx["completed_epoch"] = max(ctx["completed_epoch"], epoch)
-                        ctx["current_epoch"] = epoch
+                        ctx.completed_epoch = max(ctx.completed_epoch, epoch)
+                        ctx.current_epoch = epoch
                         return {
                             "params": training_params(
                                 phase="summary",
@@ -718,7 +729,7 @@ async def start(req: ActionTrainRequest) -> dict:
                         }
 
                     def on_config_epochs(match: re.Match) -> dict | None:
-                        ctx["epochs"] = int(match.group(1))
+                        ctx.epochs = int(match.group(1))
                         return None
 
                     def on_tqdm(match: re.Match) -> dict:
@@ -726,18 +737,18 @@ async def start(req: ActionTrainRequest) -> dict:
                         total = int(match.group("total"))
                         tail = match.group("tail") or ""
                         if "sum=" in tail:
-                            if total >= int(ctx.get("train_total") or 0):
-                                ctx["train_total"] = total
+                            if total >= int(ctx.train_total or 0):
+                                ctx.train_total = total
                                 phase = "train"
-                                epoch = max(0, int(ctx["completed_epoch"]) + 1)
+                                epoch = max(0, int(ctx.completed_epoch) + 1)
                             else:
                                 phase = "val"
-                                epoch = max(0, int(ctx["current_epoch"]))
+                                epoch = max(0, int(ctx.current_epoch))
                         else:
                             phase = "map"
-                            epoch = max(0, int(ctx["current_epoch"]))
+                            epoch = max(0, int(ctx.current_epoch))
 
-                        ctx["current_epoch"] = epoch
+                        ctx.current_epoch = epoch
                         phase_label = {
                             "train": "Training",
                             "val": "Validation loss",
@@ -746,7 +757,7 @@ async def start(req: ActionTrainRequest) -> dict:
                         loss_match = re.search(r"sum=([0-9.]+)", tail)
                         current_loss = float(loss_match.group(1)) if loss_match else None
                         pct = int(step * 100 / max(1, total))
-                        total_epochs = max(1, ctx["epochs"])
+                        total_epochs = max(1, ctx.epochs)
                         return {
                             "progress": phase_progress(epoch, phase, step, total),
                             "message": (
@@ -764,15 +775,15 @@ async def start(req: ActionTrainRequest) -> dict:
                         }
 
                     def on_train_loss(match: re.Match) -> dict:
-                        ctx["latest_train_loss"] = float(match.group(4))
+                        ctx.latest_train_loss = float(match.group(4))
                         return {"params": training_params()}
 
                     def on_val_loss(match: re.Match) -> dict:
-                        ctx["latest_val_loss"] = float(match.group(4))
+                        ctx.latest_val_loss = float(match.group(4))
                         return {"params": training_params()}
 
                     def on_val_map(match: re.Match) -> dict:
-                        ctx["latest_val_map"] = float(match.group(1)) / 100.0
+                        ctx.latest_val_map = float(match.group(1)) / 100.0
                         return {"params": training_params()}
 
                     async def export_checkpoint_package_once(
@@ -833,13 +844,13 @@ async def start(req: ActionTrainRequest) -> dict:
                         task.add_done_callback(checkpoint_export_tasks.discard)
 
                     def on_new_best(_match: re.Match) -> dict:
-                        ctx["best_epoch"] = ctx["current_epoch"]
-                        ctx["best_value"] = (
-                            ctx["latest_val_map"]
+                        ctx.best_epoch = ctx.current_epoch
+                        ctx.best_value = (
+                            ctx.latest_val_map
                             if req.criterion == "map"
-                            else ctx["latest_val_loss"]
+                            else ctx.latest_val_loss
                         )
-                        schedule_checkpoint_export(ctx["best_epoch"], "new_best")
+                        schedule_checkpoint_export(ctx.best_epoch, "new_best")
                         return {"params": training_params()}
 
                     env = {
