@@ -622,16 +622,16 @@ export class AnnotationEditor {
     const durationSec = (a.end - a.start).toFixed(1);
 
     return `
-      <div class="ae-item flex items-center gap-2.5 px-3 py-2.5 rounded-xl border ${rowCls} cursor-pointer transition-all duration-200 group" data-idx="${i}">
+      <div class="ae-item flex items-center gap-1.5 px-3 py-2.5 rounded-xl border ${rowCls} cursor-pointer transition-all duration-200 group" data-idx="${i}">
         <span class="text-[10px] font-heading text-text-muted/60 w-4 text-right select-none">${i + 1}</span>
         <button class="flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/20 text-emerald-400 ring-1 ring-emerald-500/25 hover:bg-emerald-500/30 cursor-pointer transition-colors duration-200" data-action="download" title="Download this rally clip">
           <svg class="w-3 h-3 pointer-events-none" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 11l5 5 5-5M12 16V4"/></svg>
           <span class="pointer-events-none">rally</span>
         </button>
         <div class="flex items-center gap-1.5 ml-auto">
-          <input type="text" value="${formatTime(a.start)}" class="bg-transparent border-b border-white/10 text-text-primary text-[11px] w-14 text-center font-heading focus:border-primary-light outline-none transition-colors duration-200 tabular-nums" data-idx="${i}" data-field="start">
+          <input type="text" value="${formatTime(a.start)}" class="bg-transparent border-b border-white/10 text-text-primary text-[11px] w-11 text-center font-heading focus:border-primary-light outline-none transition-colors duration-200 tabular-nums" data-idx="${i}" data-field="start">
           <span class="text-text-muted/40 text-[10px]">→</span>
-          <input type="text" value="${formatTime(a.end)}" class="bg-transparent border-b border-white/10 text-text-primary text-[11px] w-14 text-center font-heading focus:border-primary-light outline-none transition-colors duration-200 tabular-nums" data-idx="${i}" data-field="end">
+          <input type="text" value="${formatTime(a.end)}" class="bg-transparent border-b border-white/10 text-text-primary text-[11px] w-11 text-center font-heading focus:border-primary-light outline-none transition-colors duration-200 tabular-nums" data-idx="${i}" data-field="end">
         </div>
         <span class="text-[10px] text-text-muted font-heading tabular-nums bg-surface-200/40 px-1.5 py-0.5 rounded">${durationSec}s</span>
         ${this.rowExtras(a)}

@@ -2,12 +2,19 @@
 its true action boundaries using SPOT action predictions.
 
 A volleyball rally truly starts on a *serve* and ends on a *score*. TAD tends to
-over-shoot both ends, so for each TAD segment we:
+mis-place both ends, so for each TAD segment we:
 
-  - find the *first* serve inside the segment and move the start to
+  - take the *first* serve in ``[start - max_gap_s, end]`` and move the start to
     ``serve - serve_pad`` (1 s of lead-in by default), and
-  - find the *last* score inside the segment and move the end to
+  - take the *last* score in ``[start, end + max_gap_s]`` and move the end to
     ``score + score_pad`` (1 s of tail by default).
+
+``max_gap_s`` lets the anchoring serve/score sit slightly *outside* the TAD
+segment: the true serve/score is often detected just before/after the imperfect
+TAD boundary, so a small window (3 s) recovers it. The cap matters because when
+the event was genuinely not detected, the nearest serve/score belongs to a
+neighbouring rally tens of seconds away — beyond the cap we treat it as missing
+and keep the original TAD boundary.
 
 Design note: this module is intentionally **independent** of the core TAD
 predict flow. It only consumes SPOT action predictions already written to disk
@@ -55,15 +62,20 @@ def trim_detections(
     *,
     serve_pad: float = 1.0,
     score_pad: float = 1.0,
+    max_gap_s: float = 3.0,
     min_rally_s: float = 1.0,
 ) -> list[dict]:
     """Trim each detection's ``segment`` [start, end] (seconds) to serve/score.
 
-    Detections without a serve or score inside their span keep the corresponding
-    TAD boundary. A ``trim_via`` field records how each end was set:
-      - "trimmed"  : both serve and score found inside the segment
-      - "no_serve" : no serve inside -> original TAD start kept
-      - "no_score" : no score inside -> original TAD end kept
+    The anchoring serve is taken from ``[start - max_gap_s, end]`` and the score
+    from ``[start, end + max_gap_s]``, so an event detected just outside the TAD
+    boundary still anchors the rally; ``max_gap_s=0`` restricts the search to
+    strictly inside the segment. Detections without a serve or score within range
+    keep the corresponding TAD boundary. A ``trim_via`` field records how each end
+    was set:
+      - "trimmed"  : both serve and score found within range
+      - "no_serve" : no serve found -> original TAD start kept
+      - "no_score" : no score found -> original TAD end kept
       - "none"     : neither found -> segment passed through unchanged
     Detections shorter than ``min_rally_s`` after trimming are dropped.
     """
@@ -76,8 +88,8 @@ def trim_detections(
     for det in detections:
         seg = det.get("segment", [0.0, 0.0])
         s0, e0 = float(seg[0]), float(seg[1])
-        srv = next((t for t in serves if s0 <= t <= e0), None)
-        scr = next((t for t in reversed(scores) if s0 <= t <= e0), None)
+        srv = next((t for t in serves if s0 - max_gap_s <= t <= e0), None)
+        scr = next((t for t in reversed(scores) if s0 <= t <= e0 + max_gap_s), None)
 
         if srv is not None and scr is not None:
             via = "trimmed"
@@ -107,6 +119,7 @@ def refine_detections(
     action_path: Path | None = None,
     serve_pad: float = 1.0,
     score_pad: float = 1.0,
+    max_gap_s: float = 3.0,
     min_rally_s: float = 1.0,
     on_message=None,
 ) -> list[dict]:
@@ -130,7 +143,8 @@ def refine_detections(
     fps = float(meta.get("fps") or 30.0)
     trimmed = trim_detections(
         detections, events, fps,
-        serve_pad=serve_pad, score_pad=score_pad, min_rally_s=min_rally_s,
+        serve_pad=serve_pad, score_pad=score_pad,
+        max_gap_s=max_gap_s, min_rally_s=min_rally_s,
     )
     n_full = sum(1 for d in trimmed if d.get("trim_via") == "trimmed")
     _msg(f"  [trim] {len(detections)} TAD -> {len(trimmed)} trimmed "

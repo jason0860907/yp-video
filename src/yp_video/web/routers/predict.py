@@ -43,6 +43,9 @@ class PredictRequest(BaseModel):
     trim_with_actions: bool = True
     serve_pad: float = 1.0
     score_pad: float = 1.0
+    # How far outside a TAD segment a serve/score anchor may sit before it's
+    # treated as not detected (the imperfect TAD edge is then kept).
+    max_gap_s: float = 3.0
 
 
 @router.get("/videos")
@@ -142,6 +145,7 @@ async def start_prediction(req: PredictRequest):
                         trim_with_actions=req.trim_with_actions,
                         serve_pad=req.serve_pad,
                         score_pad=req.score_pad,
+                        max_gap_s=req.max_gap_s,
                         on_message=msg_cb,
                         on_progress=prog_cb,
                     )
