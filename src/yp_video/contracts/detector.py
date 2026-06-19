@@ -156,6 +156,15 @@ class SuccessResult(BaseModel):
             "until a scoring pass fills it. Additive and may be empty."
         ),
     )
+    action_events: list[SegmentEvent] = Field(
+        default_factory=list,
+        description=(
+            "Flat, time-sorted list of every spotted event (serve / receive / "
+            "set / spike / block / score) with seconds-based `time`. Powers the "
+            "rally-wide touch timeline, which needs the full action set rather "
+            "than just a spike's build-up. Additive and may be empty."
+        ),
+    )
     locale_echo: str | None = Field(
         default=None, description="Echoes back DetectorInput.locale if provided"
     )

@@ -253,6 +253,23 @@ def build_score_segments(
     return segments
 
 
+def event_timeline(events: Sequence[dict], *, fps: float) -> list[dict]:
+    """Flat ``[{label, time}]`` of every spotted event, seconds-based and time
+    sorted.
+
+    Unlike the segment builders (which only surface a spike's 接舉打 build-up),
+    this carries *all* labels — serve / receive / set / spike / block / score —
+    so the app can draw a rally-wide touch timeline with the full action set.
+    """
+    if fps <= 0:
+        fps = 30.0
+    out = [
+        {"label": e.get("label"), "time": round(_event_time(e, fps), 2)}
+        for e in events
+    ]
+    return sorted(out, key=lambda x: x["time"])
+
+
 def project_window(
     segment: dict,
     mode: str = DEFAULT_MODE,
