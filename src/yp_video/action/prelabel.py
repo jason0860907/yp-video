@@ -165,6 +165,36 @@ def load_predictions(path: Path) -> list[dict]:
     return data
 
 
+def parse_spot_progress(payload: str) -> dict | None:
+    """Parse the JSON body of a ``SPOT_PROGRESS`` line (prefix already stripped).
+
+    Returns the record only for inference-phase ticks; ``None`` for malformed
+    lines or other phases. The field schema is the SPOT progress protocol in
+    ``yp_video.contracts.action``.
+    """
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict) or data.get("phase") != "inference":
+        return None
+    return data
+
+
+def spot_progress_fraction(data: dict) -> float:
+    """Inference progress in [0, 1] from a parsed SPOT progress record.
+
+    Prefers ``clips_done/clips_total`` and falls back to frame counts.
+    """
+    clips_total = int(data.get("clips_total") or 0)
+    if clips_total > 0:
+        ratio = int(data.get("clips_done") or 0) / clips_total
+    else:
+        total_frames = max(1, int(data.get("total_frames") or 1))
+        ratio = int(data.get("end_frame") or 0) / total_frames
+    return max(0.0, min(1.0, ratio))
+
+
 def predictions_to_annotation(
     predictions: list[dict],
     *,

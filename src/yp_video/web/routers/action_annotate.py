@@ -9,7 +9,6 @@ import os
 import subprocess
 import tempfile
 import traceback
-from fractions import Fraction
 from pathlib import Path
 from typing import Literal
 from urllib.parse import unquote
@@ -41,6 +40,11 @@ from yp_video.contracts.action import (
     SPOT_PROGRESS_PREFIX,
 )
 from yp_video.core.annotation_ids import action_id, rally_id
+from yp_video.core.ffmpeg import (
+    FFmpegError,
+    parse_optional_float as _parse_optional_float,
+    probe_video_metadata,
+)
 from yp_video.core.jsonl import read_jsonl
 from yp_video.web.job_helpers import ProgressParser, finalize_batch_job, stop_vllm_for_job, stream_subprocess
 from yp_video.web.jobs import job_manager
@@ -163,51 +167,12 @@ def _rally_sources(video_name: str) -> list[str]:
     return sources
 
 
-def _parse_rate(rate: str | None) -> float:
-    if not rate or rate == "0/0":
-        return 0.0
-    try:
-        return float(Fraction(rate))
-    except (ValueError, ZeroDivisionError):
-        return 0.0
-
-
-def _parse_optional_float(value: object) -> float | None:
-    if value in (None, "", "N/A"):
-        return None
-    if not isinstance(value, (int, float, str)):
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
 def _video_metadata(path: Path) -> dict:
-    cmd = [
-        "ffprobe", "-v", "error",
-        "-select_streams", "v:0",
-        "-show_entries", "stream=avg_frame_rate,r_frame_rate,nb_frames,duration,start_time",
-        "-of", "json",
-        str(path),
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    if result.returncode != 0:
-        raise HTTPException(502, f"ffprobe failed: {result.stderr[:200]}")
+    """Probe ``{fps, duration, num_frames, start_time}``; HTTP 502 on failure."""
     try:
-        stream = (json.loads(result.stdout).get("streams") or [{}])[0]
-    except json.JSONDecodeError as exc:
-        raise HTTPException(502, "ffprobe returned invalid JSON") from exc
-
-    fps = _parse_rate(stream.get("avg_frame_rate")) or _parse_rate(stream.get("r_frame_rate")) or 30.0
-    duration = float(stream.get("duration") or 0)
-    num_frames = int(stream.get("nb_frames") or round(duration * fps))
-    return {
-        "fps": fps,
-        "duration": duration,
-        "num_frames": num_frames,
-        "start_time": _parse_optional_float(stream.get("start_time")) or 0.0,
-    }
+        return probe_video_metadata(path)
+    except FFmpegError as exc:
+        raise HTTPException(502, str(exc)) from exc
 
 
 def _timeline_metadata(path: Path, video_meta: dict) -> dict:
@@ -678,26 +643,9 @@ def _resolve_prelabel_entries(names: list[str], *, overwrite: bool) -> list[tupl
     return entries
 
 
-def _parse_spot_progress(raw: str) -> dict | None:
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(data, dict) or data.get("phase") != "inference":
-        return None
-    return data
-
-
 def _spot_progress_fraction(data: dict, *, start: float, span: float, cap: float) -> float:
-    clips_done = int(data.get("clips_done") or 0)
-    clips_total = int(data.get("clips_total") or 0)
-    if clips_total > 0:
-        ratio = clips_done / clips_total
-    else:
-        end_frame = int(data.get("end_frame") or 0)
-        total_frames = max(1, int(data.get("total_frames") or 1))
-        ratio = end_frame / total_frames
-    return min(cap, start + span * max(0.0, min(float(ratio), 1.0)))
+    """Map SPOT inference progress into a UI band ``[start, start+span]``."""
+    return min(cap, start + span * prelabel.spot_progress_fraction(data))
 
 
 def _spot_progress_message(data: dict) -> str:
@@ -716,7 +664,7 @@ def _spot_progress_message(data: dict) -> str:
 
 def _spot_app_log_line(job_id: str, line: str) -> str | None:
     if line.startswith(SPOT_PROGRESS_PREFIX):
-        data = _parse_spot_progress(line.removeprefix(SPOT_PROGRESS_PREFIX))
+        data = prelabel.parse_spot_progress(line.removeprefix(SPOT_PROGRESS_PREFIX))
         if data is None:
             return None
         video = data.get("video_basename") or Path(str(data.get("video") or "")).name
@@ -956,7 +904,7 @@ async def start_spot_prelabel(req: SpotPrelabelRequest) -> dict:
                 }
 
             def progress_handler(match):
-                data = _parse_spot_progress(match.group(1))
+                data = prelabel.parse_spot_progress(match.group(1))
                 if data is None:
                     return None
                 return {
@@ -1275,7 +1223,7 @@ async def _run_prelabel_batch_subprocess(
                     return None
 
                 def progress_handler(match, *, item_idx: int = idx, item_video: Path = video):
-                    data = _parse_spot_progress(match.group(1))
+                    data = prelabel.parse_spot_progress(match.group(1))
                     if data is None:
                         return None
                     item_progress = _spot_progress_fraction(data, start=0.12, span=0.78, cap=0.9)

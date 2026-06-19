@@ -1,7 +1,10 @@
 """FFmpeg utilities for video processing."""
 
 import asyncio
+import json
+import math
 import subprocess
+from fractions import Fraction
 from pathlib import Path
 
 
@@ -34,6 +37,68 @@ def get_video_duration(video_path: str) -> float:
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     return float(result.stdout.strip())
+
+
+def parse_rate(rate: str | None) -> float:
+    """Parse an ffprobe rate field (``"30000/1001"`` or ``"30"``) to fps.
+
+    Returns 0.0 for missing/unparseable values so callers can ``or`` through
+    fallbacks.
+    """
+    if not rate or rate == "0/0":
+        return 0.0
+    try:
+        return float(Fraction(str(rate)))
+    except (ValueError, ZeroDivisionError):
+        return 0.0
+
+
+def parse_optional_float(value: object) -> float | None:
+    """Best-effort float parse; ``None`` when missing or unparseable."""
+    if value in (None, "", "N/A"):
+        return None
+    if not isinstance(value, (int, float, str)):
+        return None
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    return out if math.isfinite(out) else None
+
+
+def probe_video_metadata(path: Path | str) -> dict:
+    """Probe the first video stream via ffprobe.
+
+    Returns ``{fps, duration, num_frames, start_time}``. ``num_frames`` falls
+    back to ``round(duration * fps)`` when the container stores no frame count.
+
+    Raises:
+        FFmpegError: ffprobe failed or returned invalid JSON.
+    """
+    cmd = [
+        "ffprobe", "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=avg_frame_rate,r_frame_rate,nb_frames,duration,start_time",
+        "-of", "json",
+        str(path),
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        raise FFmpegError(f"ffprobe failed: {result.stderr[:200]}")
+    try:
+        stream = (json.loads(result.stdout).get("streams") or [{}])[0]
+    except json.JSONDecodeError as exc:
+        raise FFmpegError("ffprobe returned invalid JSON") from exc
+
+    fps = parse_rate(stream.get("avg_frame_rate")) or parse_rate(stream.get("r_frame_rate")) or 30.0
+    duration = float(stream.get("duration") or 0)
+    num_frames = int(stream.get("nb_frames") or round(duration * fps))
+    return {
+        "fps": fps,
+        "duration": duration,
+        "num_frames": num_frames,
+        "start_time": parse_optional_float(stream.get("start_time")) or 0.0,
+    }
 
 
 def extract_clip(video_path: str, start_time: float, duration: float, output_path: str) -> bool:
