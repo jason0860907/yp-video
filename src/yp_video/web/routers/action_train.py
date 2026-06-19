@@ -23,7 +23,12 @@ from yp_video.config import (
     ACTION_FRAMES_DIR,
     SPOT_DIR,
     SPOT_PYTHON,
+    SPOT_TRAIN_MODULE,
     find_cut,
+)
+from yp_video.contracts.action import (
+    ACTION_CONTRACT_VERSION,
+    ACTION_CONTRACT_VERSION_ENV,
 )
 from yp_video.action.frames import ensure_action_frame_caches, inspect_action_frame_cache
 from yp_video.action.prelabel import resolve_checkpoint_path
@@ -524,9 +529,10 @@ def _build_command(
     cmd = [
         str(SPOT_PYTHON),
         "-m",
-        "yp_spot.train",
+        SPOT_TRAIN_MODULE,
         dataset,
         str(frame_dir),
+        # Second -m is yp_spot.train's own feature-arch flag, not python's.
         "-m",
         req.feature_arch,
         "-t",
@@ -862,6 +868,7 @@ async def start(req: ActionTrainRequest) -> dict:
                             else str(SPOT_DIR)
                         ),
                         "CUDA_VISIBLE_DEVICES": str(req.gpu),
+                        ACTION_CONTRACT_VERSION_ENV: ACTION_CONTRACT_VERSION,
                     }
                     rc, last_line = await stream_subprocess(
                         job.id,

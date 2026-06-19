@@ -4,9 +4,16 @@ Single source of truth for all project paths. Eliminates hardcoded
 Path(__file__).parent.parent chains throughout the codebase (DIP).
 """
 
+import os
 from collections.abc import Iterator
 from pathlib import Path
 from typing import NamedTuple
+
+
+def _env_path(name: str, default: Path) -> Path:
+    """Return ``$name`` as an expanded Path, falling back to *default*."""
+    value = os.environ.get(name)
+    return Path(value).expanduser() if value else default
 
 
 def _find_project_root() -> Path:
@@ -24,9 +31,14 @@ PROJECT_ROOT = _find_project_root()
 
 # ── External dependencies (at project root) ──────────────────────
 ACTIONFORMER_DIR = PROJECT_ROOT / "actionformer"
-SPOT_DIR = Path.home() / "yp-spot"
-SPOT_PYTHON = SPOT_DIR / ".venv" / "bin" / "python"
-SPOT_INFERENCE_SCRIPT = SPOT_DIR / "inference_on_mp4.py"
+# yp-spot lives in its own repo + venv, reached across a subprocess boundary.
+# Both are overridable so the integration isn't pinned to ~/yp-spot.
+SPOT_DIR = _env_path("YP_SPOT_DIR", Path.home() / "yp-spot")
+SPOT_PYTHON = _env_path("YP_SPOT_PYTHON", SPOT_DIR / ".venv" / "bin" / "python")
+SPOT_PACKAGE_DIR = SPOT_DIR / "yp_spot"
+# Invoked as ``python -m <module>`` (no script-path coupling).
+SPOT_INFERENCE_MODULE = "yp_spot.inference"
+SPOT_TRAIN_MODULE = "yp_spot.train"
 PROMPTS_DIR = PROJECT_ROOT / "prompts"
 VLLM_ENV_PATH = PROJECT_ROOT / "vllm.env"
 R2_ENV_PATH = PROJECT_ROOT / "r2.env"

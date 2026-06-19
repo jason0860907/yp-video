@@ -10,18 +10,23 @@ from pathlib import Path
 from yp_video.config import (
     ACTION_CHECKPOINTS_DIR,
     SPOT_DIR,
-    SPOT_INFERENCE_SCRIPT,
+    SPOT_INFERENCE_MODULE,
+    SPOT_PACKAGE_DIR,
     SPOT_PYTHON,
     VIDEOS_DIR,
 )
+from yp_video.contracts.action import ACTION_LABELS
 
-ACTION_LABELS = {"serve", "receive", "set", "spike", "block", "score"}
 _CHECKPOINT_RE = re.compile(r"checkpoint_(\d+)\.pt$")
 _BEST_CHECKPOINT = "checkpoint_best.pt"
 
 
 def spot_available() -> bool:
-    return SPOT_DIR.exists() and SPOT_PYTHON.exists() and SPOT_INFERENCE_SCRIPT.exists()
+    return (
+        SPOT_DIR.exists()
+        and SPOT_PYTHON.exists()
+        and (SPOT_PACKAGE_DIR / "inference.py").exists()
+    )
 
 
 def list_checkpoints() -> list[dict]:
@@ -138,7 +143,7 @@ def build_command(
 
     cmd = [
         str(SPOT_PYTHON),
-        str(SPOT_INFERENCE_SCRIPT),
+        "-m", SPOT_INFERENCE_MODULE,
         "--video_path", *(str(path) for path in video_paths),
         "--checkpoint_path", str(checkpoint_path),
         "--save_dir", *(str(path) for path in save_dirs),

@@ -30,8 +30,9 @@ tokens.env
 # Project specific
 *.json
 !package.json
-# Generated wire contract — source of truth for the iOS client codegen
+# Generated contracts — source of truth (iOS client + yp-spot integration)
 !contracts/detector.schema.json
+!contracts/action_label.schema.json
 
 # Large directories (use git submodule if needed)
 datasets/

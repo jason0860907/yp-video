@@ -11,10 +11,14 @@ from collections.abc import Callable
 from pathlib import Path
 
 from yp_video.config import ACTION_FRAMES_DIR
+from yp_video.contracts.action import (
+    FRAME_FFMPEG_PATTERN,
+    FRAME_HEIGHT,
+    frame_filename,
+)
 
 
-FRAME_HEIGHT = 224
-FRAME_PATTERN = "%06d.jpg"
+FRAME_PATTERN = FRAME_FFMPEG_PATTERN
 META_NAME = ".frame-cache.json"
 _EXTRACT_SEMAPHORE = threading.Semaphore(2)
 _CACHE_LOCKS: dict[str, threading.Lock] = {}
@@ -171,8 +175,8 @@ def inspect_action_frame_cache(
     frame_count = int(metadata.get("frame_count") or 0) if metadata else 0
     if frame_count <= 0:
         frame_count = _count_frames(output_dir)
-    first = output_dir / "000000.jpg"
-    last = output_dir / f"{frame_count - 1:06d}.jpg" if frame_count else None
+    first = output_dir / frame_filename(0)
+    last = output_dir / frame_filename(frame_count - 1) if frame_count else None
     ready = (
         output_dir.is_dir()
         and first.exists()

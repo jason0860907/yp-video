@@ -34,6 +34,12 @@ from yp_video.config import (
 )
 from yp_video.action import prelabel
 from yp_video.action.frames import inspect_action_frame_cache
+from yp_video.contracts.action import (
+    ACTION_CONTRACT_VERSION,
+    ACTION_CONTRACT_VERSION_ENV,
+    ACTION_LABELS_ORDERED,
+    SPOT_PROGRESS_PREFIX,
+)
 from yp_video.core.annotation_ids import action_id, rally_id
 from yp_video.core.jsonl import read_jsonl
 from yp_video.web.job_helpers import ProgressParser, finalize_batch_job, stop_vllm_for_job, stream_subprocess
@@ -43,7 +49,7 @@ from yp_video.web.r2_client import serve_video_or_r2_redirect, sync_to_r2
 log = logging.getLogger(__name__)
 router = APIRouter()
 
-ACTION_LABELS = ("serve", "receive", "set", "spike", "block", "score")
+ACTION_LABELS = ACTION_LABELS_ORDERED
 AUDIO_WAVEFORM_SAMPLE_RATE = 32000
 AUDIO_WAVEFORM_CHANNELS = 2
 AUDIO_WAVEFORM_CACHE_VERSION = 7
@@ -709,8 +715,8 @@ def _spot_progress_message(data: dict) -> str:
 
 
 def _spot_app_log_line(job_id: str, line: str) -> str | None:
-    if line.startswith("SPOT_PROGRESS "):
-        data = _parse_spot_progress(line.removeprefix("SPOT_PROGRESS "))
+    if line.startswith(SPOT_PROGRESS_PREFIX):
+        data = _parse_spot_progress(line.removeprefix(SPOT_PROGRESS_PREFIX))
         if data is None:
             return None
         video = data.get("video_basename") or Path(str(data.get("video") or "")).name
@@ -732,6 +738,7 @@ def _spot_subprocess_env(req: SpotPrelabelOptions) -> dict[str, str]:
         "SPOT_NUM_PRODUCERS": str(req.decode_producers),
         "SPOT_DECODER_THREADS": str(req.decoder_threads),
         "SPOT_DECODE_CHUNK_FRAMES": str(req.decode_chunk_frames),
+        ACTION_CONTRACT_VERSION_ENV: ACTION_CONTRACT_VERSION,
     }
     if req.decoder == "nvdec":
         env["SPOT_ENABLE_EXPERIMENTAL_NVDEC"] = "1"
@@ -959,7 +966,7 @@ async def start_spot_prelabel(req: SpotPrelabelRequest) -> dict:
 
             parsers = [
                 ProgressParser(r"Starting inference \d+/\d+: .+", start_handler),
-                ProgressParser(r"SPOT_PROGRESS (.+)", progress_handler),
+                ProgressParser(SPOT_PROGRESS_PREFIX + r"(.+)", progress_handler),
             ]
 
             with tempfile.TemporaryDirectory(prefix=f"yp-spot-{job.id}-") as tmp_root:
@@ -990,7 +997,7 @@ async def start_spot_prelabel(req: SpotPrelabelRequest) -> dict:
                             parsers=parsers,
                             is_key_line=lambda line: (
                                 line.startswith("Starting inference")
-                                or line.startswith("SPOT_PROGRESS ")
+                                or line.startswith(SPOT_PROGRESS_PREFIX)
                                 or line.startswith("Saved predictions")
                             ),
                             push_interval=1.0,
@@ -1315,7 +1322,7 @@ async def _run_prelabel_batch_subprocess(
                     env=_spot_subprocess_env(req),
                     parsers=[
                         ProgressParser(r"Starting inference (\d+)/(\d+): (.+)", start_handler),
-                        ProgressParser(r"SPOT_PROGRESS (.+)", progress_handler),
+                        ProgressParser(SPOT_PROGRESS_PREFIX + r"(.+)", progress_handler),
                         ProgressParser(r"((?:Failed inference \d+/\d+|Failure summary): .+)", failure_handler),
                     ],
                     is_key_line=lambda line: (

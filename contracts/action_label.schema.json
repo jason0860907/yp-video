@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "YP Action-Spotting Label Contract",
+  "version": "1.0.0",
+  "description": "Source of truth for the *_actions.jsonl label records and frame cache layout exchanged between yp-video (producer) and yp-spot (consumer). Generated from yp_video/contracts/action.py via make_schema.py \u2014 do not edit by hand. yp-spot mirrors these constants in yp_spot/contract.py under the same version.",
+  "x-frame-layout": {
+    "height": 224,
+    "ffmpeg_pattern": "%06d.jpg",
+    "py_pattern": "{:06d}.jpg",
+    "glob": "*.jpg",
+    "zero_based": true
+  },
+  "x-label-file-glob": "*_actions.jsonl",
+  "$defs": {
+    "ActionEvent": {
+      "additionalProperties": false,
+      "description": "A single spotted action at one frame, with a normalized court location.",
+      "properties": {
+        "frame": {
+          "description": "0-based frame index into the frame cache",
+          "minimum": 0,
+          "title": "Frame",
+          "type": "integer"
+        },
+        "label": {
+          "description": "One of ACTION_LABELS",
+          "title": "Label",
+          "type": "string"
+        },
+        "xy": {
+          "description": "Normalized [x, y] court location, each in [0, 1]",
+          "items": {
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "title": "Xy",
+          "type": "array"
+        },
+        "visible": {
+          "default": true,
+          "description": "Whether the action is visible on screen",
+          "title": "Visible",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "frame",
+        "label",
+        "xy"
+      ],
+      "title": "ActionEvent",
+      "type": "object"
+    },
+    "ActionLabelRecord": {
+      "additionalProperties": true,
+      "description": "One video's worth of action labels \u2014 the unit of a ``*_actions.jsonl`` row.",
+      "properties": {
+        "video": {
+          "description": "Video stem; matches the frame-cache directory name",
+          "title": "Video",
+          "type": "string"
+        },
+        "num_frames": {
+          "description": "Total frames in the cache for this video",
+          "minimum": 0,
+          "title": "Num Frames",
+          "type": "integer"
+        },
+        "fps": {
+          "default": 30.0,
+          "exclusiveMinimum": 0,
+          "title": "Fps",
+          "type": "number"
+        },
+        "events": {
+          "items": {
+            "$ref": "#/$defs/ActionEvent"
+          },
+          "title": "Events",
+          "type": "array"
+        }
+      },
+      "required": [
+        "video",
+        "num_frames"
+      ],
+      "title": "ActionLabelRecord",
+      "type": "object"
+    }
+  }
+}

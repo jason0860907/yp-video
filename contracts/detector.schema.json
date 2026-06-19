@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "VolleyIQ Rally Detector Wire Contract",
-  "version": "2.0.0",
+  "version": "1.0.0",
   "description": "Source of truth for the request/response shape between the iOS app and any rally-detection backend. Generated from yp_video/contracts/detector.py via make_schema.py \u2014 do not edit by hand.",
   "$defs": {
     "CameraAngle": {
