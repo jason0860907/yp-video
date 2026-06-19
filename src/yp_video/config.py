@@ -32,8 +32,9 @@ PROJECT_ROOT = _find_project_root()
 # ── External dependencies (at project root) ──────────────────────
 ACTIONFORMER_DIR = PROJECT_ROOT / "actionformer"
 # yp-spot lives in its own repo + venv, reached across a subprocess boundary.
-# Both are overridable so the integration isn't pinned to ~/yp-spot.
-SPOT_DIR = _env_path("YP_SPOT_DIR", Path.home() / "yp-spot")
+# Defaults to a sibling of yp-video (same parent dir); both paths are
+# overridable so the integration isn't pinned to a fixed location.
+SPOT_DIR = _env_path("YP_SPOT_DIR", PROJECT_ROOT.parent / "yp-spot")
 SPOT_PYTHON = _env_path("YP_SPOT_PYTHON", SPOT_DIR / ".venv" / "bin" / "python")
 SPOT_PACKAGE_DIR = SPOT_DIR / "yp_spot"
 # Invoked as ``python -m <module>`` (no script-path coupling).
