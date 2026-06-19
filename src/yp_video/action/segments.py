@@ -160,6 +160,99 @@ def build_action_segments(
     return segments
 
 
+def build_score_segments(
+    events: Sequence[dict],
+    rallies: Sequence[dict],
+    *,
+    fps: float,
+    anchor: str = "score",
+) -> list[dict]:
+    """Build segment records anchored on each ``score`` (point-decided) event.
+
+    Unlike :func:`build_action_segments` (anchored on the spike), this anchors on
+    the moment the point ends and reaches *back* to the attack that decided it:
+    the build-up chain is the 接舉打 (receive→set→spike) immediately preceding
+    the score. The consumer frames the clip as ``[chain start … score + pad]``
+    (see the app's score-clip projection) so a Score item shows "what lost/won
+    the point" plus a beat after the whistle.
+
+    These records carry the same nullable ``player_id`` / ``outcome`` fields, so
+    a future scoring/re-id pass enriches them in place. ``outcome`` here will
+    eventually mean won/lost from our side; today the user marks it by hand.
+
+    Args:
+        events: SPOT action events (``{frame|time, label, xy, ...}``).
+        rallies: rally dicts carrying a ``segment`` ``[start, end]`` in seconds.
+        fps: frame rate used to convert event frames to seconds.
+        anchor: action label to anchor on (default ``"score"``).
+
+    Returns:
+        One record per anchor event; same schema as ``build_action_segments``,
+        but ``action == anchor`` and ``chain`` ends on the deciding spike (the
+        anchor is the score, which sits *after* the chain).
+    """
+    if fps <= 0:
+        fps = 30.0
+
+    evs = sorted(
+        ({**e, "_t": _event_time(e, fps)} for e in events),
+        key=lambda e: e["_t"],
+    )
+    bounds = sorted(
+        (
+            (float(r["segment"][0]), float(r["segment"][1]))
+            for r in rallies
+            if r.get("segment")
+        ),
+        key=lambda b: b[0],
+    )
+
+    def _rally_of(t: float) -> tuple[int, float, float] | None:
+        for i, (s, e) in enumerate(bounds, start=1):
+            if s <= t <= e:
+                return i, s, e
+        return None
+
+    segments: list[dict] = []
+    for ev in evs:
+        if ev.get("label") != anchor:
+            continue
+        t = ev["_t"]
+        r = _rally_of(t)
+        if r is not None:
+            r_idx, r_start, r_end = r
+            scope = [e for e in evs if r_start <= e["_t"] <= r_end]
+        else:
+            r_idx = r_start = r_end = None
+            scope = [e for e in evs if e["_t"] <= t]  # no rally → everything up to the score
+
+        before = [e for e in scope if e["_t"] < t]
+        # The 接舉打 leading to the point: the last spike, plus the receive→set
+        # that fed it. Falls back to a bare receive/set chain when no spike was
+        # detected before the score (e.g. a service ace / opponent error).
+        last_spike = next((e for e in reversed(before) if e.get("label") == "spike"), None)
+        if last_spike is not None:
+            chain = _build_up_chain([e for e in before if e["_t"] < last_spike["_t"]])
+            chain.append(_public(last_spike))
+        else:
+            chain = _build_up_chain(before)
+
+        segments.append({
+            "action": anchor,
+            "anchor": _public(ev),
+            "chain": chain,
+            "rally": (
+                {"index": r_idx, "start": r_start, "end": r_end}
+                if r is not None else None
+            ),
+            "next": None,
+            "player_id": None,
+            "outcome": None,
+            "team": None,
+        })
+    return segments
+
+
 def project_window(
     segment: dict,
     mode: str = DEFAULT_MODE,

@@ -27,6 +27,7 @@ from .action import (
 )
 from .detector import (
     DetectorInput,
+    ActionSegment,
     ErrorPayload,
     ErrorResult,
     Rally,
@@ -36,11 +37,13 @@ from .detector import (
 SCHEMA_VERSION = "1.0.0"
 
 # Only BaseModel classes — the referenced enums (CameraAngle, VideoQuality,
-# ErrorCode) land in $defs automatically.
+# ErrorCode) and nested models (SegmentEvent, RallyBounds) land in $defs
+# automatically once a listed model references them.
 _MODELS = [
     ErrorPayload,
     ErrorResult,
     Rally,
+    ActionSegment,
     DetectorInput,
     SuccessResult,
 ]

@@ -64,6 +64,52 @@ class Rally(BaseModel):
     score: int = Field(ge=0, le=100, description="Highlight score 0-100")
 
 
+class SegmentEvent(BaseModel):
+    """One touch inside an action's build-up (receive / set / spike, …).
+
+    Mirrors ``yp_video.action.segments._public``: a label plus a timestamp,
+    with the source frame and normalized court location carried when known.
+    Distinct from ``contracts.action.ActionEvent`` (the frame-indexed label
+    record yp-spot emits) — this is the seconds-based, app-facing shape.
+    """
+
+    label: str = Field(description="Touch label, e.g. receive / set / spike")
+    time: float = Field(ge=0, description="Seconds from video start")
+    frame: int | None = Field(default=None, ge=0, description="Source frame index, when known")
+    xy: list[float] | None = Field(
+        default=None, min_length=2, max_length=2,
+        description="Normalized [x, y] court location, each in [0, 1]",
+    )
+
+
+class RallyBounds(BaseModel):
+    """The rally an action sits in: its 1-based timeline index and span."""
+
+    index: int = Field(ge=1, description="1-based rally number (matches Rally.index)")
+    start: float = Field(ge=0, description="Seconds from video start")
+    end: float = Field(ge=0, description="Seconds from video start")
+
+
+class ActionSegment(BaseModel):
+    """A per-action highlight segment, anchored on a spike.
+
+    Mode-agnostic: it carries the *structure* around the anchor (build-up
+    chain, the rally it sits in, the next action) and leaves the clip-window
+    choice to the client. ``player_id`` / ``outcome`` / ``team`` are reserved
+    for a future re-id + scoring pass and are null until then, so adding those
+    features never breaks this decode.
+    """
+
+    action: str = Field(description="Anchor action label (currently always 'spike')")
+    anchor: SegmentEvent = Field(description="The anchor action itself")
+    chain: list[SegmentEvent] = Field(description="Build-up touches, ending on the anchor")
+    rally: RallyBounds | None = Field(default=None, description="Rally bounds, null if unmatched")
+    next: SegmentEvent | None = Field(default=None, description="First action after the anchor")
+    player_id: str | None = Field(default=None, description="Reserved: filled by a future re-id pass")
+    outcome: str | None = Field(default=None, description="Reserved: kill / error / blocked (future scoring pass)")
+    team: str | None = Field(default=None, description="Reserved: owning team (future pass)")
+
+
 class DetectorInput(BaseModel):
     """Detection request posted by the iOS client."""
 
@@ -91,6 +137,25 @@ class SuccessResult(BaseModel):
 
     total_duration: float = Field(ge=0, description="Source video length in seconds")
     rallies: list[Rally]
+    action_segments: list[ActionSegment] = Field(
+        default_factory=list,
+        description=(
+            "Per-action (spike) highlight segments for the Action scope. "
+            "Additive and may be empty — absent/empty when SPOT action spotting "
+            "did not run. The client projects each clip window on demand and "
+            "decodes an empty list when the field is missing, so older workers "
+            "stay compatible."
+        ),
+    )
+    score_segments: list[ActionSegment] = Field(
+        default_factory=list,
+        description=(
+            "Point-decided (score) segments for the Score scope: each anchors "
+            "on a score event and its `chain` is the deciding 接舉打 build-up. "
+            "Same shape as `action_segments`; `outcome` (won/lost) stays null "
+            "until a scoring pass fills it. Additive and may be empty."
+        ),
+    )
     locale_echo: str | None = Field(
         default=None, description="Echoes back DetectorInput.locale if provided"
     )
