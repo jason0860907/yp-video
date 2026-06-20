@@ -136,6 +136,10 @@ class DetectorInput(BaseModel):
 class SuccessResult(BaseModel):
     """Payload returned when detection succeeds."""
 
+    result_version: int = Field(
+        default=1,
+        description="Result JSON schema version; bumped when the shape changes so clients can branch.",
+    )
     total_duration: float = Field(ge=0, description="Source video length in seconds")
     rallies: list[Rally]
     action_segments: list[ActionSegment] = Field(

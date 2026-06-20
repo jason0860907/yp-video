@@ -1,4 +1,4 @@
-.PHONY: install build-ext dev tunnel
+.PHONY: install build-ext dev tunnel contract contract-check
 
 VENV ?= $(CURDIR)/.venv
 PYTHON ?= $(VENV)/bin/python
@@ -24,3 +24,17 @@ dev:
 
 tunnel:
 	cloudflared tunnel --url http://localhost:8080
+
+# Regenerate the JSON-schema contracts from the Pydantic models. Run after
+# editing contracts/*.py. The emitted contracts/*.schema.json are the source
+# of truth consumed by the iOS app + yp-spot.
+contract:
+	uv run python -m yp_video.contracts.make_schema
+
+# CI / pre-commit guard against drift: regenerate and fail if the committed
+# schemas are stale (someone edited a Pydantic model but forgot `make contract`).
+contract-check:
+	uv run python -m yp_video.contracts.make_schema
+	@git diff --exit-code -- contracts/*.schema.json \
+		|| (echo "❌ contracts/*.schema.json out of date — run 'make contract' and commit." && exit 1)
+	@echo "✓ contracts up to date"

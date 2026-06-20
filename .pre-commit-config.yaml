@@ -1,0 +1,13 @@
+# Run `pre-commit install` once to enable. Guards the schema-first contract:
+# if a contracts/*.py Pydantic model changes without regenerating the JSON
+# schemas, the commit fails. Keeps detector.schema.json / action_label.schema.json
+# (the source of truth the iOS app + yp-spot consume) from drifting.
+repos:
+  - repo: local
+    hooks:
+      - id: contract-schemas-up-to-date
+        name: contract schemas up to date
+        entry: make contract-check
+        language: system
+        pass_filenames: false
+        files: ^src/yp_video/contracts/.*\.py$

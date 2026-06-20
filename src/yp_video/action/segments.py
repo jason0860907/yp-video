@@ -2,11 +2,11 @@
 
 Mode-agnostic by design. For each anchor action (default: spike) this emits the
 *structure* around it — its build-up chain (receive→set→spike), the rally it
-sits in, and the next action — and leaves the choice of clip window to the
-consumer via :func:`project_window`. That lets each video, or even each segment,
-pick a different window (whole rally / build-up / full play / to-next) **without
-re-running inference**: switching mode is a pure re-projection over data already
-emitted.
+sits in, the previous action, and the next action — and leaves the choice of
+clip window to the CLIENT (iOS `ActionSegment.window`, the single projector).
+That lets each video, or even each segment, pick a different window (whole rally
+/ build-up / full play / to-next) **without re-running inference**: switching
+mode is a pure re-projection over data already emitted.
 
 Future enrichment (player_id, outcome, team) rides on the same records as
 nullable fields, so a later re-id or scoring pass only *fills values* and never
@@ -31,8 +31,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 # ── Window modes — the consumer contract ─────────────────────────────
-# project_window() below is the single source of truth for how each maps to
-# [start, end]; the iOS app mirrors these names.
+# These mode NAMES are mirrored by the iOS client (SpikeClipWindow). The
+# name→[start,end] projection math lives only in the client (single source of
+# truth); backends emit mode-agnostic structure and never project here.
 WINDOW_WHOLE_RALLY = "whole_rally"   # 整個 rally
 WINDOW_BUILD_UP = "build_up"         # 接舉打: receive→set→spike
 WINDOW_FULL_PLAY = "full_play"       # 接舉打 → 結果
@@ -277,34 +278,10 @@ def event_timeline(events: Sequence[dict], *, fps: float) -> list[dict]:
     return sorted(out, key=lambda x: x["time"])
 
 
-def project_window(
-    segment: dict,
-    mode: str = DEFAULT_MODE,
-    *,
-    pre_pad: float = 1.0,
-    post_pad: float = 1.0,
-) -> list[float]:
-    """Compute ``[start, end]`` seconds for a segment under a window ``mode``.
-
-    Single source of truth for the mode→window mapping; the iOS app mirrors
-    this. Degrades gracefully when the data a mode needs is absent (e.g. no
-    rally bounds → falls back to a chain/anchor window).
-    """
-    anchor_t = float(segment["anchor"]["time"])
-    chain = segment.get("chain") or [segment["anchor"]]
-    chain_start = float(chain[0]["time"])
-    rally = segment.get("rally")
-    nxt = segment.get("next")
-    result_t = float(
-        nxt["time"] if nxt is not None
-        else (rally["end"] if rally else anchor_t)
-    )
-
-    if mode == WINDOW_WHOLE_RALLY and rally:
-        return [float(rally["start"]), float(rally["end"])]
-    if mode == WINDOW_BUILD_UP:
-        return [max(0.0, chain_start - pre_pad), anchor_t + post_pad]
-    if mode == WINDOW_TO_NEXT:
-        return [max(0.0, anchor_t - pre_pad), result_t + post_pad]
-    # WINDOW_FULL_PLAY (default) — and the whole_rally fallback when no rally.
-    return [max(0.0, chain_start - pre_pad), result_t + post_pad]
+# NOTE: window projection ([start, end] per mode) is NOT done here. The mode
+# names above (WINDOW_*) are the contract the iOS client mirrors
+# (SpikeClipWindow), but the projection MATH lives only in the client
+# (ActionSegment.window) so there is a single source of truth. Backends only
+# emit the mode-agnostic structure (anchor / chain / prev / next / rally); the
+# client frames the clip. (An earlier `project_window` here duplicated that math
+# and was never called in serving — removed to avoid drift.)
