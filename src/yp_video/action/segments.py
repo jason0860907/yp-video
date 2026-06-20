@@ -139,8 +139,10 @@ def build_action_segments(
             r_idx = r_start = r_end = None
             scope = evs  # no rally bounds — fall back to the global timeline
 
-        chain = _build_up_chain([e for e in scope if e["_t"] < t])
+        before = [e for e in scope if e["_t"] < t]
+        chain = _build_up_chain(before)
         chain.append(_public(ev))
+        prv = before[-1] if before else None
         nxt = next((e for e in scope if e["_t"] > t), None)
 
         segments.append({
@@ -151,6 +153,7 @@ def build_action_segments(
                 {"index": r_idx, "start": r_start, "end": r_end}
                 if r is not None else None
             ),
+            "prev": _public(prv) if prv is not None else None,
             "next": _public(nxt) if nxt is not None else None,
             # Future enrichment — null now; a re-id / scoring pass fills these.
             "player_id": None,
@@ -227,15 +230,18 @@ def build_score_segments(
             scope = [e for e in evs if e["_t"] <= t]  # no rally → everything up to the score
 
         before = [e for e in scope if e["_t"] < t]
-        # The 接舉打 leading to the point: the last spike, plus the receive→set
-        # that fed it. Falls back to a bare receive/set chain when no spike was
-        # detected before the score (e.g. a service ace / opponent error).
-        last_spike = next((e for e in reversed(before) if e.get("label") == "spike"), None)
-        if last_spike is not None:
-            chain = _build_up_chain([e for e in before if e["_t"] < last_spike["_t"]])
-            chain.append(_public(last_spike))
+        # Frame from the action immediately before the point (`prev`):
+        #   • if it's a spike → take its full 接舉扣 build-up (receive→set→spike)
+        #   • otherwise → just that one action (e.g. a serve ace, a block, an
+        #     opponent error — there's no attack to show).
+        prev = before[-1] if before else None
+        if prev is not None and prev.get("label") == "spike":
+            chain = _build_up_chain([e for e in before if e["_t"] < prev["_t"]])
+            chain.append(_public(prev))
+        elif prev is not None:
+            chain = [_public(prev)]
         else:
-            chain = _build_up_chain(before)
+            chain = []
 
         segments.append({
             "action": anchor,
@@ -245,6 +251,7 @@ def build_score_segments(
                 {"index": r_idx, "start": r_start, "end": r_end}
                 if r is not None else None
             ),
+            "prev": _public(prev) if prev is not None else None,
             "next": None,
             "player_id": None,
             "outcome": None,

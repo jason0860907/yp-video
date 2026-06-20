@@ -104,6 +104,7 @@ class ActionSegment(BaseModel):
     anchor: SegmentEvent = Field(description="The anchor action itself")
     chain: list[SegmentEvent] = Field(description="Build-up touches, ending on the anchor")
     rally: RallyBounds | None = Field(default=None, description="Rally bounds, null if unmatched")
+    prev: SegmentEvent | None = Field(default=None, description="Action immediately before the anchor")
     next: SegmentEvent | None = Field(default=None, description="First action after the anchor")
     player_id: str | None = Field(default=None, description="Reserved: filled by a future re-id pass")
     outcome: str | None = Field(default=None, description="Reserved: kill / error / blocked (future scoring pass)")
