@@ -4,6 +4,110 @@
   "version": "1.0.0",
   "description": "Source of truth for the request/response shape between the iOS app and any rally-detection backend. Generated from yp_video/contracts/detector.py via make_schema.py \u2014 do not edit by hand.",
   "$defs": {
+    "ActionSegment": {
+      "description": "A per-action highlight segment, anchored on a spike.\n\nMode-agnostic: it carries the *structure* around the anchor (build-up\nchain, the rally it sits in, the next action) and leaves the clip-window\nchoice to the client. ``player_id`` / ``outcome`` / ``team`` are reserved\nfor a future re-id + scoring pass and are null until then, so adding those\nfeatures never breaks this decode.",
+      "properties": {
+        "action": {
+          "description": "Anchor action label (currently always 'spike')",
+          "title": "Action",
+          "type": "string"
+        },
+        "anchor": {
+          "$ref": "#/$defs/SegmentEvent",
+          "description": "The anchor action itself"
+        },
+        "chain": {
+          "description": "Build-up touches, ending on the anchor",
+          "items": {
+            "$ref": "#/$defs/SegmentEvent"
+          },
+          "title": "Chain",
+          "type": "array"
+        },
+        "rally": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RallyBounds"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Rally bounds, null if unmatched"
+        },
+        "prev": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SegmentEvent"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Action immediately before the anchor"
+        },
+        "next": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SegmentEvent"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "First action after the anchor"
+        },
+        "player_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Reserved: filled by a future re-id pass",
+          "title": "Player Id"
+        },
+        "outcome": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Reserved: kill / error / blocked (future scoring pass)",
+          "title": "Outcome"
+        },
+        "team": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Reserved: owning team (future pass)",
+          "title": "Team"
+        }
+      },
+      "required": [
+        "action",
+        "anchor",
+        "chain"
+      ],
+      "title": "ActionSegment",
+      "type": "object"
+    },
     "CameraAngle": {
       "enum": [
         "phoneSideline",
@@ -153,9 +257,99 @@
       "title": "Rally",
       "type": "object"
     },
+    "RallyBounds": {
+      "description": "The rally an action sits in: its 1-based timeline index and span.",
+      "properties": {
+        "index": {
+          "description": "1-based rally number (matches Rally.index)",
+          "minimum": 1,
+          "title": "Index",
+          "type": "integer"
+        },
+        "start": {
+          "description": "Seconds from video start",
+          "minimum": 0,
+          "title": "Start",
+          "type": "number"
+        },
+        "end": {
+          "description": "Seconds from video start",
+          "minimum": 0,
+          "title": "End",
+          "type": "number"
+        }
+      },
+      "required": [
+        "index",
+        "start",
+        "end"
+      ],
+      "title": "RallyBounds",
+      "type": "object"
+    },
+    "SegmentEvent": {
+      "description": "One touch inside an action's build-up (receive / set / spike, \u2026).\n\nMirrors ``yp_video.action.segments._public``: a label plus a timestamp,\nwith the source frame and normalized court location carried when known.\nDistinct from ``contracts.action.ActionEvent`` (the frame-indexed label\nrecord yp-spot emits) \u2014 this is the seconds-based, app-facing shape.",
+      "properties": {
+        "label": {
+          "description": "Touch label, e.g. receive / set / spike",
+          "title": "Label",
+          "type": "string"
+        },
+        "time": {
+          "description": "Seconds from video start",
+          "minimum": 0,
+          "title": "Time",
+          "type": "number"
+        },
+        "frame": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Source frame index, when known",
+          "title": "Frame"
+        },
+        "xy": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "number"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Normalized [x, y] court location, each in [0, 1]",
+          "title": "Xy"
+        }
+      },
+      "required": [
+        "label",
+        "time"
+      ],
+      "title": "SegmentEvent",
+      "type": "object"
+    },
     "SuccessResult": {
       "description": "Payload returned when detection succeeds.",
       "properties": {
+        "result_version": {
+          "default": 1,
+          "description": "Result JSON schema version; bumped when the shape changes so clients can branch.",
+          "title": "Result Version",
+          "type": "integer"
+        },
         "total_duration": {
           "description": "Source video length in seconds",
           "minimum": 0,
@@ -167,6 +361,30 @@
             "$ref": "#/$defs/Rally"
           },
           "title": "Rallies",
+          "type": "array"
+        },
+        "action_segments": {
+          "description": "Per-action (spike) highlight segments for the Action scope. Additive and may be empty \u2014 absent/empty when SPOT action spotting did not run. The client projects each clip window on demand and decodes an empty list when the field is missing, so older workers stay compatible.",
+          "items": {
+            "$ref": "#/$defs/ActionSegment"
+          },
+          "title": "Action Segments",
+          "type": "array"
+        },
+        "score_segments": {
+          "description": "Point-decided (score) segments for the Score scope: each anchors on a score event and its `chain` is the deciding \u63a5\u8209\u6253 build-up. Same shape as `action_segments`; `outcome` (won/lost) stays null until a scoring pass fills it. Additive and may be empty.",
+          "items": {
+            "$ref": "#/$defs/ActionSegment"
+          },
+          "title": "Score Segments",
+          "type": "array"
+        },
+        "action_events": {
+          "description": "Flat, time-sorted list of every spotted event (serve / receive / set / spike / block / score) with seconds-based `time`. Powers the rally-wide touch timeline, which needs the full action set rather than just a spike's build-up. Additive and may be empty.",
+          "items": {
+            "$ref": "#/$defs/SegmentEvent"
+          },
+          "title": "Action Events",
           "type": "array"
         },
         "locale_echo": {
