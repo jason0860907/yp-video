@@ -175,10 +175,14 @@ def build_score_segments(
 
     Unlike :func:`build_action_segments` (anchored on the spike), this anchors on
     the moment the point ends and reaches *back* to the attack that decided it:
-    the build-up chain is the 接舉打 (receive→set→spike) immediately preceding
+    the build-up chain is the 接舉打 (receive→set→spike) of the last spike before
     the score. The consumer frames the clip as ``[chain start … score + pad]``
     (see the app's score-clip projection) so a Score item shows "what lost/won
     the point" plus a beat after the whistle.
+
+    One segment per rally: a rally is one point, so duplicate ``score`` whistles
+    within it collapse to a single anchor (the last whistle). Scores outside any
+    rally are kept individually.
 
     These records carry the same nullable ``player_id`` / ``outcome`` fields, so
     a future scoring/re-id pass enriches them in place. ``outcome`` here will
@@ -191,9 +195,10 @@ def build_score_segments(
         anchor: action label to anchor on (default ``"score"``).
 
     Returns:
-        One record per anchor event; same schema as ``build_action_segments``,
-        but ``action == anchor`` and ``chain`` ends on the deciding spike (the
-        anchor is the score, which sits *after* the chain).
+        One record per rally that contains a score (plus one per rally-less
+        score); same schema as ``build_action_segments``, but ``action ==
+        anchor`` and ``chain`` ends on the deciding spike (the anchor is the
+        score, which sits *after* the chain).
     """
     if fps <= 0:
         fps = 30.0
@@ -217,10 +222,27 @@ def build_score_segments(
                 return i, s, e
         return None
 
-    segments: list[dict] = []
+    # A rally is one point, so it yields one Score segment. Real footage often
+    # carries duplicate `score` whistles a beat apart; collapse each rally's
+    # scores to a single anchor — the LAST one, the final whistle being the
+    # point's hard end. Scores outside every rally have no group to collapse
+    # into, so each stands alone.
+    anchor_by_rally: dict[int, dict] = {}
+    standalone: list[dict] = []
     for ev in evs:
         if ev.get("label") != anchor:
             continue
+        r = _rally_of(ev["_t"])
+        if r is None:
+            standalone.append(ev)
+            continue
+        kept = anchor_by_rally.get(r[0])
+        if kept is None or ev["_t"] > kept["_t"]:
+            anchor_by_rally[r[0]] = ev
+    anchors = sorted([*anchor_by_rally.values(), *standalone], key=lambda e: e["_t"])
+
+    segments: list[dict] = []
+    for ev in anchors:
         t = ev["_t"]
         r = _rally_of(t)
         if r is not None:
@@ -230,12 +252,17 @@ def build_score_segments(
             r_idx = r_start = r_end = None
             scope = [e for e in evs if e["_t"] <= t]  # no rally → everything up to the score
 
-        before = [e for e in scope if e["_t"] < t]
-        # Frame from the action immediately before the point (`prev`):
-        #   • if it's a spike → take its full 接舉扣 build-up (receive→set→spike)
-        #   • otherwise → just that one action (e.g. a serve ace, a block, an
-        #     opponent error — there's no attack to show).
-        prev = before[-1] if before else None
+        # Reach back to the attack that decided the point: the LAST spike before
+        # the score, not merely the touch right before the whistle (which may be
+        # a defensive dig, or a duplicate-whistle artefact). Frame its full 接舉扣
+        # build-up. With no spike — a serve ace, a block, an opponent error —
+        # fall back to the last real touch; there's no attack to show. Other
+        # `score` events are skipped so `prev` names the deciding touch.
+        before = [e for e in scope if e["_t"] < t and e.get("label") != anchor]
+        prev = next(
+            (e for e in reversed(before) if e.get("label") == "spike"),
+            before[-1] if before else None,
+        )
         if prev is not None and prev.get("label") == "spike":
             chain = _build_up_chain([e for e in before if e["_t"] < prev["_t"]])
             chain.append(_public(prev))
