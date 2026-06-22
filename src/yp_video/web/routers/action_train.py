@@ -19,8 +19,11 @@ from pydantic import BaseModel, Field
 
 from yp_video.config import (
     ACTION_ANNOTATIONS_DIR,
+    ACTION_AUDIO_DIR,
     ACTION_CHECKPOINTS_DIR,
     ACTION_FRAMES_DIR,
+    CUTS_DIRS,
+    SPOT_AUDIO_PRECOMPUTE_MODULE,
     SPOT_DIR,
     SPOT_PYTHON,
     SPOT_TRAIN_MODULE,
@@ -71,6 +74,9 @@ class ActionTrainRequest(BaseModel):
     # from scratch; an explicit path → that checkpoint.
     init_checkpoint: str | None = None
     gpu: int = Field(default=0, ge=0)
+    # "logmel" → late-fusion audio (precomputed before training); "none" →
+    # pure-visual model (no audio, no precompute). Must match at inference.
+    audio_backend: str = Field(default="logmel", pattern="^(logmel|none)$")
     feature_arch: str = "rny008_gsm"
     temporal_arch: str = "gru"
     pred_loc_arch: str = "mlp"
@@ -309,6 +315,55 @@ def _prepare_action_training_labels(*, frame_dir: Path, save_dir: Path) -> dict:
     }
 
 
+def _resolve_audio_dir(req: ActionTrainRequest, *, frame_dir: Path) -> Path | None:
+    """Per-frame audio feature dir for this run's backend, or None for visual-only.
+
+    Action labels precompute into a managed per-backend cache (built here, see
+    ``_audio_precompute_command``). The VNL dataset's source videos aren't local,
+    so its features must be precomputed offline next to the frame dir — fail loud
+    if absent rather than silently training without audio.
+    """
+    if req.audio_backend == "none":
+        return None
+    if req.source == "vnl_1_5":
+        audio_dir = frame_dir.parent / f"audio_{req.audio_backend}"
+        if not audio_dir.exists():
+            raise RuntimeError(
+                f"VNL audio features not found: {audio_dir}. Precompute them with "
+                f"`python -m yp_spot.audio.precompute --label-file data/vnl_1.5/*.jsonl "
+                f"--video-root <vnl videos> --out {audio_dir} --backend {req.audio_backend}`, "
+                "or set the audio backend to none for a visual-only model."
+            )
+        return audio_dir
+    return ACTION_AUDIO_DIR / req.audio_backend
+
+
+def _audio_precompute_command(
+    req: ActionTrainRequest, *, label_dir: Path, audio_dir: Path
+) -> list[str]:
+    """Build the ``yp_spot.audio.precompute`` command for the run-local labels.
+
+    Features are keyed by video name and reused across runs (precompute skips
+    already-cached videos), so re-training the same set is cheap.
+    """
+    label_files = sorted(label_dir.glob("*_actions.jsonl"))
+    if not label_files:
+        raise RuntimeError(f"No action labels to precompute audio from in {label_dir}")
+    return [
+        str(SPOT_PYTHON),
+        "-m",
+        SPOT_AUDIO_PRECOMPUTE_MODULE,
+        "--label-file",
+        *(str(p) for p in label_files),
+        "--video-root",
+        *(str(d) for d in CUTS_DIRS),
+        "--out",
+        str(audio_dir),
+        "--backend",
+        req.audio_backend,
+    ]
+
+
 def _load_json_file(path: Path) -> dict | list | None:
     if not path.exists():
         return None
@@ -498,6 +553,7 @@ def _build_command(
     save_dir: Path | None = None,
     checkpoint_dir: Path | None = None,
     action_label_dir: Path | None = None,
+    audio_dir: Path | None = None,
 ) -> tuple[list[str], Path, dict]:
     if not SPOT_DIR.exists():
         raise HTTPException(503, "SPOT is not available at ~/yp-spot")
@@ -558,6 +614,11 @@ def _build_command(
         "-s",
         str(save_dir),
     ]
+    cmd.extend(["--audio_backend", req.audio_backend])
+    if req.audio_backend != "none":
+        if audio_dir is None:
+            raise HTTPException(400, "Audio features missing for late-fusion training")
+        cmd.extend(["--audio_dir", str(audio_dir)])
     if req.predict_location:
         cmd.append("--predict_location")
     if init_checkpoint is not None:
@@ -596,7 +657,10 @@ def _build_command(
         "epochs": req.num_epochs,
         "feature_arch": req.feature_arch,
         "criterion": req.criterion,
+        "audio_backend": req.audio_backend,
     }
+    if audio_dir is not None:
+        params["audio_dir"] = str(audio_dir)
     if req.source == "action_annotations":
         params["label_dir"] = str(action_label_dir or ACTION_ANNOTATIONS_DIR)
         params["training_mode"] = req.training_mode
@@ -681,11 +745,31 @@ async def start(req: ActionTrainRequest) -> dict:
                     params={**job.params, "training_labels": label_summary},
                 )
 
+            # Resolve / build audio features for late fusion (no-op visual-only).
+            audio_dir = await asyncio.to_thread(
+                _resolve_audio_dir, req, frame_dir=frame_dir
+            )
+            if audio_dir is not None and req.source == "action_annotations":
+                audio_dir.mkdir(parents=True, exist_ok=True)
+                pre_cmd = _audio_precompute_command(
+                    req, label_dir=action_label_dir, audio_dir=audio_dir
+                )
+                await job_manager.update_job(
+                    job.id,
+                    message=f"Precomputing {req.audio_backend} audio features...",
+                )
+                rc, last_line = await stream_subprocess(job.id, pre_cmd, cwd=SPOT_DIR)
+                if rc != 0:
+                    raise RuntimeError(
+                        f"Audio precompute failed (rc={rc}): {last_line}"
+                    )
+
             cmd, resolved_save_dir, params = _build_command(
                 req,
                 save_dir=save_dir,
                 checkpoint_dir=checkpoint_dir,
                 action_label_dir=action_label_dir,
+                audio_dir=audio_dir,
             )
             await job_manager.update_job(
                 job.id,

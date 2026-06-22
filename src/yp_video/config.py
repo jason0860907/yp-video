@@ -40,6 +40,7 @@ SPOT_PACKAGE_DIR = SPOT_DIR / "yp_spot"
 # Invoked as ``python -m <module>`` (no script-path coupling).
 SPOT_INFERENCE_MODULE = "yp_spot.inference"
 SPOT_TRAIN_MODULE = "yp_spot.train"
+SPOT_AUDIO_PRECOMPUTE_MODULE = "yp_spot.audio.precompute"
 PROMPTS_DIR = PROJECT_ROOT / "prompts"
 VLLM_ENV_PATH = PROJECT_ROOT / "vllm.env"
 R2_ENV_PATH = PROJECT_ROOT / "r2.env"
@@ -67,6 +68,10 @@ ANNOTATIONS_DIR = VIDEOS_DIR / "rally-annotations"
 ACTION_ANNOTATIONS_DIR = VIDEOS_DIR / "action-annotations"
 ACTION_PRE_ANNOTATIONS_DIR = VIDEOS_DIR / "action-pre-annotations"
 ACTION_FRAMES_DIR = VIDEOS_DIR / "action-frames"
+# Precomputed per-frame audio features for SPOT late-fusion training, keyed by
+# backend name (e.g. action-audio/logmel/<video>.npy). Visual-only training
+# ("none" backend) needs nothing here.
+ACTION_AUDIO_DIR = VIDEOS_DIR / "action-audio"
 ACTION_WAVEFORMS_DIR = VIDEOS_DIR / "action-waveforms"
 ACTION_CHECKPOINTS_DIR = VIDEOS_DIR / "action-checkpoints"
 PREDICTIONS_DIR = VIDEOS_DIR / "tad-predictions"

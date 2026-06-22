@@ -51,6 +51,10 @@ export function render(container) {
                   <option value="mstcn">mstcn</option>
                   <option value="asformer">asformer</option>
                 `))}
+                ${field('Audio', 'act-train-audio', select(`
+                  <option value="logmel">logmel (late fusion)</option>
+                  <option value="none">none (visual only)</option>
+                `))}
                 ${field('Epochs', 'act-train-epochs', input('number', '100', '1', '1000'))}
                 ${field('Batch', 'act-train-batch', input('number', '8', '1', '64'))}
                 ${field('Clip Len', 'act-train-clip', input('number', '64', '8', '256'))}
@@ -336,6 +340,7 @@ async function startTraining() {
       gpu: numberValue('act-train-gpu', 0),
       feature_arch: textValue('act-train-feature', 'rny008_gsm'),
       temporal_arch: textValue('act-train-temporal', 'gru'),
+      audio_backend: textValue('act-train-audio', 'logmel'),
       clip_len: numberValue('act-train-clip', 64),
       batch_size: numberValue('act-train-batch', 8),
       num_epochs: numberValue('act-train-epochs', 100),
