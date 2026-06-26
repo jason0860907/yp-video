@@ -70,8 +70,8 @@ class ActionTrainRequest(BaseModel):
     frame_dir: str | None = None
     save_dir: str | None = None
     checkpoint_dir: str | None = None
-    # None → fall back to the VNL base (_default_init_checkpoint); "" → train
-    # from scratch; an explicit path → that checkpoint.
+    # None / "" → train from scratch; an explicit path → that checkpoint
+    # (selected from ACTION_CHECKPOINTS_DIR).
     init_checkpoint: str | None = None
     gpu: int = Field(default=0, ge=0)
     # "logmel" → late-fusion audio (precomputed before training); "none" →
@@ -110,11 +110,6 @@ def _default_frame_dir(source: str) -> str:
 
 def _default_dataset(source: str) -> str:
     return "vnl_1.5" if source == "vnl_1_5" else "yp_actions"
-
-
-def _default_init_checkpoint() -> str:
-    path = SPOT_DIR / "exp" / "vnl15_official_150" / "checkpoint_best.pt"
-    return str(path.relative_to(SPOT_DIR)) if path.exists() else ""
 
 
 def _safe_run_name(dataset: str) -> str:
@@ -490,16 +485,12 @@ def _vnl_stats() -> dict:
 
 
 def _init_checkpoint_options() -> list[dict]:
-    """Selectable init-checkpoint options: the VNL base plus packaged action runs.
+    """Selectable init-checkpoint options: packaged action runs.
 
     Action checkpoints live under ACTION_CHECKPOINTS_DIR/<run>/checkpoint_best.pt
-    and are returned as absolute paths (passed through _spot_path unchanged). The
-    VNL base stays SPOT-relative so it resolves under SPOT_DIR.
+    and are returned as absolute paths (passed through _spot_path unchanged).
     """
     options: list[dict] = []
-    default = _default_init_checkpoint()
-    if default:
-        options.append({"label": "VNL 1.5 base (vnl15_official_150)", "value": default})
     if ACTION_CHECKPOINTS_DIR.exists():
         for run_dir in sorted(ACTION_CHECKPOINTS_DIR.iterdir(), reverse=True):
             ckpt = run_dir / "checkpoint_best.pt"
@@ -538,7 +529,6 @@ def status() -> dict:
         "spot_available": SPOT_DIR.exists() and SPOT_PYTHON.exists(),
         "spot_dir": str(SPOT_DIR),
         "spot_python": str(SPOT_PYTHON),
-        "default_init_checkpoint": _default_init_checkpoint(),
         "init_checkpoints": _init_checkpoint_options(),
         "vnl_1_5": _vnl_stats(),
         "action_annotations": _action_annotation_stats(),
@@ -570,9 +560,8 @@ def _build_command(
         for rel in ("data/vnl_1.5/train.jsonl", "data/vnl_1.5/val.jsonl"):
             if not (SPOT_DIR / rel).exists():
                 raise HTTPException(400, f"Missing VNL JSONL labels: {SPOT_DIR / rel}")
-    init_value = _default_init_checkpoint() if req.init_checkpoint is None else req.init_checkpoint
-    if init_value:
-        init_checkpoint = _spot_path(init_value)
+    if req.init_checkpoint:
+        init_checkpoint = _spot_path(req.init_checkpoint)
         if not init_checkpoint.exists():
             raise HTTPException(400, f"Init checkpoint not found: {init_checkpoint}")
     else:

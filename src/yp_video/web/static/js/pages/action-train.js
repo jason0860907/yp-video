@@ -199,9 +199,7 @@ function populateInitCheckpoints() {
     .map((o) => `<option value="${escapeHtml(o.value)}">${escapeHtml(o.label)}</option>`)
     .join('');
   const values = opts.map((o) => o.value);
-  const defaultInit = status?.default_init_checkpoint || '';
   if (prev && values.includes(prev)) initEl.value = prev;
-  else if (defaultInit && values.includes(defaultInit)) initEl.value = defaultInit;
   else initEl.value = values[0];
 }
 
@@ -263,7 +261,6 @@ function vnlSummary(vnl) {
     ['Train', `${vnl.train_videos || 0} videos / ${vnl.train_events || 0} events`],
     ['Val', `${vnl.val_videos || 0} videos / ${vnl.val_events || 0} events`],
     ['Frames', vnl.frame_dir_exists ? vnl.frame_dir : 'missing'],
-    ['Init', status?.default_init_checkpoint || 'missing'],
   ];
   return summaryRows(rows, vnl.ready);
 }
