@@ -31,7 +31,24 @@ let state = {
   mode: 'upload', // 'upload' or 'download'
   files: [],
   jobs: [],
+  expanded: {}, // folderKey -> true when a sub-folder is expanded (collapsed by default)
 };
+
+// Sub-path of a file within its group (e.g. "labels/action-annotations/x.jsonl"),
+// its directory portion ("" for files at the group root), and a stable folder key.
+function subPathOf(f) {
+  return (f.group && f.path.startsWith(f.group + '/'))
+    ? f.path.slice(f.group.length + 1)
+    : (f.path || f.name);
+}
+function subDirOf(f) {
+  const sp = subPathOf(f);
+  const i = sp.lastIndexOf('/');
+  return i === -1 ? '' : sp.slice(0, i);
+}
+function folderKeyOf(f) {
+  return (f.group || '') + '/' + subDirOf(f);
+}
 
 export function render(container) {
   container.innerHTML = `
@@ -225,6 +242,7 @@ async function loadFiles() {
       state.files = await api(API.upload.r2Files(state.category));
     }
     state.files.forEach(f => f.selected = false);
+    state.expanded = {}; // sub-folders start collapsed on every (re)load
     renderFiles();
   } catch (e) {
     el.innerHTML = emptyState(
@@ -266,27 +284,77 @@ function renderFiles() {
          ${btnSmall('Un-synced', 'id="upl-select-unsynced"', 'primary')}`
   );
 
-  // Pre-count files per group for the group header
+  // Render in (group → sub-dir → name) order so root files lead each group and
+  // nested files (labels) collapse under one folder, without disturbing the
+  // data-idx → state.files mapping that selection relies on.
+  const order = state.files.map((_, i) => i).sort((a, b) => {
+    const fa = state.files[a], fb = state.files[b];
+    return (fa.group || '').localeCompare(fb.group || '')
+      || subDirOf(fa).localeCompare(subDirOf(fb))
+      || fa.name.localeCompare(fb.name);
+  });
+
+  // Pre-count files per group, and per sub-folder track total + selected for the
+  // folder header's checkbox (checked = all selected, indeterminate = some).
   const groupCounts = {};
+  const subTotal = {};
+  const subSelected = {};
   for (const f of state.files) {
     if (f.group) groupCounts[f.group] = (groupCounts[f.group] || 0) + 1;
+    if (f.group && subDirOf(f)) {
+      const k = folderKeyOf(f);
+      subTotal[k] = (subTotal[k] || 0) + 1;
+      if (f.selected) subSelected[k] = (subSelected[k] || 0) + 1;
+    }
   }
 
   let currentGroup = null;
+  let currentSub = null;
   let html = '';
 
-  for (let i = 0; i < state.files.length; i++) {
+  for (const i of order) {
     const f = state.files[i];
     const isSynced = isUpload ? f.uploaded : f.local;
 
     // Group header (shown for nested categories like rally_clips, tad-features)
     if (f.group && f.group !== currentGroup) {
       currentGroup = f.group;
+      currentSub = null;
       html += `<div class="pt-3 pb-1 px-2.5 text-[11px] font-heading font-medium text-text-muted uppercase tracking-wider flex items-center gap-2">
         <span>${f.group}</span>
         <span class="text-text-muted/70 normal-case tracking-normal tabular-nums">(${groupCounts[f.group]} files)</span>
       </div>`;
     }
+
+    // Sub-folder: collapsible row (collapsed by default), with a folder-level
+    // checkbox that selects/deselects every file inside it.
+    const d = f.group ? subDirOf(f) : '';
+    if (d !== (currentSub || '')) {
+      currentSub = d;
+      if (d) {
+        const key = folderKeyOf(f);
+        const total = subTotal[key] || 0;
+        const sel = subSelected[key] || 0;
+        const expanded = !!state.expanded[key];
+        const checkAttr = sel === 0 ? '' : (sel === total ? 'checked' : 'data-indeterminate="1"');
+        const chevron = expanded
+          ? '<path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5"/>'
+          : '<path stroke-linecap="round" stroke-linejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5"/>';
+        html += `
+      <div class="flex items-center gap-3 p-2.5 rounded-xl border border-transparent hover:bg-white/[0.03] hover:border-white/5 transition-all duration-200">
+        <input type="checkbox" data-folder="${encodeURIComponent(key)}" class="upl-folder-check cursor-pointer accent-primary w-3.5 h-3.5" ${checkAttr}>
+        <button type="button" data-folder="${encodeURIComponent(key)}" class="upl-folder-toggle flex items-center gap-2 flex-1 min-w-0 text-left cursor-pointer">
+          <svg class="w-3.5 h-3.5 text-text-muted shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">${chevron}</svg>
+          <svg class="w-4 h-4 text-amber-300/80 shrink-0" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9A2.25 2.25 0 0019.5 6.75h-5.379a1.5 1.5 0 01-1.06-.44z"/></svg>
+          <span class="text-sm text-text-secondary truncate">${d}/</span>
+          <span class="text-[11px] text-text-muted/70 tabular-nums shrink-0">(${total})</span>
+        </button>
+      </div>`;
+      }
+    }
+
+    // Skip child rows while their folder is collapsed
+    if (d && !state.expanded[folderKeyOf(f)]) continue;
 
     const syncBadge = localOnly ? '' : (isSynced
       ? `<span class="inline-flex items-center gap-1.5 text-[11px] text-emerald-400 bg-emerald-500/10 ring-1 ring-emerald-500/20 px-2.5 py-0.5 rounded-full font-medium"><span class="w-1.5 h-1.5 rounded-full bg-current"></span>${syncLabel}</span>`
@@ -294,7 +362,7 @@ function renderFiles() {
     );
 
     html += `
-      <div class="group flex items-center gap-3 p-2.5 rounded-xl border border-transparent hover:bg-white/[0.03] hover:border-white/5 transition-all duration-200">
+      <div class="group flex items-center gap-3 p-2.5 ${d ? 'pl-9' : ''} rounded-xl border border-transparent hover:bg-white/[0.03] hover:border-white/5 transition-all duration-200">
         <input type="checkbox" data-idx="${i}" class="upl-check cursor-pointer accent-primary w-3.5 h-3.5" ${f.selected ? 'checked' : ''}>
         <span class="text-sm text-text-primary flex-1 truncate group-hover:text-white transition-colors duration-200">${f.name}</span>
         <span class="text-[11px] text-text-muted tabular-nums">${formatBytes(f.size)}</span>
@@ -306,8 +374,33 @@ function renderFiles() {
 
   el.querySelectorAll('.upl-check').forEach(cb => {
     cb.addEventListener('change', (e) => {
-      state.files[parseInt(e.target.dataset.idx)].selected = e.target.checked;
-      updateSelectedCount();
+      const f = state.files[parseInt(e.target.dataset.idx)];
+      f.selected = e.target.checked;
+      // Re-render only for nested files so the parent folder checkbox reflects
+      // the new aggregate; flat lists just bump the count (cheaper).
+      if (f.group && subDirOf(f)) renderFiles();
+      else updateSelectedCount();
+    });
+  });
+
+  // Folder checkbox: the "indeterminate" visual can only be set via JS, plus it
+  // selects/deselects every file inside the folder at once.
+  el.querySelectorAll('.upl-folder-check').forEach(cb => {
+    if (cb.dataset.indeterminate) cb.indeterminate = true;
+    cb.addEventListener('change', (e) => {
+      const key = decodeURIComponent(e.target.dataset.folder);
+      const checked = e.target.checked;
+      state.files.forEach(f => { if (folderKeyOf(f) === key) f.selected = checked; });
+      renderFiles();
+    });
+  });
+
+  // Folder row toggles expand/collapse (collapsed by default)
+  el.querySelectorAll('.upl-folder-toggle').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const key = decodeURIComponent(e.currentTarget.dataset.folder);
+      state.expanded[key] = !state.expanded[key];
+      renderFiles();
     });
   });
 
