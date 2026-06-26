@@ -894,7 +894,7 @@ async def start_spot_prelabel(req: SpotPrelabelRequest) -> dict:
             await job_manager.update_job(
                 job.id,
                 progress=0.05,
-                message="Waiting for GPU...",
+                message="Waiting for inference slot...",
             )
 
             def start_handler(_match):
@@ -931,7 +931,9 @@ async def start_spot_prelabel(req: SpotPrelabelRequest) -> dict:
                 )
 
                 async with stop_vllm_for_job(job.id, when=req.stop_vllm):
-                    async with job_manager.gpu_lock:
+                    # inference_lock (not gpu_lock) so this can run alongside a
+                    # training job; still serialized against other inference jobs.
+                    async with job_manager.inference_lock:
                         await job_manager.update_job(
                             job.id,
                             progress=0.08,
@@ -1191,7 +1193,9 @@ async def _run_prelabel_batch_subprocess(
             return "SPOT did not create prediction output"
 
         failed = 0
-        async with job_manager.gpu_lock:
+        # inference_lock (not gpu_lock) so the batch can run alongside training;
+        # still serialized against other inference jobs.
+        async with job_manager.inference_lock:
             await job_manager.update_job(job_id, message="Running SPOT inference", progress=0.08)
             for idx, ((video, _ann_path), pred_file) in enumerate(zip(entries, pred_files)):
                 failure_lines: list[str] = []

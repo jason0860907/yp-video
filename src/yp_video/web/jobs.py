@@ -81,6 +81,11 @@ class JobManager:
     def __init__(self):
         self.jobs: dict[str, Job] = {}
         self.gpu_lock = _GpuLock()
+        # Serializes SPOT inference jobs among themselves WITHOUT blocking on the
+        # exclusive gpu_lock that training holds, so a (small-batch) pre-label can
+        # run while a training job is in progress. Inference runs in a subprocess,
+        # so the OS reclaims its VRAM on exit — no in-process cache flush needed.
+        self.inference_lock = asyncio.Lock()
         self._vllm_using_gpu = False
 
     def create_job(self, job_type: str, params: dict | None = None, name: str = "") -> Job:
