@@ -38,12 +38,13 @@ class DeleteR2Request(BaseModel):
 # Categories that skip R2 upload (local-only)
 LOCAL_ONLY_CATEGORIES = {"videos"}
 
+# terminal.log is intentionally excluded: it's a bulky training-process record,
+# kept locally in the package dir but neither listed nor uploaded to R2.
 ACTION_CHECKPOINT_PACKAGE_FILES = {
     "checkpoint_best.pt",
     "checkpoint_best.json",
     "config.json",
     "loss.json",
-    "terminal.log",
     "manifest.json",
 }
 
