@@ -27,6 +27,7 @@ from yp_video.config import (
     SPOT_DIR,
     SPOT_PYTHON,
     SPOT_TRAIN_MODULE,
+    cut_kind_of,
     find_cut,
 )
 from yp_video.contracts.action import (
@@ -82,15 +83,18 @@ class ActionTrainRequest(BaseModel):
     pred_loc_arch: str = "mlp"
     clip_len: int = Field(default=64, ge=8, le=256)
     batch_size: int = Field(default=8, ge=1, le=64)
-    num_epochs: int = Field(default=100, ge=1, le=1000)
+    num_epochs: int = Field(default=50, ge=1, le=1000)
     warm_up_epochs: int = Field(default=3, ge=0, le=100)
-    learning_rate: float = Field(default=0.0008, gt=0)
+    learning_rate: float = Field(default=0.0003, gt=0)
     num_workers: int = Field(default=4, ge=0, le=32)
     criterion: str = Field(default="map", pattern="^(map|loss)$")
     start_val_epoch: int = Field(default=0, ge=0)
     epoch_num_frames: int | None = Field(default=None, ge=1)
     val_ratio: float = Field(default=0.2, gt=0, lt=1)
     split_seed: int = 42
+    # "all" trains every view together; "broadcast"/"sideline" restrict to one
+    # camera view (labels carry a camera_view tag from _prepare_action_training_labels).
+    camera_view: str = Field(default="all", pattern="^(all|broadcast|sideline)$")
     predict_location: bool = True
     stop_vllm: bool = False
 
@@ -116,10 +120,21 @@ def _safe_run_name(dataset: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", dataset).strip("._") or "actions"
 
 
+def _audio_tag(req: ActionTrainRequest) -> str:
+    """Run-name fragment marking the modality: 'visual' or 'fusion'.
+
+    Makes a run dir self-describing (e.g. yp_actions_fusion_<stamp> vs
+    yp_actions_visual_<stamp>) so visual-only and audio late-fusion runs are
+    distinguishable at a glance in exp/ and action-checkpoints/.
+    """
+    return "visual" if req.audio_backend == "none" else "fusion"
+
+
 def _resolve_save_dir(req: ActionTrainRequest, dataset: str | None = None) -> Path:
     dataset = dataset or req.dataset or _default_dataset(req.source)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    return _spot_path(req.save_dir or (Path("exp") / f"{_safe_run_name(dataset)}_{stamp}"))
+    name = f"{_safe_run_name(dataset)}_{req.camera_view}_{_audio_tag(req)}_{stamp}"
+    return _spot_path(req.save_dir or (Path("exp") / name))
 
 
 def _action_checkpoint_path(path: str | Path) -> Path:
@@ -227,8 +242,14 @@ def _rally_match_span(meta: dict, num_frames: int) -> tuple[int, int] | None:
     return start, end
 
 
-def _prepare_action_training_labels(*, frame_dir: Path, save_dir: Path) -> dict:
-    """Write run-local label copies whose frame counts match the SPOT cache."""
+def _prepare_action_training_labels(
+    *, frame_dir: Path, save_dir: Path, camera_view: str = "all"
+) -> dict:
+    """Write run-local label copies whose frame counts match the SPOT cache.
+
+    When ``camera_view`` restricts to a single view, only matching videos are
+    written, so the saved label snapshot equals what training actually used.
+    """
 
     label_files = sorted(ACTION_ANNOTATIONS_DIR.glob("*_actions.jsonl"))
     if not label_files:
@@ -255,6 +276,10 @@ def _prepare_action_training_labels(*, frame_dir: Path, save_dir: Path) -> dict:
         if video_path is None:
             raise RuntimeError(f"Missing source video for action labels: {stem}.mp4")
 
+        view = cut_kind_of(video_path)
+        if camera_view != "all" and view != camera_view:
+            continue
+
         cache = inspect_action_frame_cache(video_path, cache_root=frame_dir)
         cache_frames = int(cache.get("frame_count") or 0)
         if cache_frames <= 0:
@@ -278,6 +303,7 @@ def _prepare_action_training_labels(*, frame_dir: Path, save_dir: Path) -> dict:
             **meta,
             "num_frames": cache_frames,
             "training_num_frames_source": "action_frame_cache",
+            "camera_view": view,
         }
         if original_frames and original_frames != cache_frames:
             training_meta["source_num_frames"] = original_frames
@@ -298,6 +324,11 @@ def _prepare_action_training_labels(*, frame_dir: Path, save_dir: Path) -> dict:
         videos += 1
         events += len(records)
         total_frames += cache_frames
+
+    if videos == 0:
+        raise RuntimeError(
+            f"No '{camera_view}' action labels found in {ACTION_ANNOTATIONS_DIR}"
+        )
 
     return {
         "label_dir": str(label_dir),
@@ -608,6 +639,14 @@ def _build_command(
         if audio_dir is None:
             raise HTTPException(400, "Audio features missing for late-fusion training")
         cmd.extend(["--audio_dir", str(audio_dir)])
+    if req.camera_view != "all":
+        if req.source != "action_annotations":
+            raise HTTPException(
+                400,
+                f"camera_view='{req.camera_view}' is only supported for "
+                "action_annotations labels; VNL labels carry no camera_view tag.",
+            )
+        cmd.extend(["--camera_view", req.camera_view])
     if req.predict_location:
         cmd.append("--predict_location")
     if init_checkpoint is not None:
@@ -653,6 +692,7 @@ def _build_command(
     if req.source == "action_annotations":
         params["label_dir"] = str(action_label_dir or ACTION_ANNOTATIONS_DIR)
         params["training_mode"] = req.training_mode
+        params["camera_view"] = req.camera_view
         if req.training_mode == "split":
             params["val_ratio"] = req.val_ratio
             params["split_seed"] = req.split_seed
@@ -725,6 +765,7 @@ async def start(req: ActionTrainRequest) -> dict:
                     _prepare_action_training_labels,
                     frame_dir=frame_dir,
                     save_dir=save_dir,
+                    camera_view=req.camera_view,
                 )
                 action_label_dir = Path(label_summary["label_dir"])
                 await job_manager.update_job(

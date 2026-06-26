@@ -55,12 +55,12 @@ export function render(container) {
                   <option value="logmel">logmel (late fusion)</option>
                   <option value="none">none (visual only)</option>
                 `))}
-                ${field('Epochs', 'act-train-epochs', input('number', '100', '1', '1000'))}
+                ${field('Epochs', 'act-train-epochs', input('number', '50', '1', '1000'))}
                 ${field('Batch', 'act-train-batch', input('number', '8', '1', '64'))}
                 ${field('Clip Len', 'act-train-clip', input('number', '64', '8', '256'))}
                 ${field('Workers', 'act-train-workers', input('number', '4', '0', '32'))}
                 ${field('GPU', 'act-train-gpu', input('number', '0', '0', '7'))}
-                ${field('LR', 'act-train-lr', input('number', '0.0008', '0', '', 'any'))}
+                ${field('LR', 'act-train-lr', input('number', '0.0003', '0', '', 'any'))}
                 ${field('Warmup', 'act-train-warmup', input('number', '3', '0', '100'))}
                 ${field('Criterion', 'act-train-criterion', select(`
                   <option value="map">map</option>
@@ -73,6 +73,11 @@ export function render(container) {
                   ${field('Data Mode', 'act-train-training-mode', select(`
                     <option value="all" selected>All Data</option>
                     <option value="split">Train/Test Split</option>
+                  `))}
+                  ${field('Camera View', 'act-train-camera-view', select(`
+                    <option value="all" selected>All Views</option>
+                    <option value="broadcast">Broadcast</option>
+                    <option value="sideline">Sideline</option>
                   `))}
                 </div>
 
@@ -116,6 +121,7 @@ export function render(container) {
     updateTrainingModeControls();
     renderDataset();
   });
+  document.getElementById('act-train-camera-view').addEventListener('change', renderDataset);
   document.getElementById('act-train-start').addEventListener('click', startTraining);
   document.getElementById('act-train-cancel').addEventListener('click', cancelTraining);
   loadData();
@@ -180,6 +186,8 @@ function applySourceDefaults() {
     datasetEl.value = 'yp_actions';
     framesEl.value = '~/videos/action-frames';
     if (job?.params?.training_mode && modeEl) modeEl.value = job.params.training_mode;
+    const viewEl = document.getElementById('act-train-camera-view');
+    if (job?.params?.camera_view && viewEl) viewEl.value = job.params.camera_view;
     modeWrap.classList.remove('hidden');
     updateTrainingModeControls();
   }
@@ -205,6 +213,10 @@ function populateInitCheckpoints() {
 
 function trainingMode() {
   return document.getElementById('act-train-training-mode')?.value || 'split';
+}
+
+function cameraView() {
+  return document.getElementById('act-train-camera-view')?.value || 'all';
 }
 
 function updateTrainingModeControls() {
@@ -269,6 +281,7 @@ function actionSummary(stats) {
   const rows = [
     ['Labels', `${stats.videos} videos / ${stats.actions} events / ${stats.frames.toLocaleString()} frames`],
     ['Mode', trainingMode() === 'all' ? 'all data' : 'train/test split'],
+    ['View', cameraView() === 'all' ? 'all views' : cameraView()],
     ['Source', status?.action_annotations?.label_dir || '~/videos/action-annotations'],
     ['Frames', document.getElementById('act-train-frame-dir')?.value || '~/videos/action-frames'],
   ];
@@ -330,6 +343,7 @@ async function startTraining() {
     const body = {
       source,
       training_mode: source === 'action_annotations' ? trainingMode() : 'split',
+      camera_view: source === 'action_annotations' ? cameraView() : 'all',
       dataset: textValue('act-train-dataset'),
       frame_dir: textValue('act-train-frame-dir'),
       checkpoint_dir: textValue('act-train-checkpoint-dir', null),
@@ -340,9 +354,9 @@ async function startTraining() {
       audio_backend: textValue('act-train-audio', 'logmel'),
       clip_len: numberValue('act-train-clip', 64),
       batch_size: numberValue('act-train-batch', 8),
-      num_epochs: numberValue('act-train-epochs', 100),
+      num_epochs: numberValue('act-train-epochs', 50),
       warm_up_epochs: numberValue('act-train-warmup', 3),
-      learning_rate: numberValue('act-train-lr', 0.0008),
+      learning_rate: numberValue('act-train-lr', 0.0003),
       num_workers: numberValue('act-train-workers', 4),
       criterion: textValue('act-train-criterion', 'map'),
       start_val_epoch: numberValue('act-train-start-val', 0),
