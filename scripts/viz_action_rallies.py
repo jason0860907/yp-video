@@ -28,10 +28,13 @@ import html
 import json
 from pathlib import Path
 
-ACTION_PRE_DIR = Path.home() / "videos" / "action-pre-annotations"
-# TAD (ActionFormer) first-pass rally segments live here, one *_annotations.jsonl
-# per video (first line is a {"_meta": true, ...} header, rest are rally rows).
-RALLY_PRE_DIR = Path.home() / "videos" / "rally-pre-annotations"
+# RALLY_PRE_DIR holds the TAD (ActionFormer) first-pass rally segments, one
+# *_annotations.jsonl per video (first line is a {"_meta": true, ...} header,
+# rest are rally rows).
+from yp_video.config import (
+    ACTION_PRE_ANNOTATIONS_DIR as ACTION_PRE_DIR,
+    PRE_ANNOTATIONS_DIR as RALLY_PRE_DIR,
+)
 
 # Matches the overlay colors used in action-annotate.js
 COLORS = {

@@ -31,7 +31,7 @@ import numpy as np
 
 from yp_video.core.sampling import get_fps as get_video_fps
 
-from yp_video.config import TAD_ANNOTATIONS_FILE, TAD_FEATURES_DIR
+from yp_video.config import PRE_ANNOTATIONS_DIR, TAD_ANNOTATIONS_FILE, TAD_FEATURES_DIR
 from yp_video.core.jsonl import read_jsonl
 
 
@@ -245,7 +245,7 @@ def main():
     parser.add_argument(
         "--annotations",
         type=Path,
-        default=Path.home() / "videos" / "rally-pre-annotations",
+        default=PRE_ANNOTATIONS_DIR,
         help="Directory containing *_annotations.jsonl files",
     )
     parser.add_argument(

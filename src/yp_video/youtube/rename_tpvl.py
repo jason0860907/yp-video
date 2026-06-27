@@ -17,8 +17,7 @@ import re
 import sys
 from pathlib import Path
 
-# Default video directory
-DEFAULT_VIDEO_DIR = Path.home() / "videos"
+from yp_video.config import VIDEOS_DIR as DEFAULT_VIDEO_DIR
 
 # Pattern to match already-formatted files
 FORMATTED_PATTERN = re.compile(r'^\d{4}-\d{2}-\d{2}_G\d+_.+\.mp4$')

@@ -18,6 +18,7 @@ Rally detection logic:
 import argparse
 from pathlib import Path
 
+from yp_video.config import PRE_ANNOTATIONS_DIR, SEG_ANNOTATIONS_DIR
 from yp_video.core.jsonl import read_jsonl, write_jsonl
 from yp_video.core.sampling import get_video_duration_cv2 as get_video_duration
 
@@ -203,13 +204,13 @@ def main():
     parser.add_argument(
         "--input",
         type=Path,
-        default=Path.home() / "videos" / "seg-annotations",
+        default=SEG_ANNOTATIONS_DIR,
         help="Input directory with VLM JSONL files",
     )
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path.home() / "videos" / "rally-pre-annotations",
+        default=PRE_ANNOTATIONS_DIR,
         help="Output directory for rally annotations",
     )
     parser.add_argument(

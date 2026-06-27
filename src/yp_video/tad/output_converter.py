@@ -15,6 +15,7 @@ import argparse
 import json
 from pathlib import Path
 
+from yp_video.config import PREDICTIONS_DIR
 from yp_video.core.jsonl import write_jsonl
 from yp_video.core.sampling import get_video_duration_cv2 as get_video_duration
 
@@ -144,7 +145,7 @@ def main():
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path.home() / "videos" / "tad-predictions",
+        default=PREDICTIONS_DIR,
         help="Output directory for JSONL files",
     )
     parser.add_argument(

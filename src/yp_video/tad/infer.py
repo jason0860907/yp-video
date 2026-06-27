@@ -15,6 +15,8 @@ import torch
 
 from yp_video.config import (
     FEATURES_DIR,
+    PREDICTIONS_DIR,
+    RALLY_CLIPS_DIR,
     TAD_CHECKPOINTS_DIR,
     TAD_CONFIGS_DIR,
     TAD_FEATURES_DIR,
@@ -462,15 +464,13 @@ def main():
         sys.exit(1)
 
     if args.output is None:
-        args.output = (
-            Path.home() / "videos" / "tad-predictions" / f"{args.video.stem}_annotations.jsonl"
-        )
+        args.output = PREDICTIONS_DIR / f"{args.video.stem}_annotations.jsonl"
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
 
     cut_dir = None
     if args.cut:
-        cut_dir = Path.home() / "videos" / "rally_clips" / args.video.stem
+        cut_dir = RALLY_CLIPS_DIR / args.video.stem
 
     run_inference(
         args.video,

@@ -16,8 +16,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Default output directory
-DEFAULT_OUTPUT_DIR = Path.home() / "videos"
+from yp_video.config import VIDEOS_DIR as DEFAULT_OUTPUT_DIR
 
 
 def check_ytdlp():

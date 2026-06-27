@@ -64,7 +64,7 @@ def default_checkpoint() -> Path | None:
     return resolve_checkpoint(chosen["path"])
 
 
-def resolve_checkpoint(value: str | None) -> Path:
+def resolve_checkpoint(value: str | Path | None) -> Path:
     if value:
         path = resolve_checkpoint_path(value)
     else:

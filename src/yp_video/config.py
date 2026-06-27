@@ -54,7 +54,7 @@ TAD_PKG_DIR = Path(__file__).resolve().parent / "tad"
 TAD_CONFIGS_DIR = TAD_PKG_DIR / "configs"
 
 # ── User data directories (~/videos) ─────────────────────────────
-VIDEOS_DIR = Path.home() / "videos"
+VIDEOS_DIR = _env_path("YP_VIDEOS_DIR", PROJECT_ROOT.parent / "videos")
 RAW_VIDEOS_DIR = VIDEOS_DIR / "raw-videos"
 # Cuts split by capture style — picked in the UI when exporting from Cut page.
 # "broadcast" = TV-style with replays / overlays / cuts (e.g. VNL, U19, TPVL)

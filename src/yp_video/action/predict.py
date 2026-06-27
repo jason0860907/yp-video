@@ -104,15 +104,12 @@ def predict_actions_to_jsonl(
         )
 
     try:
-        checkpoint = (
-            Path(checkpoint_path).expanduser()
-            if checkpoint_path
-            else prelabel.resolve_checkpoint(None)
-        )
+        # resolve_checkpoint handles VIDEOS_DIR-relative refs, existence, and the
+        # ~/videos/action-checkpoints containment check for both the explicit and
+        # default (None) cases.
+        checkpoint = prelabel.resolve_checkpoint(checkpoint_path)
     except (FileNotFoundError, ValueError) as exc:
         raise SpotInferenceError(f"SPOT checkpoint unavailable: {exc}") from exc
-    if not checkpoint.exists():
-        raise SpotInferenceError(f"SPOT checkpoint not found: {checkpoint}")
 
     _msg("Reading video metadata...")
     fps, num_frames = _probe_fps_frames(video_path)

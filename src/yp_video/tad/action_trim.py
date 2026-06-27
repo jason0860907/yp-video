@@ -27,9 +27,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from yp_video.config import ACTION_PRE_ANNOTATIONS_DIR as ACTION_PRE_DIR
 from yp_video.core.jsonl import read_jsonl
-
-ACTION_PRE_DIR = Path.home() / "videos" / "action-pre-annotations"
 
 
 def default_action_path(video_stem: str) -> Path:
