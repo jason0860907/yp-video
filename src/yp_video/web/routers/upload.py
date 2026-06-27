@@ -193,9 +193,13 @@ def list_r2_files(category: str = "cuts-broadcast") -> list[dict]:
             "size": obj["size"],
             "local": local_path.exists(),
         }
-        # Add group for nested categories
+        # Add group for nested categories. action-checkpoints groups by the
+        # run dir only (first part), matching list_local_files so the frontend
+        # renders the nested label/metadata files as folders under the run.
         rel_path = Path(rel)
-        if len(rel_path.parts) > 1:
+        if category == "action-checkpoints":
+            entry["group"] = rel_path.parts[0]
+        elif len(rel_path.parts) > 1:
             entry["group"] = str(rel_path.parent)
         result.append(entry)
     return result
