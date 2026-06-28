@@ -69,6 +69,37 @@ function timelineRange(ed: Editor, scope: 'rally' | 'video', rally: ActionRally 
 const frameToPct = (frame: number, r: TimelineRange) => clamp((frame - r.startFrame) / Math.max(1, r.endFrame - r.startFrame), 0, 1) * 100;
 const pctToFrame = (pct: number, r: TimelineRange) => Math.round(r.startFrame + clamp(pct, 0, 1) * Math.max(0, r.endFrame - r.startFrame));
 
+// Audio waveform: request density + amplitude shaping, ported from the legacy UI.
+const WAVEFORM_POINTS_PER_SECOND = 120;
+const WAVEFORM_MIN_POINTS = 2400;
+const WAVEFORM_MAX_POINTS = 96000;
+const WAVEFORM_SCALE_PERCENTILE = 0.98;
+const WAVEFORM_SCALE_HEADROOM = 1.35;
+const WAVEFORM_MIN_SCALE = 0.02;
+const WAVEFORM_VERTICAL_FILL = 0.4;
+const WAVEFORM_PEAK_GAIN = 0.55;
+const WAVEFORM_RMS_GAIN = 1.15;
+
+interface WaveformData {
+  video: string;
+  loading: boolean;
+  error: string;
+  hasAudio: boolean;
+  duration: number;
+  peaks: number[];
+  rms: number[];
+}
+const EMPTY_WAVE: WaveformData = { video: '', loading: false, error: '', hasAudio: false, duration: 0, peaks: [], rms: [] };
+/** Normalize amplitudes to a high percentile so quiet clips still fill the lane. */
+function waveformScaleAmp(values: number[]): number {
+  const active = values.filter((v) => v > 0.001).sort((a, b) => a - b);
+  if (!active.length) return 0.03;
+  const idx = clamp(Math.floor((active.length - 1) * WAVEFORM_SCALE_PERCENTILE), 0, active.length - 1);
+  return Math.max(WAVEFORM_MIN_SCALE, active[idx]! * WAVEFORM_SCALE_HEADROOM);
+}
+const waveformPointCount = (durationSeconds: number) =>
+  clamp(Math.ceil(Math.max(0, durationSeconds) * WAVEFORM_POINTS_PER_SECOND) || WAVEFORM_MIN_POINTS, WAVEFORM_MIN_POINTS, WAVEFORM_MAX_POINTS);
+
 const findRally = (frame: number, ed: Editor): ActionRally | null => {
   const t = frame / (ed.fps || 30);
   return ed.rallies.find((r) => t >= r.start && t < r.end) ?? null;
@@ -125,6 +156,9 @@ export function ActionAnnotatePage() {
   const [pointMode, setPointMode] = useState(false);
   const [timelineScope, setTimelineScope] = useState<'rally' | 'video'>('rally');
   const [mediaBox, setMediaBox] = useState<MediaBox | null>(null);
+  const [waveform, setWaveform] = useState<WaveformData>(EMPTY_WAVE);
+  const waveformReq = useRef(0);
+  const waveCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const drag = useRef<{ id: string; moved: boolean } | null>(null);
   const suppressClick = useRef(false);
   const [selectedLabel, setSelectedLabel] = useState('serve');
@@ -312,6 +346,22 @@ export function ActionAnnotatePage() {
     });
   }, [videos, kindFilter, progressFilter, search]);
 
+  const loadWaveform = useCallback(async (name: string, duration: number) => {
+    const reqId = ++waveformReq.current;
+    setWaveform({ ...EMPTY_WAVE, video: name, loading: true });
+    try {
+      const pts = waveformPointCount(duration);
+      const data = await apiFetch<{ has_audio?: boolean; duration?: number; peaks?: number[]; rms?: number[] }>(`${API.actionAnnotate.waveform(name)}?points=${pts}`);
+      if (reqId !== waveformReq.current) return;
+      const peaks = Array.isArray(data.peaks) ? data.peaks.map((v) => clamp(Number(v) || 0, 0, 1)) : [];
+      const rms = Array.isArray(data.rms) && data.rms.length === peaks.length ? data.rms.map((v) => clamp(Number(v) || 0, 0, 1)) : peaks;
+      setWaveform({ video: name, loading: false, error: '', hasAudio: Boolean(data.has_audio), duration: Number(data.duration) || duration || 0, peaks, rms });
+    } catch (e) {
+      if (reqId !== waveformReq.current) return;
+      setWaveform({ ...EMPTY_WAVE, video: name, error: errMsg(e) });
+    }
+  }, []);
+
   const load = async (name: string) => {
     if (!name) return;
     if (ed.dirty && name !== ed.video) {
@@ -338,6 +388,7 @@ export function ActionAnnotatePage() {
         el.src = apiUrl(API.actionAnnotate.video(next.video));
         el.load();
       }
+      loadWaveform(next.video, next.duration);
       setFrame(0);
       toast.success(`Loaded ${next.events.length} event(s)`);
     } catch (e) {
@@ -478,6 +529,108 @@ export function ActionAnnotatePage() {
     if (!hasTimeline) return;
     setTimelineScope((s) => (s === 'rally' ? 'video' : 'rally'));
   };
+
+  // Audio lane. Slices the fetched peaks/RMS to the visible time window and
+  // paints a peaks envelope under a brighter RMS body. Redraws on range/data
+  // change and on canvas resize (ResizeObserver via a ref to dodge stale closures).
+  const waveStart = range.startTime;
+  const waveEnd = range.endTime;
+  const drawWaveform = useCallback(() => {
+    const canvas = waveCanvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const width = Math.max(1, Math.floor(rect.width));
+    const height = Math.max(1, Math.floor(rect.height));
+    const dpr = window.devicePixelRatio || 1;
+    const pw = Math.max(1, Math.floor(width * dpr));
+    const ph = Math.max(1, Math.floor(height * dpr));
+    if (canvas.width !== pw || canvas.height !== ph) {
+      canvas.width = pw;
+      canvas.height = ph;
+    }
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+    const center = height / 2;
+
+    const bg = ctx.createLinearGradient(0, 0, 0, height);
+    bg.addColorStop(0, 'rgba(56,189,248,0.12)');
+    bg.addColorStop(1, 'rgba(249,115,22,0.06)');
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, width, height);
+    ctx.strokeStyle = 'rgba(125,125,135,0.20)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, center);
+    ctx.lineTo(width, center);
+    ctx.stroke();
+
+    if (!waveform.hasAudio || !waveform.peaks.length) return;
+    const duration = waveform.duration || ed.duration || 1;
+    const startIndex = clamp(Math.floor((waveStart / duration) * waveform.peaks.length), 0, waveform.peaks.length - 1);
+    const endIndex = clamp(Math.ceil((waveEnd / duration) * waveform.peaks.length), startIndex + 1, waveform.peaks.length);
+    const visiblePeaks = waveform.peaks.slice(startIndex, endIndex);
+    const visibleRms = waveform.rms.length ? waveform.rms.slice(startIndex, endIndex) : visiblePeaks;
+    const scaleAmp = waveformScaleAmp(visibleRms);
+    const halfHeight = Math.max(8, height - 10) * WAVEFORM_VERTICAL_FILL;
+
+    const valueAtPixel = (values: number[], x: number) => {
+      if (!values.length) return 0;
+      if (values.length < width * 1.5) {
+        const pos = (x / Math.max(1, width - 1)) * Math.max(0, values.length - 1);
+        const left = Math.floor(pos);
+        const right = Math.min(values.length - 1, left + 1);
+        const mix = pos - left;
+        return (values[left] || 0) * (1 - mix) + (values[right] || 0) * mix;
+      }
+      const from = Math.floor((x / width) * values.length);
+      const to = Math.max(from + 1, Math.ceil(((x + 1) / width) * values.length));
+      let value = 0;
+      for (let i = from; i < to; i += 1) value = Math.max(value, values[i] || 0);
+      return value;
+    };
+    const compressedAmp = (value: number, mult = 1) => Math.sqrt(clamp((value * mult) / scaleAmp, 0, 1));
+    const fillEnvelope = (values: number[], gain: number, style: string | CanvasGradient) => {
+      ctx.fillStyle = style;
+      ctx.beginPath();
+      ctx.moveTo(0, center);
+      for (let x = 0; x < width; x += 1) ctx.lineTo(x, center - compressedAmp(valueAtPixel(values, x), gain) * halfHeight);
+      for (let x = width - 1; x >= 0; x -= 1) ctx.lineTo(x, center + compressedAmp(valueAtPixel(values, x), gain) * halfHeight);
+      ctx.closePath();
+      ctx.fill();
+    };
+
+    fillEnvelope(visiblePeaks, WAVEFORM_PEAK_GAIN, 'rgba(56,189,248,0.12)');
+    const rmsGradient = ctx.createLinearGradient(0, 0, width, 0);
+    rmsGradient.addColorStop(0, 'rgba(56,189,248,0.72)');
+    rmsGradient.addColorStop(0.58, 'rgba(129,140,248,0.76)');
+    rmsGradient.addColorStop(1, 'rgba(249,115,22,0.68)');
+    fillEnvelope(visibleRms, WAVEFORM_RMS_GAIN, rmsGradient);
+  }, [waveform, waveStart, waveEnd, ed.duration]);
+
+  useEffect(() => {
+    drawWaveform();
+  }, [drawWaveform]);
+  const drawRef = useRef(drawWaveform);
+  drawRef.current = drawWaveform;
+  useEffect(() => {
+    const canvas = waveCanvasRef.current;
+    if (!canvas) return;
+    const ro = new ResizeObserver(() => drawRef.current());
+    ro.observe(canvas);
+    return () => ro.disconnect();
+  }, []);
+
+  const waveformStatus = !ed.video
+    ? ''
+    : waveform.loading
+      ? 'Loading audio…'
+      : waveform.error
+        ? 'Audio unavailable'
+        : !waveform.hasAudio || !waveform.peaks.length
+          ? 'No audio'
+          : 'Audio';
 
   return (
     <div className="mx-auto max-w-screen-2xl space-y-5">
@@ -699,6 +852,19 @@ export function ActionAnnotatePage() {
                   <span className="absolute -top-1 left-1/2 h-2 w-2 -translate-x-1/2 rounded-full bg-ink" />
                 </div>
               )}
+            </div>
+            {/* Audio waveform lane (shares the timeline's range + seek) */}
+            <div
+              className="relative mt-1.5 h-16 w-full cursor-pointer overflow-hidden rounded-lg border border-border bg-surface-200/30"
+              onPointerDown={(e) => {
+                if (!hasTimeline) return;
+                const rect = e.currentTarget.getBoundingClientRect();
+                seekFrame(pctToFrame((e.clientX - rect.left) / rect.width, range));
+              }}
+            >
+              <canvas ref={waveCanvasRef} className="block h-full w-full" />
+              {waveformStatus && <span className="pointer-events-none absolute left-2 top-1.5 font-mono text-[10px] uppercase tracking-wide text-text-muted">{waveformStatus}</span>}
+              {hasTimeline && <div className="pointer-events-none absolute inset-y-0 w-0.5 -translate-x-1/2 bg-ink/70" style={{ left: `${frameToPct(frame, range)}%` }} />}
             </div>
             <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
               <span className="rounded-lg border border-border bg-surface-200/50 px-2.5 py-1 font-mono text-sm tabular-nums text-text-primary">
