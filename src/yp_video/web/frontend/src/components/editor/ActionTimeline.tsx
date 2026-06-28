@@ -100,8 +100,10 @@ export function ActionTimeline({
   const cssWidth = duration && pxPerSec ? duration * pxPerSec : viewW;
   const xOf = (t: number) => t * pxPerSec;
 
-  // Follow the playhead during playback when zoomed in: keep it on screen.
-  // Gated on `playing` so a paused seek (e.g. selecting a rally) isn't re-centred.
+  // Follow the playhead during playback when zoomed in. Page-turn style: only
+  // when it reaches the right edge (or is scrolled off the left) jump so it sits
+  // just inside the left edge — never re-centre. Gated on `playing` so a paused
+  // seek (e.g. selecting a rally) keeps the rally start anchored to the left.
   useEffect(() => {
     if (spv === 0 || !pxPerSec || !playing) return;
     const scroll = scrollRef.current;
@@ -109,7 +111,7 @@ export function ActionTimeline({
     const x = time * pxPerSec;
     const left = scroll.scrollLeft;
     const vw = scroll.clientWidth;
-    if (x < left + 8 || x > left + vw - 8) scroll.scrollLeft = Math.max(0, x - vw / 2);
+    if (x > left + vw - 8 || x < left) scroll.scrollLeft = Math.max(0, x - 8);
   }, [time, pxPerSec, spv, playing]);
 
   // Selecting a rally anchors its start to the left edge of the timeline.
