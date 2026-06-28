@@ -3,24 +3,8 @@ import { NavLink } from 'react-router-dom';
 import { API, apiFetch } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { Icon } from '@/components/ui/Icon';
+import type { ActiveCount, SystemStats, VllmStatus } from '@/types/api';
 import { NAV } from './nav';
-
-interface VllmStatus {
-  status: 'running' | 'starting' | 'stopped' | 'error';
-}
-interface SystemStats {
-  videos?: number;
-  cuts?: number;
-  pre_annotations?: number;
-  annotations?: number;
-  action_pre_annotations?: number;
-  actions?: number;
-  vjepa_b?: number;
-  predictions?: number;
-}
-interface ActiveCount {
-  count: number;
-}
 
 const VLLM_UI: Record<VllmStatus['status'], { dot: string; label: string }> = {
   running: { dot: 'bg-emerald-400 shadow-[0_0_6px_rgba(52,199,89,0.5)]', label: 'vLLM: running' },
