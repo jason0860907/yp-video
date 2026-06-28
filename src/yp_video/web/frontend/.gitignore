@@ -1,0 +1,8 @@
+node_modules
+dist
+*.local
+.vite
+
+# Generated from ../../../../contracts via `npm run gen:types`
+src/types/contracts/
+*.tsbuildinfo
