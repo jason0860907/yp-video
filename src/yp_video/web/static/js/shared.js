@@ -1,17 +1,18 @@
 /**
  * Shared utilities & design system for YP Video Pipeline.
- * Design: Indigo/Orange accents, OLED dark, glass cards.
+ * VolleyIQ design: court-green brand + gold accent, iOS-native dark surfaces,
+ * flat hairline cards. Numbers are mono (IBM Plex Mono).
  */
 
-// ── Design tokens ──
+// ── Design tokens (mirror the Tailwind config in index.html) ──
 export const COLORS = {
-  primary: '#6366F1',
-  primaryLight: '#818CF8',
-  accent: '#F97316',
-  accentLight: '#FB923C',
-  success: '#22C55E',
-  error: '#EF4444',
-  warning: '#FBBF24',
+  primary: '#2D5F3F',
+  primaryLight: '#5BBF8A',
+  accent: '#E8B23A',
+  accentLight: '#F3D275',
+  success: '#34C759',
+  error: '#FF453A',
+  warning: '#E8B23A',
 };
 
 // ── Format helpers ──
@@ -277,7 +278,7 @@ export function pageHeader(title, subtitle, actions = '') {
 // ── Status Badge ──
 export function createStatusBadge(status) {
   const map = {
-    running:   'bg-indigo-500/15 text-indigo-400 ring-1 ring-indigo-500/20',
+    running:   'bg-primary/20 text-primary-light ring-1 ring-primary/30',
     completed: 'bg-emerald-500/15 text-emerald-400 ring-1 ring-emerald-500/20',
     failed:    'bg-red-500/15 text-red-400 ring-1 ring-red-500/20',
     cancelled: 'bg-amber-500/15 text-amber-400 ring-1 ring-amber-500/20',
@@ -300,14 +301,14 @@ export function createStatusBadge(status) {
 export function createProgressBar(progress, variant = 'primary') {
   const pct = Math.round((progress || 0) * 100);
   const gradients = {
-    primary: 'background: linear-gradient(90deg, #4F46E5, #818CF8)',
-    accent:  'background: linear-gradient(90deg, #EA580C, #FB923C)',
-    success: 'background: linear-gradient(90deg, #16A34A, #22C55E)',
+    primary: 'background: linear-gradient(90deg, #244D33, #2D5F3F)',
+    accent:  'background: linear-gradient(90deg, #C8901A, #E8B23A)',
+    success: 'background: linear-gradient(90deg, #2D9A52, #34C759)',
   };
   const glows = {
-    primary: 'box-shadow: 0 0 10px rgba(99,102,241,0.35)',
-    accent:  'box-shadow: 0 0 10px rgba(249,115,22,0.35)',
-    success: 'box-shadow: 0 0 10px rgba(34,197,94,0.35)',
+    primary: 'box-shadow: 0 0 8px rgba(45,95,63,0.45)',
+    accent:  'box-shadow: 0 0 8px rgba(232,178,58,0.45)',
+    success: 'box-shadow: 0 0 8px rgba(52,199,89,0.40)',
   };
   return `
     <div class="w-full bg-white/[0.06] rounded-full h-1.5 overflow-hidden">
@@ -327,16 +328,16 @@ export function showToast(message, type = 'info') {
     warning: '<svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>',
   };
   const colors = {
-    info:    'border-indigo-500/25 text-indigo-300',
+    info:    'border-primary/30 text-primary-light',
     success: 'border-emerald-500/25 text-emerald-300',
     error:   'border-red-500/25 text-red-300',
     warning: 'border-amber-500/25 text-amber-300',
   };
   const bgs = {
-    info:    'rgba(99,102,241,0.06)',
-    success: 'rgba(34,197,94,0.06)',
-    error:   'rgba(239,68,68,0.06)',
-    warning: 'rgba(251,191,36,0.06)',
+    info:    'rgba(45,95,63,0.12)',
+    success: 'rgba(52,199,89,0.10)',
+    error:   'rgba(255,69,58,0.10)',
+    warning: 'rgba(232,178,58,0.10)',
   };
   const n = _toastCount++;
   const toast = document.createElement('div');
@@ -358,7 +359,7 @@ export function showToast(message, type = 'info') {
 
 // ── Modal dialog ──
 // showConfirm({ title, body, confirmText, cancelText, variant }) → Promise<boolean>
-// variant: 'warning' (amber) | 'danger' (red) | 'info' (indigo)
+// variant: 'warning' (gold) | 'danger' (red) | 'info' (brand green)
 export function showConfirm({
   title = 'Confirm',
   body = '',
@@ -367,11 +368,11 @@ export function showConfirm({
   variant = 'warning',
 } = {}) {
   const variants = {
-    info:    { ring: 'ring-indigo-500/25', glow: 'rgba(99,102,241,0.12)', iconBg: 'bg-indigo-500/15 text-indigo-300 ring-indigo-500/25',
+    info:    { ring: 'ring-primary/30', glow: 'rgba(45,95,63,0.18)', iconBg: 'bg-primary/20 text-primary-light ring-primary/30',
                svg: '<path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>' },
-    warning: { ring: 'ring-amber-500/25', glow: 'rgba(251,191,36,0.10)', iconBg: 'bg-amber-500/15 text-amber-300 ring-amber-500/25',
+    warning: { ring: 'ring-amber-500/25', glow: 'rgba(232,178,58,0.14)', iconBg: 'bg-amber-500/15 text-amber-300 ring-amber-500/25',
                svg: '<path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>' },
-    danger:  { ring: 'ring-red-500/25', glow: 'rgba(239,68,68,0.12)', iconBg: 'bg-red-500/15 text-red-300 ring-red-500/25',
+    danger:  { ring: 'ring-red-500/25', glow: 'rgba(255,69,58,0.16)', iconBg: 'bg-red-500/15 text-red-300 ring-red-500/25',
                svg: '<path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>' },
   };
   const v = variants[variant] || variants.warning;
@@ -382,8 +383,8 @@ export function showConfirm({
     overlay.style.cssText = 'background: rgba(0,0,0,0.55); backdrop-filter: blur(8px); opacity: 0; transition: opacity 0.2s ease;';
 
     overlay.innerHTML = `
-      <div class="relative w-full max-w-md rounded-2xl border border-white/10 ring-1 ${v.ring} p-6 shadow-2xl"
-           style="background: linear-gradient(180deg, rgba(20,20,26,0.98), rgba(12,12,16,0.98)); backdrop-filter: blur(20px); box-shadow: 0 24px 64px -12px ${v.glow}, 0 0 0 1px rgba(255,255,255,0.03); opacity: 0; transform: translateY(8px) scale(0.98); transition: all 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);">
+      <div class="relative w-full max-w-md rounded-2xl border border-border ring-1 ${v.ring} p-6"
+           style="background: #1C1C1E; box-shadow: 0 24px 64px -12px ${v.glow}, 0 0 0 1px rgba(0,0,0,0.4); opacity: 0; transform: translateY(8px) scale(0.98); transition: all 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);">
         <div class="flex items-start gap-4">
           <div class="w-10 h-10 rounded-xl flex items-center justify-center ring-1 flex-shrink-0 ${v.iconBg}">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">${v.svg}</svg>
@@ -397,8 +398,8 @@ export function showConfirm({
           <button data-act="cancel" class="inline-flex items-center justify-center gap-2 bg-white/[0.04] hover:bg-white/[0.08] text-text-secondary hover:text-text-primary border border-white/10 hover:border-white/20 px-4 py-2 rounded-xl font-medium text-sm cursor-pointer transition-all duration-200">${cancelText}</button>
           <button data-act="confirm" class="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl font-semibold text-sm text-white cursor-pointer transition-all duration-200 hover:-translate-y-px active:translate-y-0 hover:shadow-lg"
                   style="${variant === 'danger'
-                    ? 'background: linear-gradient(135deg, #EF4444, #DC2626); box-shadow: 0 2px 12px rgba(239,68,68,0.25)'
-                    : 'background: linear-gradient(135deg, #F97316, #EA580C); box-shadow: 0 2px 12px rgba(249,115,22,0.25)'}">${confirmText}</button>
+                    ? 'background: linear-gradient(135deg, #FF453A, #E0352B); box-shadow: 0 2px 12px rgba(255,69,58,0.25)'
+                    : 'background: linear-gradient(135deg, #2D5F3F, #244D33); box-shadow: 0 2px 12px rgba(45,95,63,0.30)'}">${confirmText}</button>
         </div>
       </div>`;
 
@@ -477,15 +478,15 @@ export function statCard(label, value, ok = true) {
 // ── Step Badge ──
 export function stepBadge(number, variant = 'primary') {
   const styles = {
-    primary: 'background: linear-gradient(135deg, rgba(99,102,241,0.18), rgba(99,102,241,0.05)); color: #818CF8; border: 1px solid rgba(99,102,241,0.15)',
-    accent: 'background: linear-gradient(135deg, rgba(249,115,22,0.20), rgba(249,115,22,0.05)); color: #FB923C; border: 1px solid rgba(249,115,22,0.18)',
+    primary: 'background: linear-gradient(135deg, rgba(45,95,63,0.28), rgba(45,95,63,0.06)); color: #5BBF8A; border: 1px solid rgba(45,95,63,0.35)',
+    accent: 'background: linear-gradient(135deg, rgba(232,178,58,0.22), rgba(232,178,58,0.05)); color: #F3D275; border: 1px solid rgba(232,178,58,0.28)',
   };
   return `<span class="w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold font-heading flex-shrink-0" style="${styles[variant] || styles.primary}">${number}</span>`;
 }
 
 // ── Button builders ──
 export function btnPrimary(text, attrs = '') {
-  return `<button class="relative inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm text-white cursor-pointer transition-all duration-200 hover:-translate-y-px active:translate-y-0 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-40 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none" style="background: linear-gradient(135deg, #F97316, #EA580C); box-shadow: 0 2px 12px rgba(249,115,22,0.25)" ${attrs}>${text}</button>`;
+  return `<button class="relative inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm text-white cursor-pointer transition-all duration-200 hover:-translate-y-px active:translate-y-0 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-40 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none" style="background: linear-gradient(135deg, #2D5F3F, #244D33); box-shadow: 0 2px 12px rgba(45,95,63,0.30)" ${attrs}>${text}</button>`;
 }
 
 export function btnSecondary(text, attrs = '') {
@@ -493,7 +494,7 @@ export function btnSecondary(text, attrs = '') {
 }
 
 export function btnDanger(text, attrs = '') {
-  return `<button class="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm text-white cursor-pointer transition-all duration-200 hover:-translate-y-px active:translate-y-0 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-red-500 disabled:opacity-40 disabled:cursor-not-allowed" style="background: linear-gradient(135deg, #EF4444, #DC2626); box-shadow: 0 2px 12px rgba(239,68,68,0.25)" ${attrs}>${text}</button>`;
+  return `<button class="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-sm text-white cursor-pointer transition-all duration-200 hover:-translate-y-px active:translate-y-0 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-red-500 disabled:opacity-40 disabled:cursor-not-allowed" style="background: linear-gradient(135deg, #FF453A, #E0352B); box-shadow: 0 2px 12px rgba(255,69,58,0.25)" ${attrs}>${text}</button>`;
 }
 
 export function btnSmall(text, attrs = '', variant = 'default') {

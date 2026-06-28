@@ -4,25 +4,38 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>YP Video Pipeline</title>
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%236366F1'/%3E%3Ctext x='16' y='23' font-family='Arial,sans-serif' font-size='20' font-weight='bold' fill='white' text-anchor='middle'%3EYP%3C/text%3E%3C/svg%3E">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232D5F3F'/%3E%3Ctext x='16' y='22' font-family='Archivo,Arial,sans-serif' font-size='13' font-weight='800' fill='%23E8B23A' text-anchor='middle'%3EYP%3C/text%3E%3C/svg%3E">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
+    // VolleyIQ design system — Pipeline workspace (dark, instrument-grade).
+    // Brand green #2D5F3F · accent gold #E8B23A · iOS-native dark surfaces.
+    // Token names stay stable so every page re-skins from this one config; the
+    // borrowed Tailwind palettes (emerald/red/amber/sky/violet) are remapped to
+    // the iOS semantic hues so existing utility classes stay on-brand.
     tailwind.config = {
       darkMode: 'class',
       theme: {
         extend: {
           colors: {
-            primary: { DEFAULT: '#6366F1', light: '#818CF8', dark: '#4F46E5', dim: 'rgba(99,102,241,0.15)' },
-            accent: { DEFAULT: '#F97316', light: '#FB923C', dark: '#EA580C', dim: 'rgba(249,115,22,0.15)' },
-            surface: { DEFAULT: '#09090F', '50': '#111118', '100': '#18181F', '200': '#1F1F28', '300': '#282832', '400': '#333340' },
-            'text-primary': '#F0F0F2',
-            'text-secondary': '#9D9DB5',
-            'text-muted': '#5C5C72',
-            border: { DEFAULT: 'rgba(255,255,255,0.06)', light: 'rgba(255,255,255,0.10)', bright: 'rgba(255,255,255,0.16)' },
+            primary: { DEFAULT: '#2D5F3F', light: '#5BBF8A', dark: '#244D33', dim: 'rgba(45,95,63,0.15)' },
+            accent: { DEFAULT: '#E8B23A', light: '#F3D275', dark: '#C8901A', dim: 'rgba(232,178,58,0.15)' },
+            surface: { DEFAULT: '#000000', '50': '#0E0E10', '100': '#1C1C1E', '200': '#2C2C2E', '300': '#3A3A3C', '400': '#48484A' },
+            'text-primary': '#FFFFFF',
+            'text-secondary': 'rgba(235,235,245,0.62)',
+            'text-muted': 'rgba(235,235,245,0.40)',
+            border: { DEFAULT: 'rgba(84,84,88,0.45)', light: 'rgba(84,84,88,0.65)', bright: 'rgba(120,120,128,0.55)' },
+            // iOS semantic palette (dark) mapped onto the borrowed Tailwind scales.
+            emerald: { 200: '#A7E8C0', 300: '#5FD98C', 400: '#34C759', 500: '#34C759', 600: '#2D9A52' },
+            red: { 300: '#FF8A80', 400: '#FF6B5E', 500: '#FF453A', 600: '#E0352B' },
+            amber: { 100: '#F3D275', 200: '#F0C868', 300: '#ECBE4F', 400: '#E8B23A', 500: '#E8B23A' },
+            sky: { 300: '#7DD3FC', 400: '#38BDF8', 500: '#38BDF8' },
+            violet: { 300: '#A78BFA', 400: '#7B5FD4', 500: '#7B5FD4' },
+            rose: { 400: '#FF6B5E', 500: '#FF453A' },
           },
           fontFamily: {
-            heading: ['"Fira Code"', 'monospace'],
-            body: ['"Fira Sans"', 'sans-serif'],
+            heading: ['"Archivo"', 'system-ui', 'sans-serif'],
+            body: ['"IBM Plex Sans"', 'system-ui', 'sans-serif'],
+            mono: ['"IBM Plex Mono"', 'ui-monospace', 'monospace'],
           },
           keyframes: {
             'fade-in': { from: { opacity: '0', transform: 'translateY(6px)' }, to: { opacity: '1', transform: 'translateY(0)' } },
@@ -42,13 +55,15 @@
   </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     * { box-sizing: border-box; }
-    body { font-family: 'Fira Sans', sans-serif; background: #09090F; color: #F0F0F2; }
-    h1, h2, h3, h4, h5, h6 { font-family: 'Fira Code', monospace; }
+    body { font-family: 'IBM Plex Sans', system-ui, sans-serif; background: #000000; color: #FFFFFF; -webkit-font-smoothing: antialiased; letter-spacing: -0.01em; }
+    h1, h2, h3, h4, h5, h6 { font-family: 'Archivo', system-ui, sans-serif; letter-spacing: -0.02em; }
+    /* Data role — numbers, times, coords, ids. Pages opt in with .font-mono / tabular-nums. */
+    .tabular-nums { font-variant-numeric: tabular-nums; }
 
-    :focus-visible { outline: 2px solid #6366F1; outline-offset: 2px; }
+    :focus-visible { outline: 2px solid #2D5F3F; outline-offset: 2px; }
 
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after {
@@ -59,25 +74,25 @@
 
     /* ── Sidebar ── */
     #sidebar {
-      background: linear-gradient(180deg, #0E0E16 0%, #0A0A12 100%);
-      border-right: 1px solid rgba(255,255,255,0.04);
+      background: #161618;
+      border-right: 1px solid rgba(84,84,88,0.45);
     }
     .sidebar-link {
-      transition: all 180ms ease;
+      transition: all 150ms cubic-bezier(0.4,0,0.2,1);
       cursor: pointer;
-      border-left: 3px solid transparent;
+      border-left: 2px solid transparent;
       position: relative;
     }
     .sidebar-link:hover {
-      background: rgba(255,255,255,0.04);
-      color: #F0F0F2;
+      background: rgba(255,255,255,0.05);
+      color: #FFFFFF;
     }
     .sidebar-link.active {
-      background: linear-gradient(90deg, rgba(99,102,241,0.10) 0%, transparent 100%);
-      border-left-color: #6366F1;
-      color: #F0F0F2;
+      background: linear-gradient(90deg, rgba(45,95,63,0.22) 0%, transparent 100%);
+      border-left-color: #2D5F3F;
+      color: #FFFFFF;
     }
-    .sidebar-link.active svg { color: #818CF8; }
+    .sidebar-link.active svg { color: #5BBF8A; }
 
     /* ── Collapsible sidebar ── */
     /* When collapsed the sidebar is fully removed from the flex row, so
@@ -97,20 +112,24 @@
        sidebar is collapsed, give the video more vertical room too. */
     body.sidebar-collapsed video[id$="-player"] { max-height: 72vh; }
 
-    /* ── Accent stripe on sidebar top ── */
+    /* ── Brand stripe on sidebar top (green → gold) ── */
     #sidebar::before {
       content: '';
       position: absolute;
       top: 0; left: 0; right: 0;
       height: 2px;
-      background: linear-gradient(90deg, #6366F1, #F97316);
-      opacity: 0.6;
+      background: linear-gradient(90deg, #2D5F3F, #E8B23A);
+      opacity: 0.85;
     }
 
-    /* ── Main content ── */
+    /* ── Main content ──
+       One restrained radial wash (gold ~4% / blue ~10%) is the only
+       background flourish; everything else is flat cool-black. */
     #app {
-      background: radial-gradient(ellipse at 50% 0%, rgba(99,102,241,0.03) 0%, transparent 60%),
-                  #09090F;
+      background:
+        radial-gradient(ellipse 80% 50% at 78% -8%, rgba(232,178,58,0.045) 0%, transparent 60%),
+        radial-gradient(ellipse 70% 45% at 12% 0%, rgba(56,189,248,0.05) 0%, transparent 55%),
+        #000000;
     }
 
     /* ── Page transitions ── */
@@ -119,25 +138,28 @@
     }
 
     /* ── Scrollbars ── */
-    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.07); border-radius: 10px; }
-    ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.13); }
+    ::-webkit-scrollbar-thumb { background: rgba(120,120,128,0.30); border-radius: 10px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(120,120,128,0.50); }
 
-    /* ── Utility ── */
-    .glow-primary { box-shadow: 0 0 20px rgba(99,102,241,0.15), 0 0 4px rgba(99,102,241,0.1); }
-    .glow-accent  { box-shadow: 0 0 20px rgba(249,115,22,0.2), 0 0 4px rgba(249,115,22,0.1); }
-    .glow-green   { box-shadow: 0 0 15px rgba(34,197,94,0.2); }
-    .glow-red     { box-shadow: 0 0 15px rgba(239,68,68,0.2); }
+    /* ── Elevation utilities ──
+       Flat is the default. The only genuinely elevated surface is the video
+       console (--shadow-surface); these tints are restrained focus cues. */
+    .glow-primary { box-shadow: 0 0 0 1px rgba(45,95,63,0.45); }
+    .glow-accent  { box-shadow: 0 0 0 1px rgba(232,178,58,0.45); }
+    .glow-green   { box-shadow: 0 0 0 1px rgba(52,199,89,0.45); }
+    .glow-red     { box-shadow: 0 0 0 1px rgba(255,69,58,0.45); }
 
+    /* ── Card surface ──
+       iOS-native: solid #1C1C1E panel, hairline border, flat. Kept under the
+       legacy .glass-card name so every card() call re-skins from here. */
     .glass-card {
-      background: rgba(17, 17, 24, 0.7);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-      border: 1px solid rgba(255,255,255,0.06);
+      background: #1C1C1E;
+      border: 1px solid rgba(84,84,88,0.45);
     }
     .glass-card:hover {
-      border-color: rgba(255,255,255,0.09);
+      border-color: rgba(84,84,88,0.65);
     }
 
     /* ── Shimmer effect for loading ── */

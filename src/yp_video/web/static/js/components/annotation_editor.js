@@ -466,8 +466,8 @@ export class AnnotationEditor {
     };
 
     overlay.innerHTML = `
-      <div class="relative w-full max-w-lg rounded-2xl border border-white/10 p-6 shadow-2xl flex flex-col max-h-[80vh]"
-           style="background: linear-gradient(180deg, rgba(20,20,26,0.98), rgba(12,12,16,0.98)); backdrop-filter: blur(20px);">
+      <div class="relative w-full max-w-lg rounded-2xl border border-border p-6 shadow-2xl flex flex-col max-h-[80vh]"
+           style="background: #1C1C1E; box-shadow: 0 24px 64px -12px rgba(0,0,0,0.6), 0 0 0 1px rgba(0,0,0,0.4);">
         <div class="flex items-start justify-between gap-4 mb-4">
           <div class="min-w-0">
             <h3 class="text-base font-heading font-semibold text-text-primary">Download rally clips</h3>
@@ -664,9 +664,9 @@ export class AnnotationEditor {
     if (!listEl) { this._highlight = { inside, prev, next }; return; }
 
     const STYLE = {
-      inside: 'inset 3px 0 0 #F97316',
-      prev:   'inset 3px 0 0 rgba(249, 115, 22, 0.4)',
-      next:   'inset 3px 0 0 rgba(249, 115, 22, 0.4)',
+      inside: 'inset 3px 0 0 #E8B23A',
+      prev:   'inset 3px 0 0 rgba(232, 178, 58, 0.4)',
+      next:   'inset 3px 0 0 rgba(232, 178, 58, 0.4)',
     };
     const applyStyle = (idx, kind) => {
       if (idx < 0) return;
@@ -727,8 +727,8 @@ export class AnnotationEditor {
         const x1 = (a.start / this.state.duration) * w;
         const x2 = (a.end / this.state.duration) * w;
         const grad = ctx.createLinearGradient(x1, 0, x1, h);
-        grad.addColorStop(0, 'rgba(34, 197, 94, 0.5)');
-        grad.addColorStop(1, 'rgba(34, 197, 94, 0.25)');
+        grad.addColorStop(0, 'rgba(52, 199, 89, 0.5)');
+        grad.addColorStop(1, 'rgba(52, 199, 89, 0.25)');
         ctx.fillStyle = grad;
         ctx.beginPath();
         ctx.roundRect(x1, 2 * dpr, x2 - x1, h - 4 * dpr, 3 * dpr);
@@ -737,8 +737,8 @@ export class AnnotationEditor {
 
       if (this.videoEl && !isNaN(this.videoEl.currentTime)) {
         const px = (this.videoEl.currentTime / this.state.duration) * w;
-        ctx.fillStyle = '#F97316';
-        ctx.shadowColor = 'rgba(249,115,22,0.6)';
+        ctx.fillStyle = '#FFFFFF';
+        ctx.shadowColor = 'rgba(255,255,255,0.55)';
         ctx.shadowBlur = 6 * dpr;
         ctx.fillRect(px - 1 * dpr, 0, 2 * dpr, h);
         ctx.shadowBlur = 0;
@@ -746,8 +746,8 @@ export class AnnotationEditor {
 
       if (this._markStart != null) {
         const mx = (this._markStart / this.state.duration) * w;
-        ctx.fillStyle = '#6366F1';
-        ctx.shadowColor = 'rgba(99,102,241,0.6)';
+        ctx.fillStyle = '#E8B23A';
+        ctx.shadowColor = 'rgba(232,178,58,0.6)';
         ctx.shadowBlur = 6 * dpr;
         ctx.fillRect(mx - 1 * dpr, 0, 2 * dpr, h);
         ctx.shadowBlur = 0;

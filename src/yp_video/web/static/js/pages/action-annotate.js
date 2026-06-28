@@ -6,6 +6,8 @@ import {
   showToast, showConfirm, emptyState, escapeHtml, selectCls, inputCls, renderJobProgress,
 } from '../shared.js';
 
+// Action palette — six fixed hues, one per action, identical everywhere an
+// action appears (timeline, waveform, list, label chips).
 const COLORS = {
   serve: '#38BDF8',
   receive: '#22C55E',
@@ -818,7 +820,7 @@ function renderLabels() {
   const el = document.getElementById('act-labels');
   el.innerHTML = labels.map((label, i) => {
     const active = label === selectedLabel;
-    const color = COLORS[label] || '#818CF8';
+    const color = COLORS[label] || '#8E8E93';
     return `<button type="button" data-label="${escapeHtml(label)}"
       class="px-3 py-2 rounded-lg border text-xs font-heading font-semibold transition-colors duration-150 ${active ? 'text-white' : 'text-text-secondary hover:text-text-primary'}"
       style="border-color:${active ? color : 'rgba(255,255,255,0.08)'}; background:${active ? `${color}33` : 'rgba(255,255,255,0.035)'}">
@@ -1251,7 +1253,7 @@ function actionPanel(entries, emptyText) {
 
 function eventRow(event, idx, rowNumber = idx + 1) {
   const selected = idx === selectedIdx;
-  const color = COLORS[event.label] || '#818CF8';
+  const color = COLORS[event.label] || '#8E8E93';
   const visible = event.visible !== false;
   const labelOptions = labels.map(label => `<option value="${escapeHtml(label)}" ${label === event.label ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('');
   const dotStyle = visible
@@ -1463,7 +1465,7 @@ function renderOverlay() {
   overlayEl.innerHTML = state.events.map((event, idx) => ({ event, idx }))
     .filter(({ event }) => event.visible !== false && eventVisibleInScope(event) && Math.abs(event.frame - frame) <= 2)
     .map(({ event, idx }) => {
-    const color = COLORS[event.label] || '#818CF8';
+    const color = COLORS[event.label] || '#8E8E93';
     const exactFrame = event.frame === frame;
     const eventFrameRing = exactFrame
       ? `<span class="absolute left-1/2 top-1/2 w-5 h-5 rounded-full border-2 border-white/90 pointer-events-none -translate-x-1/2 -translate-y-1/2"
@@ -1831,7 +1833,7 @@ function renderTimeline() {
     }).join('');
   const eventButtons = visibleEventEntries().filter(({ event }) => eventInTimelineRange(event, range)).map(({ event, idx }) => {
     const pct = frameToTimelinePct(event.frame, range);
-    const color = COLORS[event.label] || '#818CF8';
+    const color = COLORS[event.label] || '#8E8E93';
     const active = idx === selectedIdx;
     const visible = event.visible !== false;
     return `<button type="button" data-idx="${idx}" title="${escapeHtml(event.label)} frame ${event.frame}"

@@ -18,8 +18,8 @@ export function render(container) {
         <div class="space-y-4">
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-3">
-              <div class="w-9 h-9 rounded-xl bg-indigo-500/[0.08] border border-indigo-500/15 flex items-center justify-center">
-                <svg class="w-4.5 h-4.5 text-indigo-400" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 14.25h13.5m-13.5 0a3 3 0 01-3-3m3 3a3 3 0 100 6h13.5a3 3 0 100-6m-16.5-3a3 3 0 013-3h13.5a3 3 0 013 3m-19.5 0a4.5 4.5 0 01.9-2.7L5.737 5.1a3.375 3.375 0 012.7-1.35h7.126c1.062 0 2.062.5 2.7 1.35l2.587 3.45a4.5 4.5 0 01.9 2.7m0 0a3 3 0 01-3 3m0 3h.008v.008h-.008v-.008zm0-6h.008v.008h-.008v-.008zm-3 6h.008v.008h-.008v-.008zm0-6h.008v.008h-.008v-.008z"/></svg>
+              <div class="w-9 h-9 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center">
+                <svg class="w-4.5 h-4.5 text-primary-light" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 14.25h13.5m-13.5 0a3 3 0 01-3-3m3 3a3 3 0 100 6h13.5a3 3 0 100-6m-16.5-3a3 3 0 013-3h13.5a3 3 0 013 3m-19.5 0a4.5 4.5 0 01.9-2.7L5.737 5.1a3.375 3.375 0 012.7-1.35h7.126c1.062 0 2.062.5 2.7 1.35l2.587 3.45a4.5 4.5 0 01.9 2.7m0 0a3 3 0 01-3 3m0 3h.008v.008h-.008v-.008zm0-6h.008v.008h-.008v-.008zm-3 6h.008v.008h-.008v-.008zm0-6h.008v.008h-.008v-.008z"/></svg>
               </div>
               <div>
                 <h3 class="text-sm font-heading font-semibold text-text-primary">vLLM Server</h3>
@@ -124,7 +124,7 @@ async function loadJobs() {
       return `
         <div class="group p-4 rounded-xl border transition-all duration-200 space-y-3
           ${isRunning
-            ? 'bg-indigo-500/[0.03] border-indigo-500/15 hover:border-indigo-500/25 hover:bg-indigo-500/[0.05]'
+            ? 'bg-primary/[0.06] border-primary/20 hover:border-primary/30 hover:bg-primary/[0.09]'
             : 'bg-surface-50/50 border-border hover:border-border-light hover:bg-white/[0.03]'}">
           <div class="flex items-center justify-between">
             <div class="flex items-center gap-3">
