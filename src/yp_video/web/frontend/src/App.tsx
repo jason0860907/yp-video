@@ -10,6 +10,7 @@ import { TrainPage } from '@/pages/TrainPage';
 import { ActionPredictPage } from '@/pages/ActionPredictPage';
 import { PredictPage } from '@/pages/PredictPage';
 import { ActionTrainPage } from '@/pages/ActionTrainPage';
+import { ActionAnnotatePage } from '@/pages/ActionAnnotatePage';
 import { UploadPage } from '@/pages/UploadPage';
 import { CutPage } from '@/pages/CutPage';
 import { AnnotatePage } from '@/pages/AnnotatePage';
@@ -26,6 +27,7 @@ const PAGES: Record<string, ReactElement> = {
   '/review': <ReviewPage />,
   '/action-predict': <ActionPredictPage />,
   '/action-train': <ActionTrainPage />,
+  '/action-annotate': <ActionAnnotatePage />,
   '/upload': <UploadPage />,
   '/jobs': <JobsPage />,
 };

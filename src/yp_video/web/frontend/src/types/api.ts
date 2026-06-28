@@ -78,6 +78,36 @@ export interface ActionVideo {
   has_action_annotation?: boolean;
   has_action_pre_annotation?: boolean;
   has_action_final_annotation?: boolean;
+  action_reviewed?: boolean;
+  action_annotation_source?: string;
+  rally_sources?: string[];
+}
+
+/** Action-label editor data (one video's rallies + action events). */
+export interface ActionRally {
+  rally_id: number;
+  start: number;
+  end: number;
+  label?: string;
+}
+export interface ActionEvent {
+  id: string;
+  rally_id: number | null;
+  frame: number;
+  time: number | null;
+  relative_frame: number | null;
+  label: string;
+  xy: [number, number];
+  visible: boolean;
+}
+export interface ActionAnnotationData {
+  video?: string;
+  source_video?: string;
+  duration?: number;
+  fps?: number;
+  num_frames?: number;
+  rallies?: Array<{ rally_id?: unknown; start?: unknown; end?: unknown; label?: string }>;
+  events?: Array<Record<string, unknown>>;
 }
 
 export interface SpotCheckpoint {
