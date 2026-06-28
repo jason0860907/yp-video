@@ -11,13 +11,17 @@ import { PredictPage } from '@/pages/PredictPage';
 import { ActionTrainPage } from '@/pages/ActionTrainPage';
 import { UploadPage } from '@/pages/UploadPage';
 import { CutPage } from '@/pages/CutPage';
+import { AnnotatePage } from '@/pages/AnnotatePage';
+import { ReviewPage } from '@/pages/ReviewPage';
 
 /** Migrated pages, by route. Paths absent here fall back to a Placeholder. */
 const PAGES: Record<string, ReactElement> = {
   '/download': <DownloadPage />,
   '/cut': <CutPage />,
   '/detect': <DetectPage />,
+  '/annotate': <AnnotatePage />,
   '/predict': <PredictPage />,
+  '/review': <ReviewPage />,
   '/action-predict': <ActionPredictPage />,
   '/action-train': <ActionTrainPage />,
   '/upload': <UploadPage />,

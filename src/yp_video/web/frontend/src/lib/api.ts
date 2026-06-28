@@ -51,6 +51,17 @@ export async function apiFetch<T = unknown>(path: string, options: ApiOptions = 
   return res.json() as Promise<T>;
 }
 
+/** POST JSON and return the response body as a Blob (mp4 / zip clip endpoints). */
+export async function apiPostBlob(path: string, body: unknown): Promise<Blob> {
+  const res = await fetch(apiUrl(path), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new ApiError(res.status, await res.text());
+  return res.blob();
+}
+
 // ── Endpoint map ──
 // Leaves are literal paths or functions returning paths (relative to /api).
 // SSE URLs are passed through apiUrl() by callers via the SSEClient.
@@ -97,6 +108,7 @@ export const API = {
     results: '/annotate/results',
     annotations: '/annotate/annotations',
     result: (name: string) => `/annotate/results/${encodeURIComponent(name)}`,
+    video: (path: string) => `/annotate/video/${encodeURIComponent(path)}`,
     publish: '/annotate/publish',
   },
   actionAnnotate: {
@@ -120,6 +132,7 @@ export const API = {
     annotations: '/review/annotations',
     result: (name: string, params: QueryParams = {}) =>
       `/review/results/${encodeURIComponent(name)}${q(params)}`,
+    video: (path: string) => `/review/video/${encodeURIComponent(path)}`,
     clip: '/review/clip',
     clipZip: '/review/clip-zip',
   },
