@@ -8,6 +8,7 @@ import { DownloadPage } from '@/pages/DownloadPage';
 import { DetectPage } from '@/pages/DetectPage';
 import { ActionPredictPage } from '@/pages/ActionPredictPage';
 import { PredictPage } from '@/pages/PredictPage';
+import { ActionTrainPage } from '@/pages/ActionTrainPage';
 
 /** Migrated pages, by route. Paths absent here fall back to a Placeholder. */
 const PAGES: Record<string, ReactElement> = {
@@ -15,6 +16,7 @@ const PAGES: Record<string, ReactElement> = {
   '/detect': <DetectPage />,
   '/predict': <PredictPage />,
   '/action-predict': <ActionPredictPage />,
+  '/action-train': <ActionTrainPage />,
   '/jobs': <JobsPage />,
 };
 

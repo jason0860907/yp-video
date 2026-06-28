@@ -19,7 +19,40 @@ export interface Job {
   message?: string;
   error?: string;
   logs?: string[];
-  params?: { items?: JobItem[] };
+  // items is the batch sub-progress; other keys are job-type-specific payloads.
+  params?: { items?: JobItem[]; [k: string]: unknown };
+}
+
+export interface ActionTrainStatus {
+  active_job?: Job;
+  spot_available?: boolean;
+  init_checkpoints?: Array<{ value: string; label: string }>;
+  action_annotations?: { videos?: number; events?: number; frames?: number; label_dir?: string };
+  vnl_1_5?: {
+    ready?: boolean;
+    train_videos?: number;
+    train_events?: number;
+    val_videos?: number;
+    val_events?: number;
+    frame_dir?: string;
+    frame_dir_exists?: boolean;
+  };
+}
+
+export interface ActionTrainProgress {
+  epoch_display?: number;
+  epochs?: number;
+  phase?: string;
+  phase_label?: string;
+  phase_progress?: number;
+  step?: number;
+  total?: number;
+  current_loss?: number;
+  latest_train_loss?: number;
+  latest_val_loss?: number;
+  latest_val_map?: number;
+  best_value?: number;
+  best_epoch?: number;
 }
 
 export interface VllmStatus {
