@@ -61,6 +61,24 @@ export interface SpotInfo {
   error?: string;
 }
 
+/** Video record from the TAD predict listing. `features` is keyed by feature
+ *  model (base/large/giant/gigantic) → present. */
+export interface PredictVideo {
+  name: string;
+  kind: CutKind;
+  has_annotation?: boolean;
+  has_pre_annotation?: boolean;
+  has_prediction?: boolean;
+  features?: Record<string, boolean>;
+}
+
+export interface TrainCheckpoint {
+  path: string;
+  name: string;
+  size_mb: number;
+  kind: 'best' | 'last' | 'epoch';
+}
+
 export interface SystemStats {
   videos?: number;
   cuts?: number;
