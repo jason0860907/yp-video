@@ -158,7 +158,13 @@ export function ActionAnnotatePage() {
       if (!el?.requestVideoFrameCallback) return;
       const myGen = gen.current;
       cbId.current = el.requestVideoFrameCallback((_n, meta) => {
-        if (!alive || myGen !== gen.current) return;
+        if (!alive) return;
+        // A seek (or load) bumped the generation — restart the clock with the
+        // new generation instead of letting the loop die.
+        if (myGen !== gen.current) {
+          tick();
+          return;
+        }
         if (!el.paused) lockedFrame.current = null;
         if (Number.isFinite(meta?.mediaTime) && (lockedFrame.current === null || !el.paused)) presented.current = meta.mediaTime;
         refreshPlayhead();
@@ -192,7 +198,13 @@ export function ActionAnnotatePage() {
   const togglePlay = () => {
     const el = videoRef.current;
     if (!el?.src) return;
-    el.paused ? void el.play().catch((e) => toast.error(`Play failed: ${errMsg(e)}`)) : el.pause();
+    if (el.paused) {
+      // Release any seek lock so the playhead tracks playback from frame one.
+      lockedFrame.current = null;
+      void el.play().catch((e) => toast.error(`Play failed: ${errMsg(e)}`));
+    } else {
+      el.pause();
+    }
   };
 
   // ── On-video overlay (object-contain letterbox geometry) ──
