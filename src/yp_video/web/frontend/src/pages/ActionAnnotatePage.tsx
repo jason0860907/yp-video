@@ -751,16 +751,16 @@ export function ActionAnnotatePage() {
     <div className="mx-auto max-w-screen-2xl space-y-5">
       {/* Picker */}
       <Card>
-        <div className="grid grid-cols-1 items-end gap-3 lg:grid-cols-[8.5rem_8.5rem_minmax(18rem,1fr)_auto_auto]">
+        <div className="grid grid-cols-1 items-end gap-3 lg:grid-cols-[8.5rem_8.5rem_minmax(18rem,1fr)_auto]">
           <FieldLabel label="Kind">
-            <select value={kindFilter} onChange={(e) => setKindFilter(e.target.value as typeof kindFilter)} className={fieldCls}>
+            <select value={kindFilter} onChange={(e) => setKindFilter(e.target.value as typeof kindFilter)} className={cn(fieldCls, 'h-9 w-full py-0')}>
               <option value="all">All kinds</option>
               <option value="broadcast">Broadcast</option>
               <option value="sideline">Sideline</option>
             </select>
           </FieldLabel>
           <FieldLabel label="Status">
-            <select value={progressFilter} onChange={(e) => setProgressFilter(e.target.value as typeof progressFilter)} className={fieldCls}>
+            <select value={progressFilter} onChange={(e) => setProgressFilter(e.target.value as typeof progressFilter)} className={cn(fieldCls, 'h-9 w-full py-0')}>
               <option value="all">All</option>
               <option value="unlabeled">Unlabeled</option>
               <option value="pre-labeled">Pre-labeled</option>
@@ -777,7 +777,7 @@ export function ActionAnnotatePage() {
                 }}
                 onFocus={() => setDropdownOpen(true)}
                 placeholder="Type to search filename…"
-                className={cn(fieldCls, 'w-full pr-8 font-mono text-xs')}
+                className={cn(fieldCls, 'h-9 w-full py-0 pr-8 font-mono text-xs')}
               />
               {search && (
                 <button type="button" onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-text-muted hover:text-text-primary">
@@ -811,12 +811,14 @@ export function ActionAnnotatePage() {
               )}
             </div>
           </FieldLabel>
-          <Button size="sm" intent="primary" onClick={() => load(search.trim() || filtered[0]?.name || '')} disabled={loading}>
-            {loading ? 'Loading…' : 'Load'}
-          </Button>
-          <Button size="sm" onClick={exportDataset}>
-            Export JSONL
-          </Button>
+          <div className="flex items-stretch gap-2">
+            <Button intent="primary" className="h-9 py-0" onClick={() => load(search.trim() || filtered[0]?.name || '')} disabled={loading}>
+              {loading ? 'Loading…' : 'Load'}
+            </Button>
+            <Button className="h-9 py-0" onClick={exportDataset}>
+              Export JSONL
+            </Button>
+          </div>
         </div>
         <div className="mt-2 font-mono text-[11px] tabular-nums text-text-muted">
           {filtered.length} shown / {videos.length} total · {reviewedCount} action labeled
