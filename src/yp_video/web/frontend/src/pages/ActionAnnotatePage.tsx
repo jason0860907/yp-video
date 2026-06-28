@@ -480,7 +480,6 @@ export function ActionAnnotatePage() {
 
   const eventsByRally = (rid: number) => ed.events.map((e, idx) => ({ e, idx })).filter(({ e }) => e.rally_id === rid);
   const outside = ed.events.map((e, idx) => ({ e, idx })).filter(({ e }) => !e.rally_id);
-  const reviewedCount = videos.filter(isReviewed).length;
 
   return (
     <div className="mx-auto max-w-screen-2xl space-y-5">
@@ -554,9 +553,6 @@ export function ActionAnnotatePage() {
               Export JSONL
             </Button>
           </div>
-        </div>
-        <div className="mt-2 font-mono text-[11px] tabular-nums text-text-muted">
-          {filtered.length} shown / {videos.length} total · {reviewedCount} action labeled
         </div>
       </Card>
 
