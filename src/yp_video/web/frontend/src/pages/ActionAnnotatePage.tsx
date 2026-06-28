@@ -127,6 +127,7 @@ export function ActionAnnotatePage() {
   const [selectedRallyId, setSelectedRallyId] = useState<number | 'all'>('all');
   const [expanded, setExpanded] = useState<string | null>(null);
   const [frame, setFrame] = useState(0);
+  const [playing, setPlaying] = useState(false);
 
   // Frame-clock refs (read inside the requestVideoFrameCallback loop).
   const lockedFrame = useRef<number | null>(null);
@@ -178,6 +179,22 @@ export function ActionAnnotatePage() {
       clearInterval(poll);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Track play/pause so the timeline only follows the playhead during playback.
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el) return;
+    const onPlay = () => setPlaying(true);
+    const onPause = () => setPlaying(false);
+    el.addEventListener('play', onPlay);
+    el.addEventListener('pause', onPause);
+    el.addEventListener('ended', onPause);
+    return () => {
+      el.removeEventListener('play', onPlay);
+      el.removeEventListener('pause', onPause);
+      el.removeEventListener('ended', onPause);
+    };
   }, []);
 
   const seekFrame = (f: number) => {
@@ -633,6 +650,7 @@ export function ActionAnnotatePage() {
                 events={ed.events}
                 selectedRallyId={selectedRallyId}
                 selectedIdx={selectedIdx}
+                playing={playing}
                 waveform={waveform}
                 colors={ACTION_COLORS}
                 onSeekFrame={seekFrame}

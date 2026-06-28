@@ -45,6 +45,7 @@ interface ActionTimelineProps {
   events: ActionEvent[];
   selectedRallyId: number | 'all';
   selectedIdx: number;
+  playing: boolean;
   waveform: WaveformData;
   colors: Record<string, string>;
   onSeekFrame: (f: number) => void;
@@ -64,6 +65,7 @@ export function ActionTimeline({
   events,
   selectedRallyId,
   selectedIdx,
+  playing,
   waveform,
   colors,
   onSeekFrame,
@@ -98,16 +100,28 @@ export function ActionTimeline({
   const cssWidth = duration && pxPerSec ? duration * pxPerSec : viewW;
   const xOf = (t: number) => t * pxPerSec;
 
-  // Follow the playhead when zoomed in: keep it on screen.
+  // Follow the playhead during playback when zoomed in: keep it on screen.
+  // Gated on `playing` so a paused seek (e.g. selecting a rally) isn't re-centred.
   useEffect(() => {
-    if (spv === 0 || !pxPerSec) return;
+    if (spv === 0 || !pxPerSec || !playing) return;
     const scroll = scrollRef.current;
     if (!scroll) return;
     const x = time * pxPerSec;
     const left = scroll.scrollLeft;
     const vw = scroll.clientWidth;
     if (x < left + 8 || x > left + vw - 8) scroll.scrollLeft = Math.max(0, x - vw / 2);
-  }, [time, pxPerSec, spv]);
+  }, [time, pxPerSec, spv, playing]);
+
+  // Selecting a rally anchors its start to the left edge of the timeline.
+  useEffect(() => {
+    if (selectedRallyId === 'all' || spv === 0 || !pxPerSec) return;
+    const rally = rallies.find((r) => r.rally_id === selectedRallyId);
+    const scroll = scrollRef.current;
+    if (!rally || !scroll) return;
+    scroll.scrollLeft = Math.max(0, xOf(rally.start));
+    // xOf is derived from pxPerSec; rallies identity is stable per load.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedRallyId, pxPerSec, spv]);
 
   const drawWave = useCallback(() => {
     const canvas = canvasRef.current;
