@@ -1,9 +1,21 @@
 <!DOCTYPE html>
-<html lang="en" class="dark">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>VolleyIQ · Pipeline</title>
+    <script>
+      // Apply theme + palette before first paint to avoid a flash.
+      (function () {
+        var t = localStorage.getItem('vq-theme');
+        if (t !== 'light' && t !== 'dark') t = 'dark';
+        var p = localStorage.getItem('vq-palette');
+        if (p !== 'court' && p !== 'sunset' && p !== 'coral') p = 'court';
+        var el = document.documentElement;
+        el.setAttribute('data-theme', t);
+        el.setAttribute('data-palette', p);
+      })();
+    </script>
     <link
       rel="icon"
       type="image/svg+xml"

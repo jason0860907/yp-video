@@ -140,7 +140,7 @@ export function JobsPage() {
                     'group space-y-3 rounded-xl border p-4 transition-all duration-200',
                     isRunning
                       ? 'border-primary/20 bg-primary/[0.06] hover:border-primary/30 hover:bg-primary/[0.09]'
-                      : 'border-border bg-surface-50/50 hover:border-border-light hover:bg-white/[0.03]',
+                      : 'border-border bg-surface-50 hover:border-border-light hover:bg-white/[0.03]',
                   )}
                 >
                   <div className="flex items-center justify-between">

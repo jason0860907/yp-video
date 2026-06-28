@@ -9,13 +9,33 @@ export default {
   theme: {
     extend: {
       colors: {
-        primary: { DEFAULT: '#2D5F3F', light: '#5BBF8A', dark: '#244D33', dim: 'rgba(45,95,63,0.15)' },
-        accent: { DEFAULT: '#E8B23A', light: '#F3D275', dark: '#C8901A', dim: 'rgba(232,178,58,0.15)' },
-        surface: { DEFAULT: '#000000', 50: '#0E0E10', 100: '#1C1C1E', 200: '#2C2C2E', 300: '#3A3A3C', 400: '#48484A' },
-        'text-primary': '#FFFFFF',
-        'text-secondary': 'rgba(235,235,245,0.62)',
-        'text-muted': 'rgba(235,235,245,0.40)',
-        border: { DEFAULT: 'rgba(84,84,88,0.45)', light: 'rgba(84,84,88,0.65)', bright: 'rgba(120,120,128,0.55)' },
+        // Brand — palette-switchable via CSS vars (channel triplets → alpha works).
+        primary: {
+          DEFAULT: 'rgb(var(--primary) / <alpha-value>)',
+          light: 'rgb(var(--primary-light) / <alpha-value>)',
+          dark: 'rgb(var(--primary-dark) / <alpha-value>)',
+          dim: 'rgb(var(--primary) / 0.15)',
+        },
+        accent: {
+          DEFAULT: 'rgb(var(--accent) / <alpha-value>)',
+          light: 'rgb(var(--accent-light) / <alpha-value>)',
+          dark: 'rgb(var(--accent-dark) / <alpha-value>)',
+          dim: 'rgb(var(--accent) / 0.15)',
+        },
+        // Surfaces / text / lines — theme-switchable (full values, no alpha modifier).
+        surface: {
+          DEFAULT: 'var(--bg)',
+          50: 'var(--surface-50)',
+          100: 'var(--surface-100)',
+          200: 'var(--surface-200)',
+          300: 'var(--surface-300)',
+          400: 'var(--surface-400)',
+        },
+        sidebar: 'var(--sidebar)',
+        'text-primary': 'var(--text-primary)',
+        'text-secondary': 'var(--text-secondary)',
+        'text-muted': 'var(--text-muted)',
+        border: { DEFAULT: 'var(--line)', light: 'var(--line-strong)', bright: 'var(--line-bright)' },
         emerald: { 200: '#A7E8C0', 300: '#5FD98C', 400: '#34C759', 500: '#34C759', 600: '#2D9A52' },
         red: { 300: '#FF8A80', 400: '#FF6B5E', 500: '#FF453A', 600: '#E0352B' },
         amber: { 100: '#F3D275', 200: '#F0C868', 300: '#ECBE4F', 400: '#E8B23A', 500: '#E8B23A' },

@@ -1,14 +1,14 @@
 export type ProgressVariant = 'primary' | 'accent' | 'success';
 
 const GRADIENTS: Record<ProgressVariant, string> = {
-  primary: 'linear-gradient(90deg, #244D33, #2D5F3F)',
-  accent: 'linear-gradient(90deg, #C8901A, #E8B23A)',
+  primary: 'linear-gradient(90deg, rgb(var(--primary-dark)), rgb(var(--primary)))',
+  accent: 'linear-gradient(90deg, rgb(var(--accent-dark)), rgb(var(--accent)))',
   success: 'linear-gradient(90deg, #2D9A52, #34C759)',
 };
 
 const GLOWS: Record<ProgressVariant, string> = {
-  primary: '0 0 8px rgba(45,95,63,0.45)',
-  accent: '0 0 8px rgba(232,178,58,0.45)',
+  primary: '0 0 8px rgb(var(--primary) / 0.45)',
+  accent: '0 0 8px rgb(var(--accent) / 0.45)',
   success: '0 0 8px rgba(52,199,89,0.40)',
 };
 
