@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { cn } from '@/lib/cn';
+import { useTheme } from '@/lib/theme';
 import type { EditorAnnotation } from './AnnotationEditor';
+
+// "45 95 63" → "45,95,63" for rgba(); falls back to court green.
+const rgbList = (v: string, fallback: string) => (v.trim() ? v.trim().split(/\s+/).join(',') : fallback);
 
 interface RallyTimelineProps {
   videoRef: RefObject<HTMLVideoElement>;
@@ -61,6 +65,18 @@ export function RallyTimeline({ videoRef, annotations, duration, markStart, onSe
   const spvRef = useRef(spv);
   spvRef.current = spv;
 
+  // Brand colors read from CSS vars so the timeline follows theme + palette.
+  const { theme, palette } = useTheme();
+  const brandRef = useRef({ primary: '45,95,63', accent: '232,178,58', fg: '#ffffff' });
+  useEffect(() => {
+    const cs = getComputedStyle(document.documentElement);
+    brandRef.current = {
+      primary: rgbList(cs.getPropertyValue('--primary'), '45,95,63'),
+      accent: rgbList(cs.getPropertyValue('--accent'), '232,178,58'),
+      fg: cs.getPropertyValue('--text-primary').trim() || '#ffffff',
+    };
+  }, [theme, palette]);
+
   useEffect(() => {
     let raf = 0;
     const draw = () => {
@@ -79,6 +95,7 @@ export function RallyTimeline({ videoRef, annotations, duration, markStart, onSe
       }
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
+      const brand = brandRef.current;
       const w = canvas.width;
       const h = canvas.height;
       ctx.clearRect(0, 0, w, h);
@@ -92,22 +109,22 @@ export function RallyTimeline({ videoRef, annotations, duration, markStart, onSe
         const x1 = a.start * pps * dpr;
         const x2 = a.end * pps * dpr;
         const grad = ctx.createLinearGradient(x1, 0, x1, h);
-        grad.addColorStop(0, 'rgba(52,199,89,0.55)');
-        grad.addColorStop(1, 'rgba(52,199,89,0.28)');
+        grad.addColorStop(0, `rgba(${brand.primary},0.6)`);
+        grad.addColorStop(1, `rgba(${brand.primary},0.3)`);
         ctx.fillStyle = grad;
         ctx.beginPath();
         ctx.roundRect(x1, 2 * dpr, Math.max(1, x2 - x1), h - 4 * dpr, 3 * dpr);
         ctx.fill();
         if (x2 - x1 > 16 * dpr) {
-          ctx.fillStyle = 'rgba(255,255,255,0.9)';
+          ctx.fillStyle = brand.fg;
           ctx.fillText(`R${i + 1}`, (x1 + x2) / 2, h / 2);
         }
       });
 
       if (el && !isNaN(el.currentTime)) {
         const px = el.currentTime * pps * dpr;
-        ctx.fillStyle = '#FFFFFF';
-        ctx.shadowColor = 'rgba(255,255,255,0.55)';
+        ctx.fillStyle = brand.fg;
+        ctx.shadowColor = brand.fg;
         ctx.shadowBlur = 6 * dpr;
         ctx.fillRect(px - dpr, 0, 2 * dpr, h);
         ctx.shadowBlur = 0;
@@ -125,8 +142,8 @@ export function RallyTimeline({ videoRef, annotations, duration, markStart, onSe
 
       if (markRef.current != null) {
         const mx = markRef.current * pps * dpr;
-        ctx.fillStyle = '#E8B23A';
-        ctx.shadowColor = 'rgba(232,178,58,0.6)';
+        ctx.fillStyle = `rgb(${brand.accent})`;
+        ctx.shadowColor = `rgba(${brand.accent},0.6)`;
         ctx.shadowBlur = 6 * dpr;
         ctx.fillRect(mx - dpr, 0, 2 * dpr, h);
         ctx.shadowBlur = 0;

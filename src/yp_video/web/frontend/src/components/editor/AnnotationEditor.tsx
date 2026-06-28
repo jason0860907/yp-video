@@ -361,7 +361,7 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
                     }}
                     className={cn(
                       'ae-row group flex cursor-pointer items-center gap-1.5 rounded-xl border px-3 py-2.5 transition-colors',
-                      selected ? 'border-emerald-500/40 bg-emerald-500/[0.08]' : 'border-emerald-500/15 bg-emerald-500/[0.04] hover:bg-emerald-500/[0.08]',
+                      selected ? 'border-primary/45 bg-primary/[0.12]' : 'border-primary/20 bg-primary/[0.05] hover:bg-primary/[0.10]',
                       playing && 'ring-1 ring-accent/50',
                     )}
                   >
@@ -372,7 +372,7 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
                         e.stopPropagation();
                         void downloadClip(a);
                       }}
-                      className="flex items-center gap-1 rounded-full bg-emerald-500/20 px-2 py-0.5 text-[11px] font-medium text-emerald-400 ring-1 ring-emerald-500/25 transition-colors hover:bg-emerald-500/30"
+                      className="flex items-center gap-1 rounded-full bg-primary/20 px-2 py-0.5 text-[11px] font-medium text-primary-text ring-1 ring-primary/30 transition-colors hover:bg-primary/30"
                       title="Download this rally clip"
                     >
                       <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">

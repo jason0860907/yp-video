@@ -15,6 +15,8 @@ export default {
           light: 'rgb(var(--primary-light) / <alpha-value>)',
           dark: 'rgb(var(--primary-dark) / <alpha-value>)',
           dim: 'rgb(var(--primary) / 0.15)',
+          // Brand-as-text, readable per theme (see --primary-text).
+          text: 'var(--primary-text)',
         },
         accent: {
           DEFAULT: 'rgb(var(--accent) / <alpha-value>)',

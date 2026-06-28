@@ -23,6 +23,9 @@
   /* Text/icon color on a primary fill — white by default; light palettes
      (amber) override to dark ink so labels stay readable. */
   --on-primary: #ffffff;
+  /* Brand color used as TEXT — readable in each theme: the dark brand variant
+     on light, the light variant on dark. */
+  --primary-text: rgb(var(--primary-dark));
 
   /* ---- NEUTRALS · light (warm gray — faint orange undertone) ----
      Mostly neutral gray with a hint of warmth; cards stay white. */
@@ -64,6 +67,7 @@
   --line-strong: rgba(84, 84, 88, 0.65);
   --line-bright: rgba(120, 120, 128, 0.55);
   --fg-rgb: 255 255 255;
+  --primary-text: rgb(var(--primary-light));
   --wash-gold: rgba(232, 178, 58, 0.045);
   --wash-blue: rgba(56, 189, 248, 0.05);
 }
