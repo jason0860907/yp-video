@@ -27,7 +27,7 @@ export interface ActionTrainStatus {
   active_job?: Job;
   spot_available?: boolean;
   init_checkpoints?: Array<{ value: string; label: string }>;
-  action_annotations?: { videos?: number; events?: number; frames?: number; label_dir?: string; frame_dir?: string };
+  action_annotations?: { videos?: number; events?: number; frames?: number; label_dir?: string; frame_dir?: string; checkpoint_dir?: string };
   vnl_1_5?: {
     ready?: boolean;
     train_videos?: number;

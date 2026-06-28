@@ -181,6 +181,7 @@ def _action_annotation_stats() -> dict:
     return {
         "label_dir": str(ACTION_ANNOTATIONS_DIR),
         "frame_dir": str(ACTION_FRAMES_DIR),
+        "checkpoint_dir": str(ACTION_CHECKPOINTS_DIR),
         "videos": videos,
         "events": events,
         "frames": frames,

@@ -322,9 +322,9 @@ export function ActionTrainPage() {
               ['Frames', stats.frames.toLocaleString()],
               ['Mode', form.training_mode === 'all' ? 'all data' : 'train/test split'],
               ['View', form.camera_view === 'all' ? 'all views' : form.camera_view],
-              ['Label dir', status?.action_annotations?.label_dir || '~/videos/action-annotations'],
+              ['Label dir', status?.action_annotations?.label_dir || '—'],
               ['Frame dir', form.frame_dir || status?.action_annotations?.frame_dir || '—'],
-              ['Ckpt dir', form.checkpoint_dir || 'auto'],
+              ['Ckpt dir', form.checkpoint_dir || (status?.action_annotations?.checkpoint_dir ? `${status.action_annotations.checkpoint_dir}/<auto run>` : '—')],
             ].map(([label, value]) => (
               <div key={label} className="flex items-center gap-3">
                 <span className="w-16 flex-shrink-0 text-text-muted">{label}</span>
