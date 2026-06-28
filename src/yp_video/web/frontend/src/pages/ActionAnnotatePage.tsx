@@ -9,8 +9,9 @@ import { SectionLabel } from '@/components/ui/SectionLabel';
 import { toast } from '@/components/feedback/toast';
 import { confirm } from '@/components/feedback/confirm';
 import { LiveJob } from '@/components/job/LiveJob';
+import { ActionTimeline } from '@/components/editor/ActionTimeline';
 import { isTerminal } from '@/lib/job';
-import type { ActionAnnotationData, ActionEvent, ActionRally, ActionVideo, Job, SpotCheckpoint, SpotInfo, VllmStatus } from '@/types/api';
+import type { ActionAnnotationData, ActionEvent, ActionRally, ActionVideo, Job, SpotCheckpoint, SpotInfo, VllmStatus, WaveformData } from '@/types/api';
 
 // Six fixed action hues (kept identical to the legacy editor).
 const ACTION_COLORS: Record<string, string> = {
@@ -49,56 +50,11 @@ interface Editor {
 }
 const EMPTY: Editor = { video: '', duration: 0, fps: 30, numFrames: 0, rallies: [], events: [], dirty: false };
 
-interface TimelineRange {
-  scope: 'rally' | 'video';
-  startFrame: number;
-  endFrame: number;
-  startTime: number;
-  endTime: number;
-  rally: ActionRally | null;
-}
-/** Visible window of the scrub timeline: the selected rally, or the whole video. */
-function timelineRange(ed: Editor, scope: 'rally' | 'video', rally: ActionRally | null): TimelineRange {
-  const fps = ed.fps || 30;
-  const maxFrame = Math.max(0, ed.numFrames - 1);
-  if (scope === 'rally' && rally) {
-    const startFrame = clamp(Math.round(rally.start * fps), 0, maxFrame);
-    const endFrame = clamp(Math.max(startFrame, Math.ceil(rally.end * fps) - 1), 0, maxFrame);
-    return { scope: 'rally', startFrame, endFrame, startTime: rally.start, endTime: rally.end, rally };
-  }
-  return { scope: 'video', startFrame: 0, endFrame: maxFrame, startTime: 0, endTime: ed.duration || maxFrame / fps, rally: null };
-}
-const frameToPct = (frame: number, r: TimelineRange) => clamp((frame - r.startFrame) / Math.max(1, r.endFrame - r.startFrame), 0, 1) * 100;
-const pctToFrame = (pct: number, r: TimelineRange) => Math.round(r.startFrame + clamp(pct, 0, 1) * Math.max(0, r.endFrame - r.startFrame));
-
-// Audio waveform: request density + amplitude shaping, ported from the legacy UI.
+// Waveform request density (points scale with duration), ported from the legacy UI.
 const WAVEFORM_POINTS_PER_SECOND = 120;
 const WAVEFORM_MIN_POINTS = 2400;
 const WAVEFORM_MAX_POINTS = 96000;
-const WAVEFORM_SCALE_PERCENTILE = 0.98;
-const WAVEFORM_SCALE_HEADROOM = 1.35;
-const WAVEFORM_MIN_SCALE = 0.02;
-const WAVEFORM_VERTICAL_FILL = 0.4;
-const WAVEFORM_PEAK_GAIN = 0.55;
-const WAVEFORM_RMS_GAIN = 1.15;
-
-interface WaveformData {
-  video: string;
-  loading: boolean;
-  error: string;
-  hasAudio: boolean;
-  duration: number;
-  peaks: number[];
-  rms: number[];
-}
 const EMPTY_WAVE: WaveformData = { video: '', loading: false, error: '', hasAudio: false, duration: 0, peaks: [], rms: [] };
-/** Normalize amplitudes to a high percentile so quiet clips still fill the lane. */
-function waveformScaleAmp(values: number[]): number {
-  const active = values.filter((v) => v > 0.001).sort((a, b) => a - b);
-  if (!active.length) return 0.03;
-  const idx = clamp(Math.floor((active.length - 1) * WAVEFORM_SCALE_PERCENTILE), 0, active.length - 1);
-  return Math.max(WAVEFORM_MIN_SCALE, active[idx]! * WAVEFORM_SCALE_HEADROOM);
-}
 const waveformPointCount = (durationSeconds: number) =>
   clamp(Math.ceil(Math.max(0, durationSeconds) * WAVEFORM_POINTS_PER_SECOND) || WAVEFORM_MIN_POINTS, WAVEFORM_MIN_POINTS, WAVEFORM_MAX_POINTS);
 
@@ -191,11 +147,9 @@ export function ActionAnnotatePage() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const [pointMode, setPointMode] = useState(false);
-  const [timelineScope, setTimelineScope] = useState<'rally' | 'video'>('rally');
   const [mediaBox, setMediaBox] = useState<MediaBox | null>(null);
   const [waveform, setWaveform] = useState<WaveformData>(EMPTY_WAVE);
   const waveformReq = useRef(0);
-  const waveCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const drag = useRef<{ id: string; moved: boolean } | null>(null);
   const suppressClick = useRef(false);
   const [selectedLabel, setSelectedLabel] = useState('serve');
@@ -619,9 +573,6 @@ export function ActionAnnotatePage() {
       } else if (e.key.toLowerCase() === 'p') {
         e.preventDefault();
         setPointMode((m) => !m);
-      } else if (e.key.toLowerCase() === 'o') {
-        e.preventDefault();
-        setTimelineScope((s) => (s === 'rally' ? 'video' : 'rally'));
       } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIdx >= 0) {
         deleteEvent(selectedIdx);
       }
@@ -633,119 +584,6 @@ export function ActionAnnotatePage() {
   const eventsByRally = (rid: number) => ed.events.map((e, idx) => ({ e, idx })).filter(({ e }) => e.rally_id === rid);
   const outside = ed.events.map((e, idx) => ({ e, idx })).filter(({ e }) => !e.rally_id);
   const reviewedCount = videos.filter(isReviewed).length;
-
-  // Scrub timeline geometry. Rally scope needs a selected rally; otherwise the
-  // window falls back to the whole video (and the toggle is disabled).
-  const selRally = selectedRallyId === 'all' ? null : ed.rallies.find((r) => r.rally_id === selectedRallyId) ?? null;
-  const effectiveScope: 'rally' | 'video' = timelineScope === 'rally' && selRally ? 'rally' : 'video';
-  const range = timelineRange(ed, effectiveScope, selRally);
-  const hasTimeline = Boolean(ed.video && ed.numFrames);
-  const toggleTimelineScope = () => {
-    if (!hasTimeline) return;
-    setTimelineScope((s) => (s === 'rally' ? 'video' : 'rally'));
-  };
-
-  // Audio lane. Slices the fetched peaks/RMS to the visible time window and
-  // paints a peaks envelope under a brighter RMS body. Redraws on range/data
-  // change and on canvas resize (ResizeObserver via a ref to dodge stale closures).
-  const waveStart = range.startTime;
-  const waveEnd = range.endTime;
-  const drawWaveform = useCallback(() => {
-    const canvas = waveCanvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const width = Math.max(1, Math.floor(rect.width));
-    const height = Math.max(1, Math.floor(rect.height));
-    const dpr = window.devicePixelRatio || 1;
-    const pw = Math.max(1, Math.floor(width * dpr));
-    const ph = Math.max(1, Math.floor(height * dpr));
-    if (canvas.width !== pw || canvas.height !== ph) {
-      canvas.width = pw;
-      canvas.height = ph;
-    }
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, width, height);
-    const center = height / 2;
-
-    const bg = ctx.createLinearGradient(0, 0, 0, height);
-    bg.addColorStop(0, 'rgba(56,189,248,0.12)');
-    bg.addColorStop(1, 'rgba(249,115,22,0.06)');
-    ctx.fillStyle = bg;
-    ctx.fillRect(0, 0, width, height);
-    ctx.strokeStyle = 'rgba(125,125,135,0.20)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(0, center);
-    ctx.lineTo(width, center);
-    ctx.stroke();
-
-    if (!waveform.hasAudio || !waveform.peaks.length) return;
-    const duration = waveform.duration || ed.duration || 1;
-    const startIndex = clamp(Math.floor((waveStart / duration) * waveform.peaks.length), 0, waveform.peaks.length - 1);
-    const endIndex = clamp(Math.ceil((waveEnd / duration) * waveform.peaks.length), startIndex + 1, waveform.peaks.length);
-    const visiblePeaks = waveform.peaks.slice(startIndex, endIndex);
-    const visibleRms = waveform.rms.length ? waveform.rms.slice(startIndex, endIndex) : visiblePeaks;
-    const scaleAmp = waveformScaleAmp(visibleRms);
-    const halfHeight = Math.max(8, height - 10) * WAVEFORM_VERTICAL_FILL;
-
-    const valueAtPixel = (values: number[], x: number) => {
-      if (!values.length) return 0;
-      if (values.length < width * 1.5) {
-        const pos = (x / Math.max(1, width - 1)) * Math.max(0, values.length - 1);
-        const left = Math.floor(pos);
-        const right = Math.min(values.length - 1, left + 1);
-        const mix = pos - left;
-        return (values[left] || 0) * (1 - mix) + (values[right] || 0) * mix;
-      }
-      const from = Math.floor((x / width) * values.length);
-      const to = Math.max(from + 1, Math.ceil(((x + 1) / width) * values.length));
-      let value = 0;
-      for (let i = from; i < to; i += 1) value = Math.max(value, values[i] || 0);
-      return value;
-    };
-    const compressedAmp = (value: number, mult = 1) => Math.sqrt(clamp((value * mult) / scaleAmp, 0, 1));
-    const fillEnvelope = (values: number[], gain: number, style: string | CanvasGradient) => {
-      ctx.fillStyle = style;
-      ctx.beginPath();
-      ctx.moveTo(0, center);
-      for (let x = 0; x < width; x += 1) ctx.lineTo(x, center - compressedAmp(valueAtPixel(values, x), gain) * halfHeight);
-      for (let x = width - 1; x >= 0; x -= 1) ctx.lineTo(x, center + compressedAmp(valueAtPixel(values, x), gain) * halfHeight);
-      ctx.closePath();
-      ctx.fill();
-    };
-
-    fillEnvelope(visiblePeaks, WAVEFORM_PEAK_GAIN, 'rgba(56,189,248,0.12)');
-    const rmsGradient = ctx.createLinearGradient(0, 0, width, 0);
-    rmsGradient.addColorStop(0, 'rgba(56,189,248,0.72)');
-    rmsGradient.addColorStop(0.58, 'rgba(129,140,248,0.76)');
-    rmsGradient.addColorStop(1, 'rgba(249,115,22,0.68)');
-    fillEnvelope(visibleRms, WAVEFORM_RMS_GAIN, rmsGradient);
-  }, [waveform, waveStart, waveEnd, ed.duration]);
-
-  useEffect(() => {
-    drawWaveform();
-  }, [drawWaveform]);
-  const drawRef = useRef(drawWaveform);
-  drawRef.current = drawWaveform;
-  useEffect(() => {
-    const canvas = waveCanvasRef.current;
-    if (!canvas) return;
-    const ro = new ResizeObserver(() => drawRef.current());
-    ro.observe(canvas);
-    return () => ro.disconnect();
-  }, []);
-
-  const waveformStatus = !ed.video
-    ? ''
-    : waveform.loading
-      ? 'Loading audio…'
-      : waveform.error
-        ? 'Audio unavailable'
-        : !waveform.hasAudio || !waveform.peaks.length
-          ? 'No audio'
-          : 'Audio';
 
   return (
     <div className="mx-auto max-w-screen-2xl space-y-5">
@@ -963,97 +801,22 @@ export function ActionAnnotatePage() {
               )}
             </div>
 
-            {/* Scrub timeline: rally bands + action markers + playhead (waveform comes in a later pass) */}
-            <div className="mt-3 flex items-center justify-between gap-3">
-              <SectionLabel className="!mb-0">Timeline</SectionLabel>
-              <div className="flex items-center gap-2">
-                <span className="font-mono text-[11px] tabular-nums text-text-muted">
-                  {hasTimeline ? `${effectiveScope === 'rally' && selRally ? `R${ed.rallies.findIndex((r) => r.rally_id === selRally.rally_id) + 1} ` : 'Video '}${fmt(range.startTime)}–${fmt(range.endTime)}` : ''}
-                </span>
-                <Button
-                  size="sm"
-                  intent={effectiveScope === 'rally' ? 'primary' : 'default'}
-                  onClick={toggleTimelineScope}
-                  disabled={!hasTimeline || !selRally}
-                  title="Timeline range: current rally or full video (O)"
-                >
-                  {effectiveScope === 'rally' ? 'Current rally' : 'Full video'}
-                </Button>
-              </div>
-            </div>
-            <div
-              role="slider"
-              aria-label="Timeline"
-              aria-valuenow={frame}
-              tabIndex={0}
-              className="relative mt-2 h-9 w-full cursor-pointer select-none rounded-lg border border-border bg-surface-200/40"
-              onPointerDown={(e) => {
-                if ((e.target as HTMLElement).closest('button[data-marker]')) return;
-                if (!hasTimeline) return;
-                const rect = e.currentTarget.getBoundingClientRect();
-                seekFrame(pctToFrame((e.clientX - rect.left) / rect.width, range));
-              }}
-            >
-              {/* Rally bands */}
-              {effectiveScope === 'rally' && selRally ? (
-                <div className="absolute inset-y-0 left-0 w-full rounded-sm border-x bg-primary/[0.16]" style={{ borderColor: 'rgb(var(--primary) / 0.5)' }} />
-              ) : (
-                ed.rallies.map((rally) => {
-                  const sf = Math.round(rally.start * ed.fps);
-                  const ef = Math.round(rally.end * ed.fps);
-                  const left = frameToPct(sf, range);
-                  const width = Math.max(0.2, frameToPct(ef, range) - left);
-                  const active = rally.rally_id === selectedRallyId;
-                  return (
-                    <div
-                      key={rally.rally_id}
-                      className={cn('absolute inset-y-0 rounded-sm border-x', active ? 'bg-primary/[0.18]' : 'bg-primary/[0.07]')}
-                      style={{ left: `${left}%`, width: `${width}%`, borderColor: active ? 'rgb(var(--primary) / 0.5)' : 'rgb(var(--primary) / 0.18)' }}
-                    />
-                  );
-                })
-              )}
-              {/* Action markers */}
-              {ed.events
-                .map((e, idx) => ({ e, idx }))
-                .filter(({ e }) => (selectedRallyId === 'all' || e.rally_id === selectedRallyId) && e.frame >= range.startFrame && e.frame <= range.endFrame)
-                .map(({ e, idx }) => {
-                  const color = ACTION_COLORS[e.label] || '#8E8E93';
-                  const active = idx === selectedIdx;
-                  return (
-                    <button
-                      key={e.id}
-                      data-marker
-                      type="button"
-                      onClick={(ev) => {
-                        ev.stopPropagation();
-                        jumpToEvent(idx);
-                      }}
-                      title={`${e.label} · frame ${e.frame}`}
-                      className={cn('absolute top-1/2 -translate-y-1/2 rounded-full border border-black/50 transition-transform', active ? '-ml-[7px] h-6 w-3.5 scale-105' : '-ml-px h-5 w-1.5 hover:scale-125')}
-                      style={{ left: `${frameToPct(e.frame, range)}%`, background: e.visible ? color : 'transparent', borderColor: e.visible ? 'rgba(0,0,0,0.5)' : color }}
-                    />
-                  );
-                })}
-              {/* Playhead */}
-              {hasTimeline && (
-                <div className="pointer-events-none absolute inset-y-0 w-0.5 -translate-x-1/2 bg-ink/80" style={{ left: `${frameToPct(frame, range)}%` }}>
-                  <span className="absolute -top-1 left-1/2 h-2 w-2 -translate-x-1/2 rounded-full bg-ink" />
-                </div>
-              )}
-            </div>
-            {/* Audio waveform lane (shares the timeline's range + seek) */}
-            <div
-              className="relative mt-1.5 h-16 w-full cursor-pointer overflow-hidden rounded-lg border border-border bg-surface-200/30"
-              onPointerDown={(e) => {
-                if (!hasTimeline) return;
-                const rect = e.currentTarget.getBoundingClientRect();
-                seekFrame(pctToFrame((e.clientX - rect.left) / rect.width, range));
-              }}
-            >
-              <canvas ref={waveCanvasRef} className="block h-full w-full" />
-              {waveformStatus && <span className="pointer-events-none absolute left-2 top-1.5 font-mono text-[10px] uppercase tracking-wide text-text-muted">{waveformStatus}</span>}
-              {hasTimeline && <div className="pointer-events-none absolute inset-y-0 w-0.5 -translate-x-1/2 bg-ink/70" style={{ left: `${frameToPct(frame, range)}%` }} />}
+            {/* Zoomable timeline + waveform (All / 10m / 5m / 3m, rally bands R1, R2 …) */}
+            <div className="mt-3">
+              <ActionTimeline
+                duration={ed.duration}
+                fps={ed.fps}
+                numFrames={ed.numFrames}
+                frame={frame}
+                rallies={ed.rallies}
+                events={ed.events}
+                selectedRallyId={selectedRallyId}
+                selectedIdx={selectedIdx}
+                waveform={waveform}
+                colors={ACTION_COLORS}
+                onSeekFrame={seekFrame}
+                onJumpEvent={jumpToEvent}
+              />
             </div>
             <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
               <span className="rounded-lg border border-border bg-surface-200/50 px-2.5 py-1 font-mono text-sm tabular-nums text-text-primary">
@@ -1084,7 +847,6 @@ export function ActionAnnotatePage() {
             <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">← →</kbd> frame ·{' '}
             <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">Enter</kbd> add ·{' '}
             <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">P</kbd> point mode ·{' '}
-            <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">O</kbd> timeline range ·{' '}
             <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">Del</kbd> remove
           </p>
         </div>

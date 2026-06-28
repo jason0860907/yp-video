@@ -110,6 +110,17 @@ export interface ActionAnnotationData {
   events?: Array<Record<string, unknown>>;
 }
 
+/** Decoded audio envelope for the Action Label waveform lane. */
+export interface WaveformData {
+  video: string;
+  loading: boolean;
+  error: string;
+  hasAudio: boolean;
+  duration: number;
+  peaks: number[];
+  rms: number[];
+}
+
 export interface SpotCheckpoint {
   path: string;
   name: string;
