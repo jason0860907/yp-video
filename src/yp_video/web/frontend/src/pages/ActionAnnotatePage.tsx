@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { API, ApiError, apiFetch, apiUrl } from '@/lib/api';
 import { cn } from '@/lib/cn';
@@ -90,8 +90,20 @@ function normalize(data: ActionAnnotationData, labels: string[]): Editor {
 const hasActive = (v: ActionVideo) => Boolean(v.has_action_annotation || v.has_action_final_annotation || v.has_action_pre_annotation);
 const isReviewed = (v: ActionVideo) => Boolean(v.action_reviewed);
 
+interface MediaBox {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
 export function ActionAnnotatePage() {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [pointMode, setPointMode] = useState(false);
+  const [mediaBox, setMediaBox] = useState<MediaBox | null>(null);
+  const drag = useRef<{ id: string; moved: boolean } | null>(null);
+  const suppressClick = useRef(false);
   const [selectedLabel, setSelectedLabel] = useState('serve');
   const [kindFilter, setKindFilter] = useState<'all' | 'broadcast' | 'sideline'>('all');
   const [progressFilter, setProgressFilter] = useState<'all' | 'unlabeled' | 'pre-labeled' | 'labeled'>('all');
@@ -170,6 +182,99 @@ export function ActionAnnotatePage() {
     const el = videoRef.current;
     if (!el?.src) return;
     el.paused ? void el.play().catch((e) => toast.error(`Play failed: ${errMsg(e)}`)) : el.pause();
+  };
+
+  // ── On-video overlay (object-contain letterbox geometry) ──
+  // The displayed media rect inside the <video>, in client coords.
+  const mediaRect = () => {
+    const el = videoRef.current;
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    if (!r.width || !r.height) return null;
+    let { width, height, left, top } = r;
+    const vw = el.videoWidth;
+    const vh = el.videoHeight;
+    if (vw && vh) {
+      const mr = vw / vh;
+      const br = r.width / r.height;
+      if (br > mr) {
+        width = r.height * mr;
+        left += (r.width - width) / 2;
+      } else if (br < mr) {
+        height = r.width / mr;
+        top += (r.height - height) / 2;
+      }
+    }
+    return { left, top, width, height };
+  };
+  const clientToPoint = (cx: number, cy: number): [number, number] | null => {
+    const m = mediaRect();
+    if (!m || !m.width || !m.height) return null;
+    return [round4(clamp((cx - m.left) / m.width, 0, 1)), round4(clamp((cy - m.top) / m.height, 0, 1))];
+  };
+  const recomputeMediaBox = useCallback(() => {
+    const m = mediaRect();
+    const wrap = wrapRef.current;
+    if (!m || !wrap) {
+      setMediaBox(null);
+      return;
+    }
+    const wr = wrap.getBoundingClientRect();
+    setMediaBox({ left: m.left - wr.left, top: m.top - wr.top, width: m.width, height: m.height });
+  }, []);
+  useEffect(() => {
+    recomputeMediaBox();
+    const ro = new ResizeObserver(recomputeMediaBox);
+    if (wrapRef.current) ro.observe(wrapRef.current);
+    if (videoRef.current) ro.observe(videoRef.current);
+    window.addEventListener('resize', recomputeMediaBox);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', recomputeMediaBox);
+    };
+  }, [recomputeMediaBox]);
+
+  const onVideoClick = (e: ReactMouseEvent) => {
+    if (!edRef.current.video || !pointMode) return;
+    const p = clientToPoint(e.clientX, e.clientY);
+    if (p) addEvent(p[0], p[1]);
+  };
+  const onVideoContextMenu = (e: ReactMouseEvent) => {
+    e.preventDefault();
+    if (!edRef.current.video) return;
+    const p = clientToPoint(e.clientX, e.clientY);
+    if (p) addEvent(p[0], p[1], false);
+  };
+
+  const startDrag = (e: ReactPointerEvent, evt: ActionEvent, idx: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setSelectedIdx(idx);
+    videoRef.current?.pause();
+    const f = computeFrame();
+    mutate((prev) => ({ ...prev, events: prev.events.map((x) => (x.id === evt.id ? withRally({ ...x, frame: f }, prev) : x)) }));
+    drag.current = { id: evt.id, moved: false };
+    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+    const onMove = (ev: PointerEvent) => {
+      if (!drag.current) return;
+      drag.current.moved = true;
+      const p = clientToPoint(ev.clientX, ev.clientY);
+      if (!p) return;
+      setEd((prev) => ({ ...prev, dirty: true, events: prev.events.map((x) => (x.id === drag.current!.id ? { ...x, xy: p } : x)) }));
+    };
+    const onUp = () => {
+      if (drag.current?.moved) {
+        suppressClick.current = true;
+        setTimeout(() => {
+          suppressClick.current = false;
+        }, 0);
+      }
+      drag.current = null;
+      document.removeEventListener('pointermove', onMove);
+      setEd((prev) => ({ ...prev, events: sortEvents(prev.events) }));
+    };
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp, { once: true });
   };
 
   // ── Video list filtering ──
@@ -322,6 +427,9 @@ export function ActionAnnotatePage() {
       } else if (e.key === 'Enter') {
         e.preventDefault();
         addEvent(0.5, 0.5);
+      } else if (e.key.toLowerCase() === 'p') {
+        e.preventDefault();
+        setPointMode((m) => !m);
       } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIdx >= 0) {
         deleteEvent(selectedIdx);
       }
@@ -435,8 +543,45 @@ export function ActionAnnotatePage() {
               </div>
             </div>
 
-            <div className="overflow-hidden rounded-2xl bg-black ring-1 ring-white/[0.06]">
-              <video ref={videoRef} className="mx-auto block max-h-[45vh] w-full bg-black object-contain" playsInline preload="metadata" />
+            <div ref={wrapRef} className="relative overflow-hidden rounded-2xl bg-black ring-1 ring-white/[0.06]">
+              <video
+                ref={videoRef}
+                className={cn('mx-auto block max-h-[45vh] w-full bg-black object-contain', pointMode && ed.video && 'cursor-crosshair')}
+                playsInline
+                preload="metadata"
+                onClick={onVideoClick}
+                onContextMenu={onVideoContextMenu}
+                onLoadedMetadata={recomputeMediaBox}
+              />
+              {mediaBox && (
+                <div className="pointer-events-none absolute" style={{ left: mediaBox.left, top: mediaBox.top, width: mediaBox.width, height: mediaBox.height }}>
+                  {ed.events
+                    .map((e, idx) => ({ e, idx }))
+                    .filter(({ e }) => e.visible && (selectedRallyId === 'all' || e.rally_id === selectedRallyId) && Math.abs(e.frame - frame) <= 2)
+                    .map(({ e, idx }) => {
+                      const color = ACTION_COLORS[e.label] || '#8E8E93';
+                      return (
+                        <button
+                          key={e.id}
+                          type="button"
+                          onPointerDown={(ev) => startDrag(ev, e, idx)}
+                          onClick={(ev) => {
+                            ev.stopPropagation();
+                            if (!suppressClick.current) jumpToEvent(idx);
+                          }}
+                          className="pointer-events-auto absolute -ml-3 -mt-3 h-6 w-6 cursor-grab touch-none active:cursor-grabbing"
+                          style={{ left: `${e.xy[0] * 100}%`, top: `${e.xy[1] * 100}%` }}
+                          title={`${e.label} frame ${e.frame}`}
+                        >
+                          {e.frame === frame && (
+                            <span className="absolute left-1/2 top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white/90" style={{ boxShadow: `0 0 0 1px ${color}88` }} />
+                          )}
+                          <span className="absolute left-1/2 top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/85" style={{ background: color, boxShadow: `0 0 0 1px ${color}55` }} />
+                        </button>
+                      );
+                    })}
+                </div>
+              )}
             </div>
 
             {/* Scrubber (full timeline / waveform comes in a later pass) */}
@@ -461,6 +606,9 @@ export function ActionAnnotatePage() {
                 </Button>
                 <Button size="sm" onClick={() => stepFrame(1)}>
                   ▸
+                </Button>
+                <Button size="sm" intent={pointMode ? 'primary' : 'default'} onClick={() => setPointMode((m) => !m)} title="Point mode: click the video to drop the selected action">
+                  {pointMode ? 'Point mode' : 'Review mode'}
                 </Button>
                 <Button size="sm" intent="primary" onClick={() => addEvent(0.5, 0.5)}>
                   Add center
