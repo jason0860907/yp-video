@@ -227,13 +227,6 @@ export function ActionTrainPage() {
                 ))}
               </select>
             </Field>
-            <Field label="Frame dir" className="col-span-2">
-              <input value={form.frame_dir} onChange={(e) => set('frame_dir', e.target.value)} className={cn(fieldCls, 'font-mono text-[11px]')} />
-            </Field>
-            <Field label="Checkpoint dir">
-              <input value={form.checkpoint_dir} onChange={(e) => set('checkpoint_dir', e.target.value)} placeholder="auto" className={cn(fieldCls, 'font-mono text-[11px]')} />
-            </Field>
-
             <Field label="Feature">
               <SelectArch value={form.feature_arch} options={SELECTS.feature_arch} onChange={(v) => set('feature_arch', v)} />
             </Field>
@@ -329,10 +322,12 @@ export function ActionTrainPage() {
               ['Frames', stats.frames.toLocaleString()],
               ['Mode', form.training_mode === 'all' ? 'all data' : 'train/test split'],
               ['View', form.camera_view === 'all' ? 'all views' : form.camera_view],
-              ['Source', status?.action_annotations?.label_dir || '~/videos/action-annotations'],
+              ['Label dir', status?.action_annotations?.label_dir || '~/videos/action-annotations'],
+              ['Frame dir', form.frame_dir || status?.action_annotations?.frame_dir || '—'],
+              ['Ckpt dir', form.checkpoint_dir || 'auto'],
             ].map(([label, value]) => (
               <div key={label} className="flex items-center gap-3">
-                <span className="w-14 flex-shrink-0 text-text-muted">{label}</span>
+                <span className="w-16 flex-shrink-0 text-text-muted">{label}</span>
                 <span className="min-w-0 flex-1 truncate font-mono tabular-nums text-text-secondary" title={String(value)}>
                   {value}
                 </span>
