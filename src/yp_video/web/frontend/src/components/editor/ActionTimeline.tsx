@@ -16,6 +16,8 @@ const ZOOMS: Array<{ label: string; spv: number }> = [
   { label: '10m', spv: 600 },
   { label: '5m', spv: 300 },
   { label: '3m', spv: 180 },
+  { label: '30s', spv: 30 },
+  { label: '10s', spv: 10 },
 ];
 
 // Waveform amplitude shaping (ported from the legacy editor).
@@ -201,7 +203,7 @@ export function ActionTimeline({
     <div className="space-y-1.5">
       <div className="flex items-center justify-between gap-2">
         <span className="font-mono text-[11px] tabular-nums text-text-muted">
-          {ready ? `${rallies.length} rally · ${spv === 0 ? `0:00–${fmt(duration)}` : `${spv / 60}m window`}` : ''}
+          {ready ? `${rallies.length} rally · ${spv === 0 ? `0:00–${fmt(duration)}` : `${spv >= 60 ? `${spv / 60}m` : `${spv}s`} window`}` : ''}
         </span>
         <div className="flex items-center gap-1">
           {ZOOMS.map((z) => (
