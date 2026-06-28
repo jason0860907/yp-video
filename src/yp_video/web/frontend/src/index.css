@@ -179,3 +179,8 @@ body.sidebar-collapsed video.vq-video {
 body.sidebar-collapsed .vq-list {
   max-height: calc(72vh + 2.25rem);
 }
+/* Collapsing the sidebar also lets the editor go full-width (legacy behaviour),
+   so a wide video isn't still boxed in by the page's max-width. */
+body.sidebar-collapsed .max-w-screen-2xl {
+  max-width: none;
+}

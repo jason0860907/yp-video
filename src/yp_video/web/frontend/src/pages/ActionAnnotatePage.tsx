@@ -584,7 +584,7 @@ export function ActionAnnotatePage() {
             <div ref={wrapRef} className="relative overflow-hidden rounded-2xl bg-black ring-1 ring-white/[0.06]">
               <video
                 ref={videoRef}
-                className={cn('mx-auto block max-h-[45vh] w-full bg-black object-contain', pointMode && ed.video && 'cursor-crosshair')}
+                className={cn('vq-video mx-auto block max-h-[45vh] w-full bg-black object-contain', pointMode && ed.video && 'cursor-crosshair')}
                 playsInline
                 preload="metadata"
                 onClick={onVideoClick}
