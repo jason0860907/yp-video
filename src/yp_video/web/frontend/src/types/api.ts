@@ -112,6 +112,44 @@ export interface TrainCheckpoint {
   kind: 'best' | 'last' | 'epoch';
 }
 
+/** Train (TAD) page status + video records + perf chart shapes. */
+export interface TrainStatus {
+  cuts_count?: number;
+  features_by_model?: Record<string, number>;
+  annotations_exist?: boolean;
+  vllm_running?: boolean;
+  active_train_job?: Job;
+}
+
+export interface TrainVideo {
+  name: string;
+  kind: CutKind;
+  has_annotation?: boolean;
+  has_pre_annotation?: boolean;
+  has_features?: boolean;
+  has_prediction?: boolean;
+}
+
+export interface TrainConfigDefaults {
+  lr?: number;
+  epochs?: number;
+  warmup_epochs?: number;
+  weight_decay?: number;
+  schedule?: string;
+  batch_size?: number;
+  sampler_alpha?: number;
+}
+
+export interface PerfEntry {
+  epoch: number;
+  tiou?: Record<string, { mAP?: number }>;
+  per_source?: Record<string, { mAP?: number; tiou_mAP?: number[]; n_videos?: number; n_preds?: number }>;
+}
+export interface PerfData {
+  name?: string;
+  entries?: PerfEntry[];
+}
+
 export interface SystemStats {
   videos?: number;
   cuts?: number;

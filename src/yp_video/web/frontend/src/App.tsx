@@ -6,6 +6,7 @@ import { Placeholder } from '@/components/Placeholder';
 import { JobsPage } from '@/pages/JobsPage';
 import { DownloadPage } from '@/pages/DownloadPage';
 import { DetectPage } from '@/pages/DetectPage';
+import { TrainPage } from '@/pages/TrainPage';
 import { ActionPredictPage } from '@/pages/ActionPredictPage';
 import { PredictPage } from '@/pages/PredictPage';
 import { ActionTrainPage } from '@/pages/ActionTrainPage';
@@ -20,6 +21,7 @@ const PAGES: Record<string, ReactElement> = {
   '/cut': <CutPage />,
   '/detect': <DetectPage />,
   '/annotate': <AnnotatePage />,
+  '/train': <TrainPage />,
   '/predict': <PredictPage />,
   '/review': <ReviewPage />,
   '/action-predict': <ActionPredictPage />,
