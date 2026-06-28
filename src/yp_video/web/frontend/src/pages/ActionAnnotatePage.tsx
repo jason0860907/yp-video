@@ -47,6 +47,28 @@ interface Editor {
 }
 const EMPTY: Editor = { video: '', duration: 0, fps: 30, numFrames: 0, rallies: [], events: [], dirty: false };
 
+interface TimelineRange {
+  scope: 'rally' | 'video';
+  startFrame: number;
+  endFrame: number;
+  startTime: number;
+  endTime: number;
+  rally: ActionRally | null;
+}
+/** Visible window of the scrub timeline: the selected rally, or the whole video. */
+function timelineRange(ed: Editor, scope: 'rally' | 'video', rally: ActionRally | null): TimelineRange {
+  const fps = ed.fps || 30;
+  const maxFrame = Math.max(0, ed.numFrames - 1);
+  if (scope === 'rally' && rally) {
+    const startFrame = clamp(Math.round(rally.start * fps), 0, maxFrame);
+    const endFrame = clamp(Math.max(startFrame, Math.ceil(rally.end * fps) - 1), 0, maxFrame);
+    return { scope: 'rally', startFrame, endFrame, startTime: rally.start, endTime: rally.end, rally };
+  }
+  return { scope: 'video', startFrame: 0, endFrame: maxFrame, startTime: 0, endTime: ed.duration || maxFrame / fps, rally: null };
+}
+const frameToPct = (frame: number, r: TimelineRange) => clamp((frame - r.startFrame) / Math.max(1, r.endFrame - r.startFrame), 0, 1) * 100;
+const pctToFrame = (pct: number, r: TimelineRange) => Math.round(r.startFrame + clamp(pct, 0, 1) * Math.max(0, r.endFrame - r.startFrame));
+
 const findRally = (frame: number, ed: Editor): ActionRally | null => {
   const t = frame / (ed.fps || 30);
   return ed.rallies.find((r) => t >= r.start && t < r.end) ?? null;
@@ -101,6 +123,7 @@ export function ActionAnnotatePage() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const [pointMode, setPointMode] = useState(false);
+  const [timelineScope, setTimelineScope] = useState<'rally' | 'video'>('rally');
   const [mediaBox, setMediaBox] = useState<MediaBox | null>(null);
   const drag = useRef<{ id: string; moved: boolean } | null>(null);
   const suppressClick = useRef(false);
@@ -430,6 +453,9 @@ export function ActionAnnotatePage() {
       } else if (e.key.toLowerCase() === 'p') {
         e.preventDefault();
         setPointMode((m) => !m);
+      } else if (e.key.toLowerCase() === 'o') {
+        e.preventDefault();
+        setTimelineScope((s) => (s === 'rally' ? 'video' : 'rally'));
       } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIdx >= 0) {
         deleteEvent(selectedIdx);
       }
@@ -441,6 +467,17 @@ export function ActionAnnotatePage() {
   const eventsByRally = (rid: number) => ed.events.map((e, idx) => ({ e, idx })).filter(({ e }) => e.rally_id === rid);
   const outside = ed.events.map((e, idx) => ({ e, idx })).filter(({ e }) => !e.rally_id);
   const reviewedCount = videos.filter(isReviewed).length;
+
+  // Scrub timeline geometry. Rally scope needs a selected rally; otherwise the
+  // window falls back to the whole video (and the toggle is disabled).
+  const selRally = selectedRallyId === 'all' ? null : ed.rallies.find((r) => r.rally_id === selectedRallyId) ?? null;
+  const effectiveScope: 'rally' | 'video' = timelineScope === 'rally' && selRally ? 'rally' : 'video';
+  const range = timelineRange(ed, effectiveScope, selRally);
+  const hasTimeline = Boolean(ed.video && ed.numFrames);
+  const toggleTimelineScope = () => {
+    if (!hasTimeline) return;
+    setTimelineScope((s) => (s === 'rally' ? 'video' : 'rally'));
+  };
 
   return (
     <div className="mx-auto max-w-screen-2xl space-y-5">
@@ -584,15 +621,85 @@ export function ActionAnnotatePage() {
               )}
             </div>
 
-            {/* Scrubber (full timeline / waveform comes in a later pass) */}
-            <input
-              type="range"
-              min={0}
-              max={Math.max(0, ed.numFrames - 1)}
-              value={frame}
-              onChange={(e) => seekFrame(Number(e.target.value))}
-              className="mt-3 h-1.5 w-full cursor-pointer appearance-none rounded-full bg-surface-300 accent-primary"
-            />
+            {/* Scrub timeline: rally bands + action markers + playhead (waveform comes in a later pass) */}
+            <div className="mt-3 flex items-center justify-between gap-3">
+              <SectionLabel className="!mb-0">Timeline</SectionLabel>
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-[11px] tabular-nums text-text-muted">
+                  {hasTimeline ? `${effectiveScope === 'rally' && selRally ? `R${ed.rallies.findIndex((r) => r.rally_id === selRally.rally_id) + 1} ` : 'Video '}${fmt(range.startTime)}–${fmt(range.endTime)}` : ''}
+                </span>
+                <Button
+                  size="sm"
+                  intent={effectiveScope === 'rally' ? 'primary' : 'default'}
+                  onClick={toggleTimelineScope}
+                  disabled={!hasTimeline || !selRally}
+                  title="Timeline range: current rally or full video (O)"
+                >
+                  {effectiveScope === 'rally' ? 'Current rally' : 'Full video'}
+                </Button>
+              </div>
+            </div>
+            <div
+              role="slider"
+              aria-label="Timeline"
+              aria-valuenow={frame}
+              tabIndex={0}
+              className="relative mt-2 h-9 w-full cursor-pointer select-none rounded-lg border border-border bg-surface-200/40"
+              onPointerDown={(e) => {
+                if ((e.target as HTMLElement).closest('button[data-marker]')) return;
+                if (!hasTimeline) return;
+                const rect = e.currentTarget.getBoundingClientRect();
+                seekFrame(pctToFrame((e.clientX - rect.left) / rect.width, range));
+              }}
+            >
+              {/* Rally bands */}
+              {effectiveScope === 'rally' && selRally ? (
+                <div className="absolute inset-y-0 left-0 w-full rounded-sm border-x bg-primary/[0.16]" style={{ borderColor: 'rgb(var(--primary) / 0.5)' }} />
+              ) : (
+                ed.rallies.map((rally) => {
+                  const sf = Math.round(rally.start * ed.fps);
+                  const ef = Math.round(rally.end * ed.fps);
+                  const left = frameToPct(sf, range);
+                  const width = Math.max(0.2, frameToPct(ef, range) - left);
+                  const active = rally.rally_id === selectedRallyId;
+                  return (
+                    <div
+                      key={rally.rally_id}
+                      className={cn('absolute inset-y-0 rounded-sm border-x', active ? 'bg-primary/[0.18]' : 'bg-primary/[0.07]')}
+                      style={{ left: `${left}%`, width: `${width}%`, borderColor: active ? 'rgb(var(--primary) / 0.5)' : 'rgb(var(--primary) / 0.18)' }}
+                    />
+                  );
+                })
+              )}
+              {/* Action markers */}
+              {ed.events
+                .map((e, idx) => ({ e, idx }))
+                .filter(({ e }) => (selectedRallyId === 'all' || e.rally_id === selectedRallyId) && e.frame >= range.startFrame && e.frame <= range.endFrame)
+                .map(({ e, idx }) => {
+                  const color = ACTION_COLORS[e.label] || '#8E8E93';
+                  const active = idx === selectedIdx;
+                  return (
+                    <button
+                      key={e.id}
+                      data-marker
+                      type="button"
+                      onClick={(ev) => {
+                        ev.stopPropagation();
+                        jumpToEvent(idx);
+                      }}
+                      title={`${e.label} · frame ${e.frame}`}
+                      className={cn('absolute top-1/2 -translate-y-1/2 rounded-full border border-black/50 transition-transform', active ? '-ml-[7px] h-6 w-3.5 scale-105' : '-ml-px h-5 w-1.5 hover:scale-125')}
+                      style={{ left: `${frameToPct(e.frame, range)}%`, background: e.visible ? color : 'transparent', borderColor: e.visible ? 'rgba(0,0,0,0.5)' : color }}
+                    />
+                  );
+                })}
+              {/* Playhead */}
+              {hasTimeline && (
+                <div className="pointer-events-none absolute inset-y-0 w-0.5 -translate-x-1/2 bg-ink/80" style={{ left: `${frameToPct(frame, range)}%` }}>
+                  <span className="absolute -top-1 left-1/2 h-2 w-2 -translate-x-1/2 rounded-full bg-ink" />
+                </div>
+              )}
+            </div>
             <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
               <span className="rounded-lg border border-border bg-surface-200/50 px-2.5 py-1 font-mono text-sm tabular-nums text-text-primary">
                 {fmt(frame / (ed.fps || 30))} / f{frame}
@@ -621,6 +728,8 @@ export function ActionAnnotatePage() {
             <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">1-6</kbd> label ·{' '}
             <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">← →</kbd> frame ·{' '}
             <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">Enter</kbd> add ·{' '}
+            <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">P</kbd> point mode ·{' '}
+            <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">O</kbd> timeline range ·{' '}
             <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">Del</kbd> remove
           </p>
         </div>
