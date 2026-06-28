@@ -74,15 +74,11 @@ export function ActionTimeline({
   const scrollRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [viewW, setViewW] = useState(0);
-  const [spv, setSpv] = useState(0);
+  // Default to a tight 30s window — action labels are frame-precise work.
+  const [spv, setSpv] = useState(30);
 
   const ready = duration > 0 && numFrames > 0;
   const time = fps ? frame / fps : 0;
-
-  // Default to a 3-minute window the first time we meet a long video.
-  useEffect(() => {
-    if (duration > 0) setSpv((cur) => (cur === 0 && duration > 200 ? 180 : cur));
-  }, [duration]);
 
   useEffect(() => {
     const el = scrollRef.current;
