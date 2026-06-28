@@ -126,10 +126,14 @@ export function ActionTrainPage() {
 
   const set = <K extends keyof Form>(key: K, value: Form[K]) => setForm((f) => ({ ...f, [key]: value }));
 
+  // Counts reflect the selected camera view (all = totals; otherwise the
+  // per-view breakdown from the status endpoint).
+  const ann = status?.action_annotations;
+  const viewStats = form.camera_view === 'all' ? undefined : ann?.by_view?.[form.camera_view];
   const stats = {
-    videos: Math.max(0, Number(status?.action_annotations?.videos) || 0),
-    actions: Math.max(0, Number(status?.action_annotations?.events) || 0),
-    frames: Math.max(0, Number(status?.action_annotations?.frames) || 0),
+    videos: Math.max(0, Number((viewStats ?? ann)?.videos) || 0),
+    actions: Math.max(0, Number((viewStats ?? ann)?.events) || 0),
+    frames: Math.max(0, Number((viewStats ?? ann)?.frames) || 0),
   };
   const ready = stats.actions > 0;
   const running = !!job && (job.status === 'running' || job.status === 'pending');
@@ -217,8 +221,8 @@ export function ActionTrainPage() {
             <Field label="Dataset">
               <input value={form.dataset} onChange={(e) => set('dataset', e.target.value)} className={fieldCls} />
             </Field>
-            <Field label="Init checkpoint">
-              <select value={form.init_checkpoint} onChange={(e) => set('init_checkpoint', e.target.value)} className={cn(fieldCls, 'cursor-pointer appearance-none')}>
+            <Field label="Init checkpoint" className="col-span-2">
+              <select value={form.init_checkpoint} onChange={(e) => set('init_checkpoint', e.target.value)} title={form.init_checkpoint} className={cn(fieldCls, 'cursor-pointer appearance-none')}>
                 {initCheckpoints.length === 0 && <option value="">No checkpoints found</option>}
                 {initCheckpoints.map((o) => (
                   <option key={o.value} value={o.value}>

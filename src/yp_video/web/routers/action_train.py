@@ -167,6 +167,12 @@ def _count_jsonl_records(path: Path) -> tuple[int, int]:
 
 def _action_annotation_stats() -> dict:
     ACTION_ANNOTATIONS_DIR.mkdir(parents=True, exist_ok=True)
+    # Totals plus a per-camera-view breakdown so the UI can reflect the selected
+    # view. A video's view is its cut kind (broadcast / sideline).
+    by_view: dict[str, dict[str, int]] = {
+        "broadcast": {"videos": 0, "events": 0, "frames": 0},
+        "sideline": {"videos": 0, "events": 0, "frames": 0},
+    }
     videos = 0
     events = 0
     frames = 0
@@ -175,9 +181,18 @@ def _action_annotation_stats() -> dict:
             meta, records = read_jsonl(path)
         except (OSError, json.JSONDecodeError):
             continue
+        n_events = len(records)
+        n_frames = int(meta.get("num_frames") or 0)
         videos += 1
-        events += len(records)
-        frames += int(meta.get("num_frames") or 0)
+        events += n_events
+        frames += n_frames
+        stem = str(meta.get("video") or path.stem.removesuffix("_actions"))
+        video_path = find_cut(f"{stem}.mp4")
+        view = cut_kind_of(video_path) if video_path else None
+        if view in by_view:
+            by_view[view]["videos"] += 1
+            by_view[view]["events"] += n_events
+            by_view[view]["frames"] += n_frames
     return {
         "label_dir": str(ACTION_ANNOTATIONS_DIR),
         "frame_dir": str(ACTION_FRAMES_DIR),
@@ -185,6 +200,7 @@ def _action_annotation_stats() -> dict:
         "videos": videos,
         "events": events,
         "frames": frames,
+        "by_view": by_view,
         "exists": ACTION_ANNOTATIONS_DIR.exists(),
     }
 
