@@ -409,14 +409,6 @@ export function ActionAnnotatePage() {
     mutate((prev) => ({ ...prev, events: prev.events.filter((_, i) => i !== idx) }));
   };
 
-  const clearEvents = async () => {
-    if (!ed.events.length) return;
-    const ok = await confirm({ title: 'Clear action events?', body: `Removes ${ed.events.length} event(s) from this view. The file on disk is untouched until Save.`, confirmText: 'Clear', variant: 'danger' });
-    if (!ok) return;
-    setSelectedIdx(-1);
-    mutate((prev) => ({ ...prev, events: [] }));
-  };
-
   const save = async () => {
     if (!ed.video) return toast.warning('No video loaded');
     try {
@@ -700,9 +692,6 @@ export function ActionAnnotatePage() {
               <div className="flex items-center gap-2">
                 <Button size="sm" intent="primary" onClick={save}>
                   {ed.dirty ? 'Save •' : 'Save'}
-                </Button>
-                <Button size="sm" intent="danger" onClick={clearEvents}>
-                  Clear
                 </Button>
               </div>
             </div>
