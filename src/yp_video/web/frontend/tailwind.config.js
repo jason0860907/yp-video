@@ -32,6 +32,12 @@ export default {
           400: 'var(--surface-400)',
         },
         sidebar: 'var(--sidebar)',
+        // Theme-reversing foreground: white on dark, black on light. Use with
+        // an alpha for subtle tints/hovers/hairlines (bg-ink/5, ring-ink/10).
+        ink: 'rgb(var(--fg-rgb) / <alpha-value>)',
+        // Readable text/icon color on a primary fill (flips to dark on the
+        // light amber palette).
+        'on-primary': 'var(--on-primary)',
         'text-primary': 'var(--text-primary)',
         'text-secondary': 'var(--text-secondary)',
         'text-muted': 'var(--text-muted)',

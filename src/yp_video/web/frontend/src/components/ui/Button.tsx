@@ -5,10 +5,10 @@ export type ButtonIntent = 'primary' | 'default' | 'ghost' | 'danger';
 export type ButtonSize = 'sm' | 'md' | 'lg';
 
 const INTENTS: Record<ButtonIntent, string> = {
-  primary: 'bg-primary text-white border border-transparent hover:brightness-110',
+  primary: 'bg-primary text-on-primary border border-transparent hover:brightness-110',
   default:
     'bg-surface-300 text-text-secondary border border-border-light hover:text-text-primary hover:border-border-bright',
-  ghost: 'bg-transparent text-text-secondary border border-transparent hover:text-text-primary hover:bg-white/5',
+  ghost: 'bg-transparent text-text-secondary border border-transparent hover:text-text-primary hover:bg-ink/5',
   danger: 'bg-red-500/15 text-red-400 border border-red-500/30 hover:bg-red-500/25',
 };
 

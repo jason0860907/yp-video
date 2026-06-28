@@ -5,8 +5,8 @@ const MAP: Record<string, string> = {
   completed: 'bg-emerald-500/15 text-emerald-400 ring-1 ring-emerald-500/20',
   failed: 'bg-red-500/15 text-red-400 ring-1 ring-red-500/20',
   cancelled: 'bg-amber-500/15 text-amber-400 ring-1 ring-amber-500/20',
-  pending: 'bg-white/5 text-text-muted ring-1 ring-white/10',
-  stopped: 'bg-white/5 text-text-muted ring-1 ring-white/10',
+  pending: 'bg-ink/5 text-text-muted ring-1 ring-ink/10',
+  stopped: 'bg-ink/5 text-text-muted ring-1 ring-ink/10',
 };
 
 /** Job/server status pill. Lowercase label + color; running pulses. */

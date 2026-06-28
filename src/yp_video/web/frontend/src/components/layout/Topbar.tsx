@@ -18,7 +18,7 @@ export function Topbar({ onToggleSidebar }: TopbarProps) {
         onClick={onToggleSidebar}
         title="Toggle sidebar"
         aria-label="Toggle sidebar"
-        className="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-white/[0.06] hover:text-text-primary"
+        className="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted transition-colors hover:bg-ink/[0.06] hover:text-text-primary"
       >
         <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />

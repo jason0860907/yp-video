@@ -29,7 +29,15 @@ export function CutPage() {
   const [markStart, setMarkStart] = useState<number | null>(null);
   const [kind, setKind] = useState<CutKind>('broadcast');
   const [time, setTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [playing, setPlaying] = useState(false);
   const [exporting, setExporting] = useState(false);
+
+  const togglePlay = () => {
+    const el = videoRef.current;
+    if (!el) return;
+    el.paused ? void el.play() : el.pause();
+  };
 
   const videosQuery = useQuery({ queryKey: ['cut-videos'], queryFn: () => apiFetch<string[]>(API.cut.videos) });
   const videos = videosQuery.data ?? [];
@@ -164,7 +172,7 @@ export function CutPage() {
                   key={k}
                   type="button"
                   onClick={() => setKind(k)}
-                  className={cn('rounded-md px-2.5 py-1 font-heading text-xs capitalize transition-colors', kind === k ? 'bg-primary text-white' : 'text-text-secondary hover:bg-white/[0.04]')}
+                  className={cn('rounded-md px-2.5 py-1 font-heading text-xs capitalize transition-colors', kind === k ? 'bg-primary text-on-primary' : 'text-text-secondary hover:bg-ink/[0.04]')}
                 >
                   {k}
                 </button>
@@ -196,12 +204,51 @@ export function CutPage() {
             </select>
           </div>
           <div className="overflow-hidden rounded-2xl bg-black shadow-lg shadow-black/40 ring-1 ring-white/[0.06]">
-            <video ref={videoRef} className="max-h-[50vh] w-full" controls onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)} />
+            <video
+              ref={videoRef}
+              className="max-h-[50vh] w-full cursor-pointer"
+              onClick={togglePlay}
+              onPlay={() => setPlaying(true)}
+              onPause={() => setPlaying(false)}
+              onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
+              onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
+            />
           </div>
+          <input
+            type="range"
+            min={0}
+            max={duration || 0}
+            step={0.01}
+            value={time}
+            onChange={(e) => {
+              const el = videoRef.current;
+              if (el) el.currentTime = Number(e.target.value);
+            }}
+            className="mt-3 h-1.5 w-full cursor-pointer appearance-none rounded-full bg-surface-300 accent-primary"
+          />
           <div className="mt-3 flex items-center justify-between">
-            <span className="rounded-lg border border-border bg-surface-50 px-3 py-1.5 font-mono text-sm tabular-nums text-text-primary">
-              {formatTimePrecise(time)}
-            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={togglePlay}
+                aria-label={playing ? 'Pause' : 'Play'}
+                className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-on-primary transition-colors hover:brightness-110"
+              >
+                {playing ? (
+                  <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
+                    <rect x="6" y="5" width="4" height="14" rx="1" />
+                    <rect x="14" y="5" width="4" height="14" rx="1" />
+                  </svg>
+                ) : (
+                  <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M8 5.14v13.72a1 1 0 001.54.84l10.7-6.86a1 1 0 000-1.68L9.54 4.3A1 1 0 008 5.14z" />
+                  </svg>
+                )}
+              </button>
+              <span className="rounded-lg border border-border bg-surface-50 px-3 py-1.5 font-mono text-sm tabular-nums text-text-primary">
+                {formatTimePrecise(time)}
+              </span>
+            </div>
             <div className="flex items-center gap-2">
               <Button size="sm" intent="primary" onClick={doMarkStart}>
                 Mark Start [

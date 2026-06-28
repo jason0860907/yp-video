@@ -20,21 +20,29 @@
   --accent: 232 178 58;
   --accent-light: 243 210 117;
   --accent-dark: 200 144 26;
+  /* Text/icon color on a primary fill — white by default; light palettes
+     (amber) override to dark ink so labels stay readable. */
+  --on-primary: #ffffff;
 
-  /* ---- NEUTRALS · light (iOS system) ---- */
-  --bg: #f2f2f7;
-  --surface-50: #ffffff;
-  --surface-100: #ffffff;
-  --surface-200: #f2f2f7;
-  --surface-300: #e8e8ec;
-  --surface-400: #e0e0e5;
-  --sidebar: #ffffff;
+  /* ---- NEUTRALS · light (warm gray — faint orange undertone) ----
+     Mostly neutral gray with a hint of warmth; cards stay white. */
+  --bg: #f1efeb;
+  --surface-50: #eae7e1;
+  --surface-100: #fbf9f5;
+  --surface-200: #e5e1d9;
+  --surface-300: #d8d3c9;
+  --surface-400: #c9c4ba;
+  --sidebar: #fbf9f5;
   --text-primary: #000000;
-  --text-secondary: rgba(60, 60, 67, 0.6);
-  --text-muted: rgba(60, 60, 67, 0.45);
-  --line: rgba(60, 60, 67, 0.12);
-  --line-strong: rgba(60, 60, 67, 0.2);
-  --line-bright: rgba(60, 60, 67, 0.28);
+  --text-secondary: rgba(50, 50, 56, 0.84);
+  --text-muted: rgba(50, 50, 56, 0.62);
+  --line: rgba(60, 60, 67, 0.14);
+  --line-strong: rgba(60, 60, 67, 0.22);
+  --line-bright: rgba(60, 60, 67, 0.3);
+
+  /* Foreground "ink" channel — black on light, white on dark — so subtle
+     tints/hovers/hairlines (bg-ink/5, ring-ink/10 …) adapt to the theme. */
+  --fg-rgb: 0 0 0;
 
   /* background wash tints (gold / blue) */
   --wash-gold: rgba(232, 178, 58, 0.05);
@@ -55,19 +63,12 @@
   --line: rgba(84, 84, 88, 0.45);
   --line-strong: rgba(84, 84, 88, 0.65);
   --line-bright: rgba(120, 120, 128, 0.55);
+  --fg-rgb: 255 255 255;
   --wash-gold: rgba(232, 178, 58, 0.045);
   --wash-blue: rgba(56, 189, 248, 0.05);
 }
 
-/* ---- PALETTES (brand swap) ---- */
-[data-palette='sunset'] {
-  --primary: 232 98 43;
-  --primary-light: 244 137 94;
-  --primary-dark: 201 82 31;
-  --accent: 255 200 87;
-  --accent-light: 255 228 163;
-  --accent-dark: 176 120 20;
-}
+/* ---- PALETTES (brand swap) ---- court is the default in :root above ---- */
 [data-palette='coral'] {
   --primary: 226 85 99;
   --primary-light: 240 138 149;
@@ -75,6 +76,16 @@
   --accent: 232 178 58;
   --accent-light: 243 210 117;
   --accent-dark: 200 144 26;
+}
+/* Amber/gold brand — primary is light, so on-primary flips to dark ink. */
+[data-palette='amber'] {
+  --primary: 232 178 58;
+  --primary-light: 243 210 117;
+  --primary-dark: 200 144 26;
+  --accent: 45 95 63;
+  --accent-light: 91 191 138;
+  --accent-dark: 36 77 51;
+  --on-primary: #1a1300;
 }
 
 @layer base {
@@ -150,16 +161,7 @@
 }
 
 .shimmer-bg {
-  background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.04) 50%, transparent 100%);
+  background: linear-gradient(90deg, transparent 0%, rgb(var(--fg-rgb) / 0.06) 50%, transparent 100%);
   background-size: 200% 100%;
   animation: shimmer 2s linear infinite;
-}
-
-/* Keep the native video scrubber/controls, but drop the dark gradient the
-   browser overlays on hover (the "video darkens when you point at it"). */
-video::-webkit-media-controls-panel {
-  background: transparent !important;
-}
-video::-webkit-media-controls-enclosure {
-  background: transparent !important;
 }

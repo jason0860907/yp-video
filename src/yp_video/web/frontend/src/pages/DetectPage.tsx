@@ -190,7 +190,7 @@ export function DetectPage() {
                   onClick={() => setKindFilter(tab.key)}
                   className={cn(
                     'rounded-md px-3 py-1 font-heading text-xs transition-colors duration-150',
-                    active ? 'bg-primary text-white' : 'text-text-secondary hover:bg-white/[0.04]',
+                    active ? 'bg-primary text-on-primary' : 'text-text-secondary hover:bg-ink/[0.04]',
                   )}
                 >
                   {tab.label} <span className="ml-1 opacity-60">{counts[tab.key]}</span>
@@ -235,7 +235,7 @@ export function DetectPage() {
                       detected
                     </span>
                   ) : (
-                    <span className="flex items-center gap-1.5 rounded-full bg-white/5 px-2.5 py-0.5 text-[11px] font-medium text-text-muted ring-1 ring-white/10">
+                    <span className="flex items-center gap-1.5 rounded-full bg-ink/5 px-2.5 py-0.5 text-[11px] font-medium text-text-muted ring-1 ring-ink/10">
                       <span className="h-1.5 w-1.5 rounded-full bg-current" />
                       pending
                     </span>
@@ -261,7 +261,7 @@ export function DetectPage() {
             <span className="font-mono text-[30px] font-bold tabular-nums text-text-primary">{pct}%</span>
             {job.message && <span className="text-sm text-text-muted">{job.message}</span>}
           </div>
-          <div className="h-2 overflow-hidden rounded-full bg-white/[0.06]">
+          <div className="h-2 overflow-hidden rounded-full bg-ink/[0.06]">
             <div
               className="h-full rounded-full transition-all duration-500"
               style={{ width: `${pct}%`, background: 'linear-gradient(90deg, rgb(var(--primary)), #FB923C)' }}
@@ -273,7 +273,7 @@ export function DetectPage() {
               <summary className="cursor-pointer text-[10px] text-text-muted hover:text-text-primary">
                 Show logs ({job.logs.length} lines)
               </summary>
-              <pre className="mt-1 max-h-64 overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-white/5 bg-black/40 p-2 font-mono text-[10px] text-red-300/80">
+              <pre className="mt-1 max-h-64 overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-ink/5 bg-black/40 p-2 font-mono text-[10px] text-red-300/80">
                 {job.logs.join('\n')}
               </pre>
             </details>

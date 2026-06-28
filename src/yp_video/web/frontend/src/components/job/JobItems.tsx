@@ -6,14 +6,14 @@ const STATUS_CLS: Record<string, string> = {
   failed: 'text-red-400 bg-red-500/10',
   running: 'text-primary-light bg-primary/10',
   cancelled: 'text-amber-400 bg-amber-500/10',
-  pending: 'text-text-muted bg-white/5',
+  pending: 'text-text-muted bg-ink/5',
 };
 const BAR_CLS: Record<string, string> = {
   completed: 'bg-emerald-400',
   failed: 'bg-red-400',
   running: 'bg-primary-light',
   cancelled: 'bg-amber-400',
-  pending: 'bg-white/20',
+  pending: 'bg-ink/20',
 };
 
 const clsFor = (map: Record<string, string>, status: string | undefined) =>
@@ -63,7 +63,7 @@ export function JobItems({ items, maxVisible = 12 }: JobItemsProps) {
                     {item.video ?? ''}
                   </span>
                 </div>
-                <div className="h-1 overflow-hidden rounded-full bg-white/[0.06]">
+                <div className="h-1 overflow-hidden rounded-full bg-ink/[0.06]">
                   <div className={cn('h-full rounded-full transition-all duration-300', clsFor(BAR_CLS, item.status))} style={{ width: `${pct}%` }} />
                 </div>
                 {item.message && <div className="truncate text-[9px] text-text-muted">{item.message}</div>}

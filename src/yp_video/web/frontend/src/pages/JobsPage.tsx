@@ -209,7 +209,7 @@ function JobRow({ job, onCancel }: { job: Job; onCancel: (id: string) => void })
           <div className="flex min-w-0 items-center gap-2.5">
             <span className="truncate text-[12.5px] font-medium text-text-primary">{job.name || job.type || 'unknown'}</span>
             {job.type && (
-              <span className="flex-shrink-0 rounded bg-white/5 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide text-text-muted">
+              <span className="flex-shrink-0 rounded bg-ink/5 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide text-text-muted">
                 {job.type}
               </span>
             )}

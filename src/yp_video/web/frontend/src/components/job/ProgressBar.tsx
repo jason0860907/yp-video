@@ -21,7 +21,7 @@ interface ProgressBarProps {
 export function ProgressBar({ progress, variant = 'primary' }: ProgressBarProps) {
   const pct = Math.round(Math.max(0, Math.min(progress ?? 0, 1)) * 100);
   return (
-    <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/[0.06]">
+    <div className="h-1.5 w-full overflow-hidden rounded-full bg-ink/[0.06]">
       <div
         className="relative h-full rounded-full transition-all duration-500 ease-out"
         style={{

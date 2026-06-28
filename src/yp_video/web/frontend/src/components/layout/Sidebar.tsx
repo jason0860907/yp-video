@@ -62,7 +62,7 @@ export function Sidebar() {
                     'flex items-center gap-3 rounded-lg border-l-2 px-3 py-2 text-sm transition-colors duration-150',
                     isActive
                       ? 'border-primary bg-gradient-to-r from-primary/20 to-transparent text-text-primary'
-                      : 'border-transparent text-text-secondary hover:bg-white/5 hover:text-text-primary',
+                      : 'border-transparent text-text-secondary hover:bg-ink/5 hover:text-text-primary',
                   )
                 }
               >

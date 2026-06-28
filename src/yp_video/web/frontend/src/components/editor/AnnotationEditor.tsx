@@ -10,6 +10,7 @@ import { SectionLabel } from '@/components/ui/SectionLabel';
 import { toast } from '@/components/feedback/toast';
 import { confirm } from '@/components/feedback/confirm';
 import { DownloadClipsModal } from './DownloadClipsModal';
+import { RallyTimeline } from './RallyTimeline';
 
 export interface EditorAnnotation {
   rally_id: number | null;
@@ -46,7 +47,6 @@ const num = (...vals: unknown[]): number => {
 
 export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtras, previewBackoff = 3, onSaved }: AnnotationEditorProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const [annotations, setAnnotations] = useState<EditorAnnotation[]>([]);
   const [videoName, setVideoName] = useState('');
@@ -58,14 +58,13 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
   const [shift, setShift] = useState('0');
   const [saving, setSaving] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
+  const [playing, setPlaying] = useState(false);
 
-  // Refs the rAF draw loop reads so it never closes over stale state.
-  const annRef = useRef(annotations);
-  annRef.current = annotations;
-  const markRef = useRef(markStart);
-  markRef.current = markStart;
-  const durRef = useRef(duration);
-  durRef.current = duration;
+  const togglePlay = () => {
+    const el = videoRef.current;
+    if (!el) return;
+    el.paused ? void el.play() : el.pause();
+  };
 
   // ── Load a file ──
   useEffect(() => {
@@ -172,61 +171,6 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
     return () => document.removeEventListener('keydown', onKey);
   }, [addAnnotation, doMarkStart]);
 
-  // ── Timeline canvas draw loop ──
-  useEffect(() => {
-    let raf = 0;
-    const draw = () => {
-      raf = requestAnimationFrame(draw);
-      const canvas = canvasRef.current;
-      const el = videoRef.current;
-      const dur = durRef.current;
-      if (!canvas || !dur) return;
-      const rect = canvas.getBoundingClientRect();
-      if (rect.width === 0) return;
-      const dpr = window.devicePixelRatio || 1;
-      if (canvas.width !== rect.width * dpr || canvas.height !== rect.height * dpr) {
-        canvas.width = rect.width * dpr;
-        canvas.height = rect.height * dpr;
-      }
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-      const w = canvas.width;
-      const h = canvas.height;
-      ctx.clearRect(0, 0, w, h);
-      ctx.fillStyle = 'rgba(255,255,255,0.02)';
-      ctx.fillRect(0, 0, w, h);
-      for (const a of annRef.current) {
-        const x1 = (a.start / dur) * w;
-        const x2 = (a.end / dur) * w;
-        const grad = ctx.createLinearGradient(x1, 0, x1, h);
-        grad.addColorStop(0, 'rgba(52,199,89,0.5)');
-        grad.addColorStop(1, 'rgba(52,199,89,0.25)');
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.roundRect(x1, 2 * dpr, Math.max(1, x2 - x1), h - 4 * dpr, 3 * dpr);
-        ctx.fill();
-      }
-      if (el && !isNaN(el.currentTime)) {
-        const px = (el.currentTime / dur) * w;
-        ctx.fillStyle = '#FFFFFF';
-        ctx.shadowColor = 'rgba(255,255,255,0.55)';
-        ctx.shadowBlur = 6 * dpr;
-        ctx.fillRect(px - dpr, 0, 2 * dpr, h);
-        ctx.shadowBlur = 0;
-      }
-      if (markRef.current != null) {
-        const mx = (markRef.current / dur) * w;
-        ctx.fillStyle = '#E8B23A';
-        ctx.shadowColor = 'rgba(232,178,58,0.6)';
-        ctx.shadowBlur = 6 * dpr;
-        ctx.fillRect(mx - dpr, 0, 2 * dpr, h);
-        ctx.shadowBlur = 0;
-      }
-    };
-    draw();
-    return () => cancelAnimationFrame(raf);
-  }, []);
-
   const onTimeUpdate = () => {
     const el = videoRef.current;
     if (!el) return;
@@ -319,21 +263,40 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
       <div className="min-w-0 flex-1 space-y-4">
         <Card>
           <div className="overflow-hidden rounded-2xl bg-black shadow-lg shadow-black/40 ring-1 ring-white/[0.06]">
-            <video ref={videoRef} className="max-h-[45vh] w-full" controls onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)} onTimeUpdate={onTimeUpdate} />
-          </div>
-          <div className="mt-3 overflow-hidden rounded-2xl ring-1 ring-white/[0.06]" style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01))' }}>
-            <canvas
-              ref={canvasRef}
-              className="h-12 w-full cursor-pointer"
-              title="Click to seek"
-              onClick={(e) => {
-                const rect = e.currentTarget.getBoundingClientRect();
-                if (duration) seekTo(((e.clientX - rect.left) / rect.width) * duration, false);
-              }}
+            <video
+              ref={videoRef}
+              className="max-h-[45vh] w-full cursor-pointer"
+              onClick={togglePlay}
+              onPlay={() => setPlaying(true)}
+              onPause={() => setPlaying(false)}
+              onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
+              onTimeUpdate={onTimeUpdate}
             />
           </div>
+          <div className="mt-3">
+            <RallyTimeline videoRef={videoRef} annotations={annotations} duration={duration} markStart={markStart} onSeek={(t) => seekTo(t, false)} />
+          </div>
           <div className="mt-2 flex items-center justify-between">
-            <span className="rounded-lg border border-border bg-surface-200/50 px-2.5 py-1 font-mono text-sm tabular-nums text-text-primary">{formatTime(currentTime)}</span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={togglePlay}
+                aria-label={playing ? 'Pause' : 'Play'}
+                className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-on-primary transition-colors hover:brightness-110"
+              >
+                {playing ? (
+                  <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
+                    <rect x="6" y="5" width="4" height="14" rx="1" />
+                    <rect x="14" y="5" width="4" height="14" rx="1" />
+                  </svg>
+                ) : (
+                  <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M8 5.14v13.72a1 1 0 001.54.84l10.7-6.86a1 1 0 000-1.68L9.54 4.3A1 1 0 008 5.14z" />
+                  </svg>
+                )}
+              </button>
+              <span className="rounded-lg border border-border bg-surface-200/50 px-2.5 py-1 font-mono text-sm tabular-nums text-text-primary">{formatTime(currentTime)}</span>
+            </div>
             <div className="flex items-center gap-2">
               <Button size="sm" intent="primary" onClick={doMarkStart}>
                 Start [
@@ -421,13 +384,13 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
                       <input
                         value={formatTime(a.start)}
                         onChange={(e) => updateField(i, 'start', e.target.value)}
-                        className="w-11 border-0 border-b border-white/10 bg-transparent text-center font-heading text-[11px] tabular-nums text-text-primary focus:border-primary-light focus:outline-none focus:ring-0"
+                        className="w-11 border-0 border-b border-ink/10 bg-transparent text-center font-heading text-[11px] tabular-nums text-text-primary focus:border-primary-light focus:outline-none focus:ring-0"
                       />
                       <span className="text-[10px] text-text-muted/40">→</span>
                       <input
                         value={formatTime(a.end)}
                         onChange={(e) => updateField(i, 'end', e.target.value)}
-                        className="w-11 border-0 border-b border-white/10 bg-transparent text-center font-heading text-[11px] tabular-nums text-text-primary focus:border-primary-light focus:outline-none focus:ring-0"
+                        className="w-11 border-0 border-b border-ink/10 bg-transparent text-center font-heading text-[11px] tabular-nums text-text-primary focus:border-primary-light focus:outline-none focus:ring-0"
                       />
                     </div>
                     <span className="rounded bg-surface-200/40 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-text-muted">{(a.end - a.start).toFixed(1)}s</span>

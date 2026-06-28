@@ -5,19 +5,19 @@ import { useSyncExternalStore } from 'react';
  *  inline script in index.html to avoid a flash before this module loads. */
 
 export type Theme = 'light' | 'dark';
-export type Palette = 'court' | 'sunset' | 'coral';
+export type Palette = 'court' | 'coral' | 'amber';
 
 export const PALETTES: Array<{ key: Palette; label: string; swatch: string }> = [
   { key: 'court', label: 'Court green', swatch: '#2D5F3F' },
-  { key: 'sunset', label: 'Sunset orange', swatch: '#E8622B' },
   { key: 'coral', label: 'Coral', swatch: '#E25563' },
+  { key: 'amber', label: 'Amber', swatch: '#E8B23A' },
 ];
 
 const THEME_KEY = 'vq-theme';
 const PALETTE_KEY = 'vq-palette';
 
 const isTheme = (v: string | null): v is Theme => v === 'light' || v === 'dark';
-const isPalette = (v: string | null): v is Palette => v === 'court' || v === 'sunset' || v === 'coral';
+const isPalette = (v: string | null): v is Palette => v === 'court' || v === 'coral' || v === 'amber';
 
 let state: { theme: Theme; palette: Palette } = {
   theme: isTheme(localStorage.getItem(THEME_KEY)) ? (localStorage.getItem(THEME_KEY) as Theme) : 'dark',

@@ -58,7 +58,7 @@ export function JobProgress({ job, detail = '', showLogs = false, truncateMsg = 
           <summary className="cursor-pointer text-[10px] text-text-muted hover:text-text-primary">
             Show logs ({job.logs!.length} lines)
           </summary>
-          <pre className="mt-1 max-h-64 overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-white/5 bg-black/40 p-2 font-mono text-[10px] text-red-300/80">
+          <pre className="mt-1 max-h-64 overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-ink/5 bg-black/40 p-2 font-mono text-[10px] text-red-300/80">
             {job.logs!.join('\n')}
           </pre>
         </details>

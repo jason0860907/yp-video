@@ -239,7 +239,7 @@ export function UploadPage() {
                 key={m}
                 type="button"
                 onClick={() => setMode(m)}
-                className={cn('rounded-md px-3.5 py-1.5 text-xs font-medium transition-colors', mode === m ? 'bg-primary text-white' : 'text-text-secondary hover:bg-white/[0.04]')}
+                className={cn('rounded-md px-3.5 py-1.5 text-xs font-medium transition-colors', mode === m ? 'bg-primary text-on-primary' : 'text-text-secondary hover:bg-ink/[0.04]')}
               >
                 {m === 'upload' ? 'Upload' : 'Download from R2'}
               </button>
@@ -451,7 +451,7 @@ function FileTree({ files, expanded, localOnly, isUpload, onToggleFile, onToggle
               {syncLabel}
             </span>
           ) : (
-            <span className="flex items-center gap-1.5 rounded-full bg-white/5 px-2.5 py-0.5 text-[11px] font-medium text-text-muted ring-1 ring-white/10">
+            <span className="flex items-center gap-1.5 rounded-full bg-ink/5 px-2.5 py-0.5 text-[11px] font-medium text-text-muted ring-1 ring-ink/10">
               <span className="h-1.5 w-1.5 rounded-full bg-current" />
               {unsyncLabel}
             </span>

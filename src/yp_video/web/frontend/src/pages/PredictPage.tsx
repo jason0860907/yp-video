@@ -247,7 +247,7 @@ export function PredictPage() {
                     type="button"
                     aria-pressed={active}
                     onClick={() => setKindFilter(tab.key)}
-                    className={cn('rounded-md px-3 py-1 font-heading text-xs transition-colors', active ? 'bg-primary text-white' : 'text-text-secondary hover:bg-white/[0.04]')}
+                    className={cn('rounded-md px-3 py-1 font-heading text-xs transition-colors', active ? 'bg-primary text-on-primary' : 'text-text-secondary hover:bg-ink/[0.04]')}
                   >
                     {tab.label} <span className="ml-1 opacity-60">{counts[tab.key]}</span>
                   </button>
@@ -334,7 +334,7 @@ function Pill({ tone, children }: { tone: 'emerald' | 'sky' | 'primary' | 'muted
     emerald: 'text-emerald-400 bg-emerald-500/10 ring-emerald-500/20',
     sky: 'text-sky-300 bg-sky-500/10 ring-sky-500/20',
     primary: 'text-primary-light bg-primary/15 ring-primary/25',
-    muted: 'text-text-muted bg-white/5 ring-white/10',
+    muted: 'text-text-muted bg-ink/5 ring-ink/10',
   }[tone];
   return <span className={cn('flex-shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide ring-1', cls)}>{children}</span>;
 }
