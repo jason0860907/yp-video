@@ -8,7 +8,9 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { toast } from '@/components/feedback/toast';
 import { confirm } from '@/components/feedback/confirm';
-import type { ActionAnnotationData, ActionEvent, ActionRally, ActionVideo } from '@/types/api';
+import { LiveJob } from '@/components/job/LiveJob';
+import { isTerminal } from '@/lib/job';
+import type { ActionAnnotationData, ActionEvent, ActionRally, ActionVideo, Job, SpotCheckpoint, SpotInfo, VllmStatus } from '@/types/api';
 
 // Six fixed action hues (kept identical to the legacy editor).
 const ACTION_COLORS: Record<string, string> = {
@@ -100,6 +102,41 @@ function waveformScaleAmp(values: number[]): number {
 const waveformPointCount = (durationSeconds: number) =>
   clamp(Math.ceil(Math.max(0, durationSeconds) * WAVEFORM_POINTS_PER_SECOND) || WAVEFORM_MIN_POINTS, WAVEFORM_MIN_POINTS, WAVEFORM_MAX_POINTS);
 
+/** Human label for a SPOT checkpoint dropdown option. */
+function spotCheckpointLabel(cp: SpotCheckpoint): string {
+  const details: string[] = [];
+  if (cp.is_best) details.push(`best${(cp.epoch ?? -1) >= 0 ? ` e${cp.epoch}` : ''}`);
+  if (cp.best_metric && Number.isFinite(Number(cp.best_value))) {
+    const v = cp.best_metric === 'val_mAP' ? `${(Number(cp.best_value) * 100).toFixed(2)}%` : Number(cp.best_value).toFixed(4);
+    details.push(`${cp.best_metric} ${v}`);
+  }
+  if (Number.isFinite(Number(cp.size_mb))) details.push(`${Number(cp.size_mb).toFixed(1)} MB`);
+  return details.length ? `${cp.name} (${details.join(', ')})` : cp.name;
+}
+
+interface SpotForm {
+  checkpoint: string;
+  min_score: number;
+  batch_size: number;
+  stop_vllm: boolean;
+  decoder: 'opencv' | 'nvdec';
+  decode_producers: number;
+  decoder_threads: number;
+  prefetch_factor: number;
+  decode_chunk_frames: number;
+}
+const SPOT_DEFAULTS: SpotForm = {
+  checkpoint: '',
+  min_score: 0.15,
+  batch_size: 64,
+  stop_vllm: false,
+  decoder: 'opencv',
+  decode_producers: 2,
+  decoder_threads: 1,
+  prefetch_factor: 2,
+  decode_chunk_frames: 256,
+};
+
 const findRally = (frame: number, ed: Editor): ActionRally | null => {
   const t = frame / (ed.fps || 30);
   return ed.rallies.find((r) => t >= r.start && t < r.end) ?? null;
@@ -184,8 +221,22 @@ export function ActionAnnotatePage() {
 
   const videosQuery = useQuery({ queryKey: ['action-videos'], queryFn: () => apiFetch<ActionVideo[]>(API.actionAnnotate.videos) });
   const labelsQuery = useQuery({ queryKey: ['action-labels'], queryFn: () => apiFetch<{ labels?: string[] }>(API.actionAnnotate.labels) });
+  const spotQuery = useQuery({ queryKey: ['action-spot'], queryFn: () => apiFetch<SpotInfo>(API.actionAnnotate.spot) });
   const videos = videosQuery.data ?? [];
   const labels = labelsQuery.data?.labels ?? DEFAULT_LABELS;
+  const spot = spotQuery.data;
+  const spotCheckpoints = spot?.checkpoints ?? [];
+
+  const [spotForm, setSpotForm] = useState<SpotForm>(SPOT_DEFAULTS);
+  const [spotJob, setSpotJob] = useState<Job | null>(null);
+  const setSpot = <K extends keyof SpotForm>(key: K, value: SpotForm[K]) => setSpotForm((f) => ({ ...f, [key]: value }));
+  const spotRunning = !!spotJob && !isTerminal(spotJob.status);
+
+  // Seed the checkpoint once SPOT info arrives.
+  useEffect(() => {
+    if (!spotCheckpoints.length || spotForm.checkpoint) return;
+    setSpotForm((f) => ({ ...f, checkpoint: spot?.default_checkpoint || spotCheckpoints[0]!.path }));
+  }, [spot?.default_checkpoint, spotCheckpoints, spotForm.checkpoint]);
 
   // ── Frame clock ──
   const computeFrame = () => {
@@ -395,6 +446,70 @@ export function ActionAnnotatePage() {
       toast.error(`Load failed: ${errMsg(e)}`);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Run the ~/yp-spot model to create an action pre-label, then reload it in
+  // place. Guards: discard unsaved edits, confirm overwrite, hand off the GPU
+  // from vLLM. The job streams over SSE via <LiveJob>.
+  const runSpot = async () => {
+    const name = ed.video;
+    if (!name) return toast.warning('Load a video first');
+    if (!spot?.available) return toast.error('SPOT is not available at ~/yp-spot');
+    if (spotRunning) return;
+
+    if (ed.dirty) {
+      const ok = await confirm({ title: 'Discard unsaved changes?', body: 'SPOT pre-label will discard unsaved changes in this view.', confirmText: 'Discard & Run', variant: 'danger' });
+      if (!ok) return;
+    }
+    if (hasActive(videos.find((v) => v.name === name) ?? ({} as ActionVideo))) {
+      const ok = await confirm({ title: 'Overwrite action pre-label?', body: `${name}\n\nThis replaces the active action pre-label. A saved action label, if any, is replaced by the new pre-label.`, confirmText: 'Overwrite', variant: 'warning' });
+      if (!ok) return;
+    }
+
+    let stopVllm = spotForm.stop_vllm;
+    const vllm = await apiFetch<VllmStatus>(API.system.vllmStatus).catch(() => null);
+    if (vllm?.status === 'running' && !stopVllm) {
+      const ok = await confirm({ title: 'Stop vLLM for SPOT?', body: 'SPOT uses the GPU and may fail if vLLM is holding VRAM.\n\nvLLM restarts automatically after the job finishes.', confirmText: 'Stop & Run', variant: 'warning' });
+      if (!ok) return;
+      stopVllm = true;
+    }
+
+    try {
+      const started = await apiFetch<Job>(API.actionAnnotate.prelabel, {
+        method: 'POST',
+        body: {
+          video: name,
+          checkpoint: spotForm.checkpoint,
+          batch_size: spotForm.batch_size,
+          num_workers: spotForm.decode_producers,
+          clip_len: 64,
+          decoder: spotForm.decoder,
+          decode_producers: spotForm.decode_producers,
+          decoder_threads: spotForm.decoder_threads,
+          prefetch_factor: spotForm.prefetch_factor,
+          decode_chunk_frames: spotForm.decode_chunk_frames,
+          min_score: spotForm.min_score,
+          overwrite: true,
+          stop_vllm: stopVllm,
+        },
+      });
+      setSpotJob(started);
+      toast.success('SPOT pre-label started');
+    } catch (e) {
+      toast.error(`Failed to start SPOT: ${errMsg(e)}`);
+    }
+  };
+
+  const onSpotSettled = (jobName: string) => async (done: Job) => {
+    if (done.status === 'completed') {
+      toast.success(done.message || 'SPOT pre-label complete');
+      await videosQuery.refetch();
+      await load(jobName);
+    } else if (done.status === 'failed') {
+      toast.error(`SPOT failed: ${done.error || 'Unknown error'}`);
+    } else {
+      toast.warning('SPOT pre-label cancelled');
     }
   };
 
@@ -706,6 +821,78 @@ export function ActionAnnotatePage() {
         <div className="mt-2 font-mono text-[11px] tabular-nums text-text-muted">
           {filtered.length} shown / {videos.length} total · {reviewedCount} action labeled
         </div>
+      </Card>
+
+      {/* SPOT pre-label */}
+      <Card className="!p-0">
+        <details className="group">
+          <summary className="flex cursor-pointer list-none select-none items-center gap-2 px-5 py-3.5 text-xs font-heading text-text-secondary hover:text-text-primary">
+            <span className="h-2 w-2 rounded-full bg-primary/80" />
+            SPOT pre-label
+            <span className="font-normal text-text-muted">checkpoint, score threshold, GPU handoff</span>
+            <span className="ml-auto font-mono text-[10px] text-text-muted">{ed.video ? ed.video : 'load a video'}</span>
+          </summary>
+          <div className="space-y-3 border-t border-border px-5 pb-5 pt-4">
+            {!spot ? (
+              <p className="text-xs text-text-muted">Loading SPOT…</p>
+            ) : !spot.available ? (
+              <p className="text-xs text-amber-300">SPOT unavailable: {spot.error || '~/yp-spot not ready'}</p>
+            ) : (
+              <>
+                <div className="grid grid-cols-1 items-end gap-3 md:grid-cols-[minmax(16rem,1fr)_6rem_6rem_auto_auto]">
+                  <FieldLabel label="Checkpoint">
+                    <select value={spotForm.checkpoint} onChange={(e) => setSpot('checkpoint', e.target.value)} className={cn(fieldCls, 'w-full')} disabled={!spotCheckpoints.length}>
+                      {!spotCheckpoints.length && <option value="">No SPOT checkpoints found</option>}
+                      {spotCheckpoints.map((cp) => (
+                        <option key={cp.path} value={cp.path}>
+                          {spotCheckpointLabel(cp)}
+                        </option>
+                      ))}
+                    </select>
+                  </FieldLabel>
+                  <FieldLabel label="Min score">
+                    <input type="number" min={0} max={1} step={0.05} value={spotForm.min_score} onChange={(e) => setSpot('min_score', Number(e.target.value))} className={cn(fieldCls, 'w-full')} />
+                  </FieldLabel>
+                  <FieldLabel label="Batch">
+                    <input type="number" min={1} max={128} step={1} value={spotForm.batch_size} onChange={(e) => setSpot('batch_size', Number(e.target.value))} className={cn(fieldCls, 'w-full')} />
+                  </FieldLabel>
+                  <label className="flex cursor-pointer items-center gap-2 pb-2.5 text-xs text-text-secondary">
+                    <input type="checkbox" checked={spotForm.stop_vllm} onChange={(e) => setSpot('stop_vllm', e.target.checked)} className="h-3.5 w-3.5 accent-primary" />
+                    Stop vLLM
+                  </label>
+                  <Button intent="primary" onClick={runSpot} disabled={!spotCheckpoints.length || spotRunning || !ed.video} title="Run ~/yp-spot model and create an action pre-label">
+                    {spotRunning ? 'Running…' : 'Run SPOT'}
+                  </Button>
+                </div>
+                <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+                  <FieldLabel label="Decoder">
+                    <select value={spotForm.decoder} onChange={(e) => setSpot('decoder', e.target.value as SpotForm['decoder'])} className={cn(fieldCls, 'w-full')}>
+                      <option value="opencv">OpenCV</option>
+                      <option value="nvdec">NVDEC (GPU)</option>
+                    </select>
+                  </FieldLabel>
+                  <FieldLabel label="Producers">
+                    <input type="number" min={1} max={8} step={1} value={spotForm.decode_producers} onChange={(e) => setSpot('decode_producers', Number(e.target.value))} className={cn(fieldCls, 'w-full')} />
+                  </FieldLabel>
+                  <FieldLabel label="Threads">
+                    <input type="number" min={1} max={8} step={1} value={spotForm.decoder_threads} onChange={(e) => setSpot('decoder_threads', Number(e.target.value))} className={cn(fieldCls, 'w-full')} />
+                  </FieldLabel>
+                  <FieldLabel label="Prefetch">
+                    <input type="number" min={1} max={8} step={1} value={spotForm.prefetch_factor} onChange={(e) => setSpot('prefetch_factor', Number(e.target.value))} className={cn(fieldCls, 'w-full')} />
+                  </FieldLabel>
+                  <FieldLabel label="Chunk">
+                    <input type="number" min={1} max={512} step={16} value={spotForm.decode_chunk_frames} onChange={(e) => setSpot('decode_chunk_frames', Number(e.target.value))} className={cn(fieldCls, 'w-full')} />
+                  </FieldLabel>
+                </div>
+                {spotJob && (
+                  <div className="border-t border-border pt-4">
+                    <LiveJob job={spotJob} onUpdate={setSpotJob} onSettled={onSpotSettled(ed.video)} />
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </details>
       </Card>
 
       <div className="flex flex-col gap-5 lg:flex-row">

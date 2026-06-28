@@ -115,6 +115,9 @@ export interface SpotCheckpoint {
   name: string;
   epoch?: number;
   is_best?: boolean;
+  best_metric?: string | null;
+  best_value?: number | null;
+  size_mb?: number;
 }
 
 export interface SpotInfo {
