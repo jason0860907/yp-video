@@ -26,6 +26,15 @@ export interface VllmStatus {
   status: 'running' | 'starting' | 'stopped' | 'error';
   model?: string;
   port?: number;
+  max_num_seqs?: number;
+}
+
+export type CutKind = 'broadcast' | 'sideline';
+
+export interface VideoMeta {
+  name: string;
+  kind: CutKind;
+  has_detection?: boolean;
 }
 
 export interface SystemStats {

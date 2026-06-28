@@ -4,9 +4,13 @@ import { AppLayout } from '@/components/layout/AppLayout';
 import { DEFAULT_PATH, NAV_ITEMS } from '@/components/layout/nav';
 import { Placeholder } from '@/components/Placeholder';
 import { JobsPage } from '@/pages/JobsPage';
+import { DownloadPage } from '@/pages/DownloadPage';
+import { DetectPage } from '@/pages/DetectPage';
 
 /** Migrated pages, by route. Paths absent here fall back to a Placeholder. */
 const PAGES: Record<string, ReactElement> = {
+  '/download': <DownloadPage />,
+  '/detect': <DetectPage />,
   '/jobs': <JobsPage />,
 };
 
