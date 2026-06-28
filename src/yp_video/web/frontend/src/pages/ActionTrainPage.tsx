@@ -41,7 +41,7 @@ interface Form {
 
 const BASE_FORM: Form = {
   dataset: 'yp_actions',
-  frame_dir: '~/videos/action-frames',
+  frame_dir: '', // seeded from /action-train/status (the resolved ACTION_FRAMES_DIR)
   checkpoint_dir: '',
   init_checkpoint: '',
   feature_arch: 'rny008_gsm',
@@ -109,6 +109,12 @@ export function ActionTrainPage() {
     const opts = status?.init_checkpoints ?? [];
     if (opts.length && !form.init_checkpoint) setForm((f) => ({ ...f, init_checkpoint: opts[0]!.value }));
   }, [status?.init_checkpoints, form.init_checkpoint]);
+
+  // Seed frame_dir from the server's resolved ACTION_FRAMES_DIR.
+  useEffect(() => {
+    const fd = status?.action_annotations?.frame_dir;
+    if (fd && !form.frame_dir) setForm((f) => ({ ...f, frame_dir: fd }));
+  }, [status?.action_annotations?.frame_dir, form.frame_dir]);
 
   useSSE<Job>(job && !isTerminal(job.status) ? API.jobs.eventsSSE(job.id) : null, (data) => {
     setJob(data);
