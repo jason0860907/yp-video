@@ -154,3 +154,12 @@
   background-size: 200% 100%;
   animation: shimmer 2s linear infinite;
 }
+
+/* Keep the native video scrubber/controls, but drop the dark gradient the
+   browser overlays on hover (the "video darkens when you point at it"). */
+video::-webkit-media-controls-panel {
+  background: transparent !important;
+}
+video::-webkit-media-controls-enclosure {
+  background: transparent !important;
+}
