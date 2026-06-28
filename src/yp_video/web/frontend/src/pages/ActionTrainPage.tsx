@@ -13,8 +13,6 @@ import { JobProgress } from '@/components/job/JobProgress';
 import { toast } from '@/components/feedback/toast';
 import type { ActionTrainProgress, ActionTrainStatus, Job } from '@/types/api';
 
-type Source = 'vnl_1_5' | 'action_annotations';
-
 interface Form {
   dataset: string;
   frame_dir: string;
@@ -67,11 +65,6 @@ const BASE_FORM: Form = {
   stop_vllm: false,
 };
 
-const SOURCE_DEFAULTS: Record<Source, Pick<Form, 'dataset' | 'frame_dir'>> = {
-  vnl_1_5: { dataset: 'vnl_1.5', frame_dir: 'data/vnl_1.5/frames_224p' },
-  action_annotations: { dataset: 'yp_actions', frame_dir: '~/videos/action-frames' },
-};
-
 const SELECTS = {
   feature_arch: ['rny008_gsm', 'rny002_gsm', 'convnextt_gsm', 'rn18_gsm'],
   temporal_arch: ['gru', 'deeper_gru', 'mstcn', 'asformer'],
@@ -95,7 +88,6 @@ const errMsg = (e: unknown) => (e instanceof ApiError ? e.body : e instanceof Er
 const fmtMetric = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v).toFixed(4) : '');
 
 export function ActionTrainPage() {
-  const [source, setSource] = useState<Source>('action_annotations');
   const [form, setForm] = useState<Form>(BASE_FORM);
   const [job, setJob] = useState<Job | null>(null);
 
@@ -106,14 +98,10 @@ export function ActionTrainPage() {
   });
   const status = statusQuery.data;
 
-  // Adopt any active job + its source on first load.
+  // Adopt any active job on first load.
   useEffect(() => {
     const active = status?.active_job;
-    if (active && !job) {
-      setJob(active);
-      const src = (active.params?.source as Source | undefined) ?? undefined;
-      if (src) setSource(src);
-    }
+    if (active && !job) setJob(active);
   }, [status?.active_job, job]);
 
   // Seed init_checkpoint from server options.
@@ -131,22 +119,16 @@ export function ActionTrainPage() {
   });
 
   const set = <K extends keyof Form>(key: K, value: Form[K]) => setForm((f) => ({ ...f, [key]: value }));
-  const changeSource = (next: Source) => {
-    setSource(next);
-    setForm((f) => ({ ...f, ...SOURCE_DEFAULTS[next] }));
-  };
 
   const stats = {
     videos: Math.max(0, Number(status?.action_annotations?.videos) || 0),
     actions: Math.max(0, Number(status?.action_annotations?.events) || 0),
     frames: Math.max(0, Number(status?.action_annotations?.frames) || 0),
   };
-  const vnl = status?.vnl_1_5 ?? {};
-  const sourceReady = source === 'vnl_1_5' ? Boolean(vnl.ready) : stats.actions > 0;
+  const ready = stats.actions > 0;
   const running = !!job && (job.status === 'running' || job.status === 'pending');
-  const canStart = !running && sourceReady && Boolean(status?.spot_available);
-  const isAction = source === 'action_annotations';
-  const showSplit = isAction && form.training_mode === 'split';
+  const canStart = !running && ready && Boolean(status?.spot_available);
+  const showSplit = form.training_mode === 'split';
 
   const exportDataset = () => {
     if (!stats.actions) {
@@ -159,9 +141,9 @@ export function ActionTrainPage() {
   const start = async () => {
     try {
       const body = {
-        source,
-        training_mode: isAction ? form.training_mode : 'split',
-        camera_view: isAction ? form.camera_view : 'all',
+        source: 'action_annotations',
+        training_mode: form.training_mode,
+        camera_view: form.camera_view,
         dataset: form.dataset.trim(),
         frame_dir: form.frame_dir.trim(),
         checkpoint_dir: form.checkpoint_dir.trim() || null,
@@ -218,7 +200,7 @@ export function ActionTrainPage() {
         <StatTile label="Action videos" value={stats.videos} tintClass="text-primary-light" />
         <StatTile label="Action labels" value={stats.actions} tintClass="text-accent" />
         <StatTile label="Action frames" value={stats.frames.toLocaleString()} tintClass="text-text-primary" />
-        <StatTile label="Status" value={sourceReady ? 'ready' : 'not ready'} tintClass={sourceReady ? 'text-emerald-400' : 'text-amber-400'} />
+        <StatTile label="Status" value={ready ? 'ready' : 'not ready'} tintClass={ready ? 'text-emerald-400' : 'text-amber-400'} />
       </div>
 
       <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[1.6fr_1fr]">
@@ -226,12 +208,6 @@ export function ActionTrainPage() {
         <Card>
           <SectionLabel>Training config</SectionLabel>
           <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3">
-            <Field label="Source">
-              <select value={source} onChange={(e) => changeSource(e.target.value as Source)} className={cn(fieldCls, 'cursor-pointer appearance-none')}>
-                <option value="vnl_1_5">VNL 1.5 JSONL</option>
-                <option value="action_annotations">YP Action Labels</option>
-              </select>
-            </Field>
             <Field label="Dataset">
               <input value={form.dataset} onChange={(e) => set('dataset', e.target.value)} className={fieldCls} />
             </Field>
@@ -292,23 +268,19 @@ export function ActionTrainPage() {
               />
             </Field>
 
-            {isAction && (
-              <>
-                <Field label="Data mode">
-                  <select value={form.training_mode} onChange={(e) => set('training_mode', e.target.value as Form['training_mode'])} className={cn(fieldCls, 'cursor-pointer appearance-none')}>
-                    <option value="all">All Data</option>
-                    <option value="split">Train/Test Split</option>
-                  </select>
-                </Field>
-                <Field label="Camera view">
-                  <select value={form.camera_view} onChange={(e) => set('camera_view', e.target.value as Form['camera_view'])} className={cn(fieldCls, 'cursor-pointer appearance-none')}>
-                    <option value="all">All Views</option>
-                    <option value="broadcast">Broadcast</option>
-                    <option value="sideline">Sideline</option>
-                  </select>
-                </Field>
-              </>
-            )}
+            <Field label="Data mode">
+              <select value={form.training_mode} onChange={(e) => set('training_mode', e.target.value as Form['training_mode'])} className={cn(fieldCls, 'cursor-pointer appearance-none')}>
+                <option value="all">All Data</option>
+                <option value="split">Train/Test Split</option>
+              </select>
+            </Field>
+            <Field label="Camera view">
+              <select value={form.camera_view} onChange={(e) => set('camera_view', e.target.value as Form['camera_view'])} className={cn(fieldCls, 'cursor-pointer appearance-none')}>
+                <option value="all">All Views</option>
+                <option value="broadcast">Broadcast</option>
+                <option value="sideline">Sideline</option>
+              </select>
+            </Field>
             {showSplit && (
               <>
                 <Field label="Val ratio">
@@ -344,22 +316,15 @@ export function ActionTrainPage() {
 
         {/* Dataset summary */}
         <Card>
-          <SectionLabel>{source === 'vnl_1_5' ? 'VNL 1.5 JSONL' : 'YP Action Labels'}</SectionLabel>
+          <SectionLabel>YP Action Labels</SectionLabel>
           <div className="space-y-1.5 text-[11.5px]">
-            {(source === 'vnl_1_5'
-              ? [
-                  ['Train', `${vnl.train_videos || 0} vid / ${vnl.train_events || 0} ev`],
-                  ['Val', `${vnl.val_videos || 0} vid / ${vnl.val_events || 0} ev`],
-                  ['Frames', vnl.frame_dir_exists ? vnl.frame_dir || '' : 'missing'],
-                ]
-              : [
-                  ['Labels', `${stats.videos} vid / ${stats.actions} ev`],
-                  ['Frames', stats.frames.toLocaleString()],
-                  ['Mode', form.training_mode === 'all' ? 'all data' : 'train/test split'],
-                  ['View', form.camera_view === 'all' ? 'all views' : form.camera_view],
-                  ['Source', status?.action_annotations?.label_dir || '~/videos/action-annotations'],
-                ]
-            ).map(([label, value]) => (
+            {[
+              ['Labels', `${stats.videos} vid / ${stats.actions} ev`],
+              ['Frames', stats.frames.toLocaleString()],
+              ['Mode', form.training_mode === 'all' ? 'all data' : 'train/test split'],
+              ['View', form.camera_view === 'all' ? 'all views' : form.camera_view],
+              ['Source', status?.action_annotations?.label_dir || '~/videos/action-annotations'],
+            ].map(([label, value]) => (
               <div key={label} className="flex items-center gap-3">
                 <span className="w-14 flex-shrink-0 text-text-muted">{label}</span>
                 <span className="min-w-0 flex-1 truncate font-mono tabular-nums text-text-secondary" title={String(value)}>
