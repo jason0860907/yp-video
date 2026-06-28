@@ -37,6 +37,30 @@ export interface VideoMeta {
   has_detection?: boolean;
 }
 
+/** Video record from the action-annotate listing (richer than VideoMeta). */
+export interface ActionVideo {
+  name: string;
+  kind: CutKind;
+  event_count?: number;
+  has_action_annotation?: boolean;
+  has_action_pre_annotation?: boolean;
+  has_action_final_annotation?: boolean;
+}
+
+export interface SpotCheckpoint {
+  path: string;
+  name: string;
+  epoch?: number;
+  is_best?: boolean;
+}
+
+export interface SpotInfo {
+  available: boolean;
+  checkpoints?: SpotCheckpoint[];
+  default_checkpoint?: string;
+  error?: string;
+}
+
 export interface SystemStats {
   videos?: number;
   cuts?: number;

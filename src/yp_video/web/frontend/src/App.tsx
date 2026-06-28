@@ -6,11 +6,13 @@ import { Placeholder } from '@/components/Placeholder';
 import { JobsPage } from '@/pages/JobsPage';
 import { DownloadPage } from '@/pages/DownloadPage';
 import { DetectPage } from '@/pages/DetectPage';
+import { ActionPredictPage } from '@/pages/ActionPredictPage';
 
 /** Migrated pages, by route. Paths absent here fall back to a Placeholder. */
 const PAGES: Record<string, ReactElement> = {
   '/download': <DownloadPage />,
   '/detect': <DetectPage />,
+  '/action-predict': <ActionPredictPage />,
   '/jobs': <JobsPage />,
 };
 
