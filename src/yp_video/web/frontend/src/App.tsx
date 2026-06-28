@@ -10,10 +10,12 @@ import { ActionPredictPage } from '@/pages/ActionPredictPage';
 import { PredictPage } from '@/pages/PredictPage';
 import { ActionTrainPage } from '@/pages/ActionTrainPage';
 import { UploadPage } from '@/pages/UploadPage';
+import { CutPage } from '@/pages/CutPage';
 
 /** Migrated pages, by route. Paths absent here fall back to a Placeholder. */
 const PAGES: Record<string, ReactElement> = {
   '/download': <DownloadPage />,
+  '/cut': <CutPage />,
   '/detect': <DetectPage />,
   '/predict': <PredictPage />,
   '/action-predict': <ActionPredictPage />,
