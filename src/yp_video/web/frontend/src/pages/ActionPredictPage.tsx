@@ -167,8 +167,6 @@ export function ActionPredictPage() {
   return (
     <div className="mx-auto max-w-screen-2xl space-y-5">
       <PageHeader
-        eyebrow="PIPELINE · ACTION · SPOT"
-        title="Action Predict"
         actions={
           <>
             <Button size="sm" onClick={() => navigate('/action-annotate')}>
@@ -194,7 +192,7 @@ export function ActionPredictPage() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[1fr_1.6fr]">
+      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)]">
         {/* Config */}
         <Card>
           <SectionLabel>Config</SectionLabel>
@@ -293,7 +291,7 @@ export function ActionPredictPage() {
             </span>
           </div>
 
-          <div className="max-h-[56vh] space-y-1 overflow-y-auto pr-1">
+          <div className="max-h-[56vh] space-y-1 overflow-auto pr-1">
             {visible.length === 0 ? (
               <EmptyState
                 icon={
@@ -307,11 +305,11 @@ export function ActionPredictPage() {
               visible.map((v) => (
                 <label
                   key={v.name}
-                  className="flex cursor-pointer items-center gap-3 rounded-lg border border-border bg-surface-50 px-3 py-2 transition-colors hover:border-border-light"
+                  className="flex w-max min-w-full cursor-pointer items-center gap-3 rounded-lg border border-border bg-surface-50 px-3 py-2 transition-colors hover:border-border-light"
                 >
                   <input type="checkbox" checked={selected.has(v.name)} onChange={(e) => toggle(v.name, e.target.checked)} className="h-3.5 w-3.5 accent-primary" />
                   <span className={cn('h-2 w-2 flex-shrink-0 rounded-full', v.kind === 'broadcast' ? 'bg-primary-light' : 'bg-accent-light')} />
-                  <span className="min-w-0 flex-1 truncate text-sm text-text-primary">{v.name}</span>
+                  <span className="flex-1 whitespace-nowrap text-sm text-text-primary">{v.name}</span>
                   <span className={cn('font-mono text-[11px] tabular-nums', hasLabels(v) ? 'text-emerald-300' : 'text-text-muted')}>
                     {v.event_count || 0}
                   </span>

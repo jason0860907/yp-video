@@ -5,7 +5,6 @@ import { formatBytes, formatDuration, formatSpeed } from '@/lib/format';
 import { useSSE } from '@/lib/useSSE';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { StatTile } from '@/components/ui/StatTile';
 import { StatusBadge } from '@/components/job/StatusBadge';
@@ -126,7 +125,6 @@ export function DownloadPage() {
 
   return (
     <div className="mx-auto max-w-screen-2xl space-y-5">
-      <PageHeader eyebrow="PIPELINE · INGEST" title="Download" />
 
       <div className="grid grid-cols-2 gap-3.5 lg:grid-cols-4">
         <StatTile label="In playlist" value={videos.length} tintClass="text-primary-light" />
@@ -139,7 +137,7 @@ export function DownloadPage() {
         />
       </div>
 
-      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[1fr_1.6fr]">
+      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)]">
         {/* New download form */}
         <Card>
           <SectionLabel>New download · yp-download</SectionLabel>

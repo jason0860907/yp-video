@@ -169,3 +169,13 @@
   background-size: 200% 100%;
   animation: shimmer 2s linear infinite;
 }
+
+/* Hiding the sidebar gives the editor/cut video more vertical room
+   (matches the legacy yp-video behaviour). The annotation list grows in
+   step so its bottom stays aligned with the video panel. */
+body.sidebar-collapsed video.vq-video {
+  max-height: 72vh;
+}
+body.sidebar-collapsed .vq-list {
+  max-height: calc(72vh + 2.25rem);
+}

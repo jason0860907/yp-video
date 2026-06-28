@@ -115,8 +115,6 @@ export function DetectPage() {
   return (
     <div className="mx-auto max-w-screen-2xl space-y-5">
       <PageHeader
-        eyebrow="PIPELINE · RALLY · TAD"
-        title="Rally Predict"
         actions={
           <>
             <span className="self-center font-mono text-xs tabular-nums text-text-muted">{selectedTotal} selected</span>
@@ -134,7 +132,7 @@ export function DetectPage() {
         <StatTile label="Pending" value={videos.length - detectedTotal} tintClass="text-text-muted" />
       </div>
 
-      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[1fr_1.6fr]">
+      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[20rem_minmax(0,1fr)]">
         {/* Config */}
         <Card>
           <SectionLabel>Config</SectionLabel>
@@ -202,7 +200,7 @@ export function DetectPage() {
             </span>
           </div>
 
-          <div className="max-h-80 space-y-0.5 overflow-y-auto pr-1">
+          <div className="max-h-80 space-y-0.5 overflow-auto pr-1">
             {visible.length === 0 ? (
               <EmptyState
                 icon={
@@ -217,7 +215,7 @@ export function DetectPage() {
               visible.map((v) => (
                 <div
                   key={v.name}
-                  className="group flex items-center gap-3 rounded-lg border border-transparent p-2.5 transition-colors hover:border-border hover:bg-surface-50"
+                  className="group flex w-max min-w-full items-center gap-3 rounded-lg border border-transparent p-2.5 transition-colors hover:border-border hover:bg-surface-50"
                 >
                   <input
                     type="checkbox"
@@ -228,7 +226,7 @@ export function DetectPage() {
                     className="h-3.5 w-3.5 flex-shrink-0 cursor-pointer accent-primary"
                   />
                   <KindBadge kind={v.kind} />
-                  <span className="min-w-0 flex-1 truncate text-sm text-text-primary">{v.name}</span>
+                  <span className="flex-1 whitespace-nowrap text-sm text-text-primary">{v.name}</span>
                   {v.has_detection ? (
                     <span className="flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-[11px] font-medium text-emerald-400 ring-1 ring-emerald-500/20">
                       <span className="h-1.5 w-1.5 rounded-full bg-current" />

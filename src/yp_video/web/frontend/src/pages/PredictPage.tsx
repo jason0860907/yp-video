@@ -157,8 +157,6 @@ export function PredictPage() {
   return (
     <div className="mx-auto max-w-screen-2xl space-y-5">
       <PageHeader
-        eyebrow="PIPELINE · RALLY · TAD"
-        title="TAD Predict"
         actions={
           <>
             <span className="self-center font-mono text-xs tabular-nums text-text-muted">{selectedTotal} selected</span>
@@ -176,7 +174,7 @@ export function PredictPage() {
         <StatTile label="Pending" value={videos.length - predictedTotal} tintClass="text-text-muted" />
       </div>
 
-      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[1fr_1.6fr]">
+      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)]">
         {/* Config */}
         <Card>
           <SectionLabel>Config</SectionLabel>
@@ -267,7 +265,7 @@ export function PredictPage() {
             </span>
           </div>
 
-          <div className="max-h-80 space-y-0.5 overflow-y-auto pr-1">
+          <div className="max-h-80 space-y-0.5 overflow-auto pr-1">
             {visible.length === 0 ? (
               <EmptyState
                 icon={
@@ -285,7 +283,7 @@ export function PredictPage() {
                   <div
                     key={v.name}
                     className={cn(
-                      'group flex items-center gap-3 rounded-lg border border-transparent p-2.5 transition-colors hover:border-border hover:bg-surface-50',
+                      'group flex w-max min-w-full items-center gap-3 rounded-lg border border-transparent p-2.5 transition-colors hover:border-border hover:bg-surface-50',
                       !hasFeat && 'opacity-60',
                     )}
                   >
@@ -295,7 +293,7 @@ export function PredictPage() {
                       onChange={(e) => setVideos((prev) => prev.map((x) => (x.name === v.name ? { ...x, selected: e.target.checked } : x)))}
                       className="h-3.5 w-3.5 cursor-pointer accent-primary"
                     />
-                    <span className="min-w-0 flex-1 truncate text-sm text-text-primary">{v.name}</span>
+                    <span className="flex-1 whitespace-nowrap text-sm text-text-primary">{v.name}</span>
                     {v.has_annotation ? (
                       <Pill tone="emerald">ann</Pill>
                     ) : v.has_pre_annotation ? (

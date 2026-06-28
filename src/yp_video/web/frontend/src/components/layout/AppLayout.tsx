@@ -11,6 +11,9 @@ export function AppLayout() {
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, collapsed ? '1' : '0');
+    // Drives the "give the video more room when the sidebar is hidden" rule.
+    document.body.classList.toggle('sidebar-collapsed', collapsed);
+    return () => document.body.classList.remove('sidebar-collapsed');
   }, [collapsed]);
 
   return (

@@ -105,8 +105,6 @@ export function JobsPage() {
   return (
     <div className="mx-auto max-w-screen-2xl space-y-5">
       <PageHeader
-        eyebrow="PIPELINE · OPERATIONS"
-        title="Jobs & System"
         actions={
           <Button size="sm" onClick={refetchJobs}>
             Refresh

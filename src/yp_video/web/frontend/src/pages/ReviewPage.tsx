@@ -90,8 +90,6 @@ export function ReviewPage() {
   return (
     <div className="mx-auto max-w-screen-2xl space-y-5">
       <PageHeader
-        eyebrow="PIPELINE · RALLY · TAD"
-        title="TAD Label"
         actions={
           <>
             <select value={filter} onChange={(e) => setFilter(e.target.value as Filter)} className="cursor-pointer appearance-none rounded-lg border border-border-light bg-surface-50 px-3 py-2 text-xs text-text-primary focus:border-primary/50 focus:outline-none">

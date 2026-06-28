@@ -8,7 +8,6 @@ import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { toast } from '@/components/feedback/toast';
-import { confirm } from '@/components/feedback/confirm';
 import { DownloadClipsModal } from './DownloadClipsModal';
 import { RallyTimeline } from './RallyTimeline';
 
@@ -185,20 +184,6 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
     }
   };
 
-  const clearAll = async () => {
-    if (annotations.length === 0) return;
-    const ok = await confirm({
-      title: 'Clear all annotations?',
-      body: `This removes ${annotations.length} annotation(s) from this view. The file on disk is untouched until you press Save.`,
-      confirmText: 'Clear',
-      variant: 'danger',
-    });
-    if (!ok) return;
-    setAnnotations([]);
-    setSelectedIdx(-1);
-    setDirty(true);
-  };
-
   const save = async () => {
     if (!videoName) return toast.warning('No video loaded');
     setSaving(true);
@@ -258,14 +243,14 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
   const playingIdx = annotations.findIndex((a) => currentTime >= a.start && currentTime < a.end);
 
   return (
-    <div className="flex flex-col gap-5 lg:flex-row">
+    <div className="flex flex-col gap-5 lg:flex-row lg:items-start">
       {/* Player + timeline */}
       <div className="min-w-0 flex-1 space-y-4">
         <Card>
           <div className="overflow-hidden rounded-2xl bg-black shadow-lg shadow-black/40 ring-1 ring-white/[0.06]">
             <video
               ref={videoRef}
-              className="max-h-[45vh] w-full cursor-pointer"
+              className="vq-video max-h-[45vh] w-full cursor-pointer"
               onClick={togglePlay}
               onPlay={() => setPlaying(true)}
               onPause={() => setPlaying(false)}
@@ -331,13 +316,10 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
               <Button size="sm" intent="primary" onClick={save} disabled={saving}>
                 {dirty ? 'Save •' : 'Save'}
               </Button>
-              <Button size="sm" intent="danger" onClick={clearAll}>
-                Clear
-              </Button>
             </div>
           </div>
 
-          <div className="max-h-[55vh] space-y-1.5 overflow-y-auto pr-1">
+          <div className="vq-list max-h-[calc(45vh+2.25rem)] space-y-1.5 overflow-y-auto pr-1">
             {annotations.length === 0 ? (
               <EmptyState
                 icon={

@@ -60,8 +60,6 @@ export function AnnotatePage() {
   return (
     <div className="mx-auto max-w-screen-2xl space-y-5">
       <PageHeader
-        eyebrow="PIPELINE · RALLY · TAD"
-        title="Rally Label"
         actions={
           <>
             <select value={kindFilter} onChange={(e) => setKindFilter(e.target.value as KindFilter)} className="cursor-pointer appearance-none rounded-lg border border-border-light bg-surface-50 px-3 py-2 text-xs text-text-primary focus:border-primary/50 focus:outline-none">

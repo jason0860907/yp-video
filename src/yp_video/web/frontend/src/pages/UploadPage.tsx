@@ -185,8 +185,6 @@ export function UploadPage() {
   return (
     <div className="mx-auto max-w-screen-2xl space-y-5">
       <PageHeader
-        eyebrow="PIPELINE · SYSTEM"
-        title="Cloud Storage"
         actions={
           configured ? (
             <span className="flex items-center gap-1.5 rounded-full bg-emerald-500/15 px-2.5 py-1 text-[11px] font-medium text-emerald-400 ring-1 ring-emerald-500/20">
@@ -271,7 +269,7 @@ export function UploadPage() {
           </div>
         </div>
 
-        <div className="max-h-[32rem] space-y-0.5 overflow-y-auto pr-1">
+        <div className="max-h-[32rem] space-y-0.5 overflow-auto pr-1">
           {loadingFiles ? (
             <div className="py-8 text-center text-xs text-text-muted">Loading…</div>
           ) : filesError ? (
@@ -440,9 +438,9 @@ function FileTree({ files, expanded, localOnly, isUpload, onToggleFile, onToggle
 
     const isSynced = isUpload ? f.uploaded : f.local;
     rows.push(
-      <div key={`r-${i}`} className={cn('group flex items-center gap-3 rounded-lg p-2.5 transition-colors hover:bg-surface-50', d && 'pl-9')}>
+      <div key={`r-${i}`} className={cn('group flex w-max min-w-full items-center gap-3 rounded-lg p-2.5 transition-colors hover:bg-surface-50', d && 'pl-9')}>
         <input type="checkbox" checked={f.selected} onChange={(e) => onToggleFile(i, e.target.checked)} className="h-3.5 w-3.5 flex-shrink-0 cursor-pointer accent-primary" />
-        <span className="min-w-0 flex-1 truncate text-sm text-text-primary">{f.name}</span>
+        <span className="flex-1 whitespace-nowrap text-sm text-text-primary">{f.name}</span>
         <span className="tabular-nums text-[11px] text-text-muted">{formatBytes(f.size)}</span>
         {!localOnly &&
           (isSynced ? (

@@ -162,8 +162,6 @@ export function CutPage() {
   return (
     <div className="mx-auto max-w-screen-2xl space-y-5">
       <PageHeader
-        eyebrow="PIPELINE · INGEST"
-        title="Cut into sets"
         actions={
           <>
             <div className="inline-flex rounded-lg border border-border bg-surface-50 p-0.5">
@@ -206,7 +204,7 @@ export function CutPage() {
           <div className="overflow-hidden rounded-2xl bg-black shadow-lg shadow-black/40 ring-1 ring-white/[0.06]">
             <video
               ref={videoRef}
-              className="max-h-[50vh] w-full cursor-pointer"
+              className="vq-video max-h-[50vh] w-full cursor-pointer"
               onClick={togglePlay}
               onPlay={() => setPlaying(true)}
               onPause={() => setPlaying(false)}

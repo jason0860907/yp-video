@@ -207,8 +207,6 @@ export function ActionTrainPage() {
   return (
     <div className="mx-auto max-w-screen-2xl space-y-5">
       <PageHeader
-        eyebrow="PIPELINE · ACTION · SPOT"
-        title="Action Train"
         actions={
           <Button size="sm" onClick={exportDataset}>
             Export JSONL

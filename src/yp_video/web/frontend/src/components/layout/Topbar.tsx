@@ -1,15 +1,20 @@
+import { useLocation } from 'react-router-dom';
 import { cn } from '@/lib/cn';
 import { PALETTES, setPalette, toggleTheme, useTheme } from '@/lib/theme';
+import { PAGE_TITLES, PATH_SECTION } from './nav';
 
 interface TopbarProps {
   onToggleSidebar: () => void;
 }
 
-/** Slim app bar — sidebar toggle, brand mark, workspace label, and the
- *  theme + palette controls. (No workspace switcher / teams: yp-video is the
- *  Pipeline workspace only.) */
+/** Slim app bar — sidebar toggle, brand mark, the current page heading, and
+ *  the theme + palette controls. (No workspace switcher / teams: yp-video is
+ *  the Pipeline workspace only.) */
 export function Topbar({ onToggleSidebar }: TopbarProps) {
   const { theme, palette } = useTheme();
+  const { pathname } = useLocation();
+  const title = PAGE_TITLES[pathname];
+  const section = PATH_SECTION[pathname];
 
   return (
     <header className="z-30 flex h-[52px] flex-shrink-0 items-center gap-3.5 border-b border-border bg-surface-100 px-3.5">
@@ -33,10 +38,17 @@ export function Topbar({ onToggleSidebar }: TopbarProps) {
           </svg>
         </div>
         <span className="font-mono text-[13.5px] font-bold tracking-tight text-text-primary">VolleyIQ</span>
-        <span className="rounded-md border border-border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-text-muted">
-          Pipeline
-        </span>
       </div>
+
+      {title && (
+        <>
+          <div className="h-6 w-px bg-border" />
+          <span className="truncate font-mono text-[14px] font-bold tracking-tight">
+            {section && <span className="text-text-muted">{section}&nbsp;/&nbsp;</span>}
+            <span className="text-text-primary">{title}</span>
+          </span>
+        </>
+      )}
 
       <div className="flex-1" />
 

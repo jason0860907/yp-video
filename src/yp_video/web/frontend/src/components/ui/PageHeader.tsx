@@ -1,25 +1,19 @@
 import type { ReactNode } from 'react';
 
 interface PageHeaderProps {
-  /** Small uppercase context label above the title, e.g. "PIPELINE · INGEST". */
-  eyebrow?: ReactNode;
-  title: ReactNode;
+  /** Optional muted context line shown on the left. */
   subtitle?: ReactNode;
+  /** Page-level toolbar (filters, run/save, …), right-aligned. */
   actions?: ReactNode;
 }
 
-/** Pipeline page header — eyebrow + display title + right-aligned actions,
- *  matching the VolleyIQ prototype's `_pHeader`. */
-export function PageHeader({ eyebrow, title, subtitle, actions }: PageHeaderProps) {
+/** Page toolbar row. The page title/eyebrow live in the top bar (driven by the
+ *  route); this only carries the page's own actions + an optional subtitle. */
+export function PageHeader({ subtitle, actions }: PageHeaderProps) {
+  if (!subtitle && !actions) return null;
   return (
-    <div className="mb-5 flex items-end justify-between gap-4">
-      <div>
-        {eyebrow && (
-          <div className="mb-1.5 font-body text-[11px] uppercase tracking-[0.08em] text-text-muted">{eyebrow}</div>
-        )}
-        <h1 className="font-heading text-[22px] font-bold tracking-tight text-text-primary">{title}</h1>
-        {subtitle && <p className="mt-1 text-sm text-text-muted">{subtitle}</p>}
-      </div>
+    <div className="mb-4 flex items-center justify-between gap-4">
+      {subtitle ? <p className="text-sm text-text-muted">{subtitle}</p> : <span />}
       {actions && <div className="flex flex-shrink-0 items-center gap-2.5">{actions}</div>}
     </div>
   );
