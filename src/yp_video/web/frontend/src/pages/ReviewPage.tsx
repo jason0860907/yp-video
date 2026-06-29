@@ -1,9 +1,9 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { API, ApiError, apiFetch, apiUrl } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
-import { PageHeader } from '@/components/ui/PageHeader';
+import { Card } from '@/components/ui/Card';
 import { AnnotationEditor, type EditorAnnotation, type EditorData } from '@/components/editor/AnnotationEditor';
 import { toast } from '@/components/feedback/toast';
 
@@ -14,19 +14,29 @@ interface ReviewResult {
   subset?: string;
   map?: number;
 }
-type Filter = 'all' | 'val' | 'train' | 'predict-only' | 'failing' | 'val-failing' | 'broadcast' | 'sideline';
+type KindFilter = 'all' | 'broadcast' | 'sideline';
+type StatusFilter = 'all' | 'pre-labeled' | 'labeled';
+type QualityFilter = 'all' | 'val' | 'train' | 'failing' | 'val-failing';
 
-const FILTERS: Array<{ value: Filter; label: string }> = [
-  { value: 'all', label: 'All files' },
-  { value: 'val', label: 'Validation only' },
-  { value: 'train', label: 'Training only' },
-  { value: 'predict-only', label: 'Predict only (no annotation)' },
+const KIND_FILTERS: Array<{ value: KindFilter; label: string }> = [
+  { value: 'all', label: 'All kinds' },
+  { value: 'broadcast', label: 'Broadcast' },
+  { value: 'sideline', label: 'Sideline' },
+];
+const STATUS_FILTERS: Array<{ value: StatusFilter; label: string }> = [
+  { value: 'all', label: 'All' },
+  { value: 'pre-labeled', label: 'Pre-labeled' },
+  { value: 'labeled', label: 'Labeled' },
+];
+const QUALITY_FILTERS: Array<{ value: QualityFilter; label: string }> = [
+  { value: 'all', label: 'All' },
+  { value: 'val', label: 'Validation' },
+  { value: 'train', label: 'Training' },
   { value: 'failing', label: 'Failing (mAP < 30%)' },
   { value: 'val-failing', label: 'Val + failing' },
-  { value: 'broadcast', label: 'Broadcast only' },
-  { value: 'sideline', label: 'Sideline only' },
 ];
 
+const fieldCls = 'rounded-lg border border-border-light bg-surface-50 px-3 py-2 text-sm text-text-primary focus:border-primary/50 focus:outline-none';
 const errMsg = (e: unknown) => (e instanceof ApiError ? e.body : e instanceof Error ? e.message : String(e));
 const streamPath = (vp: string) => apiUrl(API.review.video(vp));
 
@@ -38,7 +48,9 @@ function scorePill(a: EditorAnnotation) {
 }
 
 export function ReviewPage() {
-  const [filter, setFilter] = useState<Filter>('all');
+  const [kindFilter, setKindFilter] = useState<KindFilter>('all');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [qualityFilter, setQualityFilter] = useState<QualityFilter>('all');
   const [picked, setPicked] = useState('');
   const [data, setData] = useState<EditorData | null>(null);
 
@@ -51,27 +63,27 @@ export function ReviewPage() {
       const isVal = r.subset === 'validation';
       const isFailing = typeof r.map === 'number' && r.map < 0.3;
       const isPredictOnly = r.source === 'tad-prediction' && !annotatedNames.has(r.name);
-      switch (filter) {
+
+      if (kindFilter !== 'all' && r.kind !== kindFilter) return false;
+
+      if (statusFilter === 'pre-labeled' && !isPredictOnly) return false;
+      if (statusFilter === 'labeled' && r.source !== 'annotation') return false;
+
+      switch (qualityFilter) {
         case 'val':
           return isVal;
         case 'train':
           return r.subset === 'training';
-        case 'predict-only':
-          return isPredictOnly;
         case 'failing':
           return isFailing;
         case 'val-failing':
           return isVal && isFailing;
-        case 'broadcast':
-          return r.kind === 'broadcast';
-        case 'sideline':
-          return r.kind === 'sideline';
         default:
           return true;
       }
     };
     return results.filter(passes);
-  }, [results, filter]);
+  }, [results, kindFilter, statusFilter, qualityFilter]);
 
   const load = async () => {
     if (!picked) return;
@@ -89,17 +101,37 @@ export function ReviewPage() {
 
   return (
     <div className="mx-auto max-w-screen-2xl space-y-5">
-      <PageHeader
-        actions={
-          <>
-            <select value={filter} onChange={(e) => setFilter(e.target.value as Filter)} className="cursor-pointer appearance-none rounded-lg border border-border-light bg-surface-50 px-3 py-2 text-xs text-text-primary focus:border-primary/50 focus:outline-none">
-              {FILTERS.map((f) => (
+      <Card>
+        <div className="grid grid-cols-1 items-end gap-3 lg:grid-cols-[8.5rem_8.5rem_8.5rem_minmax(16rem,1fr)_auto]">
+          <FieldLabel label="Kind">
+            <select value={kindFilter} onChange={(e) => setKindFilter(e.target.value as KindFilter)} className={cn(fieldCls, 'h-9 w-full py-0')}>
+              {KIND_FILTERS.map((f) => (
                 <option key={f.value} value={f.value}>
                   {f.label}
                 </option>
               ))}
             </select>
-            <select value={picked} onChange={(e) => setPicked(e.target.value)} className="max-w-[16rem] cursor-pointer appearance-none truncate rounded-lg border border-border-light bg-surface-50 px-3 py-2 text-xs text-text-primary focus:border-primary/50 focus:outline-none">
+          </FieldLabel>
+          <FieldLabel label="Status">
+            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as StatusFilter)} className={cn(fieldCls, 'h-9 w-full py-0')}>
+              {STATUS_FILTERS.map((f) => (
+                <option key={f.value} value={f.value}>
+                  {f.label}
+                </option>
+              ))}
+            </select>
+          </FieldLabel>
+          <FieldLabel label="Quality">
+            <select value={qualityFilter} onChange={(e) => setQualityFilter(e.target.value as QualityFilter)} className={cn(fieldCls, 'h-9 w-full py-0')}>
+              {QUALITY_FILTERS.map((f) => (
+                <option key={f.value} value={f.value}>
+                  {f.label}
+                </option>
+              ))}
+            </select>
+          </FieldLabel>
+          <FieldLabel label="Result file">
+            <select value={picked} onChange={(e) => setPicked(e.target.value)} className={cn(fieldCls, 'h-9 w-full truncate py-0')}>
               <option value="">Select result file… ({visible.length})</option>
               {visible.map((r) => {
                 const mapTag = r.source === 'tad-prediction' && typeof r.map === 'number' ? ` (mAP=${(r.map * 100).toFixed(0)}%)` : '';
@@ -113,14 +145,23 @@ export function ReviewPage() {
                 );
               })}
             </select>
-            <Button size="sm" intent="primary" onClick={load}>
-              Load
-            </Button>
-          </>
-        }
-      />
+          </FieldLabel>
+          <Button intent="primary" className="h-9 py-0" onClick={load}>
+            Load
+          </Button>
+        </div>
+      </Card>
 
       <AnnotationEditor data={data} saveEndpoint={API.review.annotations} videoStreamPath={streamPath} rowExtras={scorePill} previewBackoff={5} />
     </div>
+  );
+}
+
+function FieldLabel({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <label className="block min-w-0 space-y-1.5">
+      <span className="block text-[10px] font-semibold uppercase tracking-widest text-text-muted">{label}</span>
+      {children}
+    </label>
   );
 }
