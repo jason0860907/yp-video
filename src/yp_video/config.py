@@ -147,8 +147,8 @@ def cut_kind_of(path: Path) -> str:
             return kind
     return DEFAULT_CUT_KIND
 
-# ── Web static assets ────────────────────────────────────────────
-STATIC_DIR = Path(__file__).resolve().parent / "web" / "static"
+# ── Web frontend (built React SPA) ───────────────────────────────
+FRONTEND_DIST_DIR = Path(__file__).resolve().parent / "web" / "frontend" / "dist"
 
 
 def _load_env_file(path: Path) -> dict[str, str]:

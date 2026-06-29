@@ -5,11 +5,11 @@ import signal
 from contextlib import asynccontextmanager
 from logging.handlers import RotatingFileHandler
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from yp_video.config import APP_LOG_PATH, LOGS_DIR, STATIC_DIR
+from yp_video.config import APP_LOG_PATH, FRONTEND_DIST_DIR, LOGS_DIR
 from yp_video.web.r2_client import r2_client
 from yp_video.web.routers import (
     action_annotate,
@@ -102,14 +102,39 @@ app.include_router(jobs.router, prefix="/api/jobs", tags=["jobs"])
 app.include_router(system.router, prefix="/api/system", tags=["system"])
 app.include_router(upload.router, prefix="/api/upload", tags=["upload"])
 
-# Mount static files
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+# ── Built React SPA (frontend/dist) ──────────────────────────────
+# Hashed JS/CSS live under /assets; every other non-API path returns the
+# shell so client-side routing survives a hard refresh.
+_INDEX_FILE = FRONTEND_DIST_DIR / "index.html"
+_DIST_READY = _INDEX_FILE.is_file()
+_NOT_BUILT_MSG = (
+    "Frontend not built. Run: cd src/yp_video/web/frontend && npm install && npm run build"
+)
+
+if _DIST_READY:
+    app.mount("/assets", StaticFiles(directory=FRONTEND_DIST_DIR / "assets"), name="assets")
 
 
 @app.get("/")
 async def index():
     """Serve the SPA shell."""
-    return FileResponse(STATIC_DIR / "index.html")
+    if not _DIST_READY:
+        raise HTTPException(status_code=503, detail=_NOT_BUILT_MSG)
+    return FileResponse(_INDEX_FILE)
+
+
+@app.get("/{full_path:path}")
+async def spa_fallback(full_path: str):
+    """Serve built files when they exist, else the SPA shell (client routing)."""
+    if full_path.startswith("api/"):
+        raise HTTPException(status_code=404)
+    if not _DIST_READY:
+        raise HTTPException(status_code=503, detail=_NOT_BUILT_MSG)
+    dist = FRONTEND_DIST_DIR.resolve()
+    candidate = (dist / full_path).resolve()
+    if candidate.is_file() and candidate.is_relative_to(dist):
+        return FileResponse(candidate)
+    return FileResponse(_INDEX_FILE)
 
 
 def run_server(host: str = "0.0.0.0", port: int = 8080):
