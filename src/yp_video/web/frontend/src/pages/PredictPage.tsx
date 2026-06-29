@@ -59,7 +59,6 @@ export function PredictPage() {
   const [showAllCkpts, setShowAllCkpts] = useState(false);
   const [threshold, setThreshold] = useState(0.3);
   const [device, setDevice] = useState<'cuda' | 'cpu'>('cuda');
-  const [cutRallies, setCutRallies] = useState(false);
   const [trimActions, setTrimActions] = useState(true);
   const [job, setJob] = useState<Job | null>(null);
   const [running, setRunning] = useState(false);
@@ -138,7 +137,6 @@ export function PredictPage() {
           checkpoint,
           threshold,
           device,
-          cut_rallies: cutRallies,
           model,
           stop_vllm: stopVllm,
           trim_with_actions: trimActions,
@@ -219,10 +217,6 @@ export function PredictPage() {
                 </select>
               </div>
             </div>
-            <label className="flex cursor-pointer items-center gap-2 text-xs text-text-secondary">
-              <input type="checkbox" checked={cutRallies} onChange={(e) => setCutRallies(e.target.checked)} className="h-3.5 w-3.5 accent-primary" />
-              Cut rallies
-            </label>
             <label className="flex cursor-pointer items-center gap-2 text-xs text-text-secondary" title="Trim each TAD rally to its serve/score boundaries using SPOT action predictions.">
               <input type="checkbox" checked={trimActions} onChange={(e) => setTrimActions(e.target.checked)} className="h-3.5 w-3.5 accent-primary" />
               Trim with actions

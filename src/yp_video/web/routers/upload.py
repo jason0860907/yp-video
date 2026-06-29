@@ -104,21 +104,6 @@ def list_local_files(category: str = "cuts-broadcast") -> list[dict]:
                     "r2_key": r2_key,
                     "uploaded": r2_key in r2_keys,
                 })
-    elif category == "rally_clips":
-        # Nested: rally_clips/{video_stem}/clip.mp4
-        for video_dir in sorted(base_dir.iterdir()):
-            if video_dir.is_dir():
-                for f in sorted(video_dir.glob("*.mp4")):
-                    rel = str(f.relative_to(base_dir))
-                    r2_key = f"{category}/{rel}"
-                    files.append({
-                        "name": f.name,
-                        "path": rel,
-                        "group": video_dir.name,
-                        "size": f.stat().st_size,
-                        "r2_key": r2_key,
-                        "uploaded": r2_key in r2_keys,
-                    })
     elif category == "tad-features":
         # Nested: tad-features/{model}/*.npy
         for f in sorted(base_dir.glob("**/*.npy")):
@@ -456,7 +441,7 @@ def delete_local_files(req: DeleteLocalRequest):
         local_path.unlink()
         deleted.append(file_path)
 
-        # Clean up empty parent directories (for rally_clips)
+        # Clean up empty parent directories (for nested categories like tad-features)
         parent = local_path.parent
         if parent != base_dir and parent.is_dir() and not any(parent.iterdir()):
             parent.rmdir()

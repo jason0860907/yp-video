@@ -33,7 +33,6 @@ const CATEGORIES: Category[] = [
   { key: 'action-pre-annotations', label: 'Action Pre-Annotations' },
   { key: 'action-annotations', label: 'Action Annotations' },
   { key: 'action-checkpoints', label: 'Action Checkpoints' },
-  { key: 'rally_clips', label: 'Rally Clips' },
 ];
 
 interface FileRow {

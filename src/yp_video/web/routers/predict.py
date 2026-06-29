@@ -15,7 +15,6 @@ from yp_video.config import (
     PROJECT_ROOT,
     PREDICTIONS_DIR,
     PRE_ANNOTATIONS_DIR,
-    VIDEOS_DIR,
     TAD_CONFIGS_DIR,
     TAD_CHECKPOINTS_DIR,
     cut_kind_of,
@@ -34,7 +33,6 @@ class PredictRequest(BaseModel):
     checkpoint: str
     threshold: float = 0.3
     device: str = "cuda"
-    cut_rallies: bool = False
     model: str = "base"
     stop_vllm: bool = False
     # Refine TAD rallies to serve/score boundaries using SPOT action
@@ -136,11 +134,10 @@ async def start_prediction(req: PredictRequest):
                     message=f"{prefix} Starting {video_name}...",
                 )
                 output_path = PREDICTIONS_DIR / f"{video_path.stem}_annotations.jsonl"
-                cut_dir = (VIDEOS_DIR / "rally_clips" / video_path.stem) if req.cut_rallies else None
                 try:
                     run_inference(
                         video_path, checkpoint_path, config_path,
-                        output_path, req.device, req.threshold, cut_dir,
+                        output_path, req.device, req.threshold,
                         model_name=req.model,
                         trim_with_actions=req.trim_with_actions,
                         serve_pad=req.serve_pad,

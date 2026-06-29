@@ -99,12 +99,6 @@ export function render(container) {
               </select>
             </div>
             <div class="flex items-end pb-1">
-              <label class="flex items-center gap-2.5 cursor-pointer text-sm text-text-secondary hover:text-text-primary transition-colors duration-200">
-                <input id="pred-cut" type="checkbox" class="accent-primary cursor-pointer w-4 h-4 rounded">
-                Cut rallies
-              </label>
-            </div>
-            <div class="flex items-end pb-1">
               <label class="flex items-center gap-2.5 cursor-pointer text-sm text-text-secondary hover:text-text-primary transition-colors duration-200"
                      title="Trim each TAD rally to its serve/score boundaries using SPOT action predictions. Videos without action predictions are left untrimmed.">
                 <input id="pred-trim-actions" type="checkbox" checked class="accent-primary cursor-pointer w-4 h-4 rounded">
@@ -309,7 +303,6 @@ async function startPrediction() {
         checkpoint,
         threshold: parseFloat(document.getElementById('pred-threshold').value),
         device: document.getElementById('pred-device').value,
-        cut_rallies: document.getElementById('pred-cut').checked,
         model: document.getElementById('pred-model').value,
         stop_vllm: stopVllm,
         trim_with_actions: document.getElementById('pred-trim-actions').checked,

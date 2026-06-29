@@ -75,7 +75,6 @@ ACTION_AUDIO_DIR = VIDEOS_DIR / "action-audio"
 ACTION_WAVEFORMS_DIR = VIDEOS_DIR / "action-waveforms"
 ACTION_CHECKPOINTS_DIR = VIDEOS_DIR / "action-checkpoints"
 PREDICTIONS_DIR = VIDEOS_DIR / "tad-predictions"
-RALLY_CLIPS_DIR = VIDEOS_DIR / "rally_clips"
 FEATURES_DIR = VIDEOS_DIR / "tad-features"
 TAD_FEATURES_DIR = FEATURES_DIR / "vjepa-b"  # default (ViT-B); use tad_features_dir() for other sizes
 TAD_CHECKPOINTS_DIR = VIDEOS_DIR / "tad-checkpoints"
@@ -99,7 +98,6 @@ R2_CATEGORIES: dict[str, R2Category] = {
     "action-checkpoints": R2Category(ACTION_CHECKPOINTS_DIR, "**/*"),
     "tad-predictions": R2Category(PREDICTIONS_DIR, "*.jsonl"),
     "tad-features": R2Category(FEATURES_DIR, "**/*.npy"),
-    "rally_clips": R2Category(RALLY_CLIPS_DIR, "*.mp4"),
     "tad-checkpoints": R2Category(TAD_CHECKPOINTS_DIR, "**/*"),
 }
 

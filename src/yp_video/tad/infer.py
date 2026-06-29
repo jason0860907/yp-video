@@ -16,7 +16,6 @@ import torch
 from yp_video.config import (
     FEATURES_DIR,
     PREDICTIONS_DIR,
-    RALLY_CLIPS_DIR,
     TAD_CHECKPOINTS_DIR,
     TAD_CONFIGS_DIR,
     TAD_FEATURES_DIR,
@@ -52,9 +51,9 @@ def run_inference(
     output_path: Path,
     device: str = "cuda",
     confidence_threshold: float = 0.3,
-    cut_dir: Path | None = None,
     model_name: str = "base",
     feature_batch_size: int = 8,
+    feature_cache_dir: Path | None = None,
     trim_with_actions: bool = False,
     action_predictions: Path | None = None,
     serve_pad: float = 1.0,
@@ -73,9 +72,12 @@ def run_inference(
         output_path: Path for output JSONL
         device: Device to use
         confidence_threshold: Minimum confidence for detections
-        cut_dir: If set, export rally clips to this directory
         model_name: V-JEPA model size (base/large/giant/gigantic)
         feature_batch_size: V-JEPA feature extraction batch size.
+        feature_cache_dir: Directory for the extracted-feature ``.npy`` cache.
+            Defaults to the shared ``FEATURES_DIR/<model>`` cache. Callers that
+            don't want a persistent cache (e.g. the selfhost worker) pass a
+            per-job temp dir so the features are discarded with the job.
         on_message: Optional callback for step-level status updates
         on_progress: Optional callback ``(fraction) -> None`` for progress bar
         on_batch_progress: Optional ``(done, total) -> None`` callback fired
@@ -101,7 +103,7 @@ def run_inference(
     _prog(0.0)
 
     mcfg = MODEL_CONFIGS[model_name]
-    feat_dir = FEATURES_DIR / mcfg.dir_suffix
+    feat_dir = feature_cache_dir if feature_cache_dir is not None else FEATURES_DIR / mcfg.dir_suffix
 
     # Get video info
     try:
@@ -194,35 +196,6 @@ def run_inference(
     )
 
     print(f"  Saved to: {output_path}")
-
-    # Step 4 (optional): Cut rally clips
-    if cut_dir is not None:
-        import asyncio
-
-        from yp_video.core.ffmpeg import export_segment
-
-        print("Step 4: Exporting rally clips...")
-        cut_dir.mkdir(parents=True, exist_ok=True)
-
-        sorted_dets = sorted(detections, key=lambda d: d["segment"][0])
-
-        async def _export_all():
-            for i, det in enumerate(sorted_dets, 1):
-                start, end = det["segment"]
-                clip_path = cut_dir / f"rally_{i:03d}.mp4"
-                await export_segment(video_path, start, end, clip_path)
-
-        asyncio.run(_export_all())
-
-        # Print summary table
-        print(f"\n{'Clip':<16} {'Start':>8} {'End':>8} {'Duration':>8} {'Conf':>6}")
-        print("-" * 50)
-        for i, det in enumerate(sorted_dets, 1):
-            start, end = det["segment"]
-            dur = end - start
-            score = det["score"]
-            print(f"rally_{i:03d}.mp4   {start:>7.1f}s {end:>7.1f}s {dur:>7.1f}s {score:>5.2f}")
-        print(f"\n  {len(sorted_dets)} clips saved to: {cut_dir}")
 
     print("Inference complete!")
     return detections
@@ -420,11 +393,6 @@ def main():
         help="V-JEPA model size (must match the features used for training)",
     )
     parser.add_argument(
-        "--cut",
-        action="store_true",
-        help="Export detected rallies as individual video clips",
-    )
-    parser.add_argument(
         "--trim-with-actions",
         action="store_true",
         help="Refine TAD rallies using SPOT action predictions: trim each rally "
@@ -468,10 +436,6 @@ def main():
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
 
-    cut_dir = None
-    if args.cut:
-        cut_dir = RALLY_CLIPS_DIR / args.video.stem
-
     run_inference(
         args.video,
         args.checkpoint,
@@ -479,7 +443,6 @@ def main():
         args.output,
         args.device,
         args.threshold,
-        cut_dir,
         args.model,
         trim_with_actions=args.trim_with_actions,
         action_predictions=args.action_predictions,
