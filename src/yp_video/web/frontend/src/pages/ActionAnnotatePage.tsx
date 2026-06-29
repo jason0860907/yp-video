@@ -136,6 +136,8 @@ export function ActionAnnotatePage() {
   const gen = useRef(0);
   const edRef = useRef(ed);
   edRef.current = ed;
+  const selRallyRef = useRef(selectedRallyId);
+  selRallyRef.current = selectedRallyId;
 
   const videosQuery = useQuery({ queryKey: ['action-videos'], queryFn: () => apiFetch<ActionVideo[]>(API.actionAnnotate.videos) });
   const labelsQuery = useQuery({ queryKey: ['action-labels'], queryFn: () => apiFetch<{ labels?: string[] }>(API.actionAnnotate.labels) });
@@ -150,7 +152,23 @@ export function ActionAnnotatePage() {
     const t = presented.current != null && Number.isFinite(presented.current) ? presented.current : el?.currentTime || 0;
     return clamp(Math.round(t * (e.fps || 30)), 0, Math.max(0, e.numFrames - 1));
   };
-  const refreshPlayhead = () => setFrame(computeFrame());
+  const refreshPlayhead = () => {
+    const f = computeFrame();
+    setFrame(f);
+    // Auto-pause at the end of the selected rally during playback, so a rally
+    // doesn't run on into the next one.
+    const el = videoRef.current;
+    const e = edRef.current;
+    const rid = selRallyRef.current;
+    if (!el || el.paused || rid === 'all' || !e.fps) return;
+    const rally = e.rallies.find((r) => r.rally_id === rid);
+    if (!rally) return;
+    const endFrame = Math.max(0, Math.ceil(rally.end * e.fps) - 1);
+    if (f >= endFrame) {
+      el.pause();
+      seekFrame(endFrame);
+    }
+  };
 
   useEffect(() => {
     let alive = true;
