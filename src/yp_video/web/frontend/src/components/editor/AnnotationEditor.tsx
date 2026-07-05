@@ -8,6 +8,7 @@ import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { toast } from '@/components/feedback/toast';
+import { useVideoRecovery } from '@/lib/useVideoRecovery';
 import { DownloadClipsModal } from './DownloadClipsModal';
 import { RallyTimeline } from './RallyTimeline';
 
@@ -44,6 +45,49 @@ const num = (...vals: unknown[]): number => {
   return 0;
 };
 
+// ── Local draft persistence ──
+// The network is not trustworthy (flaky tunnel, dropped connections), so
+// unsaved work is mirrored to localStorage on every edit. A draft exists
+// *only* while there is unsaved work: it is cleared on a successful save.
+// On load, a leftover draft means the page died before saving — restore it.
+const AUTOSAVE_MS = 2000;
+const DRAFT_PREFIX = 'vq:annot-draft';
+
+interface AnnotationDraft {
+  video: string;
+  duration: number;
+  annotations: EditorAnnotation[];
+}
+
+const draftKey = (endpoint: string, video: string) => `${DRAFT_PREFIX}:${endpoint}:${video}`;
+
+const readDraft = (endpoint: string, video: string): AnnotationDraft | null => {
+  try {
+    const raw = localStorage.getItem(draftKey(endpoint, video));
+    if (!raw) return null;
+    const d = JSON.parse(raw) as AnnotationDraft;
+    return Array.isArray(d.annotations) ? d : null;
+  } catch {
+    return null; // corrupt JSON / privacy mode — drafts are best-effort
+  }
+};
+
+const writeDraft = (endpoint: string, draft: AnnotationDraft): void => {
+  try {
+    localStorage.setItem(draftKey(endpoint, draft.video), JSON.stringify(draft));
+  } catch {
+    /* quota exceeded / privacy mode — nothing we can do, skip */
+  }
+};
+
+const clearDraft = (endpoint: string, video: string): void => {
+  try {
+    localStorage.removeItem(draftKey(endpoint, video));
+  } catch {
+    /* ignore */
+  }
+};
+
 export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtras, previewBackoff = 3, onSaved }: AnnotationEditorProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -65,12 +109,19 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
     el.paused ? void el.play() : el.pause();
   };
 
+  // Presigned video URLs expire and range requests can hang; reload the src
+  // (which fetches a fresh URL) and seek back to where the user was.
+  useVideoRecovery(videoRef, {
+    src: () => (videoName ? videoStreamPath(videoName) : ''),
+    onRecover: () => toast.info('影片串流中斷，已自動重新載入'),
+  });
+
   // ── Load a file ──
   useEffect(() => {
     if (!data) return;
     const path = data.video || data.source_video || data.metadata?.video || '';
     setVideoName(path);
-    const next: EditorAnnotation[] = (data.results ?? [])
+    const fromServer: EditorAnnotation[] = (data.results ?? [])
       .map((r) => ({
         rally_id: normalizeRallyId(r.rally_id),
         start: num(r.start, r.start_time, (r.segment as number[] | undefined)?.[0]),
@@ -79,10 +130,19 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
         score: (r.confidence ?? r.score ?? null) as number | null,
       }))
       .sort((a, b) => a.start - b.start);
-    setAnnotations(next);
+    // A leftover draft is unsaved work from a previous session — prefer it
+    // so a crash/reload never loses annotations.
+    const draft = path ? readDraft(saveEndpoint, path) : null;
+    if (draft) {
+      setAnnotations(draft.annotations);
+      setDirty(true);
+      toast.info('已還原上次未儲存的標註草稿');
+    } else {
+      setAnnotations(fromServer);
+      setDirty(false);
+    }
     setSelectedIdx(-1);
     setMarkStart(null);
-    setDirty(false);
     const el = videoRef.current;
     if (path && el) {
       el.pause();
@@ -91,7 +151,7 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
       el.src = videoStreamPath(path);
       el.load();
     }
-  }, [data, videoStreamPath]);
+  }, [data, videoStreamPath, saveEndpoint]);
 
   const addAnnotation = useCallback(() => {
     const el = videoRef.current;
@@ -184,20 +244,44 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
     }
   };
 
-  const save = async () => {
-    if (!videoName) return toast.warning('No video loaded');
-    setSaving(true);
-    try {
-      await apiFetch(saveEndpoint, { method: 'POST', body: { video: videoName, duration, annotations } });
-      setDirty(false);
-      toast.success('Annotations saved!');
-      if (onSaved) await onSaved(videoName);
-    } catch (e) {
-      toast.error(`Save failed: ${errMsg(e)}`);
-    } finally {
-      setSaving(false);
-    }
-  };
+  const save = useCallback(
+    async ({ silent = false }: { silent?: boolean } = {}) => {
+      if (!videoName) {
+        if (!silent) toast.warning('No video loaded');
+        return;
+      }
+      setSaving(true);
+      try {
+        await apiFetch(saveEndpoint, { method: 'POST', body: { video: videoName, duration, annotations } });
+        setDirty(false);
+        clearDraft(saveEndpoint, videoName); // server now holds the truth; drop the local backup
+        if (!silent) toast.success('Annotations saved!');
+        if (onSaved) await onSaved(videoName);
+      } catch (e) {
+        // Keep dirty=true and the draft intact so the work survives — autosave
+        // will retry on the next edit, and the draft survives a reload.
+        toast.error(`Save failed: ${errMsg(e)}`);
+      } finally {
+        setSaving(false);
+      }
+    },
+    [videoName, duration, annotations, saveEndpoint, onSaved],
+  );
+
+  // ── Mirror unsaved work to localStorage on every edit ──
+  useEffect(() => {
+    if (!dirty || !videoName) return;
+    writeDraft(saveEndpoint, { video: videoName, duration, annotations });
+  }, [annotations, duration, dirty, videoName, saveEndpoint]);
+
+  // ── Debounced autosave: push to the server AUTOSAVE_MS after editing stops ──
+  const saveRef = useRef(save);
+  saveRef.current = save;
+  useEffect(() => {
+    if (!dirty || !videoName) return;
+    const t = setTimeout(() => void saveRef.current({ silent: true }), AUTOSAVE_MS);
+    return () => clearTimeout(t);
+  }, [annotations, dirty, videoName]);
 
   const copyTimestamps = async () => {
     if (annotations.length === 0) return toast.warning('No rallies to copy');
@@ -313,7 +397,7 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
               <Button size="sm" onClick={() => setModalOpen(true)}>
                 Clips
               </Button>
-              <Button size="sm" intent="primary" onClick={save} disabled={saving}>
+              <Button size="sm" intent="primary" onClick={() => void save()} disabled={saving}>
                 {dirty ? 'Save •' : 'Save'}
               </Button>
             </div>

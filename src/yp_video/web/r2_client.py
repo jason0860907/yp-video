@@ -212,12 +212,14 @@ def serve_video_or_r2_redirect(
     """
     from fastapi.responses import FileResponse, RedirectResponse
 
-    # Prefer R2 presigned URL — video is served directly from the edge
+    # Prefer R2 presigned URL — video is served directly from the edge.
+    # 24h expiry: a <video> element holds one URL for the whole labeling
+    # session, and an expired signature kills it mid-seek.
     if r2_client.configured:
         for category in r2_categories:
             r2_key = f"{category}/{local_path.name}"
             if r2_client.object_exists(r2_key):
-                url = r2_client.generate_presigned_url(r2_key)
+                url = r2_client.generate_presigned_url(r2_key, expires=24 * 3600)
                 return RedirectResponse(url)
 
     # Fallback: serve from local disk
