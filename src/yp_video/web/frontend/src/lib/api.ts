@@ -126,6 +126,7 @@ export const API = {
   actionTrain: {
     status: '/action-train/status',
     start: '/action-train/start',
+    performance: '/action-train/performance',
   },
   review: {
     results: '/review/results',

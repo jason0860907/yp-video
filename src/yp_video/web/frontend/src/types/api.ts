@@ -27,6 +27,7 @@ export interface ActionTrainStatus {
   active_job?: Job;
   spot_available?: boolean;
   init_checkpoints?: Array<{ value: string; label: string }>;
+  resumable_runs?: Array<{ value: string; label: string }>;
   action_annotations?: {
     videos?: number;
     events?: number;
@@ -35,6 +36,7 @@ export interface ActionTrainStatus {
     frame_dir?: string;
     checkpoint_dir?: string;
     by_view?: Record<'broadcast' | 'sideline', { videos?: number; events?: number; frames?: number }>;
+    per_video?: Array<{ video: string; events: number; frames: number; view: string; is_val?: boolean }>;
   };
   vnl_1_5?: {
     ready?: boolean;
@@ -47,7 +49,37 @@ export interface ActionTrainStatus {
   };
 }
 
+export interface ActionVideoMap {
+  video: string;
+  harmonic: number;
+  temporal: number;
+  spatial: number;
+  events: number;
+}
+
+export interface ActionMapBreakdown {
+  temporal: { tolerances: number[]; classes: Record<string, number[]>; overall: number[] };
+  spatial: { pixel_tolerances: number[]; overall_by_px: number[]; overall: number };
+  per_video?: ActionVideoMap[];
+}
+
+export interface ActionPerfEntry {
+  epoch: number;
+  val_mAP?: number;
+  val_mAP_temporal?: number;
+  val_mAP_spatial?: number;
+  val_per_video?: ActionVideoMap[] | null;
+}
+
+export interface ActionPerfData {
+  run?: string;
+  best?: { epoch?: number; value?: number } | null;
+  entries: ActionPerfEntry[];
+  runs?: string[];
+}
+
 export interface ActionTrainProgress {
+  epoch?: number;
   epoch_display?: number;
   epochs?: number;
   phase?: string;
@@ -59,8 +91,10 @@ export interface ActionTrainProgress {
   latest_train_loss?: number;
   latest_val_loss?: number;
   latest_val_map?: number;
+  latest_val_breakdown?: ActionMapBreakdown;
   best_value?: number;
   best_epoch?: number;
+  best_breakdown?: ActionMapBreakdown;
 }
 
 export interface VllmStatus {
@@ -141,6 +175,7 @@ export interface SpotCheckpoint {
 
 export interface SpotInfo {
   available: boolean;
+  spot_dir?: string;
   checkpoints?: SpotCheckpoint[];
   default_checkpoint?: string;
   error?: string;

@@ -10,14 +10,16 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { StatTile } from '@/components/ui/StatTile';
 import { JobProgress } from '@/components/job/JobProgress';
+import { ActionPerfCharts } from '@/components/train/ActionPerfCharts';
 import { toast } from '@/components/feedback/toast';
-import type { ActionTrainProgress, ActionTrainStatus, Job } from '@/types/api';
+import type { ActionMapBreakdown, ActionPerfData, ActionTrainProgress, ActionTrainStatus, Job } from '@/types/api';
 
 interface Form {
   dataset: string;
   frame_dir: string;
   checkpoint_dir: string;
   init_checkpoint: string;
+  resume_run: string; // '' = fresh run; else the exp/ save_dir to --resume
   feature_arch: string;
   temporal_arch: string;
   audio_backend: string;
@@ -31,7 +33,7 @@ interface Form {
   criterion: string;
   start_val_epoch: number;
   epoch_num_frames: number | '';
-  training_mode: 'all' | 'split';
+  training_mode: 'all' | 'split' | 'holdout';
   camera_view: 'all' | 'broadcast' | 'sideline';
   val_ratio: number;
   split_seed: number;
@@ -44,6 +46,7 @@ const BASE_FORM: Form = {
   frame_dir: '', // seeded from /action-train/status (the resolved ACTION_FRAMES_DIR)
   checkpoint_dir: '',
   init_checkpoint: '',
+  resume_run: '',
   feature_arch: 'rny008_gsm',
   temporal_arch: 'gru',
   audio_backend: 'logmel',
@@ -98,6 +101,14 @@ export function ActionTrainPage() {
   });
   const status = statusQuery.data;
 
+  // Per-epoch validation curve + per-video breakdown; refresh while training.
+  const perfQuery = useQuery({
+    queryKey: ['action-train-performance'],
+    queryFn: () => apiFetch<ActionPerfData>(API.actionTrain.performance),
+    refetchInterval: job && !isTerminal(job.status) ? 30_000 : false,
+  });
+  const perf = perfQuery.data;
+
   // Adopt any active job on first load.
   useEffect(() => {
     const active = status?.active_job;
@@ -135,10 +146,16 @@ export function ActionTrainPage() {
     actions: Math.max(0, Number((viewStats ?? ann)?.events) || 0),
     frames: Math.max(0, Number((viewStats ?? ann)?.frames) || 0),
   };
+  // Per-video action counts for the selected view, most-labelled first.
+  const perVideo = (ann?.per_video ?? [])
+    .filter((v) => form.camera_view === 'all' || v.view === form.camera_view)
+    .slice()
+    .sort((a, b) => b.events - a.events);
   const ready = stats.actions > 0;
   const running = !!job && (job.status === 'running' || job.status === 'pending');
   const canStart = !running && ready && Boolean(status?.spot_available);
   const showSplit = form.training_mode === 'split';
+  const showHoldout = form.training_mode === 'holdout';
 
   const exportDataset = () => {
     if (!stats.actions) {
@@ -157,7 +174,9 @@ export function ActionTrainPage() {
         dataset: form.dataset.trim(),
         frame_dir: form.frame_dir.trim(),
         checkpoint_dir: form.checkpoint_dir.trim() || null,
-        init_checkpoint: form.init_checkpoint.trim() || null,
+        init_checkpoint: form.resume_run !== '' ? null : form.init_checkpoint.trim() || null,
+        resume: form.resume_run !== '',
+        save_dir: form.resume_run || null,
         gpu: form.gpu,
         feature_arch: form.feature_arch,
         temporal_arch: form.temporal_arch,
@@ -195,6 +214,8 @@ export function ActionTrainPage() {
   };
 
   const initCheckpoints = status?.init_checkpoints ?? [];
+  const resumableRuns = status?.resumable_runs ?? [];
+  const isResuming = form.resume_run !== '';
 
   return (
     <div className="mx-auto max-w-screen-2xl space-y-5">
@@ -208,9 +229,9 @@ export function ActionTrainPage() {
 
       <div className="grid grid-cols-2 gap-3.5 lg:grid-cols-4">
         <StatTile label="Action videos" value={stats.videos} tintClass="text-primary-light" />
-        <StatTile label="Action labels" value={stats.actions} tintClass="text-accent" />
-        <StatTile label="Action frames" value={stats.frames.toLocaleString()} tintClass="text-text-primary" />
-        <StatTile label="Status" value={ready ? 'ready' : 'not ready'} tintClass={ready ? 'text-emerald-400' : 'text-amber-400'} />
+        <StatTile label="Action labels" value={stats.actions} tintClass="text-primary-light" />
+        <StatTile label="Action frames" value={stats.frames.toLocaleString()} tintClass="text-primary-light" />
+        <StatTile label="Status" value={ready ? 'ready' : 'not ready'} tintClass={ready ? 'text-primary-light' : 'text-amber-400'} />
       </div>
 
       <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[1.6fr_1fr]">
@@ -222,9 +243,30 @@ export function ActionTrainPage() {
               <input value={form.dataset} onChange={(e) => set('dataset', e.target.value)} className={fieldCls} />
             </Field>
             <Field label="Init checkpoint" className="col-span-2">
-              <select value={form.init_checkpoint} onChange={(e) => set('init_checkpoint', e.target.value)} title={form.init_checkpoint} className={cn(fieldCls, 'cursor-pointer appearance-none')}>
+              <select
+                value={form.init_checkpoint}
+                onChange={(e) => set('init_checkpoint', e.target.value)}
+                title={isResuming ? 'Ignored while resuming (weights load from the run checkpoint)' : form.init_checkpoint}
+                disabled={isResuming}
+                className={cn(fieldCls, 'cursor-pointer appearance-none', isResuming && 'opacity-50')}
+              >
                 {initCheckpoints.length === 0 && <option value="">No checkpoints found</option>}
                 {initCheckpoints.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Resume from run" className="col-span-3">
+              <select
+                value={form.resume_run}
+                onChange={(e) => set('resume_run', e.target.value)}
+                title={form.resume_run}
+                className={cn(fieldCls, 'cursor-pointer appearance-none')}
+              >
+                <option value="">— New run (train from scratch / init checkpoint) —</option>
+                {resumableRuns.map((o) => (
                   <option key={o.value} value={o.value}>
                     {o.label}
                   </option>
@@ -275,6 +317,7 @@ export function ActionTrainPage() {
               <select value={form.training_mode} onChange={(e) => set('training_mode', e.target.value as Form['training_mode'])} className={cn(fieldCls, 'cursor-pointer appearance-none')}>
                 <option value="all">All Data</option>
                 <option value="split">Train/Test Split</option>
+                <option value="holdout">Holdout (val-set.txt)</option>
               </select>
             </Field>
             <Field label="Camera view">
@@ -295,6 +338,12 @@ export function ActionTrainPage() {
               </>
             )}
           </div>
+
+          {showHoldout && (
+            <p className="mt-2 text-xs text-text-secondary">
+              Validation videos are read from <code className="font-mono">videos/action-val-set.txt</code> — one filename per line. Every other labelled video trains.
+            </p>
+          )}
 
           <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-text-secondary">
             <label className="inline-flex cursor-pointer items-center gap-2">
@@ -324,7 +373,7 @@ export function ActionTrainPage() {
             {[
               ['Labels', `${stats.videos} vid / ${stats.actions} ev`],
               ['Frames', stats.frames.toLocaleString()],
-              ['Mode', form.training_mode === 'all' ? 'all data' : 'train/test split'],
+              ['Mode', form.training_mode === 'all' ? 'all data' : form.training_mode === 'holdout' ? 'holdout (val-set.txt)' : 'train/test split'],
               ['View', form.camera_view === 'all' ? 'all views' : form.camera_view],
               ['Label dir', status?.action_annotations?.label_dir || '—'],
               ['Frame dir', form.frame_dir || status?.action_annotations?.frame_dir || '—'],
@@ -338,6 +387,37 @@ export function ActionTrainPage() {
               </div>
             ))}
           </div>
+
+          {perVideo.length > 0 && (
+            <details className="mt-3">
+              <summary className="cursor-pointer text-[11px] text-text-muted hover:text-text-primary">
+                Per-video actions ({perVideo.length})
+              </summary>
+              <div className="mt-1.5 max-h-64 overflow-y-auto rounded-lg border border-border">
+                <table className="w-full text-[10.5px] tabular-nums">
+                  <thead className="sticky top-0 bg-surface-100 text-text-muted">
+                    <tr>
+                      <th className="px-2 py-1 text-left font-normal">Video</th>
+                      <th className="px-2 py-1 text-right font-normal">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {perVideo.map((v) => (
+                      <tr key={v.video} className="border-t border-border/50">
+                        <td className="max-w-0 truncate px-2 py-1 text-text-secondary" title={v.video}>
+                          {v.is_val && (
+                            <span className="mr-1 rounded bg-accent/20 px-1 text-[9px] font-semibold uppercase text-accent">val</span>
+                          )}
+                          {v.video}
+                        </td>
+                        <td className="px-2 py-1 text-right font-mono text-text-secondary">{v.events}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          )}
         </Card>
       </div>
 
@@ -349,6 +429,9 @@ export function ActionTrainPage() {
           <TrainDetail progress={job.params?.action_train_progress as ActionTrainProgress | undefined} epochsFallback={form.num_epochs} />
         </Card>
       )}
+
+      {/* Per-epoch curve + per-video mAP for the latest (or running) run */}
+      {perf && perf.entries.length > 0 && <ActionPerfCharts data={perf} />}
     </div>
   );
 }
@@ -380,9 +463,12 @@ function TrainDetail({ progress: p, epochsFallback }: { progress?: ActionTrainPr
   const step =
     Number.isFinite(Number(p.step)) && Number.isFinite(Number(p.total)) ? `${p.step}/${p.total}${phaseProgress ? ` (${phaseProgress})` : ''}` : '';
   const latestMap = Number.isFinite(Number(p.latest_val_map)) ? `${(Number(p.latest_val_map) * 100).toFixed(2)}%` : '';
-  const best = Number.isFinite(Number(p.best_value))
-    ? `${p.best_epoch != null ? `E${Number(p.best_epoch) + 1} ` : ''}${Number(p.best_value) <= 1 ? (Number(p.best_value) * 100).toFixed(2) + '%' : Number(p.best_value).toFixed(4)}`
+  const bestVal = Number.isFinite(Number(p.best_value))
+    ? Number(p.best_value) <= 1
+      ? (Number(p.best_value) * 100).toFixed(2) + '%'
+      : Number(p.best_value).toFixed(4)
     : '';
+  const best = bestVal ? `${bestVal}${p.best_epoch != null ? ` · Epoch ${Number(p.best_epoch) + 1}` : ''}` : '';
   const rows: Array<[string, string]> = [
     ['Epoch', `${p.epoch_display || 1}/${p.epochs || epochsFallback || '?'}`],
     ['Phase', p.phase_label || p.phase || ''],
@@ -396,15 +482,93 @@ function TrainDetail({ progress: p, epochsFallback }: { progress?: ActionTrainPr
   const visible = rows.filter(([, v]) => v !== '' && v != null);
   if (!visible.length) return null;
   return (
-    <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
-      {visible.map(([label, value]) => (
-        <div key={label} className="min-w-0 rounded-lg border border-border bg-surface-100 px-2.5 py-2">
-          <div className="text-[9px] uppercase tracking-wider text-text-muted">{label}</div>
-          <div className="mt-0.5 truncate font-mono text-[11px] tabular-nums text-text-secondary" title={value}>
-            {value}
+    <>
+      <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
+        {visible.map(([label, value]) => (
+          <div key={label} className="min-w-0 rounded-lg border border-border bg-surface-100 px-2.5 py-2">
+            <div className="text-[9px] uppercase tracking-wider text-text-muted">{label}</div>
+            <div className="mt-0.5 truncate font-mono text-[11px] tabular-nums text-text-secondary" title={value}>
+              {value}
+            </div>
           </div>
-        </div>
-      ))}
+        ))}
+      </div>
+      {(p.latest_val_breakdown || p.best_breakdown) && (
+        <details className="mt-2">
+          <summary className="cursor-pointer text-[10px] text-text-muted hover:text-text-primary">mAP breakdown</summary>
+          {p.latest_val_breakdown && <MapBreakdownTable title={`Latest — Epoch ${p.epoch_display ?? 1}`} bd={p.latest_val_breakdown} />}
+          {p.best_breakdown && <MapBreakdownTable title={`Best${p.best_epoch != null ? ` — Epoch ${p.best_epoch + 1}` : ''}`} bd={p.best_breakdown} />}
+        </details>
+      )}
+    </>
+  );
+}
+
+function MapBreakdownTable({ title, bd }: { title: string; bd: ActionMapBreakdown }) {
+  const pct = (v: number | undefined) => (Number.isFinite(v) ? ((v as number) * 100).toFixed(1) : '—');
+  return (
+    <div className="mt-3">
+      <div className="text-xs font-semibold text-text-primary">{title}</div>
+      <table className="mt-1 w-full font-mono text-[10px] tabular-nums">
+        <thead>
+          <tr className="text-text-muted">
+            <th className="text-left font-normal">Class</th>
+            {bd.temporal.tolerances.map((t) => (
+              <th key={t} className="text-right font-normal">
+                tol{t}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {Object.entries(bd.temporal.classes).map(([cls, aps]) => (
+            <tr key={cls}>
+              <td className="text-left text-text-secondary">{cls}</td>
+              {aps.map((v, i) => (
+                <td key={i} className="text-right text-text-secondary">
+                  {pct(v)}
+                </td>
+              ))}
+            </tr>
+          ))}
+          <tr className="border-t border-border text-text-primary">
+            <td className="text-left">overall</td>
+            {bd.temporal.overall.map((v, i) => (
+              <td key={i} className="text-right">
+                {pct(v)}
+              </td>
+            ))}
+          </tr>
+        </tbody>
+      </table>
+      <div className="mt-1 text-[10px] text-text-secondary">
+        spatial
+        {bd.spatial.pixel_tolerances.map((px, i) => ` ${px}px ${pct(bd.spatial.overall_by_px[i])}`).join('')}
+        {' · overall '}
+        {pct(bd.spatial.overall)}
+      </div>
+      {bd.per_video && bd.per_video.length > 0 && (
+        <table className="mt-2 w-full font-mono text-[10px] tabular-nums">
+          <thead>
+            <tr className="text-text-muted">
+              <th className="text-left font-normal">Video</th>
+              <th className="text-right font-normal">mAP</th>
+              <th className="text-right font-normal">temp</th>
+              <th className="text-right font-normal">spat</th>
+            </tr>
+          </thead>
+          <tbody>
+            {[...bd.per_video].sort((a, b) => b.harmonic - a.harmonic).map((v) => (
+              <tr key={v.video}>
+                <td className="max-w-0 truncate text-left text-text-secondary" title={v.video}>{v.video}</td>
+                <td className="text-right text-text-primary">{pct(v.harmonic)}</td>
+                <td className="text-right text-text-secondary">{pct(v.temporal)}</td>
+                <td className="text-right text-text-secondary">{pct(v.spatial)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 }

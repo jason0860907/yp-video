@@ -74,6 +74,10 @@ ACTION_FRAMES_DIR = VIDEOS_DIR / "action-frames"
 ACTION_AUDIO_DIR = VIDEOS_DIR / "action-audio"
 ACTION_WAVEFORMS_DIR = VIDEOS_DIR / "action-waveforms"
 ACTION_CHECKPOINTS_DIR = VIDEOS_DIR / "action-checkpoints"
+# Validation set for "holdout" Action Train mode: one video filename per line
+# (stem, <stem>.mp4, or <stem>_actions.jsonl all accepted; blank lines and lines
+# starting with "#" are ignored). Edit this file to pick the val videos by hand.
+ACTION_VAL_SET_FILE = VIDEOS_DIR / "action-val-set.txt"
 PREDICTIONS_DIR = VIDEOS_DIR / "tad-predictions"
 FEATURES_DIR = VIDEOS_DIR / "tad-features"
 TAD_FEATURES_DIR = FEATURES_DIR / "vjepa-b"  # default (ViT-B); use tad_features_dir() for other sizes

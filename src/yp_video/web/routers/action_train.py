@@ -22,6 +22,7 @@ from yp_video.config import (
     ACTION_AUDIO_DIR,
     ACTION_CHECKPOINTS_DIR,
     ACTION_FRAMES_DIR,
+    ACTION_VAL_SET_FILE,
     CUTS_DIRS,
     SPOT_AUDIO_PRECOMPUTE_MODULE,
     SPOT_DIR,
@@ -60,13 +61,15 @@ class _TrainProgress:
     latest_train_loss: float | None = None
     latest_val_loss: float | None = None
     latest_val_map: float | None = None
+    latest_val_breakdown: dict | None = None
     best_epoch: int | None = None
     best_value: float | None = None
+    best_breakdown: dict | None = None
 
 
 class ActionTrainRequest(BaseModel):
     source: str = Field(default="vnl_1_5", pattern="^(vnl_1_5|action_annotations)$")
-    training_mode: str = Field(default="split", pattern="^(split|all)$")
+    training_mode: str = Field(default="split", pattern="^(split|all|holdout)$")
     dataset: str | None = None
     frame_dir: str | None = None
     save_dir: str | None = None
@@ -74,6 +77,11 @@ class ActionTrainRequest(BaseModel):
     # None / "" → train from scratch; an explicit path → that checkpoint
     # (selected from ACTION_CHECKPOINTS_DIR).
     init_checkpoint: str | None = None
+    # Continue an interrupted run: restore weights + optimizer/scheduler/history
+    # from `save_dir` and keep training toward num_epochs. Requires `save_dir`
+    # to point at an existing run with optimizer state; `init_checkpoint` is
+    # ignored (SPOT loads from the checkpoint instead).
+    resume: bool = False
     gpu: int = Field(default=0, ge=0)
     # "logmel" → late-fusion audio (precomputed before training); "none" →
     # pure-visual model (no audio, no precompute). Must match at inference.
@@ -92,6 +100,10 @@ class ActionTrainRequest(BaseModel):
     epoch_num_frames: int | None = Field(default=None, ge=1)
     val_ratio: float = Field(default=0.2, gt=0, lt=1)
     split_seed: int = 42
+    # holdout mode: the exact videos to hold out as the validation set; every
+    # other labelled video trains. Entries may be the raw stem, `<stem>.mp4`, or
+    # `<stem>_actions.jsonl` — matched against the run-local label snapshot.
+    holdout_videos: list[str] = Field(default_factory=list)
     # "all" trains every view together; "broadcast"/"sideline" restrict to one
     # camera view (labels carry a camera_view tag from _prepare_action_training_labels).
     camera_view: str = Field(default="all", pattern="^(all|broadcast|sideline)$")
@@ -173,6 +185,8 @@ def _action_annotation_stats() -> dict:
         "broadcast": {"videos": 0, "events": 0, "frames": 0},
         "sideline": {"videos": 0, "events": 0, "frames": 0},
     }
+    val_names = {Path(entry).name for entry in _read_val_set_file()}
+    per_video: list[dict] = []
     videos = 0
     events = 0
     frames = 0
@@ -193,6 +207,13 @@ def _action_annotation_stats() -> dict:
             by_view[view]["videos"] += 1
             by_view[view]["events"] += n_events
             by_view[view]["frames"] += n_frames
+        per_video.append({
+            "video": stem,
+            "events": n_events,
+            "frames": n_frames,
+            "view": view or "unknown",
+            "is_val": path.name in val_names,
+        })
     return {
         "label_dir": str(ACTION_ANNOTATIONS_DIR),
         "frame_dir": str(ACTION_FRAMES_DIR),
@@ -201,6 +222,7 @@ def _action_annotation_stats() -> dict:
         "events": events,
         "frames": frames,
         "by_view": by_view,
+        "per_video": per_video,
         "exists": ACTION_ANNOTATIONS_DIR.exists(),
     }
 
@@ -302,18 +324,19 @@ def _prepare_action_training_labels(
         if cache_frames <= 0:
             raise RuntimeError(f"Missing action frame cache for {stem}")
 
-        out_of_range = [
-            int(round(float(event.get("frame", 0) or 0)))
-            for event in records
-            if int(round(float(event.get("frame", 0) or 0))) >= cache_frames
+        # An event past the extracted frame cache (usually a frame or two lost at
+        # the video tail) can't be sampled — drop it instead of failing the run.
+        kept = [
+            event for event in records
+            if int(round(float(event.get("frame", 0) or 0))) < cache_frames
         ]
-        if out_of_range:
-            sample = ", ".join(str(frame) for frame in out_of_range[:5])
-            suffix = "" if len(out_of_range) <= 5 else f" and {len(out_of_range) - 5} more"
-            raise RuntimeError(
-                f"{path.name} has action frame(s) beyond the frame cache "
-                f"({cache_frames} frames): {sample}{suffix}"
+        dropped = len(records) - len(kept)
+        if dropped:
+            log.warning(
+                "%s: dropped %d action event(s) beyond the %d-frame cache",
+                path.name, dropped, cache_frames,
             )
+        records = kept
 
         original_frames = int(meta.get("num_frames") or 0)
         training_meta = {
@@ -355,6 +378,89 @@ def _prepare_action_training_labels(
         "frames": total_frames,
         "sample_frames": span_frames,
         "adjusted": adjusted,
+    }
+
+
+def _read_val_set_file() -> list[str]:
+    """Validation video names from ACTION_VAL_SET_FILE, ignoring blanks/comments.
+
+    The file is the hand-editable source of truth for holdout mode: one video per
+    line, ``#`` starts a comment. Absent or all-comments → empty list (the caller
+    turns that into a clear "populate the file" error).
+    """
+    if not ACTION_VAL_SET_FILE.exists():
+        return []
+    names: list[str] = []
+    for line in ACTION_VAL_SET_FILE.read_text(encoding="utf-8").splitlines():
+        entry = line.strip()
+        # Only whole-line comments: video filenames legitimately contain '#'
+        # (e.g. "#獅子王 vs. #屏東台電"), so an inline-'#' rule would truncate them.
+        if not entry or entry.startswith("#"):
+            continue
+        names.append(entry)
+    return names
+
+
+def _resolve_holdout_videos(req: ActionTrainRequest) -> list[str]:
+    """Explicit request list wins; otherwise fall back to the val-set file."""
+    names = req.holdout_videos or _read_val_set_file()
+    if not names:
+        raise HTTPException(
+            400,
+            "holdout mode needs a validation set. Add one video filename per line "
+            f"to {ACTION_VAL_SET_FILE}",
+        )
+    return names
+
+
+def _materialize_holdout_split(label_dir: Path, holdout_videos: list[str]) -> dict:
+    """Split the flat label snapshot into ``train/`` and ``val/`` by filename.
+
+    The chosen videos become validation; every other labelled video trains.
+    Symlinks (not copies) keep the flat snapshot — and the audio precompute that
+    globs it — intact. Fails loud if a requested video isn't in the snapshot, or
+    if either side would be empty: a silent mis-split is worse than a stopped job.
+    """
+    files = sorted(label_dir.glob("*_actions.jsonl"))
+    by_name = {path.name: path for path in files}
+    # Entries are label-file paths (or bare filenames); match on the basename so
+    # the val-set file can point straight at action-annotations/<video>.jsonl.
+    wanted = {Path(entry).name for entry in holdout_videos if entry.strip()}
+    if not wanted:
+        raise HTTPException(400, "holdout mode needs at least one validation video")
+
+    missing = sorted(name for name in wanted if name not in by_name)
+    if missing:
+        available = ", ".join(sorted(by_name)) or "<none>"
+        raise HTTPException(
+            400,
+            "Validation label file(s) not found in the training labels "
+            f"(after camera_view filtering): {'; '.join(missing)}. Available: {available}",
+        )
+
+    train_dir = label_dir.parent / "train"
+    val_dir = label_dir.parent / "val"
+    for target in (train_dir, val_dir):
+        if target.exists():
+            shutil.rmtree(target)
+        target.mkdir(parents=True)
+
+    train_videos: list[str] = []
+    val_videos: list[str] = []
+    for name, path in by_name.items():
+        is_val = name in wanted
+        (val_dir if is_val else train_dir).joinpath(name).symlink_to(path)
+        stem = name.removesuffix("_actions.jsonl")
+        (val_videos if is_val else train_videos).append(stem)
+
+    if not train_videos:
+        raise HTTPException(400, "holdout mode left no training videos; hold out fewer")
+
+    return {
+        "train_label_dir": str(train_dir),
+        "val_label_dir": str(val_dir),
+        "train_videos": sorted(train_videos),
+        "val_videos": sorted(val_videos),
     }
 
 
@@ -553,6 +659,42 @@ def _init_checkpoint_options() -> list[dict]:
     return options
 
 
+def _last_resumable_epoch(run_dir: Path) -> int | None:
+    """Latest epoch with optimizer state in ``run_dir``, or None if not resumable.
+
+    Mirrors SPOT's ``get_last_epoch`` (globs ``optim_*.pt``): ``--resume`` needs
+    the optimizer/scheduler snapshot, and SPOT prunes all but the latest one.
+    """
+    epochs = [
+        int(m.group(1))
+        for p in run_dir.glob("optim_*.pt")
+        if (m := re.fullmatch(r"optim_(\d+)", p.stem))
+    ]
+    return max(epochs) if epochs else None
+
+
+def _resumable_run_options() -> list[dict]:
+    """Runs under ``exp/`` that ``--resume`` can continue (have optimizer state)."""
+    exp_dir = SPOT_DIR / "exp"
+    if not exp_dir.exists():
+        return []
+    options: list[dict] = []
+    for run_dir in sorted(exp_dir.iterdir(), reverse=True):
+        if not run_dir.is_dir():
+            continue
+        last_epoch = _last_resumable_epoch(run_dir)
+        if last_epoch is None:
+            continue
+        best = _load_json_file(run_dir / "checkpoint_best.json")
+        best_value = best.get("value") if isinstance(best, dict) else None
+        label = f"{run_dir.name} (E{last_epoch + 1}"
+        if isinstance(best_value, (int, float)):
+            label += f", best {best_value:.3f}"
+        label += ")"
+        options.append({"label": label, "value": str(run_dir)})
+    return options
+
+
 def _action_checkpoint_stats() -> dict:
     count = 0
     if ACTION_CHECKPOINTS_DIR.exists():
@@ -578,10 +720,47 @@ def status() -> dict:
         "spot_dir": str(SPOT_DIR),
         "spot_python": str(SPOT_PYTHON),
         "init_checkpoints": _init_checkpoint_options(),
+        "resumable_runs": _resumable_run_options(),
         "vnl_1_5": _vnl_stats(),
         "action_annotations": _action_annotation_stats(),
         "action_checkpoints": _action_checkpoint_stats(),
         "active_job": _active_job(),
+    }
+
+
+@router.get("/performance")
+def performance(run: str | None = None) -> dict:
+    """Per-epoch validation metrics (incl. per-video mAP) for a training run.
+
+    Reads ``loss.json`` from an action-checkpoints package. Defaults to the most
+    recently modified run; pass ``run`` to select one by name. ``runs`` lists the
+    available runs (newest first) so the UI can offer a picker.
+    """
+    base = ACTION_CHECKPOINTS_DIR
+    if not base.exists():
+        return {"entries": [], "runs": []}
+
+    runs = sorted(
+        (d for d in base.iterdir() if d.is_dir() and (d / "loss.json").exists()),
+        key=lambda d: d.stat().st_mtime,
+        reverse=True,
+    )
+    if not runs:
+        return {"entries": [], "runs": []}
+
+    run_dir = (base / run) if run else runs[0]
+    if not (run_dir / "loss.json").exists():
+        raise HTTPException(404, f"No loss.json for run {run_dir.name!r}")
+
+    loss = _load_json_file(run_dir / "loss.json")
+    if not isinstance(loss, list):
+        return {"run": run_dir.name, "entries": [], "runs": [d.name for d in runs]}
+    best = _load_json_file(run_dir / "checkpoint_best.json")
+    return {
+        "run": run_dir.name,
+        "best": best if isinstance(best, dict) else None,
+        "entries": loss,
+        "runs": [d.name for d in runs],
     }
 
 
@@ -597,6 +776,11 @@ def _build_command(
         raise HTTPException(503, "SPOT is not available at ~/yp-spot")
     if not SPOT_PYTHON.exists():
         raise HTTPException(503, f"SPOT python not found: {SPOT_PYTHON}")
+
+    if req.training_mode == "holdout" and req.source != "action_annotations":
+        raise HTTPException(
+            400, "holdout mode is only supported for action_annotations labels"
+        )
 
     dataset = req.dataset or _default_dataset(req.source)
     frame_dir_value = req.frame_dir or _default_frame_dir(req.source)
@@ -666,7 +850,14 @@ def _build_command(
         cmd.extend(["--camera_view", req.camera_view])
     if req.predict_location:
         cmd.append("--predict_location")
-    if init_checkpoint is not None:
+    if req.resume:
+        if _last_resumable_epoch(save_dir) is None:
+            raise HTTPException(
+                400,
+                f"Cannot resume: no optimizer checkpoint (optim_*.pt) in {save_dir}",
+            )
+        cmd.append("--resume")
+    elif init_checkpoint is not None:
         cmd.extend(["--init_checkpoint", str(init_checkpoint)])
     if req.epoch_num_frames is not None:
         cmd.extend(["--epoch_num_frames", str(req.epoch_num_frames)])
@@ -680,6 +871,15 @@ def _build_command(
                 str(label_dir),
                 "--val_labels",
                 str(label_dir),
+            ])
+        elif req.training_mode == "holdout":
+            # train/ and val/ are symlink dirs materialized next to the flat
+            # snapshot by _materialize_holdout_split before training starts.
+            cmd.extend([
+                "--train_labels",
+                str(label_dir.parent / "train"),
+                "--val_labels",
+                str(label_dir.parent / "val"),
             ])
         else:
             cmd.extend([
@@ -698,6 +898,7 @@ def _build_command(
         "save_dir": str(save_dir),
         "checkpoint_dir": str(checkpoint_dir),
         "init_checkpoint": str(init_checkpoint) if init_checkpoint else "",
+        "resume": req.resume,
         "gpu": req.gpu,
         "epochs": req.num_epochs,
         "feature_arch": req.feature_arch,
@@ -713,6 +914,11 @@ def _build_command(
         if req.training_mode == "split":
             params["val_ratio"] = req.val_ratio
             params["split_seed"] = req.split_seed
+        elif req.training_mode == "holdout":
+            # Resolved val list lands in training_labels.val_videos; record the
+            # source here so the manifest shows where the split came from.
+            params["holdout_videos"] = req.holdout_videos
+            params["val_set_file"] = str(ACTION_VAL_SET_FILE)
     return cmd, save_dir, params
 
 
@@ -785,6 +991,12 @@ async def start(req: ActionTrainRequest) -> dict:
                     camera_view=req.camera_view,
                 )
                 action_label_dir = Path(label_summary["label_dir"])
+                if req.training_mode == "holdout":
+                    holdout_videos = _resolve_holdout_videos(req)
+                    split = await asyncio.to_thread(
+                        _materialize_holdout_split, action_label_dir, holdout_videos
+                    )
+                    label_summary = {**label_summary, **split}
                 await job_manager.update_job(
                     job.id,
                     progress=0.2,
@@ -840,8 +1052,10 @@ async def start(req: ActionTrainRequest) -> dict:
                                 "latest_train_loss": ctx.latest_train_loss,
                                 "latest_val_loss": ctx.latest_val_loss,
                                 "latest_val_map": ctx.latest_val_map,
+                                "latest_val_breakdown": ctx.latest_val_breakdown,
                                 "best_epoch": ctx.best_epoch,
                                 "best_value": ctx.best_value,
+                                "best_breakdown": ctx.best_breakdown,
                                 **extra,
                             }
                         }
@@ -923,6 +1137,13 @@ async def start(req: ActionTrainRequest) -> dict:
                         ctx.latest_val_map = float(match.group(1)) / 100.0
                         return {"params": training_params()}
 
+                    def on_val_metrics(match: re.Match) -> dict | None:
+                        try:
+                            ctx.latest_val_breakdown = json.loads(match.group(1))
+                        except json.JSONDecodeError:
+                            return None
+                        return {"params": training_params()}
+
                     async def export_checkpoint_package_once(
                         *,
                         expected_epoch: int | None,
@@ -987,6 +1208,7 @@ async def start(req: ActionTrainRequest) -> dict:
                             if req.criterion == "map"
                             else ctx.latest_val_loss
                         )
+                        ctx.best_breakdown = ctx.latest_val_breakdown
                         schedule_checkpoint_export(ctx.best_epoch, "new_best")
                         return {"params": training_params()}
 
@@ -1025,6 +1247,7 @@ async def start(req: ActionTrainRequest) -> dict:
                                 r"Harmonic mean \(temporal and spatial mAPs\):\s*([0-9.]+)%",
                                 on_val_map,
                             ),
+                            ProgressParser(r"SPOT_METRICS (\{.*\})", on_val_metrics),
                             ProgressParser(r"New best epoch!", on_new_best),
                         ],
                         is_key_line=lambda line: (
@@ -1032,6 +1255,7 @@ async def start(req: ActionTrainRequest) -> dict:
                             or "Best epoch" in line
                             or "New best epoch" in line
                             or "Harmonic mean" in line
+                            or "SPOT_METRICS" in line
                             or "Train loss" in line
                             or "Val loss" in line
                         ),
