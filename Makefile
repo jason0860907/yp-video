@@ -43,10 +43,15 @@ tunnel:
 
 # 一鍵把 dev + tunnel 丟進 tmux 背景跑，關掉 SSH 也不會斷。
 # 進程若崩潰會留在原視窗(掉回 shell)方便看錯誤、重跑。
+# 可重複執行 = 重啟:若已在跑,會先砍掉舊 session 再全新啟動
+# (quick tunnel 會換一個新的公開網址,重跑後記得 make url)。
 serve:
-	@if tmux has-session -t $(SESSION) 2>/dev/null; then \
-		echo "⚠️  tmux session '$(SESSION)' 已在跑 — 用 make url / make attach / make stop"; \
-		exit 1; \
+	@# 已在跑就整個砍掉重開:先關舊 session(含 yp-app + tunnel)
+	@tmux kill-session -t $(SESSION) 2>/dev/null && echo "✓ 已關閉舊 tmux session '$(SESSION)'" || true
+	@# 再清掉殘留、仍佔著 :8080 的 yp-app(session 被砍但進程沒死),避免新進程綁不到 port
+	@if pkill -x yp-app 2>/dev/null; then \
+		echo "✓ 已關閉殘留的 yp-app"; \
+		for i in 1 2 3 4 5; do pgrep -x yp-app >/dev/null 2>&1 || break; sleep 1; done; \
 	fi
 	@tmux new-session -d -s $(SESSION) -n dev    '$(MAKE) dev;    exec $$SHELL'
 	@tmux new-window  -t $(SESSION)   -n tunnel  '$(MAKE) tunnel; exec $$SHELL'
