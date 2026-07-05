@@ -510,69 +510,80 @@ function TrainDetail({ progress: p, epochsFallback }: { progress?: ActionTrainPr
 
 function MapBreakdownTable({ title, bd }: { title: string; bd: ActionMapBreakdown }) {
   const pct = (v: number | undefined) => (Number.isFinite(v) ? ((v as number) * 100).toFixed(1) : '—');
+  const numCell = 'py-0.5 pl-5 text-right';
   return (
     <div className="mt-3">
       <div className="text-xs font-semibold text-text-primary">{title}</div>
-      <table className="mt-1 w-full font-mono text-[10px] tabular-nums">
-        <thead>
-          <tr className="text-text-muted">
-            <th className="text-left font-normal">Class</th>
-            {bd.temporal.tolerances.map((t) => (
-              <th key={t} className="text-right font-normal">
-                tol{t}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {Object.entries(bd.temporal.classes).map(([cls, aps]) => (
-            <tr key={cls}>
-              <td className="text-left text-text-secondary">{cls}</td>
-              {aps.map((v, i) => (
-                <td key={i} className="text-right text-text-secondary">
-                  {pct(v)}
-                </td>
-              ))}
-            </tr>
-          ))}
-          <tr className="border-t border-border text-text-primary">
-            <td className="text-left">overall</td>
-            {bd.temporal.overall.map((v, i) => (
-              <td key={i} className="text-right">
-                {pct(v)}
-              </td>
-            ))}
-          </tr>
-        </tbody>
-      </table>
-      <div className="mt-1 text-[10px] text-text-secondary">
-        spatial
-        {bd.spatial.pixel_tolerances.map((px, i) => ` ${px}px ${pct(bd.spatial.overall_by_px[i])}`).join('')}
-        {' · overall '}
-        {pct(bd.spatial.overall)}
-      </div>
-      {bd.per_video && bd.per_video.length > 0 && (
-        <table className="mt-2 w-full font-mono text-[10px] tabular-nums">
-          <thead>
-            <tr className="text-text-muted">
-              <th className="text-left font-normal">Video</th>
-              <th className="text-right font-normal">mAP</th>
-              <th className="text-right font-normal">temp</th>
-              <th className="text-right font-normal">spat</th>
-            </tr>
-          </thead>
-          <tbody>
-            {[...bd.per_video].sort((a, b) => b.harmonic - a.harmonic).map((v) => (
-              <tr key={v.video}>
-                <td className="max-w-0 truncate text-left text-text-secondary" title={v.video}>{v.video}</td>
-                <td className="text-right text-text-primary">{pct(v.harmonic)}</td>
-                <td className="text-right text-text-secondary">{pct(v.temporal)}</td>
-                <td className="text-right text-text-secondary">{pct(v.spatial)}</td>
+      <div className="mt-1.5 grid grid-cols-1 items-start gap-3 xl:grid-cols-[auto_minmax(0,1fr)]">
+        {/* By action class */}
+        <div className="rounded-lg border border-border bg-surface-100 px-3 py-2.5">
+          <div className="text-[9px] uppercase tracking-wider text-text-muted">By class</div>
+          <table className="mt-1 font-mono text-[10px] tabular-nums">
+            <thead>
+              <tr className="text-text-muted">
+                <th className="py-0.5 text-left font-normal">Class</th>
+                {bd.temporal.tolerances.map((t) => (
+                  <th key={t} className={cn(numCell, 'font-normal')}>
+                    tol{t}
+                  </th>
+                ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+            </thead>
+            <tbody>
+              {Object.entries(bd.temporal.classes).map(([cls, aps]) => (
+                <tr key={cls}>
+                  <td className="py-0.5 pr-2 text-left text-text-secondary">{cls}</td>
+                  {aps.map((v, i) => (
+                    <td key={i} className={cn(numCell, 'text-text-secondary')}>
+                      {pct(v)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+              <tr className="border-t border-border text-text-primary">
+                <td className="py-0.5 pr-2 text-left">overall</td>
+                {bd.temporal.overall.map((v, i) => (
+                  <td key={i} className={numCell}>
+                    {pct(v)}
+                  </td>
+                ))}
+              </tr>
+            </tbody>
+          </table>
+          <div className="mt-1.5 border-t border-border pt-1.5 text-[10px] text-text-muted">
+            spatial
+            {bd.spatial.pixel_tolerances.map((px, i) => ` ${px}px ${pct(bd.spatial.overall_by_px[i])}`).join('')}
+            {' · overall '}
+            <span className="text-text-secondary">{pct(bd.spatial.overall)}</span>
+          </div>
+        </div>
+        {/* By video */}
+        {bd.per_video && bd.per_video.length > 0 && (
+          <div className="min-w-0 rounded-lg border border-border bg-surface-100 px-3 py-2.5">
+            <div className="text-[9px] uppercase tracking-wider text-text-muted">By video</div>
+            <table className="mt-1 w-full font-mono text-[10px] tabular-nums">
+              <thead>
+                <tr className="text-text-muted">
+                  <th className="py-0.5 text-left font-normal">Video</th>
+                  <th className="w-12 py-0.5 text-right font-normal">mAP</th>
+                  <th className="w-12 py-0.5 text-right font-normal">temp</th>
+                  <th className="w-12 py-0.5 text-right font-normal">spat</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...bd.per_video].sort((a, b) => b.harmonic - a.harmonic).map((v) => (
+                  <tr key={v.video}>
+                    <td className="max-w-0 truncate py-0.5 pr-3 text-left text-text-secondary" title={v.video}>{v.video}</td>
+                    <td className="py-0.5 text-right text-text-primary">{pct(v.harmonic)}</td>
+                    <td className="py-0.5 text-right text-text-secondary">{pct(v.temporal)}</td>
+                    <td className="py-0.5 text-right text-text-secondary">{pct(v.spatial)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
