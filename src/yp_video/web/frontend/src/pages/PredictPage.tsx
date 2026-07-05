@@ -167,8 +167,8 @@ export function PredictPage() {
 
       <div className="grid grid-cols-2 gap-3.5 lg:grid-cols-4">
         <StatTile label="Cuts" value={videos.length} tintClass="text-primary-light" />
-        <StatTile label="Selected" value={selectedTotal} tintClass="text-accent" />
-        <StatTile label="Predicted" value={predictedTotal} tintClass="text-emerald-400" />
+        <StatTile label="Selected" value={selectedTotal} tintClass="text-primary-light" />
+        <StatTile label="Predicted" value={predictedTotal} tintClass="text-primary-light" />
         <StatTile label="Pending" value={videos.length - predictedTotal} tintClass="text-text-muted" />
       </div>
 
@@ -289,11 +289,11 @@ export function PredictPage() {
                     />
                     <span className="flex-1 whitespace-nowrap text-sm text-text-primary">{v.name}</span>
                     {v.has_annotation ? (
-                      <Pill tone="emerald">ann</Pill>
+                      <Pill tone="primary">ann</Pill>
                     ) : v.has_pre_annotation ? (
                       <Pill tone="sky">pre</Pill>
                     ) : null}
-                    <Pill tone={hasFeat ? 'emerald' : 'muted'}>{hasFeat ? 'feat' : 'no feat'}</Pill>
+                    <Pill tone={hasFeat ? 'primary' : 'muted'}>{hasFeat ? 'feat' : 'no feat'}</Pill>
                     <Pill tone={v.has_prediction ? 'primary' : 'muted'}>{v.has_prediction ? 'pred' : 'pending'}</Pill>
                   </div>
                 );
@@ -321,9 +321,8 @@ export function PredictPage() {
   );
 }
 
-function Pill({ tone, children }: { tone: 'emerald' | 'sky' | 'primary' | 'muted'; children: ReactNode }) {
+function Pill({ tone, children }: { tone: 'sky' | 'primary' | 'muted'; children: ReactNode }) {
   const cls = {
-    emerald: 'text-emerald-400 bg-emerald-500/10 ring-emerald-500/20',
     sky: 'text-sky-300 bg-sky-500/10 ring-sky-500/20',
     primary: 'text-primary-light bg-primary/15 ring-primary/25',
     muted: 'text-text-muted bg-ink/5 ring-ink/10',

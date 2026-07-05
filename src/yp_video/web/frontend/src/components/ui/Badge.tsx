@@ -7,7 +7,7 @@ const TONES: Record<BadgeTone, string> = {
   neutral: 'text-text-muted bg-ink/5',
   brand: 'text-primary-light bg-primary/20',
   accent: 'text-accent bg-accent/15',
-  success: 'text-emerald-400 bg-emerald-500/15',
+  success: 'text-primary-light bg-primary/15',
   warning: 'text-amber-400 bg-amber-500/15',
   danger: 'text-red-400 bg-red-500/15',
   info: 'text-sky-400 bg-sky-500/15',

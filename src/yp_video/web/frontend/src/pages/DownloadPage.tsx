@@ -128,8 +128,8 @@ export function DownloadPage() {
 
       <div className="grid grid-cols-2 gap-3.5 lg:grid-cols-4">
         <StatTile label="In playlist" value={videos.length} tintClass="text-primary-light" />
-        <StatTile label="Selected" value={selectedCount} tintClass="text-accent" />
-        <StatTile label="Completed" value={completedCount} tintClass="text-emerald-400" sub={hasPlaylist ? 'this session' : undefined} />
+        <StatTile label="Selected" value={selectedCount} tintClass="text-primary-light" />
+        <StatTile label="Completed" value={completedCount} tintClass="text-primary-light" sub={hasPlaylist ? 'this session' : undefined} />
         <StatTile
           label="Status"
           value={downloading ? 'Running' : 'Idle'}
@@ -226,7 +226,7 @@ export function DownloadPage() {
                     )}
                     <StatusBadge status={v.status} />
                   </div>
-                  {v.progress && <VideoProgressRow progress={v.progress} completed={v.status === 'completed'} />}
+                  {v.progress && <VideoProgressRow progress={v.progress} />}
                 </div>
               ))}
             </div>
@@ -237,7 +237,7 @@ export function DownloadPage() {
   );
 }
 
-function VideoProgressRow({ progress: p, completed }: { progress: VideoProgress; completed: boolean }) {
+function VideoProgressRow({ progress: p }: { progress: VideoProgress }) {
   const parts = [
     p.percent != null ? `${p.percent.toFixed(1)}%` : '',
     p.downloaded != null && p.total != null ? `${formatBytes(p.downloaded)}/${formatBytes(p.total)}` : '',
@@ -247,7 +247,7 @@ function VideoProgressRow({ progress: p, completed }: { progress: VideoProgress;
 
   return (
     <div className="mt-2.5 pl-[26px]">
-      <ProgressBar progress={(p.percent ?? 0) / 100} variant={completed ? 'success' : 'primary'} />
+      <ProgressBar progress={(p.percent ?? 0) / 100} />
       <div className="mt-1.5 flex gap-3 font-mono text-[11px] tabular-nums text-text-muted">
         {parts.map((part, i) => (
           <span key={i}>{part}</span>

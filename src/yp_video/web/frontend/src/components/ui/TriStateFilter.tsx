@@ -24,7 +24,7 @@ export function TriStateFilter<K extends string>({ fields, value, onChange }: Tr
             onClick={() => onChange(f.key, cycleTri(v))}
             className={cn(
               'inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] font-medium transition-colors',
-              v === true && 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300',
+              v === true && 'border-primary/30 bg-primary/10 text-primary-light',
               v === false && 'border-red-500/30 bg-red-500/10 text-red-300',
               v === null && 'border-border bg-surface-50 text-text-muted hover:text-text-secondary',
             )}

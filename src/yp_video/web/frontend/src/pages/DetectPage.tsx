@@ -127,8 +127,8 @@ export function DetectPage() {
 
       <div className="grid grid-cols-2 gap-3.5 lg:grid-cols-4">
         <StatTile label="Cuts" value={videos.length} tintClass="text-primary-light" />
-        <StatTile label="Selected" value={selectedTotal} tintClass="text-accent" />
-        <StatTile label="Detected" value={detectedTotal} tintClass="text-emerald-400" />
+        <StatTile label="Selected" value={selectedTotal} tintClass="text-primary-light" />
+        <StatTile label="Detected" value={detectedTotal} tintClass="text-primary-light" />
         <StatTile label="Pending" value={videos.length - detectedTotal} tintClass="text-text-muted" />
       </div>
 
@@ -228,7 +228,7 @@ export function DetectPage() {
                   <KindBadge kind={v.kind} />
                   <span className="flex-1 whitespace-nowrap text-sm text-text-primary">{v.name}</span>
                   {v.has_detection ? (
-                    <span className="flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-[11px] font-medium text-emerald-400 ring-1 ring-emerald-500/20">
+                    <span className="flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-0.5 text-[11px] font-medium text-primary-light ring-1 ring-primary/25">
                       <span className="h-1.5 w-1.5 rounded-full bg-current" />
                       detected
                     </span>
@@ -250,7 +250,7 @@ export function DetectPage() {
         <Card>
           <div className="mb-3 flex items-center justify-between">
             <SectionLabel className="mb-0">Inference progress</SectionLabel>
-            <span className={cn('flex items-center gap-1.5 font-mono text-[11px] uppercase', running ? 'text-primary-light' : job.status === 'failed' ? 'text-red-400' : 'text-emerald-400')}>
+            <span className={cn('flex items-center gap-1.5 font-mono text-[11px] uppercase', job.status === 'failed' ? 'text-red-400' : 'text-primary-light')}>
               <span className={cn('h-1.5 w-1.5 rounded-full bg-current', running && 'animate-pulse-dot')} />
               {job.status}
             </span>

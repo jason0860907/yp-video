@@ -186,7 +186,7 @@ export function UploadPage() {
       <PageHeader
         actions={
           configured ? (
-            <span className="flex items-center gap-1.5 rounded-full bg-emerald-500/15 px-2.5 py-1 text-[11px] font-medium text-emerald-400 ring-1 ring-emerald-500/20">
+            <span className="flex items-center gap-1.5 rounded-full bg-primary/15 px-2.5 py-1 text-[11px] font-medium text-primary-light ring-1 ring-primary/25">
               <span className="h-1.5 w-1.5 rounded-full bg-current" />
               {statusQuery.data?.bucket || 'configured'}
             </span>
@@ -207,9 +207,9 @@ export function UploadPage() {
 
       <div className="grid grid-cols-2 gap-3.5 lg:grid-cols-4">
         <StatTile label="Files" value={files.length} tintClass="text-primary-light" />
-        <StatTile label="Selected" value={selected.length} tintClass="text-accent" />
-        <StatTile label="Size" value={formatBytes(selectedSize)} tintClass="text-text-primary" />
-        <StatTile label={isUpload ? 'Uploaded' : 'Local'} value={syncedCount} tintClass="text-emerald-400" />
+        <StatTile label="Selected" value={selected.length} tintClass="text-primary-light" />
+        <StatTile label="Size" value={formatBytes(selectedSize)} tintClass="text-primary-light" />
+        <StatTile label={isUpload ? 'Uploaded' : 'Local'} value={syncedCount} tintClass="text-primary-light" />
       </div>
 
       {/* Category + mode controls */}
@@ -443,7 +443,7 @@ function FileTree({ files, expanded, localOnly, isUpload, onToggleFile, onToggle
         <span className="tabular-nums text-[11px] text-text-muted">{formatBytes(f.size)}</span>
         {!localOnly &&
           (isSynced ? (
-            <span className="flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-[11px] font-medium text-emerald-400 ring-1 ring-emerald-500/20">
+            <span className="flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-0.5 text-[11px] font-medium text-primary-light ring-1 ring-primary/25">
               <span className="h-1.5 w-1.5 rounded-full bg-current" />
               {syncLabel}
             </span>

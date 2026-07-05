@@ -43,7 +43,7 @@ const streamPath = (vp: string) => apiUrl(API.review.video(vp));
 // TAD predictions carry a confidence score; render it as a colored pill.
 function scorePill(a: EditorAnnotation) {
   if (a.score == null) return null;
-  const cls = a.score > 0.7 ? 'text-emerald-400 bg-emerald-500/10 ring-emerald-500/20' : a.score > 0.4 ? 'text-amber-400 bg-amber-500/10 ring-amber-500/20' : 'text-text-muted bg-ink/5 ring-ink/10';
+  const cls = a.score > 0.7 ? 'text-primary-light bg-primary/10 ring-primary/25' : a.score > 0.4 ? 'text-amber-400 bg-amber-500/10 ring-amber-500/20' : 'text-text-muted bg-ink/5 ring-ink/10';
   return <span className={cn('rounded-full px-2 py-0.5 font-heading text-[10px] font-medium tabular-nums ring-1', cls)}>{(a.score * 100).toFixed(0)}%</span>;
 }
 

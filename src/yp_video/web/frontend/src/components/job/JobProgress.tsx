@@ -7,7 +7,7 @@ function statusColor(status: Job['status']): string {
     case 'running':
       return 'text-primary-light';
     case 'completed':
-      return 'text-emerald-400';
+      return 'text-primary-light';
     case 'failed':
       return 'text-red-400';
     case 'cancelled':

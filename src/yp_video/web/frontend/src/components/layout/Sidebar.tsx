@@ -7,7 +7,7 @@ import type { ActiveCount, SystemStats, VllmStatus } from '@/types/api';
 import { NAV } from './nav';
 
 const VLLM_UI: Record<VllmStatus['status'], { dot: string; label: string }> = {
-  running: { dot: 'bg-emerald-400 shadow-[0_0_6px_rgba(52,199,89,0.5)]', label: 'vLLM: running' },
+  running: { dot: 'bg-primary-light shadow-[0_0_6px_rgb(var(--primary)/0.5)]', label: 'vLLM: running' },
   starting: { dot: 'bg-amber-400 animate-pulse-dot', label: 'vLLM: starting…' },
   stopped: { dot: 'bg-text-muted', label: 'vLLM: stopped' },
   error: { dot: 'bg-red-400 shadow-[0_0_6px_rgba(255,69,58,0.5)]', label: 'vLLM: error' },
@@ -71,7 +71,7 @@ export function Sidebar() {
                     <Icon paths={item.icon} className={isActive ? 'text-primary-light' : undefined} />
                     {item.label}
                     {item.path === '/jobs' && jobCount > 0 && (
-                      <span className="ml-auto flex h-5 w-5 items-center justify-center rounded-full bg-accent text-[10px] font-semibold text-surface">
+                      <span className="ml-auto flex h-5 w-5 items-center justify-center rounded-full bg-primary text-[10px] font-semibold text-on-primary">
                         {jobCount}
                       </span>
                     )}

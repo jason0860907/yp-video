@@ -106,7 +106,7 @@ export function DownloadClipsModal({ video, segments, onClose }: Props) {
             <div key={i} className="flex items-center gap-3 rounded-lg px-3 py-2 hover:bg-surface-50">
               <input type="checkbox" checked={picked.has(i)} disabled={busy} onChange={(e) => toggle(i, e.target.checked)} className="h-3.5 w-3.5 cursor-pointer accent-primary" />
               <span className="w-5 select-none text-right font-heading text-[10px] text-text-muted/60">{i + 1}</span>
-              <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-medium ring-1', s.label === 'rally' ? 'bg-emerald-500/20 text-emerald-400 ring-emerald-500/25' : 'bg-ink/[0.06] text-text-muted ring-ink/10')}>
+              <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-medium ring-1', s.label === 'rally' ? 'bg-primary/20 text-primary-light ring-primary/25' : 'bg-ink/[0.06] text-text-muted ring-ink/10')}>
                 {s.label}
               </span>
               <span className="flex-1 font-mono text-xs tabular-nums text-text-secondary">

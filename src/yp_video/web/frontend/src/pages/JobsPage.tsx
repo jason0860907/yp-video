@@ -19,7 +19,7 @@ const errMsg = (e: unknown) => (e instanceof ApiError ? e.body : e instanceof Er
 
 const DOT_CLS: Record<string, string> = {
   running: 'bg-primary-light',
-  completed: 'bg-emerald-400',
+  completed: 'bg-primary-light',
   failed: 'bg-red-400',
   cancelled: 'bg-amber-400',
   pending: 'bg-text-muted',
@@ -114,12 +114,12 @@ export function JobsPage() {
 
       <div className="grid grid-cols-2 gap-3.5 lg:grid-cols-4">
         <StatTile label="Active jobs" value={running.length} tintClass="text-primary-light" sub="running now" />
-        <StatTile label="Completed" value={completed} tintClass="text-emerald-400" />
+        <StatTile label="Completed" value={completed} tintClass="text-primary-light" />
         <StatTile label="Failed" value={failed} tintClass={failed ? 'text-red-400' : 'text-text-muted'} />
         <StatTile
           label="vLLM"
           value={vllmStatus}
-          tintClass={vllmRunning ? 'text-emerald-400' : 'text-text-muted'}
+          tintClass={vllmRunning ? 'text-primary-light' : 'text-text-muted'}
           sub={vllm.data?.model}
         />
       </div>

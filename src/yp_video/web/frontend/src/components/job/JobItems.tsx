@@ -2,14 +2,14 @@ import { cn } from '@/lib/cn';
 import type { JobItem } from '@/types/api';
 
 const STATUS_CLS: Record<string, string> = {
-  completed: 'text-emerald-400 bg-emerald-500/10',
+  completed: 'text-primary-light bg-primary/10',
   failed: 'text-red-400 bg-red-500/10',
   running: 'text-primary-light bg-primary/10',
   cancelled: 'text-amber-400 bg-amber-500/10',
   pending: 'text-text-muted bg-ink/5',
 };
 const BAR_CLS: Record<string, string> = {
-  completed: 'bg-emerald-400',
+  completed: 'bg-primary-light',
   failed: 'bg-red-400',
   running: 'bg-primary-light',
   cancelled: 'bg-amber-400',

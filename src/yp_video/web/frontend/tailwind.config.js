@@ -44,7 +44,6 @@ export default {
         'text-secondary': 'var(--text-secondary)',
         'text-muted': 'var(--text-muted)',
         border: { DEFAULT: 'var(--line)', light: 'var(--line-strong)', bright: 'var(--line-bright)' },
-        emerald: { 200: '#A7E8C0', 300: '#5FD98C', 400: '#34C759', 500: '#34C759', 600: '#2D9A52' },
         red: { 300: '#FF8A80', 400: '#FF6B5E', 500: '#FF453A', 600: '#E0352B' },
         amber: { 100: '#F3D275', 200: '#F0C868', 300: '#ECBE4F', 400: '#E8B23A', 500: '#E8B23A' },
         sky: { 300: '#7DD3FC', 400: '#38BDF8', 500: '#38BDF8' },

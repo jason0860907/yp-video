@@ -2,7 +2,7 @@ import { cn } from '@/lib/cn';
 
 const MAP: Record<string, string> = {
   running: 'bg-primary/20 text-primary-light ring-1 ring-primary/30',
-  completed: 'bg-emerald-500/15 text-emerald-400 ring-1 ring-emerald-500/20',
+  completed: 'bg-primary/15 text-primary-light ring-1 ring-primary/25',
   failed: 'bg-red-500/15 text-red-400 ring-1 ring-red-500/20',
   cancelled: 'bg-amber-500/15 text-amber-400 ring-1 ring-amber-500/20',
   pending: 'bg-ink/5 text-text-muted ring-1 ring-ink/10',

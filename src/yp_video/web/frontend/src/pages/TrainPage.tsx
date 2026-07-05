@@ -189,10 +189,10 @@ export function TrainPage() {
     <div className="mx-auto max-w-screen-2xl space-y-5">
       <div className="grid grid-cols-2 gap-3.5 md:grid-cols-5">
         <StatTile label="Cuts" value={status?.cuts_count ?? 0} tintClass="text-primary-light" />
-        <StatTile label="Features · B" value={featB} tintClass={featB ? 'text-emerald-400' : 'text-text-muted'} />
-        <StatTile label="Features · L" value={featL} tintClass={featL ? 'text-emerald-400' : 'text-text-muted'} />
-        <StatTile label="Annotations" value={status?.annotations_exist ? 'ready' : 'missing'} tintClass={status?.annotations_exist ? 'text-emerald-400' : 'text-amber-400'} />
-        <StatTile label="GPU" value={status?.vllm_running ? 'shared' : 'free'} tintClass={status?.vllm_running ? 'text-amber-400' : 'text-emerald-400'} />
+        <StatTile label="Features · B" value={featB} tintClass={featB ? 'text-primary-light' : 'text-text-muted'} />
+        <StatTile label="Features · L" value={featL} tintClass={featL ? 'text-primary-light' : 'text-text-muted'} />
+        <StatTile label="Annotations" value={status?.annotations_exist ? 'ready' : 'missing'} tintClass={status?.annotations_exist ? 'text-primary-light' : 'text-amber-400'} />
+        <StatTile label="GPU" value={status?.vllm_running ? 'shared' : 'free'} tintClass={status?.vllm_running ? 'text-amber-400' : 'text-primary-light'} />
       </div>
 
       {/* Step 1 — Extract features */}
@@ -404,8 +404,8 @@ function VideoList({ videos, sel, onToggle, onToggleVisible, kind, setKind, filt
             <label key={v.name} className="group flex w-max min-w-full items-center gap-3 rounded-lg border border-transparent p-2.5 transition-colors hover:border-border hover:bg-surface-50">
               <input type="checkbox" checked={sel.has(v.name)} onChange={(e) => onToggle(v.name, e.target.checked)} className="h-3.5 w-3.5 flex-shrink-0 accent-primary" />
               <span className="flex-1 whitespace-nowrap text-sm text-text-primary">{v.name}</span>
-              {v.has_annotation ? <Pill tone="emerald">ann</Pill> : v.has_pre_annotation ? <Pill tone="sky">pre</Pill> : null}
-              {v.has_features && <Pill tone="emerald">feat</Pill>}
+              {v.has_annotation ? <Pill tone="primary">ann</Pill> : v.has_pre_annotation ? <Pill tone="sky">pre</Pill> : null}
+              {v.has_features && <Pill tone="primary">feat</Pill>}
               {v.has_prediction && <Pill tone="primary">pred</Pill>}
             </label>
           ))
@@ -415,9 +415,8 @@ function VideoList({ videos, sel, onToggle, onToggleVisible, kind, setKind, filt
   );
 }
 
-function Pill({ tone, children }: { tone: 'emerald' | 'sky' | 'primary'; children: ReactNode }) {
+function Pill({ tone, children }: { tone: 'sky' | 'primary'; children: ReactNode }) {
   const cls = {
-    emerald: 'text-emerald-400 bg-emerald-500/10 ring-emerald-500/20',
     sky: 'text-sky-300 bg-sky-500/10 ring-sky-500/20',
     primary: 'text-primary-light bg-primary/15 ring-primary/25',
   }[tone];

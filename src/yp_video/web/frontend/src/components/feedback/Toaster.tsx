@@ -5,12 +5,12 @@ import { dismissToast, getToasts, subscribeToasts, type ToastType } from './toas
 const TONE: Record<ToastType, { cls: string; bg: string; icon: string }> = {
   info: {
     cls: 'border-primary/30 text-primary-light',
-    bg: 'rgba(45,95,63,0.12)',
+    bg: 'rgb(var(--primary) / 0.12)',
     icon: 'M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
   },
   success: {
-    cls: 'border-emerald-500/25 text-emerald-300',
-    bg: 'rgba(52,199,89,0.10)',
+    cls: 'border-primary/25 text-primary-light',
+    bg: 'rgb(var(--primary) / 0.10)',
     icon: 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z',
   },
   error: {
