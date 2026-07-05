@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type SyntheticEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { API, ApiError, apiFetch, apiUrl } from '@/lib/api';
 import { cn } from '@/lib/cn';
@@ -9,6 +9,7 @@ import { SectionLabel } from '@/components/ui/SectionLabel';
 import { toast } from '@/components/feedback/toast';
 import { confirm } from '@/components/feedback/confirm';
 import { ActionTimeline } from '@/components/editor/ActionTimeline';
+import { useVideoRecovery } from '@/lib/useVideoRecovery';
 import type { ActionAnnotationData, ActionEvent, ActionRally, ActionVideo, WaveformData } from '@/types/api';
 
 // Six fixed action hues (kept identical to the legacy editor).
@@ -47,6 +48,44 @@ interface Editor {
   dirty: boolean;
 }
 const EMPTY: Editor = { video: '', duration: 0, fps: 30, numFrames: 0, rallies: [], events: [], dirty: false };
+
+// ── Local draft persistence ──
+// The network is not trustworthy (flaky tunnel, dropped connections), so
+// unsaved work is mirrored to localStorage on every edit. A draft exists
+// *only* while there is unsaved work: it is cleared on a successful save or
+// an explicit discard. On load, a leftover draft means the page died before
+// saving — restore the user's events over the server snapshot.
+const AUTOSAVE_MS = 2000;
+const DRAFT_DEBOUNCE_MS = 300; // coalesce rapid edits (e.g. point dragging)
+const ACTION_DRAFT_PREFIX = 'vq:action-draft';
+const actionDraftKey = (video: string) => `${ACTION_DRAFT_PREFIX}:${video}`;
+
+const readActionDraft = (video: string): Editor | null => {
+  try {
+    const raw = localStorage.getItem(actionDraftKey(video));
+    if (!raw) return null;
+    const d = JSON.parse(raw) as Editor;
+    return Array.isArray(d.events) ? d : null;
+  } catch {
+    return null; // corrupt JSON / privacy mode — drafts are best-effort
+  }
+};
+
+const writeActionDraft = (ed: Editor): void => {
+  try {
+    localStorage.setItem(actionDraftKey(ed.video), JSON.stringify(ed));
+  } catch {
+    /* quota exceeded / privacy mode — nothing we can do, skip */
+  }
+};
+
+const clearActionDraft = (video: string): void => {
+  try {
+    localStorage.removeItem(actionDraftKey(video));
+  } catch {
+    /* ignore */
+  }
+};
 
 // Waveform request density (points scale with duration), ported from the legacy UI.
 const WAVEFORM_POINTS_PER_SECOND = 120;
@@ -99,18 +138,12 @@ function normalize(data: ActionAnnotationData, labels: string[]): Editor {
 const hasActive = (v: ActionVideo) => Boolean(v.has_action_annotation || v.has_action_final_annotation || v.has_action_pre_annotation);
 const isReviewed = (v: ActionVideo) => Boolean(v.action_reviewed);
 
-interface MediaBox {
-  left: number;
-  top: number;
-  width: number;
-  height: number;
-}
 
 export function ActionAnnotatePage() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const [pointMode, setPointMode] = useState(false);
-  const [mediaBox, setMediaBox] = useState<MediaBox | null>(null);
+  const [aspect, setAspect] = useState(16 / 9);
   const [waveform, setWaveform] = useState<WaveformData>(EMPTY_WAVE);
   const waveformReq = useRef(0);
   const drag = useRef<{ id: string; moved: boolean } | null>(null);
@@ -199,6 +232,13 @@ export function ActionAnnotatePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Presigned video URLs expire and range requests can hang; reload the src
+  // (which fetches a fresh URL) and seek back to where the user was.
+  useVideoRecovery(videoRef, {
+    src: () => (edRef.current.video ? apiUrl(API.actionAnnotate.video(edRef.current.video)) : ''),
+    onRecover: () => toast.info('影片串流中斷，已自動重新載入'),
+  });
+
   // Track play/pause so the timeline only follows the playhead during playback.
   useEffect(() => {
     const el = videoRef.current;
@@ -242,55 +282,19 @@ export function ActionAnnotatePage() {
     }
   };
 
-  // ── On-video overlay (object-contain letterbox geometry) ──
-  // The displayed media rect inside the <video>, in client coords.
-  const mediaRect = () => {
-    const el = videoRef.current;
-    if (!el) return null;
-    const r = el.getBoundingClientRect();
-    if (!r.width || !r.height) return null;
-    let { width, height, left, top } = r;
-    const vw = el.videoWidth;
-    const vh = el.videoHeight;
-    if (vw && vh) {
-      const mr = vw / vh;
-      const br = r.width / r.height;
-      if (br > mr) {
-        width = r.height * mr;
-        left += (r.width - width) / 2;
-      } else if (br < mr) {
-        height = r.width / mr;
-        top += (r.height - height) / 2;
-      }
-    }
-    return { left, top, width, height };
-  };
+  // ── On-video overlay ──
+  // The wrap div carries the video's exact aspect ratio, so the video fills it
+  // with no letterbox and normalized point coords map 1:1 onto the div — any
+  // layout change (sidebar toggle, window resize) repositions dots via CSS alone.
   const clientToPoint = (cx: number, cy: number): [number, number] | null => {
-    const m = mediaRect();
-    if (!m || !m.width || !m.height) return null;
-    return [round4(clamp((cx - m.left) / m.width, 0, 1)), round4(clamp((cy - m.top) / m.height, 0, 1))];
+    const r = wrapRef.current?.getBoundingClientRect();
+    if (!r || !r.width || !r.height) return null;
+    return [round4(clamp((cx - r.left) / r.width, 0, 1)), round4(clamp((cy - r.top) / r.height, 0, 1))];
   };
-  const recomputeMediaBox = useCallback(() => {
-    const m = mediaRect();
-    const wrap = wrapRef.current;
-    if (!m || !wrap) {
-      setMediaBox(null);
-      return;
-    }
-    const wr = wrap.getBoundingClientRect();
-    setMediaBox({ left: m.left - wr.left, top: m.top - wr.top, width: m.width, height: m.height });
-  }, []);
-  useEffect(() => {
-    recomputeMediaBox();
-    const ro = new ResizeObserver(recomputeMediaBox);
-    if (wrapRef.current) ro.observe(wrapRef.current);
-    if (videoRef.current) ro.observe(videoRef.current);
-    window.addEventListener('resize', recomputeMediaBox);
-    return () => {
-      ro.disconnect();
-      window.removeEventListener('resize', recomputeMediaBox);
-    };
-  }, [recomputeMediaBox]);
+  const onVideoMetadata = (e: SyntheticEvent<HTMLVideoElement>) => {
+    const el = e.currentTarget;
+    if (el.videoWidth && el.videoHeight) setAspect(el.videoWidth / el.videoHeight);
+  };
 
   const onVideoClick = (e: ReactMouseEvent) => {
     if (!edRef.current.video || !pointMode) return;
@@ -320,7 +324,12 @@ export function ActionAnnotatePage() {
       if (!p) return;
       setEd((prev) => ({ ...prev, dirty: true, events: prev.events.map((x) => (x.id === drag.current!.id ? { ...x, xy: p } : x)) }));
     };
+    // pointercancel (touch gesture, browser takeover) must run the same
+    // cleanup as pointerup, or the document-level move listener leaks and
+    // every later mouse move keeps dragging the point.
+    const ac = new AbortController();
     const onUp = () => {
+      ac.abort();
       if (drag.current?.moved) {
         suppressClick.current = true;
         setTimeout(() => {
@@ -328,11 +337,11 @@ export function ActionAnnotatePage() {
         }, 0);
       }
       drag.current = null;
-      document.removeEventListener('pointermove', onMove);
       setEd((prev) => ({ ...prev, events: sortEvents(prev.events) }));
     };
-    document.addEventListener('pointermove', onMove);
-    document.addEventListener('pointerup', onUp, { once: true });
+    document.addEventListener('pointermove', onMove, { signal: ac.signal });
+    document.addEventListener('pointerup', onUp, { signal: ac.signal });
+    document.addEventListener('pointercancel', onUp, { signal: ac.signal });
   };
 
   // ── Video list filtering ──
@@ -368,13 +377,20 @@ export function ActionAnnotatePage() {
     if (ed.dirty && name !== ed.video) {
       const ok = await confirm({ title: 'Discard unsaved changes?', body: 'The current action labels have not been saved.', confirmText: 'Discard', variant: 'danger' });
       if (!ok) return;
+      clearActionDraft(ed.video); // user explicitly abandoned this video's edits
     }
     setSearch(name);
     setDropdownOpen(false);
     setLoading(true);
     try {
       const data = await apiFetch<ActionAnnotationData>(API.actionAnnotate.annotation(name));
-      const next = normalize(data, labels);
+      let next = normalize(data, labels);
+      // A leftover draft is unsaved work from a previous session: restore the
+      // user's events (server stays authoritative for rally/fps structure).
+      const draft = readActionDraft(next.video);
+      if (draft) {
+        next = { ...next, events: sortEvents(draft.events.map((e) => withRally(e, next))), dirty: true };
+      }
       setEd(next);
       edRef.current = next;
       setSelectedIdx(-1);
@@ -391,7 +407,8 @@ export function ActionAnnotatePage() {
       }
       loadWaveform(next.video, next.duration);
       setFrame(0);
-      toast.success(`Loaded ${next.events.length} event(s)`);
+      if (next.dirty) toast.info(`已還原上次未儲存的草稿（${next.events.length} 個動作）`);
+      else toast.success(`Loaded ${next.events.length} event(s)`);
     } catch (e) {
       toast.error(`Load failed: ${errMsg(e)}`);
     } finally {
@@ -427,17 +444,41 @@ export function ActionAnnotatePage() {
     mutate((prev) => ({ ...prev, events: prev.events.filter((_, i) => i !== idx) }));
   };
 
-  const save = async () => {
-    if (!ed.video) return toast.warning('No video loaded');
+  const save = async (silent = false) => {
+    if (!ed.video) {
+      if (!silent) toast.warning('No video loaded');
+      return;
+    }
     try {
       await apiFetch(API.actionAnnotate.annotations, { method: 'POST', body: { video: ed.video, fps: ed.fps, num_frames: ed.numFrames, events: ed.events } });
       setEd((prev) => ({ ...prev, dirty: false }));
-      void videosQuery.refetch();
-      toast.success('Action annotations saved');
+      clearActionDraft(ed.video); // server now holds the truth; drop the local backup
+      if (!silent) {
+        void videosQuery.refetch();
+        toast.success('Action annotations saved');
+      }
     } catch (e) {
+      // Keep dirty=true and the draft intact so the work survives — autosave
+      // retries on the next edit, and the draft survives a reload.
       toast.error(`Save failed: ${errMsg(e)}`);
     }
   };
+
+  // ── Mirror unsaved work to localStorage (debounced to coalesce drags) ──
+  useEffect(() => {
+    if (!ed.dirty || !ed.video) return;
+    const t = setTimeout(() => writeActionDraft(ed), DRAFT_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [ed]);
+
+  // ── Debounced autosave: push to the server AUTOSAVE_MS after editing stops ──
+  const saveRef = useRef(save);
+  saveRef.current = save;
+  useEffect(() => {
+    if (!ed.dirty || !ed.video) return;
+    const t = setTimeout(() => void saveRef.current(true), AUTOSAVE_MS);
+    return () => clearTimeout(t);
+  }, [ed]);
   const exportDataset = () => {
     if (!videos.some(isReviewed)) return toast.warning('No saved action annotations to export yet');
     window.location.href = apiUrl(API.actionAnnotate.export);
@@ -476,7 +517,17 @@ export function ActionAnnotatePage() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      // On a focused <select> (e.g. the per-action label dropdown) space would
+      // open the native menu — but space must always be play/pause. Hijack just
+      // space here and leave every other key to the native select.
+      if (tag === 'SELECT') {
+        if (e.key === ' ') {
+          e.preventDefault();
+          togglePlay();
+        }
+        return;
+      }
       if (e.key >= '1' && e.key <= '6') {
         const l = labels[Number(e.key) - 1];
         if (l) setSelectedLabel(l);
@@ -562,7 +613,7 @@ export function ActionAnnotatePage() {
                         className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-text-secondary hover:bg-primary/10 hover:text-text-primary"
                       >
                         <span className="shrink-0 rounded bg-ink/5 px-1.5 text-[10px] font-heading text-text-muted">{v.kind === 'sideline' ? 'SIDE' : 'CAST'}</span>
-                        <span className={cn('shrink-0 text-[11px]', isReviewed(v) ? 'text-emerald-400' : hasActive(v) ? 'text-amber-300' : 'text-text-muted')}>{isReviewed(v) ? '✓' : hasActive(v) ? 'P' : '○'}</span>
+                        <span className={cn('shrink-0 text-[11px]', isReviewed(v) ? 'text-primary-light' : hasActive(v) ? 'text-amber-300' : 'text-text-muted')}>{isReviewed(v) ? '✓' : hasActive(v) ? 'P' : '○'}</span>
                         <span className="min-w-0 flex-1 break-all font-mono">{v.name}</span>
                         <span className="shrink-0 text-[10px] text-text-muted">{isReviewed(v) ? `${v.event_count || 0} labeled` : hasActive(v) ? `${v.event_count || 0} pre` : ''}</span>
                       </button>
@@ -608,18 +659,22 @@ export function ActionAnnotatePage() {
               </div>
             </div>
 
-            <div ref={wrapRef} className="relative overflow-hidden rounded-2xl bg-black ring-1 ring-white/[0.06]">
-              <video
-                ref={videoRef}
-                className={cn('vq-video mx-auto block max-h-[45vh] w-full bg-black object-contain', pointMode && ed.video && 'cursor-crosshair')}
-                playsInline
-                preload="metadata"
-                onClick={onVideoClick}
-                onContextMenu={onVideoContextMenu}
-                onLoadedMetadata={recomputeMediaBox}
-              />
-              {mediaBox && (
-                <div className="pointer-events-none absolute" style={{ left: mediaBox.left, top: mediaBox.top, width: mediaBox.width, height: mediaBox.height }}>
+            <div className="overflow-hidden rounded-2xl bg-black ring-1 ring-white/[0.06]">
+              <div
+                ref={wrapRef}
+                className="relative mx-auto"
+                style={{ aspectRatio: `${aspect}`, maxWidth: `calc(var(--video-max-h, 45vh) * ${aspect})` }}
+              >
+                <video
+                  ref={videoRef}
+                  className={cn('block h-full w-full bg-black object-contain', pointMode && ed.video && 'cursor-crosshair')}
+                  playsInline
+                  preload="metadata"
+                  onClick={onVideoClick}
+                  onContextMenu={onVideoContextMenu}
+                  onLoadedMetadata={onVideoMetadata}
+                />
+                <div className="pointer-events-none absolute inset-0">
                   {ed.events
                     .map((e, idx) => ({ e, idx }))
                     .filter(({ e }) => e.visible && (selectedRallyId === 'all' || e.rally_id === selectedRallyId) && Math.abs(e.frame - frame) <= 2)
@@ -646,7 +701,7 @@ export function ActionAnnotatePage() {
                       );
                     })}
                 </div>
-              )}
+              </div>
             </div>
 
             {/* Zoomable timeline + waveform (All / 10m / 5m / 3m, rally bands R1, R2 …) */}
@@ -708,7 +763,7 @@ export function ActionAnnotatePage() {
                 Rallies ({ed.rallies.length} rally · {ed.events.length} action){ed.dirty ? ' ·' : ''}
               </SectionLabel>
               <div className="flex items-center gap-2">
-                <Button size="sm" intent="primary" onClick={save}>
+                <Button size="sm" intent="primary" onClick={() => void save()}>
                   {ed.dirty ? 'Save •' : 'Save'}
                 </Button>
               </div>
@@ -753,7 +808,9 @@ export function ActionAnnotatePage() {
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
-                              setExpanded(isOpen ? null : String(rally.rally_id));
+                              // Collapse if open; otherwise select + expand + seek to the rally start.
+                              if (isOpen) setExpanded(null);
+                              else selectRally(rally.rally_id);
                             }}
                             className="flex items-center gap-1 rounded-full bg-primary/20 px-2 py-0.5 text-[11px] font-medium text-primary-text ring-1 ring-primary/25"
                           >

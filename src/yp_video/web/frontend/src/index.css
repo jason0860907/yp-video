@@ -172,7 +172,11 @@
 
 /* Hiding the sidebar gives the editor/cut video more vertical room
    (matches the legacy yp-video behaviour). The annotation list grows in
-   step so its bottom stays aligned with the video panel. */
+   step so its bottom stays aligned with the video panel. --video-max-h
+   drives aspect-ratio media boxes (Action Label) the same way. */
+body.sidebar-collapsed {
+  --video-max-h: 72vh;
+}
 body.sidebar-collapsed video.vq-video {
   max-height: 72vh;
 }
