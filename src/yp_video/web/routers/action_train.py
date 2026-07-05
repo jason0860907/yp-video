@@ -818,6 +818,30 @@ def _read_run_metrics(run_dir: Path) -> tuple[dict | None, list[dict]]:
     return None, []
 
 
+def _freshest_metrics_dir(package_dir: Path) -> Path:
+    """The dir whose metrics.jsonl is most current for this run.
+
+    The checkpoint package only re-exports on a new best epoch, so mid-run the
+    live training dir (manifest's source_run_dir) is ahead of the package —
+    read it directly whenever it is fresher, so the per-epoch chart advances
+    every epoch instead of every personal best.
+    """
+    manifest = _load_json_file(package_dir / "manifest.json")
+    src_value = manifest.get("source_run_dir") if isinstance(manifest, dict) else None
+    if not src_value:
+        return package_dir
+    live = Path(src_value) / "metrics.jsonl"
+    packaged = package_dir / "metrics.jsonl"
+    try:
+        if live.exists() and (
+            not packaged.exists() or live.stat().st_mtime > packaged.stat().st_mtime
+        ):
+            return live.parent
+    except OSError:
+        pass
+    return package_dir
+
+
 @router.get("/performance")
 def performance(run: str | None = None) -> dict:
     """Per-epoch validation metrics (lr, mAP, per-class, per-video) for a run.
@@ -845,7 +869,7 @@ def performance(run: str | None = None) -> dict:
     if not has_metrics(run_dir):
         raise HTTPException(404, f"No metrics for run {run_dir.name!r}")
 
-    meta, entries = _read_run_metrics(run_dir)
+    meta, entries = _read_run_metrics(_freshest_metrics_dir(run_dir))
     best = _load_json_file(run_dir / "checkpoint_best.json")
     return {
         "run": run_dir.name,
