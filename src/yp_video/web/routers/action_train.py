@@ -90,6 +90,9 @@ class ActionTrainRequest(BaseModel):
     temporal_arch: str = "gru"
     pred_loc_arch: str = "mlp"
     clip_len: int = Field(default=64, ge=8, le=256)
+    # Per-video frame stride targeting this sampling rate, so clip_len spans
+    # the same wall-clock time on 30fps and 60fps sources. 0 = every frame.
+    sample_fps: float = Field(default=30.0, ge=0, le=120)
     batch_size: int = Field(default=8, ge=1, le=64)
     num_epochs: int = Field(default=50, ge=1, le=1000)
     warm_up_epochs: int = Field(default=3, ge=0, le=100)
@@ -552,6 +555,7 @@ def _export_action_checkpoint_package(
         "checkpoint_best.pt",
         "checkpoint_best.json",
         "config.json",
+        "metrics.jsonl",
         "loss.json",
         "terminal.log",
     ):
@@ -728,20 +732,85 @@ def status() -> dict:
     }
 
 
+def _normalize_metrics_entry(rec: dict) -> dict:
+    """Flatten one epoch record into the flat shape the UI reads.
+
+    Handles both the new ``metrics.jsonl`` schema (nested ``mAP``/``loss`` +
+    ``lr``/``per_class``) and the legacy ``loss.json`` schema (flat ``val_mAP*``).
+    """
+    if "mAP" in rec:  # new metrics.jsonl schema
+        m = rec.get("mAP") or {}
+        loss = rec.get("loss") or {}
+        return {
+            "epoch": rec.get("epoch"),
+            "lr": rec.get("lr"),
+            "val_mAP": m.get("harmonic", 0),
+            "val_mAP_temporal": m.get("temporal", 0),
+            "val_mAP_spatial": m.get("spatial", 0),
+            "train_loss": loss.get("train"),
+            "val_loss": loss.get("val"),
+            "per_class": rec.get("per_class") or {},
+            "val_per_video": rec.get("per_video") or [],
+        }
+    return {  # legacy loss.json schema
+        "epoch": rec.get("epoch"),
+        "lr": rec.get("lr"),
+        "val_mAP": rec.get("val_mAP", 0),
+        "val_mAP_temporal": rec.get("val_mAP_temporal", 0),
+        "val_mAP_spatial": rec.get("val_mAP_spatial", 0),
+        "train_loss": rec.get("train"),
+        "val_loss": rec.get("val"),
+        "per_class": rec.get("per_class") or {},
+        "val_per_video": rec.get("val_per_video") or [],
+    }
+
+
+def _read_run_metrics(run_dir: Path) -> tuple[dict | None, list[dict]]:
+    """Read a run's per-epoch metrics, preferring metrics.jsonl over loss.json.
+
+    Returns ``(meta, entries)`` where entries are normalized to the flat UI shape.
+    """
+    jsonl = run_dir / "metrics.jsonl"
+    if jsonl.exists():
+        meta: dict | None = None
+        entries: list[dict] = []
+        for line in jsonl.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if rec.get("_meta"):
+                meta = rec
+            else:
+                entries.append(_normalize_metrics_entry(rec))
+        return meta, entries
+
+    loss = _load_json_file(run_dir / "loss.json")
+    if isinstance(loss, list):
+        return None, [_normalize_metrics_entry(r) for r in loss]
+    return None, []
+
+
 @router.get("/performance")
 def performance(run: str | None = None) -> dict:
-    """Per-epoch validation metrics (incl. per-video mAP) for a training run.
+    """Per-epoch validation metrics (lr, mAP, per-class, per-video) for a run.
 
-    Reads ``loss.json`` from an action-checkpoints package. Defaults to the most
-    recently modified run; pass ``run`` to select one by name. ``runs`` lists the
-    available runs (newest first) so the UI can offer a picker.
+    Reads ``metrics.jsonl`` (falling back to the legacy ``loss.json``) from an
+    action-checkpoints package. Defaults to the most recently modified run; pass
+    ``run`` to select one by name. ``runs`` lists the runs (newest first).
     """
     base = ACTION_CHECKPOINTS_DIR
     if not base.exists():
         return {"entries": [], "runs": []}
 
+    def has_metrics(d: Path) -> bool:
+        return (d / "metrics.jsonl").exists() or (d / "loss.json").exists()
+
     runs = sorted(
-        (d for d in base.iterdir() if d.is_dir() and (d / "loss.json").exists()),
+        (d for d in base.iterdir() if d.is_dir() and has_metrics(d)),
         key=lambda d: d.stat().st_mtime,
         reverse=True,
     )
@@ -749,17 +818,16 @@ def performance(run: str | None = None) -> dict:
         return {"entries": [], "runs": []}
 
     run_dir = (base / run) if run else runs[0]
-    if not (run_dir / "loss.json").exists():
-        raise HTTPException(404, f"No loss.json for run {run_dir.name!r}")
+    if not has_metrics(run_dir):
+        raise HTTPException(404, f"No metrics for run {run_dir.name!r}")
 
-    loss = _load_json_file(run_dir / "loss.json")
-    if not isinstance(loss, list):
-        return {"run": run_dir.name, "entries": [], "runs": [d.name for d in runs]}
+    meta, entries = _read_run_metrics(run_dir)
     best = _load_json_file(run_dir / "checkpoint_best.json")
     return {
         "run": run_dir.name,
+        "meta": meta,
         "best": best if isinstance(best, dict) else None,
-        "entries": loss,
+        "entries": entries,
         "runs": [d.name for d in runs],
     }
 
@@ -818,6 +886,8 @@ def _build_command(
         req.pred_loc_arch,
         "--clip_len",
         str(req.clip_len),
+        "--sample_fps",
+        str(req.sample_fps),
         "--batch_size",
         str(req.batch_size),
         "--num_epochs",

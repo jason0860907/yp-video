@@ -26,6 +26,7 @@ interface Form {
   num_epochs: number;
   batch_size: number;
   clip_len: number;
+  sample_fps: number;
   num_workers: number;
   gpu: number;
   learning_rate: number;
@@ -53,6 +54,7 @@ const BASE_FORM: Form = {
   num_epochs: 50,
   batch_size: 8,
   clip_len: 64,
+  sample_fps: 30,
   num_workers: 4,
   gpu: 0,
   learning_rate: 0.0003,
@@ -78,6 +80,7 @@ const NUM_FIELDS: Array<{ key: keyof Form; label: string; min?: number; max?: nu
   { key: 'num_epochs', label: 'Epochs', min: 1, max: 1000 },
   { key: 'batch_size', label: 'Batch', min: 1, max: 64 },
   { key: 'clip_len', label: 'Clip len', min: 8, max: 256 },
+  { key: 'sample_fps', label: 'Sample fps', min: 0, max: 120 },
   { key: 'num_workers', label: 'Workers', min: 0, max: 32 },
   { key: 'gpu', label: 'GPU', min: 0, max: 7 },
   { key: 'learning_rate', label: 'LR', min: 0, step: 0.0001 },
@@ -182,6 +185,7 @@ export function ActionTrainPage() {
         temporal_arch: form.temporal_arch,
         audio_backend: form.audio_backend,
         clip_len: form.clip_len,
+        sample_fps: form.sample_fps,
         batch_size: form.batch_size,
         num_epochs: form.num_epochs,
         warm_up_epochs: form.warm_up_epochs,
