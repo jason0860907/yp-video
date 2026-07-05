@@ -100,7 +100,7 @@ class SaveActionAnnotationsRequest(BaseModel):
 
 class SpotPrelabelOptions(BaseModel):
     checkpoint: str | None = None
-    batch_size: int = Field(default=64, ge=1, le=128)
+    batch_size: int = Field(default=16, ge=1, le=128)
     num_workers: int = Field(default=2, ge=0, le=16)
     clip_len: int = Field(default=64, ge=8, le=256)
     decoder: Literal["opencv", "nvdec"] = SPOT_DEFAULT_DECODER

@@ -30,7 +30,7 @@ interface PredSettings {
 const DEFAULTS: PredSettings = {
   checkpoint: '',
   min_score: 0.15,
-  batch_size: 64,
+  batch_size: 16,
   clip_len: 64,
   decoder: 'nvdec',
   decode_producers: 2,
@@ -99,6 +99,13 @@ export function ActionPredictPage() {
   const runningCount = jobs.filter((j) => j.status === 'running').length;
   const checkpoints = spot?.checkpoints ?? [];
   const spotReady = Boolean(spot?.available && checkpoints.length);
+  // Only claim SPOT is unavailable once the status request has settled —
+  // rendering the pending state as "not ready" flashes a false alarm on load.
+  const spotProblem = spotQuery.isPending
+    ? null
+    : spotQuery.isError
+      ? `status check failed: ${errMsg(spotQuery.error)}`
+      : spot?.error || (spot?.available ? (checkpoints.length ? null : 'no checkpoint found') : `${spot?.spot_dir || 'yp-spot directory'} not ready`);
 
   const toggle = (name: string, on: boolean) =>
     setSelected((prev) => {
@@ -181,14 +188,14 @@ export function ActionPredictPage() {
 
       <div className="grid grid-cols-2 gap-3.5 lg:grid-cols-4">
         <StatTile label="Videos" value={videos.length} tintClass="text-primary-light" />
-        <StatTile label="Selected" value={selected.size} tintClass="text-accent" />
-        <StatTile label="Labeled" value={labeledCount} tintClass="text-emerald-400" />
+        <StatTile label="Selected" value={selected.size} tintClass="text-primary-light" />
+        <StatTile label="Labeled" value={labeledCount} tintClass="text-primary-light" />
         <StatTile label="Running" value={runningCount} tintClass={runningCount ? 'text-primary-light' : 'text-text-muted'} />
       </div>
 
-      {!spotReady && (
+      {spotProblem && (
         <div className="rounded-xl border border-amber-500/25 bg-amber-500/[0.06] px-4 py-3 text-sm text-amber-300">
-          SPOT unavailable: {spot?.error || (spot?.available ? 'no checkpoint found' : '~/yp-spot not ready')}
+          SPOT unavailable: {spotProblem}
         </div>
       )}
 
@@ -310,7 +317,7 @@ export function ActionPredictPage() {
                   <input type="checkbox" checked={selected.has(v.name)} onChange={(e) => toggle(v.name, e.target.checked)} className="h-3.5 w-3.5 accent-primary" />
                   <span className={cn('h-2 w-2 flex-shrink-0 rounded-full', v.kind === 'broadcast' ? 'bg-primary-light' : 'bg-accent-light')} />
                   <span className="flex-1 whitespace-nowrap text-sm text-text-primary">{v.name}</span>
-                  <span className={cn('font-mono text-[11px] tabular-nums', hasLabels(v) ? 'text-emerald-300' : 'text-text-muted')}>
+                  <span className={cn('font-mono text-[11px] tabular-nums', hasLabels(v) ? 'text-primary-light' : 'text-text-muted')}>
                     {v.event_count || 0}
                   </span>
                 </label>
