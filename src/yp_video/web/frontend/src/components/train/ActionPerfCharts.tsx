@@ -40,20 +40,59 @@ export function ActionPerfCharts({ data }: { data: ActionPerfData }) {
     return [...(pick.val_per_video ?? [])].sort((a, b) => b.harmonic - a.harmonic);
   }, [entries, data.best?.epoch]);
 
+  // Per-class (per-action) temporal mAP at the best epoch, strongest first.
+  const perClass = useMemo<Array<{ label: string; mAP: number }>>(() => {
+    const withPc = entries.filter((e) => e.per_class && Object.keys(e.per_class).length);
+    const bestEp = data.best?.epoch;
+    const pick = withPc.find((e) => e.epoch === bestEp) ?? withPc[withPc.length - 1];
+    if (!pick?.per_class) return [];
+    return Object.entries(pick.per_class)
+      .map(([label, mAP]) => ({ label, mAP }))
+      .sort((a, b) => b.mAP - a.mAP);
+  }, [entries, data.best?.epoch]);
+
   if (!entries.length) return null;
+
+  const hasDetail = perVideo.length > 0 || perClass.length > 0;
 
   return (
     <Card>
       <SectionLabel>Validation performance{data.run ? ` · ${data.run}` : ''}</SectionLabel>
       <EpochChart entries={entries} bestEpoch={data.best?.epoch} />
-      {perVideo.length > 0 ? (
-        <PerVideoChart rows={perVideo} bestEpoch={data.best?.epoch} />
-      ) : (
+      {perClass.length > 0 && <PerClassChart rows={perClass} bestEpoch={data.best?.epoch} />}
+      {perVideo.length > 0 && <PerVideoChart rows={perVideo} bestEpoch={data.best?.epoch} />}
+      {!hasDetail && (
         <p className="mt-4 text-[11px] text-text-muted">
-          Per-video mAP appears here for runs trained after this feature landed (older runs don't record it).
+          Per-action and per-video mAP appear here for runs trained after this feature landed (older runs don't record it).
         </p>
       )}
     </Card>
+  );
+}
+
+function PerClassChart({ rows, bestEpoch }: { rows: Array<{ label: string; mAP: number }>; bestEpoch?: number }) {
+  const max = Math.max(0.001, ...rows.map((r) => r.mAP));
+  return (
+    <div className="mt-4">
+      <div className="mb-1.5 text-xs font-semibold text-text-primary">
+        Per-action temporal mAP{typeof bestEpoch === 'number' ? ` · best epoch ${bestEpoch}` : ''}
+      </div>
+      <div className="space-y-1.5">
+        {rows.map((r) => {
+          const pct = r.mAP * 100;
+          const w = (r.mAP / max) * 100;
+          return (
+            <div key={r.label} className="flex items-center gap-2" title={`${r.label} · temporal mAP ${pct.toFixed(1)}%`}>
+              <span className="w-24 flex-shrink-0 truncate font-mono text-[11px] capitalize text-text-secondary">{r.label}</span>
+              <div className="relative h-4 flex-1 overflow-hidden rounded bg-surface-100">
+                <div className="absolute inset-y-0 left-0 rounded" style={{ width: `${Math.max(w, 1.5)}%`, background: '#22d3ee', opacity: 0.85 }} />
+              </div>
+              <span className="w-12 flex-shrink-0 text-right font-mono text-[11px] tabular-nums text-text-primary">{pct.toFixed(1)}%</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -64,6 +103,7 @@ function EpochChart({ entries, bestEpoch }: { entries: ActionPerfData['entries']
   const cw = W - pad.l - pad.r;
   const ch = H - pad.t - pad.b;
   const eps = entries.map((e) => e.epoch);
+  const lrByEpoch = new Map(entries.map((e) => [e.epoch, typeof e.lr === 'number' ? e.lr : null]));
   const xMin = Math.min(...eps);
   const xMax = Math.max(...eps);
   const xRange = xMax - xMin || 1;
@@ -118,7 +158,7 @@ function EpochChart({ entries, bestEpoch }: { entries: ActionPerfData['entries']
               <path d={d} fill="none" stroke={m.color} strokeWidth={2} opacity={0.9} />
               {pts.map((p) => (
                 <circle key={p.ep} cx={p.X} cy={p.Y} r={2.5} fill={m.color} opacity={0.9}>
-                  <title>{`Epoch ${p.ep} · ${m.label} ${(p.v * 100).toFixed(1)}%`}</title>
+                  <title>{`Epoch ${p.ep} · ${m.label} ${(p.v * 100).toFixed(1)}%${lrByEpoch.get(p.ep) != null ? ` · lr ${lrByEpoch.get(p.ep)!.toExponential(2)}` : ''}`}</title>
                 </circle>
               ))}
             </g>

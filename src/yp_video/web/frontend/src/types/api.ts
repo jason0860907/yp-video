@@ -65,14 +65,19 @@ export interface ActionMapBreakdown {
 
 export interface ActionPerfEntry {
   epoch: number;
+  lr?: number | null;
   val_mAP?: number;
   val_mAP_temporal?: number;
   val_mAP_spatial?: number;
+  train_loss?: number | null;
+  val_loss?: number | null;
+  per_class?: Record<string, number>;
   val_per_video?: ActionVideoMap[] | null;
 }
 
 export interface ActionPerfData {
   run?: string;
+  meta?: Record<string, unknown> | null;
   best?: { epoch?: number; value?: number } | null;
   entries: ActionPerfEntry[];
   runs?: string[];
