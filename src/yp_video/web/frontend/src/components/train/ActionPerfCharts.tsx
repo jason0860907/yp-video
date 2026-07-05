@@ -20,12 +20,14 @@ const FIELD: Record<MetricKey, keyof import('@/types/api').ActionPerfEntry> = {
   spatial: 'val_mAP_spatial',
 };
 
-/** Shorten a long broadcast filename to something a bar row can show. */
+/** Shorten a long broadcast filename to something a bar row can show.
+ *  Prefer the segment naming the teams ("A vs. B") over the date/time head. */
 function shortLabel(video: string): string {
   const setSuffix = video.match(/_set\d+$/)?.[0] ?? '';
   const stem = video.replace(/_set\d+$/, '');
-  const head = ((stem.split('｜')[0] ?? stem).split('|')[0] ?? stem).trim();
-  return (head.length > 26 ? head.slice(0, 25) + '…' : head) + setSuffix;
+  const parts = stem.split(/[｜|]/).map((s) => s.trim()).filter(Boolean);
+  const head = parts.find((p) => /vs/i.test(p)) ?? parts[0] ?? stem;
+  return (head.length > 42 ? head.slice(0, 41) + '…' : head) + setSuffix;
 }
 
 export function ActionPerfCharts({ data }: { data: ActionPerfData }) {
@@ -83,7 +85,7 @@ function PerClassChart({ rows, bestEpoch }: { rows: Array<{ label: string; mAP: 
           const w = (r.mAP / max) * 100;
           return (
             <div key={r.label} className="flex items-center gap-2" title={`${r.label} · temporal mAP ${pct.toFixed(1)}%`}>
-              <span className="w-24 flex-shrink-0 truncate font-mono text-[11px] capitalize text-text-secondary">{r.label}</span>
+              <span className="w-72 flex-shrink-0 truncate font-mono text-[11px] capitalize text-text-secondary">{r.label}</span>
               <div className="relative h-4 flex-1 overflow-hidden rounded bg-surface-100">
                 <div className="absolute inset-y-0 left-0 rounded" style={{ width: `${Math.max(w, 1.5)}%`, background: '#22d3ee', opacity: 0.85 }} />
               </div>
@@ -129,7 +131,7 @@ function EpochChart({ entries, bestEpoch }: { entries: ActionPerfData['entries']
           );
         })}
       </div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="mt-1 w-full" style={{ maxHeight: 300 }}>
+      <svg viewBox={`0 0 ${W} ${H}`} className="mt-1 w-full max-w-[840px]" preserveAspectRatio="xMinYMid meet">
         {Array.from({ length: ySteps + 1 }, (_, i) => {
           const val = (maxVal / ySteps) * i;
           const yy = y(val);
@@ -182,7 +184,7 @@ function PerVideoChart({ rows, bestEpoch }: { rows: ActionVideoMap[]; bestEpoch?
           const w = (r.harmonic / max) * 100;
           return (
             <div key={r.video} className="flex items-center gap-2" title={`${r.video}\nharmonic ${pct.toFixed(1)}% · temporal ${(r.temporal * 100).toFixed(1)}% · spatial ${(r.spatial * 100).toFixed(1)}% · ${r.events} events`}>
-              <span className="w-40 flex-shrink-0 truncate font-mono text-[10.5px] text-text-secondary">{shortLabel(r.video)}</span>
+              <span className="w-72 flex-shrink-0 truncate font-mono text-[10.5px] text-text-secondary">{shortLabel(r.video)}</span>
               <div className="relative h-4 flex-1 overflow-hidden rounded bg-surface-100">
                 <div className="absolute inset-y-0 left-0 rounded" style={{ width: `${Math.max(w, 1.5)}%`, background: '#facc15', opacity: 0.85 }} />
               </div>
