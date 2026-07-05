@@ -420,9 +420,14 @@ def _materialize_holdout_split(label_dir: Path, holdout_videos: list[str]) -> di
     """Split the flat label snapshot into ``train/`` and ``val/`` by filename.
 
     The chosen videos become validation; every other labelled video trains.
-    Symlinks (not copies) keep the flat snapshot — and the audio precompute that
-    globs it — intact. Fails loud if a requested video isn't in the snapshot, or
-    if either side would be empty: a silent mis-split is worse than a stopped job.
+    The val-set file is one list mixing camera views: entries whose label
+    exists in the source annotations but not in the (camera_view-filtered)
+    snapshot simply aren't part of this run and are skipped, so a broadcast
+    run validates on the list's broadcast videos and a sideline run on its
+    sideline ones. Unknown names (typos) still fail loud, as does an empty
+    side after filtering: a silent mis-split is worse than a stopped job.
+    Symlinks (not copies) keep the flat snapshot — and the audio precompute
+    that globs it — intact.
     """
     files = sorted(label_dir.glob("*_actions.jsonl"))
     by_name = {path.name: path for path in files}
@@ -432,13 +437,29 @@ def _materialize_holdout_split(label_dir: Path, holdout_videos: list[str]) -> di
     if not wanted:
         raise HTTPException(400, "holdout mode needs at least one validation video")
 
-    missing = sorted(name for name in wanted if name not in by_name)
-    if missing:
-        available = ", ".join(sorted(by_name)) or "<none>"
+    unknown = sorted(
+        name for name in wanted
+        if name not in by_name and not (ACTION_ANNOTATIONS_DIR / name).exists()
+    )
+    if unknown:
         raise HTTPException(
             400,
-            "Validation label file(s) not found in the training labels "
-            f"(after camera_view filtering): {'; '.join(missing)}. Available: {available}",
+            f"Validation label file(s) not found in {ACTION_ANNOTATIONS_DIR}: "
+            f"{'; '.join(unknown)}",
+        )
+
+    skipped = sorted(name for name in wanted if name not in by_name)
+    if skipped:
+        log.info(
+            "holdout: skipping %d val entr(ies) outside this camera view: %s",
+            len(skipped), ", ".join(skipped),
+        )
+        wanted -= set(skipped)
+    if not wanted:
+        raise HTTPException(
+            400,
+            "holdout mode: none of the validation videos match this camera view. "
+            f"Add a matching video to {ACTION_VAL_SET_FILE}",
         )
 
     train_dir = label_dir.parent / "train"
@@ -459,12 +480,15 @@ def _materialize_holdout_split(label_dir: Path, holdout_videos: list[str]) -> di
     if not train_videos:
         raise HTTPException(400, "holdout mode left no training videos; hold out fewer")
 
-    return {
+    out = {
         "train_label_dir": str(train_dir),
         "val_label_dir": str(val_dir),
         "train_videos": sorted(train_videos),
         "val_videos": sorted(val_videos),
     }
+    if skipped:
+        out["val_skipped_other_view"] = skipped
+    return out
 
 
 def _resolve_audio_dir(req: ActionTrainRequest, *, frame_dir: Path) -> Path | None:
