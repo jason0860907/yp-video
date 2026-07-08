@@ -1,7 +1,7 @@
-"""Frame ↔ time and FPS utilities used across TAD/VLM pipelines.
+"""Frame ↔ time and FPS utilities used across the video pipelines.
 
-Centralizes math that previously appeared in extract_features, convert_annotations,
-output_converter, vlm_to_rally, and infer with subtly different fallbacks.
+Centralizes math that previously appeared in several modules with subtly
+different fallbacks.
 
 For container-precise duration in seconds prefer
 ``yp_video.core.ffmpeg.get_video_duration`` (uses ffprobe). The cv2 path here

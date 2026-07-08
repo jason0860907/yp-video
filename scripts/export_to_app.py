@@ -90,12 +90,8 @@ def main() -> int:
             print(f"skip {basename}: missing {mp4}", file=sys.stderr)
             continue
         if not ann.exists():
-            # Never fall back to tad-predictions; those are raw model output.
-            print(
-                f"skip {basename}: rally-annotations missing "
-                f"(refusing to use tad-predictions as a fallback)",
-                file=sys.stderr,
-            )
+            # Only reviewed rally-annotations qualify; never raw model output.
+            print(f"skip {basename}: rally-annotations missing", file=sys.stderr)
             continue
 
         try:

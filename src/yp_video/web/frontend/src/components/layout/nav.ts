@@ -25,7 +25,6 @@ const ICON = {
   annotate: ['M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z'],
   train: ['M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z'],
   predict: ['M13 7h8m0 0v8m0-8l-8 8-4-4-6 6'],
-  review: ['M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z'],
   pin: [
     'M15 10.5a3 3 0 11-6 0 3 3 0 016 0z',
     'M19.5 10.5c0 7.5-7.5 11.25-7.5 11.25S4.5 18 4.5 10.5a7.5 7.5 0 1115 0z',
@@ -49,9 +48,8 @@ export const NAV: NavSection[] = [
     items: [
       { path: '/detect', label: 'Rally Predict', icon: ICON.detect },
       { path: '/annotate', label: 'Rally Label', icon: ICON.annotate },
-      { path: '/train', label: 'TAD Train', icon: ICON.train },
-      { path: '/predict', label: 'TAD Predict', icon: ICON.predict },
-      { path: '/review', label: 'TAD Label', icon: ICON.review },
+      { path: '/spot-train', label: 'SPOT Train', icon: ICON.train },
+      { path: '/spot-predict', label: 'SPOT Predict', icon: ICON.predict },
     ],
   },
   {
@@ -87,9 +85,8 @@ export const PAGE_TITLES: Record<string, string> = {
   '/cut': 'Cut into sets',
   '/detect': 'Rally Predict',
   '/annotate': 'Rally Label',
-  '/train': 'TAD Train',
-  '/predict': 'TAD Predict',
-  '/review': 'TAD Label',
+  '/spot-train': 'SPOT Train',
+  '/spot-predict': 'SPOT Predict',
   '/action-train': 'Action Train',
   '/action-predict': 'Action Predict',
   '/action-annotate': 'Action Label',

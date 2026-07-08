@@ -54,7 +54,7 @@ export function DetectPage() {
 
   const videosQuery = useQuery({
     queryKey: ['system-videos'],
-    queryFn: () => apiFetch<VideoMeta[]>(API.system.videos()),
+    queryFn: () => apiFetch<VideoMeta[]>(API.system.videos),
   });
   const vllmQuery = useQuery({
     queryKey: ['vllm-status'],

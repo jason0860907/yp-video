@@ -40,24 +40,32 @@ LOCAL_ONLY_CATEGORIES = {"videos"}
 
 # terminal.log is intentionally excluded: it's a bulky training-process record,
 # kept locally in the package dir but neither listed nor uploaded to R2.
-ACTION_CHECKPOINT_PACKAGE_FILES = {
+CHECKPOINT_PACKAGE_FILES = {
     "checkpoint_best.pt",
     "checkpoint_best.json",
     "config.json",
     "loss.json",
     "manifest.json",
+    "metrics.jsonl",
+}
+
+# Nested checkpoint-package categories: {run}/<package file> plus the training
+# label snapshot under {run}/labels/<subdir>/*.jsonl.
+CHECKPOINT_CATEGORIES = {
+    "action-checkpoints": "action-annotations",
+    "rally-spot-checkpoints": "rally-annotations",
 }
 
 
-def _is_action_checkpoint_package_file(path: Path, base_dir: Path) -> bool:
+def _is_checkpoint_package_file(path: Path, base_dir: Path, labels_subdir: str) -> bool:
     rel = path.relative_to(base_dir)
-    if len(rel.parts) == 2 and rel.name in ACTION_CHECKPOINT_PACKAGE_FILES:
+    if len(rel.parts) == 2 and rel.name in CHECKPOINT_PACKAGE_FILES:
         return True
     return (
         len(rel.parts) == 4
         and rel.parts[1] == "labels"
-        and rel.parts[2] == "action-annotations"
-        and rel.name.endswith("_actions.jsonl")
+        and rel.parts[2] == labels_subdir
+        and rel.name.endswith(".jsonl")
     )
 
 
@@ -88,41 +96,11 @@ def list_local_files(category: str = "cuts-broadcast") -> list[dict]:
             pass  # R2 unavailable, show all as un-synced
 
     files = []
-    if category == "tad-checkpoints":
-        # Nested: actionformer/{model}/{date}/{file} — only sync key files
-        SYNC_FILES = {"best.pth.tar", "config.txt", "train_log.jsonl", "train_log.json"}
-        for f in sorted(base_dir.rglob("*")):
-            if f.is_file() and f.name in SYNC_FILES:
-                rel = str(f.relative_to(base_dir))
-                r2_key = f"{category}/{rel}"
-                group = str(f.parent.relative_to(base_dir))
-                files.append({
-                    "name": f.name,
-                    "path": rel,
-                    "group": group,
-                    "size": f.stat().st_size,
-                    "r2_key": r2_key,
-                    "uploaded": r2_key in r2_keys,
-                })
-    elif category == "tad-features":
-        # Nested: tad-features/{model}/*.npy
-        for f in sorted(base_dir.glob("**/*.npy")):
-            if f.is_file():
-                rel = str(f.relative_to(base_dir))
-                r2_key = f"{category}/{rel}"
-                group = str(f.parent.relative_to(base_dir))
-                files.append({
-                    "name": f.name,
-                    "path": rel,
-                    "group": group,
-                    "size": f.stat().st_size,
-                    "r2_key": r2_key,
-                    "uploaded": r2_key in r2_keys,
-                })
-    elif category == "action-checkpoints":
+    if category in CHECKPOINT_CATEGORIES:
         # Nested: {run}/checkpoint_best.pt + metadata/log + label snapshot.
+        labels_subdir = CHECKPOINT_CATEGORIES[category]
         for f in sorted(base_dir.rglob("*")):
-            if f.is_file() and _is_action_checkpoint_package_file(f, base_dir):
+            if f.is_file() and _is_checkpoint_package_file(f, base_dir, labels_subdir):
                 rel = str(f.relative_to(base_dir))
                 r2_key = f"{category}/{rel}"
                 files.append({
@@ -178,11 +156,11 @@ def list_r2_files(category: str = "cuts-broadcast") -> list[dict]:
             "size": obj["size"],
             "local": local_path.exists(),
         }
-        # Add group for nested categories. action-checkpoints groups by the
+        # Add group for nested categories. Checkpoint packages group by the
         # run dir only (first part), matching list_local_files so the frontend
         # renders the nested label/metadata files as folders under the run.
         rel_path = Path(rel)
-        if category == "action-checkpoints":
+        if category in CHECKPOINT_CATEGORIES:
             entry["group"] = rel_path.parts[0]
         elif len(rel_path.parts) > 1:
             entry["group"] = str(rel_path.parent)
@@ -441,7 +419,7 @@ def delete_local_files(req: DeleteLocalRequest):
         local_path.unlink()
         deleted.append(file_path)
 
-        # Clean up empty parent directories (for nested categories like tad-features)
+        # Clean up empty parent directories (for nested categories like action-checkpoints)
         parent = local_path.parent
         if parent != base_dir and parent.is_dir() and not any(parent.iterdir()):
             parent.rmdir()

@@ -102,6 +102,61 @@ export interface ActionTrainProgress {
   best_breakdown?: ActionMapBreakdown;
 }
 
+/** SPOT rally (segment) training — /spot-train/status. */
+export interface RallyTrainStatus {
+  active_job?: Job;
+  spot_available?: boolean;
+  init_checkpoints?: Array<{ value: string; label: string }>;
+  resumable_runs?: Array<{ value: string; label: string }>;
+  rally_annotations?: {
+    videos?: number;
+    rallies?: number;
+    rally_hours?: number;
+    total_hours?: number;
+    with_local_video?: number;
+    missing_videos?: number;
+    label_dir?: string;
+  };
+  frame_caches?: Array<{ fps: string; videos: number }>;
+  rally_checkpoints?: { dir?: string; runs?: number; exists?: boolean };
+}
+
+/** Segment-mAP breakdown (per class per tIoU); no spatial component. */
+export interface RallyMapBreakdown {
+  temporal: { tolerances: number[]; classes: Record<string, number[]>; overall: number[] };
+  per_video?: ActionVideoMap[];
+}
+
+export interface RallyTrainProgress {
+  epoch?: number;
+  epoch_display?: number;
+  epochs?: number;
+  phase?: string;
+  phase_label?: string;
+  phase_progress?: number;
+  step?: number;
+  total?: number;
+  current_loss?: number;
+  latest_train_loss?: number;
+  latest_val_loss?: number;
+  latest_val_map?: number;
+  latest_val_breakdown?: RallyMapBreakdown;
+  best_value?: number;
+  best_epoch?: number;
+  best_breakdown?: RallyMapBreakdown;
+}
+
+/** Video record from the SPOT rally predict listing. */
+export interface RallyPredictVideo {
+  name: string;
+  kind: CutKind;
+  has_annotation?: boolean;
+  /** SPOT prediction exists (rally-spot-pre-annotations). */
+  has_pre_annotation?: boolean;
+  /** VLM prediction exists (rally-pre-annotations) — a separate file. */
+  has_vlm_pre_annotation?: boolean;
+}
+
 export interface VllmStatus {
   status: 'running' | 'starting' | 'stopped' | 'error';
   model?: string;
@@ -186,62 +241,6 @@ export interface SpotInfo {
   error?: string;
 }
 
-/** Video record from the TAD predict listing. `features` is keyed by feature
- *  model (base/large/giant/gigantic) → present. */
-export interface PredictVideo {
-  name: string;
-  kind: CutKind;
-  has_annotation?: boolean;
-  has_pre_annotation?: boolean;
-  has_prediction?: boolean;
-  features?: Record<string, boolean>;
-}
-
-export interface TrainCheckpoint {
-  path: string;
-  name: string;
-  size_mb: number;
-  kind: 'best' | 'last' | 'epoch';
-}
-
-/** Train (TAD) page status + video records + perf chart shapes. */
-export interface TrainStatus {
-  cuts_count?: number;
-  features_by_model?: Record<string, number>;
-  annotations_exist?: boolean;
-  vllm_running?: boolean;
-  active_train_job?: Job;
-}
-
-export interface TrainVideo {
-  name: string;
-  kind: CutKind;
-  has_annotation?: boolean;
-  has_pre_annotation?: boolean;
-  has_features?: boolean;
-  has_prediction?: boolean;
-}
-
-export interface TrainConfigDefaults {
-  lr?: number;
-  epochs?: number;
-  warmup_epochs?: number;
-  weight_decay?: number;
-  schedule?: string;
-  batch_size?: number;
-  sampler_alpha?: number;
-}
-
-export interface PerfEntry {
-  epoch: number;
-  tiou?: Record<string, { mAP?: number }>;
-  per_source?: Record<string, { mAP?: number; tiou_mAP?: number[]; n_videos?: number; n_preds?: number }>;
-}
-export interface PerfData {
-  name?: string;
-  entries?: PerfEntry[];
-}
-
 export interface SystemStats {
   videos?: number;
   cuts?: number;
@@ -249,8 +248,6 @@ export interface SystemStats {
   annotations?: number;
   action_pre_annotations?: number;
   actions?: number;
-  vjepa_b?: number;
-  predictions?: number;
 }
 
 export interface ActiveCount {

@@ -21,6 +21,8 @@ export interface EditorAnnotation {
 }
 export interface EditorData {
   video?: string;
+  /** Which store the file was loaded from (e.g. rally-spot-pre-annotations). */
+  source?: string;
   source_video?: string;
   metadata?: { video?: string };
   results?: Array<Record<string, unknown>>;
@@ -308,7 +310,7 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
   const downloadClip = async (a: EditorAnnotation) => {
     if (!videoName) return toast.warning('No video loaded');
     try {
-      const blob = await apiPostBlob(API.review.clip, { video: videoName, segment: { start: a.start, end: a.end, label: 'rally' } });
+      const blob = await apiPostBlob(API.annotate.clip, { video: videoName, segment: { start: a.start, end: a.end, label: 'rally' } });
       downloadBlob(blob, `rally_${Math.round(a.start)}-${Math.round(a.end)}.mp4`);
       toast.success('Clip downloaded');
     } catch (e) {

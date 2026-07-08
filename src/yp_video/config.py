@@ -30,7 +30,6 @@ def _find_project_root() -> Path:
 PROJECT_ROOT = _find_project_root()
 
 # ── External dependencies (at project root) ──────────────────────
-ACTIONFORMER_DIR = PROJECT_ROOT / "actionformer"
 # yp-spot lives in its own repo + venv, reached across a subprocess boundary.
 # Defaults to a sibling of yp-video (same parent dir); both paths are
 # overridable so the integration isn't pinned to a fixed location.
@@ -48,10 +47,6 @@ TOKENS_ENV_PATH = PROJECT_ROOT / "tokens.env"
 VENV_PYTHON = PROJECT_ROOT / ".venv" / "bin" / "python"
 LOGS_DIR = PROJECT_ROOT / "logs"
 APP_LOG_PATH = LOGS_DIR / "yp-app.log"
-
-# ── TAD paths ─────────────────────────────────────────────────────
-TAD_PKG_DIR = Path(__file__).resolve().parent / "tad"
-TAD_CONFIGS_DIR = TAD_PKG_DIR / "configs"
 
 # ── User data directories (~/videos) ─────────────────────────────
 VIDEOS_DIR = _env_path("YP_VIDEOS_DIR", PROJECT_ROOT.parent / "videos")
@@ -78,12 +73,15 @@ ACTION_CHECKPOINTS_DIR = VIDEOS_DIR / "action-checkpoints"
 # (stem, <stem>.mp4, or <stem>_actions.jsonl all accepted; blank lines and lines
 # starting with "#" are ignored). Edit this file to pick the val videos by hand.
 ACTION_VAL_SET_FILE = VIDEOS_DIR / "action-val-set.txt"
-PREDICTIONS_DIR = VIDEOS_DIR / "tad-predictions"
-FEATURES_DIR = VIDEOS_DIR / "tad-features"
-TAD_FEATURES_DIR = FEATURES_DIR / "vjepa-b"  # default (ViT-B); use tad_features_dir() for other sizes
-TAD_CHECKPOINTS_DIR = VIDEOS_DIR / "tad-checkpoints"
-TAD_ANNOTATIONS_DIR = VIDEOS_DIR / "tad-annotations"
-TAD_ANNOTATIONS_FILE = TAD_ANNOTATIONS_DIR / "volleyball_anno.json"
+# SPOT rally (segment) training. Frame caches are extracted at a reduced fps —
+# native-fps caches for 800+ full matches would need ~1 TB — and keyed per rate:
+# rally-spot-frames/fps2/<stem>/000000.jpg. Labels are written in the same
+# reduced-fps frame space, so yp-spot trains on them unchanged.
+RALLY_SPOT_FRAMES_DIR = VIDEOS_DIR / "rally-spot-frames"
+RALLY_SPOT_CHECKPOINTS_DIR = VIDEOS_DIR / "rally-spot-checkpoints"
+# SPOT rally predictions live beside (not inside) the VLM pre-annotations so
+# the two model families never overwrite each other; Rally Label can load either.
+RALLY_SPOT_PRE_ANNOTATIONS_DIR = VIDEOS_DIR / "rally-spot-pre-annotations"
 
 # R2 category → local directory + glob pattern mapping
 class R2Category(NamedTuple):
@@ -96,13 +94,12 @@ R2_CATEGORIES: dict[str, R2Category] = {
     "cuts-sideline": R2Category(CUTS_SIDELINE_DIR, "*.mp4"),
     "seg-annotations": R2Category(SEG_ANNOTATIONS_DIR, "*.jsonl"),
     "rally-pre-annotations": R2Category(PRE_ANNOTATIONS_DIR, "*.jsonl"),
+    "rally-spot-pre-annotations": R2Category(RALLY_SPOT_PRE_ANNOTATIONS_DIR, "*.jsonl"),
     "rally-annotations": R2Category(ANNOTATIONS_DIR, "*.jsonl"),
     "action-pre-annotations": R2Category(ACTION_PRE_ANNOTATIONS_DIR, "*.jsonl"),
     "action-annotations": R2Category(ACTION_ANNOTATIONS_DIR, "*.jsonl"),
     "action-checkpoints": R2Category(ACTION_CHECKPOINTS_DIR, "**/*"),
-    "tad-predictions": R2Category(PREDICTIONS_DIR, "*.jsonl"),
-    "tad-features": R2Category(FEATURES_DIR, "**/*.npy"),
-    "tad-checkpoints": R2Category(TAD_CHECKPOINTS_DIR, "**/*"),
+    "rally-spot-checkpoints": R2Category(RALLY_SPOT_CHECKPOINTS_DIR, "**/*"),
 }
 
 # Registry: kind → (local cuts dir, R2 category name). Single source of truth

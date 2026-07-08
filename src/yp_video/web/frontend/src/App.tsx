@@ -6,15 +6,14 @@ import { Placeholder } from '@/components/Placeholder';
 import { JobsPage } from '@/pages/JobsPage';
 import { DownloadPage } from '@/pages/DownloadPage';
 import { DetectPage } from '@/pages/DetectPage';
-import { TrainPage } from '@/pages/TrainPage';
 import { ActionPredictPage } from '@/pages/ActionPredictPage';
-import { PredictPage } from '@/pages/PredictPage';
 import { ActionTrainPage } from '@/pages/ActionTrainPage';
 import { ActionAnnotatePage } from '@/pages/ActionAnnotatePage';
+import { SpotTrainPage } from '@/pages/SpotTrainPage';
+import { SpotPredictPage } from '@/pages/SpotPredictPage';
 import { UploadPage } from '@/pages/UploadPage';
 import { CutPage } from '@/pages/CutPage';
 import { AnnotatePage } from '@/pages/AnnotatePage';
-import { ReviewPage } from '@/pages/ReviewPage';
 
 /** Migrated pages, by route. Paths absent here fall back to a Placeholder. */
 const PAGES: Record<string, ReactElement> = {
@@ -22,9 +21,8 @@ const PAGES: Record<string, ReactElement> = {
   '/cut': <CutPage />,
   '/detect': <DetectPage />,
   '/annotate': <AnnotatePage />,
-  '/train': <TrainPage />,
-  '/predict': <PredictPage />,
-  '/review': <ReviewPage />,
+  '/spot-train': <SpotTrainPage />,
+  '/spot-predict': <SpotPredictPage />,
   '/action-predict': <ActionPredictPage />,
   '/action-train': <ActionTrainPage />,
   '/action-annotate': <ActionAnnotatePage />,

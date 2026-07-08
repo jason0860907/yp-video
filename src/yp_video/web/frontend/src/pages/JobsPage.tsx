@@ -33,8 +33,6 @@ const STAT_ROWS: Array<[label: string, key: keyof SystemStats]> = [
   ['Rally Labels', 'annotations'],
   ['Action-Pred', 'action_pre_annotations'],
   ['Action Labels', 'actions'],
-  ['VJEPA-B', 'vjepa_b'],
-  ['TAD-Pred', 'predictions'],
 ];
 
 export function JobsPage() {

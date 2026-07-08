@@ -4,19 +4,11 @@ version = "1.0.0"
 description = "Volleyball video analysis pipeline: download, cut, detect, annotate, train, predict"
 requires-python = ">=3.10"
 dependencies = [
-    "torch>=2.0.0",
-    "torchvision>=0.15.0",
-    "transformers>=4.40.0",
-    "timm>=0.9.0",
-    "einops>=0.7.0",
+    # Video decode / probing
     "decord>=0.6.0",
-    "PyNvVideoCodec>=2.1.0",
     "opencv-python-headless>=4.8.0",
     "numpy>=1.24.0",
-    "pillow>=10.0.0",
     "pydantic>=2.0",
-    "packaging>=23.0",
-    "ninja>=1.11.0",
     "requests>=2.31.0",
     "aiohttp>=3.9.0",
     "tqdm>=4.66.0",
@@ -26,15 +18,10 @@ dependencies = [
     "pycryptodome>=3.20.0",
     # Cloud storage
     "boto3>=1.34.0",
-    # Web application
+    # Web application (vLLM serves the VLM detect flow; brings torch with it)
     "fastapi>=0.110.0",
     "uvicorn>=0.27.0",
     "vllm>=0.17.0",
-    "scipy>=1.10.0",
-    "pandas>=2.0.0",
-    "pyyaml>=6.0",
-    "joblib>=1.0",
-    "h5py>=3.0",
     "google-genai>=1.0.0",
 ]
 
@@ -46,10 +33,6 @@ yp-app = "yp_video.web.app:run_server"
 yp-download = "yp_video.youtube.download:main"
 yp-vlm-segment = "yp_video.core.vlm_segment:main"
 yp-vlm-to-rally = "yp_video.tad.vlm_to_rally:main"
-yp-tad-extract = "yp_video.tad.extract_features:main"
-yp-tad-convert = "yp_video.tad.convert_annotations:main"
-yp-tad-train = "yp_video.tad.train:main"
-yp-tad-infer = "yp_video.tad.infer:main"
 
 [build-system]
 requires = ["hatchling"]

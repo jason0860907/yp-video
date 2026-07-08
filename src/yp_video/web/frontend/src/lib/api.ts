@@ -75,7 +75,8 @@ export const API = {
   },
   system: {
     stats: '/system/stats',
-    videos: (params: QueryParams = {}) => `/system/videos${q(params)}`,
+    videos: '/system/videos',
+    presence: '/system/presence',
     vllmStart: '/system/vllm/start',
     vllmStop: '/system/vllm/stop',
     vllmStatus: '/system/vllm/status',
@@ -107,8 +108,10 @@ export const API = {
   annotate: {
     results: '/annotate/results',
     annotations: '/annotate/annotations',
-    result: (name: string) => `/annotate/results/${encodeURIComponent(name)}`,
+    result: (name: string, params: QueryParams = {}) => `/annotate/results/${encodeURIComponent(name)}${q(params)}`,
     video: (path: string) => `/annotate/video/${encodeURIComponent(path)}`,
+    clip: '/annotate/clip',
+    clipZip: '/annotate/clip-zip',
     publish: '/annotate/publish',
   },
   actionAnnotate: {
@@ -128,26 +131,14 @@ export const API = {
     start: '/action-train/start',
     performance: '/action-train/performance',
   },
-  review: {
-    results: '/review/results',
-    annotations: '/review/annotations',
-    result: (name: string, params: QueryParams = {}) =>
-      `/review/results/${encodeURIComponent(name)}${q(params)}`,
-    video: (path: string) => `/review/video/${encodeURIComponent(path)}`,
-    clip: '/review/clip',
-    clipZip: '/review/clip-zip',
+  spotTrain: {
+    status: '/spot-train/status',
+    start: '/spot-train/start',
+    performance: '/spot-train/performance',
   },
-  predict: {
-    videos: '/predict/videos',
-    start: '/predict/start',
-  },
-  train: {
-    configDefaults: '/train/config-defaults',
-    convertAnnotations: '/train/convert-annotations',
-    extractFeatures: '/train/extract-features',
-    start: '/train/start',
-    status: (params: QueryParams = {}) => `/train/status${q(params)}`,
-    performance: (params: QueryParams = {}) => `/train/performance${q(params)}`,
-    checkpoints: (params: QueryParams = {}) => `/train/checkpoints${q(params)}`,
+  spotPredict: {
+    videos: '/spot-predict/videos',
+    spot: '/spot-predict/spot',
+    start: '/spot-predict/start',
   },
 } as const;

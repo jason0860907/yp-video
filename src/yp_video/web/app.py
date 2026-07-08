@@ -19,10 +19,9 @@ from yp_video.web.routers import (
     detect,
     download,
     jobs,
-    predict,
-    review,
+    spot_predict,
+    spot_train,
     system,
-    train,
     upload,
 )
 from yp_video.web.vllm_manager import vllm_manager
@@ -31,7 +30,12 @@ from yp_video.web.vllm_manager import vllm_manager
 class _QuietPollFilter(logging.Filter):
     """Suppress uvicorn access logs for high-frequency polling endpoints."""
 
-    _QUIET_PATHS = ("/api/system/stats", "/api/jobs/active-count", "/api/system/vllm/status")
+    _QUIET_PATHS = (
+        "/api/system/stats",
+        "/api/jobs/active-count",
+        "/api/system/vllm/status",
+        "/api/system/presence",
+    )
 
     def filter(self, record: logging.LogRecord) -> bool:
         msg = record.getMessage()
@@ -95,9 +99,8 @@ app.include_router(action_annotate.router, prefix="/api/action-annotate", tags=[
 app.include_router(action_train.router, prefix="/api/action-train", tags=["action-train"])
 app.include_router(annotate.router, prefix="/api/annotate", tags=["annotate"])
 app.include_router(detect.router, prefix="/api/detect", tags=["detect"])
-app.include_router(train.router, prefix="/api/train", tags=["train"])
-app.include_router(predict.router, prefix="/api/predict", tags=["predict"])
-app.include_router(review.router, prefix="/api/review", tags=["review"])
+app.include_router(spot_train.router, prefix="/api/spot-train", tags=["spot-train"])
+app.include_router(spot_predict.router, prefix="/api/spot-predict", tags=["spot-predict"])
 app.include_router(jobs.router, prefix="/api/jobs", tags=["jobs"])
 app.include_router(system.router, prefix="/api/system", tags=["system"])
 app.include_router(upload.router, prefix="/api/upload", tags=["upload"])

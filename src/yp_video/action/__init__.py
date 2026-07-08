@@ -1,7 +1,7 @@
 """Action (SPOT) pipeline: the yp-video side of per-frame action detection.
 
-This package is the orchestration home for action/SPOT work, symmetric to the
-``tad`` package. It does NOT contain the model — SPOT lives in the separate
+This package is the orchestration home for action/SPOT work. It does NOT
+contain the model — SPOT lives in the separate
 ``~/yp-spot`` repo/venv and is invoked across a process boundary (subprocess +
 JSON on disk). Here we only build the command, resolve checkpoints, and parse /
 convert SPOT output into annotations.

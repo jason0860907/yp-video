@@ -242,11 +242,11 @@ def sync_to_r2(local_path: Path, category: str, *, base_dir: Path | None = None)
     Example with ``base_dir``::
 
         sync_to_r2(
-            .../tad-checkpoints/actionformer/vjepa-b/2026-0401/best.pth.tar,
-            "tad-checkpoints",
-            base_dir=.../tad-checkpoints,
+            .../action-checkpoints/<run>/checkpoint_best.pt,
+            "action-checkpoints",
+            base_dir=.../action-checkpoints,
         )
-        # → R2 key: tad-checkpoints/actionformer/vjepa-b/2026-0401/best.pth.tar
+        # → R2 key: action-checkpoints/<run>/checkpoint_best.pt
     """
     if not r2_client.configured:
         return

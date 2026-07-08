@@ -1,16 +1,16 @@
 """System router - vLLM control and system info."""
 
+import time
+
 from fastapi import APIRouter
+from pydantic import BaseModel, Field
 
 from yp_video.config import (
     ANNOTATIONS_DIR,
     ACTION_ANNOTATIONS_DIR,
     ACTION_PRE_ANNOTATIONS_DIR,
-    FEATURES_DIR,
-    PREDICTIONS_DIR,
     PRE_ANNOTATIONS_DIR,
     SEG_ANNOTATIONS_DIR,
-    TAD_FEATURES_DIR,
     RAW_VIDEOS_DIR,
     count_files,
     cut_kind_of,
@@ -20,6 +20,34 @@ from yp_video.web.jobs import job_manager
 from yp_video.web.vllm_manager import vllm_manager
 
 router = APIRouter()
+
+# ── Presence (who has the page open right now) ────────────────────
+# Each browser sends a heartbeat with a persistent random id every ~30 s;
+# a client counts as online while its last beat is younger than the TTL, and
+# as active while its latest beat says the user recently interacted (the
+# idle threshold lives client-side). In-memory on purpose: a restart
+# repopulates within one heartbeat.
+_PRESENCE_TTL_S = 75.0
+_presence: dict[str, tuple[float, bool]] = {}  # client_id -> (last_seen, is_active)
+
+
+class PresenceBeat(BaseModel):
+    client_id: str = Field(min_length=8, max_length=64)
+    # False once the user has gone idle (no input past the client threshold).
+    active: bool = True
+
+
+@router.post("/presence")
+def presence(beat: PresenceBeat) -> dict:
+    """Record one heartbeat and return online/active client counts."""
+    now = time.monotonic()
+    _presence[beat.client_id] = (now, beat.active)
+    for cid in [c for c, (seen, _a) in _presence.items() if now - seen > _PRESENCE_TTL_S]:
+        del _presence[cid]
+    return {
+        "online": len(_presence),
+        "active": sum(1 for _seen, is_active in _presence.values() if is_active),
+    }
 
 
 @router.get("/vllm/status")
@@ -49,13 +77,8 @@ async def vllm_health():
 
 
 @router.get("/videos")
-def list_videos(model: str = "base") -> list[dict]:
+def list_videos() -> list[dict]:
     """List cut videos with full pipeline status."""
-    from yp_video.tad.extract_features import MODEL_CONFIGS
-
-    cfg = MODEL_CONFIGS.get(model, MODEL_CONFIGS["base"])
-    feat_dir = FEATURES_DIR / cfg.dir_suffix
-
     results = []
     for f in sorted(iter_all_cuts(), key=lambda p: p.name):
         stem = f.stem
@@ -69,8 +92,6 @@ def list_videos(model: str = "base") -> list[dict]:
             "has_detection": (PRE_ANNOTATIONS_DIR / f"{stem}_annotations.jsonl").exists(),
             "has_pre_annotation": (PRE_ANNOTATIONS_DIR / f"{stem}_annotations.jsonl").exists(),
             "has_annotation": (ANNOTATIONS_DIR / f"{stem}_annotations.jsonl").exists(),
-            "has_features": (feat_dir / f"{stem}.npy").exists(),
-            "has_prediction": (PREDICTIONS_DIR / f"{stem}_annotations.jsonl").exists(),
         })
     return results
 
@@ -86,8 +107,5 @@ def get_stats():
         "annotations": count_files(ANNOTATIONS_DIR, "*.jsonl"),
         "action_pre_annotations": count_files(ACTION_PRE_ANNOTATIONS_DIR, "*.jsonl"),
         "actions": count_files(ACTION_ANNOTATIONS_DIR, "*.jsonl"),
-        "predictions": count_files(PREDICTIONS_DIR, "*.jsonl"),
-        "vjepa_b": count_files(FEATURES_DIR / "vjepa-b", "*.npy"),
-        "vjepa_l": count_files(FEATURES_DIR / "vjepa-l", "*.npy"),
         "active_jobs": job_manager.active_count(),
     }

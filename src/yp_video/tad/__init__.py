@@ -1,1 +1,1 @@
-"""TAD (Temporal Action Detection) module for volleyball rally detection."""
+"""VLM detection → rally segment conversion."""
