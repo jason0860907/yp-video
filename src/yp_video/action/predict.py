@@ -3,9 +3,8 @@
 Router-free entry point shared by the web dashboard and the selfhost GPU
 worker. Given a video it shells out to the yp-spot model — which lives in its
 own repo + venv and is reached across a subprocess boundary (see
-``contracts/action.py``) — and writes a ``*_actions.jsonl`` file in the exact
-shape ``yp_video.tad.action_trim`` consumes: a ``_meta`` header line (carrying
-``fps``) followed by one action event per line.
+``contracts/action.py``) — and writes a ``*_actions.jsonl`` file: a ``_meta``
+header line (carrying ``fps``) followed by one action event per line.
 
 This keeps the SPOT→JSONL orchestration in one place so the worker does not
 duplicate (and drift from) the web router's flow.
@@ -34,8 +33,8 @@ from yp_video.core.jsonl import write_jsonl
 class SpotInferenceError(RuntimeError):
     """yp-spot was unavailable or its inference subprocess failed.
 
-    Callers that want graceful degradation (e.g. fall back to untrimmed TAD
-    rallies) should catch this and continue rather than aborting.
+    Callers that want graceful degradation (e.g. omit highlight data when
+    action spotting fails) should catch this and continue rather than aborting.
     """
 
 
@@ -58,6 +57,83 @@ def _probe_fps_frames(video_path: Path) -> tuple[float, int]:
     except FFmpegError as exc:
         raise SpotInferenceError(str(exc)) from exc
     return meta["fps"], meta["num_frames"]
+
+
+def run_spot_inference(
+    video_path: Path,
+    *,
+    checkpoint: Path,
+    batch_size: int = 8,
+    num_workers: int = 4,
+    clip_len: int = 64,
+    use_amp: bool = True,
+    postprocess: bool = True,
+    on_progress: Callable[[float], None] | None = None,
+) -> list[dict]:
+    """Run one yp-spot inference subprocess and return its loaded predictions.
+
+    Shared by the action (``predict_actions_to_jsonl``) and rally
+    (``yp_video.rally_spot.predict_rally_segments``) entry points. Streams
+    stdout so progress ticks surface live; merges stderr in so a single reader
+    can't deadlock and the error tail is captured too.
+
+    Raises:
+        SpotInferenceError: yp-spot is not installed, or its inference
+            subprocess failed / produced no output.
+    """
+    if not prelabel.spot_available():
+        raise SpotInferenceError(
+            f"yp-spot not available (looked under {SPOT_DIR}); "
+            "set YP_SPOT_DIR / YP_SPOT_PYTHON and install its venv"
+        )
+
+    with tempfile.TemporaryDirectory(prefix="yp-spot-infer-") as tmp_root:
+        pred_file = Path(tmp_root) / "predictions.json"
+        cmd = prelabel.build_command(
+            video_path=video_path,
+            checkpoint_path=checkpoint,
+            save_dir=pred_file.parent,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            clip_len=clip_len,
+            use_amp=use_amp,
+            postprocess=postprocess,
+        )
+        env = {
+            **os.environ,
+            "PYTHONUNBUFFERED": "1",
+            ACTION_CONTRACT_VERSION_ENV: ACTION_CONTRACT_VERSION,
+        }
+        proc = subprocess.Popen(
+            cmd,
+            cwd=SPOT_DIR,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        tail: deque[str] = deque(maxlen=20)
+        assert proc.stdout is not None
+        for raw in proc.stdout:
+            line = raw.rstrip("\n")
+            if not line:
+                continue
+            ratio = _spot_progress_ratio(line)
+            if ratio is not None:
+                if on_progress:
+                    on_progress(ratio)
+            else:
+                tail.append(line)
+        rc = proc.wait()
+        if rc != 0:
+            raise SpotInferenceError(
+                f"yp-spot inference failed (rc={rc}): " + " | ".join(list(tail)[-5:])
+            )
+        if not pred_file.exists():
+            raise SpotInferenceError(f"yp-spot produced no predictions at {pred_file}")
+
+        return prelabel.load_predictions(pred_file)
 
 
 def predict_actions_to_jsonl(
@@ -97,12 +173,6 @@ def predict_actions_to_jsonl(
         if on_message:
             on_message(text)
 
-    if not prelabel.spot_available():
-        raise SpotInferenceError(
-            f"yp-spot not available (looked under {SPOT_DIR}); "
-            "set YP_SPOT_DIR / YP_SPOT_PYTHON and install its venv"
-        )
-
     try:
         # resolve_checkpoint handles VIDEOS_DIR-relative refs, existence, and the
         # ~/videos/action-checkpoints containment check for both the explicit and
@@ -114,55 +184,16 @@ def predict_actions_to_jsonl(
     _msg("Reading video metadata...")
     fps, num_frames = _probe_fps_frames(video_path)
 
-    with tempfile.TemporaryDirectory(prefix="yp-spot-infer-") as tmp_root:
-        pred_file = Path(tmp_root) / "predictions.json"
-        cmd = prelabel.build_command(
-            video_path=video_path,
-            checkpoint_path=checkpoint,
-            save_dir=pred_file.parent,
-            batch_size=batch_size,
-            num_workers=num_workers,
-            clip_len=clip_len,
-            use_amp=use_amp,
-        )
-        env = {
-            **os.environ,
-            "PYTHONUNBUFFERED": "1",
-            ACTION_CONTRACT_VERSION_ENV: ACTION_CONTRACT_VERSION,
-        }
-        _msg("Running SPOT action inference...")
-        # Stream stdout so progress ticks surface live; merge stderr in so a
-        # single reader can't deadlock and the error tail is captured too.
-        proc = subprocess.Popen(
-            cmd,
-            cwd=SPOT_DIR,
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
-        )
-        tail: deque[str] = deque(maxlen=20)
-        assert proc.stdout is not None
-        for raw in proc.stdout:
-            line = raw.rstrip("\n")
-            if not line:
-                continue
-            ratio = _spot_progress_ratio(line)
-            if ratio is not None:
-                if on_progress:
-                    on_progress(ratio)
-            else:
-                tail.append(line)
-        rc = proc.wait()
-        if rc != 0:
-            raise SpotInferenceError(
-                f"yp-spot inference failed (rc={rc}): " + " | ".join(list(tail)[-5:])
-            )
-        if not pred_file.exists():
-            raise SpotInferenceError(f"yp-spot produced no predictions at {pred_file}")
-
-        predictions = prelabel.load_predictions(pred_file)
+    _msg("Running SPOT action inference...")
+    predictions = run_spot_inference(
+        video_path,
+        checkpoint=checkpoint,
+        batch_size=batch_size,
+        num_workers=num_workers,
+        clip_len=clip_len,
+        use_amp=use_amp,
+        on_progress=on_progress,
+    )
 
     data = prelabel.predictions_to_annotation(
         predictions,

@@ -29,9 +29,10 @@ def spot_available() -> bool:
     )
 
 
-def list_checkpoints() -> list[dict]:
+def list_checkpoints(root: Path = ACTION_CHECKPOINTS_DIR) -> list[dict]:
+    """Packaged SPOT checkpoints under ``root`` (action or rally packages)."""
     checkpoints = []
-    for path in _iter_checkpoint_paths():
+    for path in _iter_checkpoint_paths(root):
         if not path.is_file():
             continue
         match = _CHECKPOINT_RE.match(path.name)
@@ -50,31 +51,33 @@ def list_checkpoints() -> list[dict]:
             "best_value": best_metadata.get("value"),
             "mtime": stat.st_mtime,
             "size_mb": stat.st_size / (1024 * 1024),
-            "source": "action-checkpoints",
+            "source": root.name,
         })
     checkpoints.sort(key=lambda c: (c["is_best"], c["mtime"], c["epoch"]), reverse=True)
     return checkpoints
 
 
-def default_checkpoint() -> Path | None:
-    checkpoints = list_checkpoints()
+def default_checkpoint(root: Path = ACTION_CHECKPOINTS_DIR) -> Path | None:
+    checkpoints = list_checkpoints(root)
     if not checkpoints:
         return None
     chosen = checkpoints[0]
-    return resolve_checkpoint(chosen["path"])
+    return resolve_checkpoint(chosen["path"], root=root)
 
 
-def resolve_checkpoint(value: str | Path | None) -> Path:
+def resolve_checkpoint(
+    value: str | Path | None, root: Path = ACTION_CHECKPOINTS_DIR
+) -> Path:
     if value:
-        path = resolve_checkpoint_path(value)
+        path = resolve_checkpoint_path(value, root=root)
     else:
-        path = default_checkpoint()
+        path = default_checkpoint(root)
         if path is None:
-            raise FileNotFoundError(f"No SPOT checkpoint found under {ACTION_CHECKPOINTS_DIR}")
+            raise FileNotFoundError(f"No SPOT checkpoint found under {root}")
 
     resolved = path.resolve()
-    if not _is_action_checkpoint(resolved):
-        raise ValueError("SPOT checkpoint must live under ~/videos/action-checkpoints")
+    if not _is_under(resolved, root):
+        raise ValueError(f"SPOT checkpoint must live under {root}")
     if not resolved.exists():
         raise FileNotFoundError(f"SPOT checkpoint not found: {resolved}")
     if resolved.suffix != ".pt":
@@ -82,31 +85,33 @@ def resolve_checkpoint(value: str | Path | None) -> Path:
     return resolved
 
 
-def _iter_checkpoint_paths() -> list[Path]:
-    if ACTION_CHECKPOINTS_DIR.exists():
-        return list(ACTION_CHECKPOINTS_DIR.glob("*/checkpoint_*.pt"))
+def _iter_checkpoint_paths(root: Path) -> list[Path]:
+    if root.exists():
+        return list(root.glob("*/checkpoint_*.pt"))
     return []
 
 
-def resolve_checkpoint_path(value: str | Path) -> Path:
-    """Resolve a possibly-relative action checkpoint path to an absolute one.
+def resolve_checkpoint_path(
+    value: str | Path, root: Path = ACTION_CHECKPOINTS_DIR
+) -> Path:
+    """Resolve a possibly-relative checkpoint path to an absolute one.
 
-    Absolute paths pass through unchanged. A relative path whose first segment is
-    the action-checkpoints dir name is taken relative to ``VIDEOS_DIR``; any other
-    relative path is taken relative to ``ACTION_CHECKPOINTS_DIR``. Performs no
+    Absolute paths pass through unchanged. A relative path whose first segment
+    is the checkpoint dir name is taken relative to ``VIDEOS_DIR``; any other
+    relative path is taken relative to ``root``. Performs no
     existence/containment checks — callers validate.
     """
     path = Path(str(value)).expanduser()
     if path.is_absolute():
         return path
-    if path.parts and path.parts[0] == ACTION_CHECKPOINTS_DIR.name:
+    if path.parts and path.parts[0] == root.name:
         return VIDEOS_DIR / path
-    return ACTION_CHECKPOINTS_DIR / path
+    return root / path
 
 
-def _is_action_checkpoint(path: Path) -> bool:
+def _is_under(path: Path, root: Path) -> bool:
     try:
-        path.resolve().relative_to(ACTION_CHECKPOINTS_DIR.resolve())
+        path.resolve().relative_to(root.resolve())
         return True
     except ValueError:
         return False
@@ -135,6 +140,7 @@ def build_command(
     clip_len: int,
     prefetch_factor: int | None = None,
     use_amp: bool = True,
+    postprocess: bool = True,
 ) -> list[str]:
     video_paths = [video_path] if isinstance(video_path, Path) else list(video_path)
     save_dirs = [save_dir] if isinstance(save_dir, Path) else list(save_dir)
@@ -154,6 +160,10 @@ def build_command(
     if prefetch_factor is not None:
         cmd.extend(["--prefetch_factor", str(prefetch_factor)])
     cmd.append("--amp" if use_amp else "--no-amp")
+    if not postprocess:
+        # Dense/segment models need every per-frame event; score filtering and
+        # NMS would shred contiguous runs.
+        cmd.append("--no-postprocess")
     return cmd
 
 
@@ -193,6 +203,21 @@ def spot_progress_fraction(data: dict) -> float:
         total_frames = max(1, int(data.get("total_frames") or 1))
         ratio = int(data.get("end_frame") or 0) / total_frames
     return max(0.0, min(1.0, ratio))
+
+
+def spot_progress_message(data: dict) -> str:
+    """Human-readable status line from a parsed SPOT progress record."""
+    end_frame = int(data.get("end_frame") or 0)
+    total_frames = int(data.get("total_frames") or 0)
+    batch_done = int(data.get("batch_done") or 0)
+    batch_total = int(data.get("batch_total") or 0)
+    clips_done = int(data.get("clips_done") or 0)
+    clips_total = int(data.get("clips_total") or 0)
+    frame_text = f"frame {min(end_frame, total_frames)}/{total_frames}" if total_frames > 0 else ""
+    batch_text = f"batch {batch_done}/{batch_total}" if batch_total > 0 else ""
+    clip_text = f"clip {clips_done}/{clips_total}" if clips_total > 0 else ""
+    parts = [part for part in (batch_text, clip_text, frame_text) if part]
+    return "SPOT inference " + " · ".join(parts)
 
 
 def predictions_to_annotation(

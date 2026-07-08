@@ -15,10 +15,21 @@ interface AnnotateResult {
 }
 type KindFilter = 'all' | 'broadcast' | 'sideline';
 type StatusFilter = 'all' | 'pre-labeled' | 'labeled';
+// Which location to load from: auto = saved annotation → SPOT pass → VLM pass.
+type SourceFilter = 'auto' | 'annotation' | 'spot-pre-annotation' | 'pre-annotation';
 
-// The list endpoint returns source as an array of {annotation, pre-annotation};
-// a file counts as "labeled" once a manual annotation exists for it.
-const hasAnnotation = (src: string | string[]) => (Array.isArray(src) ? src : [src]).includes('annotation');
+// The list endpoint returns source as an array of
+// {annotation, spot-pre-annotation, pre-annotation}; a file counts as
+// "labeled" once a manual annotation exists for it.
+const sources = (src: string | string[]) => (Array.isArray(src) ? src : [src]);
+const hasAnnotation = (src: string | string[]) => sources(src).includes('annotation');
+// Emoji per source: ✅ saved annotation, 🤖 SPOT prediction, ⚡ VLM prediction.
+const sourceMarks = (src: string | string[]) => {
+  const s = sources(src);
+  return [hasAnnotation(src) && '✅', s.includes('spot-pre-annotation') && '🤖', s.includes('pre-annotation') && '⚡']
+    .filter(Boolean)
+    .join('');
+};
 
 const errMsg = (e: unknown) => (e instanceof ApiError ? e.body : e instanceof Error ? e.message : String(e));
 // Stable reference so the editor's load effect doesn't re-run each render.
@@ -27,6 +38,7 @@ const streamPath = (vp: string) => apiUrl(API.annotate.video(vp));
 export function AnnotatePage() {
   const [kindFilter, setKindFilter] = useState<KindFilter>('all');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [sourceFilter, setSourceFilter] = useState<SourceFilter>('auto');
   const [picked, setPicked] = useState('');
   const [data, setData] = useState<EditorData | null>(null);
   const [manifestUrl, setManifestUrl] = useState<string | null>(null);
@@ -40,18 +52,21 @@ export function AnnotatePage() {
         if (kindFilter !== 'all' && r.kind !== kindFilter) return false;
         if (statusFilter === 'labeled' && !hasAnnotation(r.source)) return false;
         if (statusFilter === 'pre-labeled' && hasAnnotation(r.source)) return false;
+        if (sourceFilter !== 'auto' && !sources(r.source).includes(sourceFilter)) return false;
         return true;
       }),
-    [results, kindFilter, statusFilter],
+    [results, kindFilter, statusFilter, sourceFilter],
   );
 
   const load = async () => {
     if (!picked) return;
     try {
-      const d = await apiFetch<EditorData>(API.annotate.result(picked));
+      const d = await apiFetch<EditorData>(
+        API.annotate.result(picked, sourceFilter === 'auto' ? {} : { source: sourceFilter }),
+      );
       setData(d);
       setManifestUrl(null);
-      toast.success(`Loaded ${d.results?.length ?? 0} annotations`);
+      toast.success(`Loaded ${d.results?.length ?? 0} annotations (${String(d.source || '')})`);
     } catch (e) {
       toast.error(`Failed to load: ${errMsg(e)}`);
     }
@@ -76,7 +91,7 @@ export function AnnotatePage() {
   return (
     <div className="mx-auto max-w-screen-2xl space-y-5">
       <Card>
-        <div className="grid grid-cols-1 items-end gap-3 lg:grid-cols-[8.5rem_8.5rem_minmax(18rem,1fr)_auto]">
+        <div className="grid grid-cols-1 items-end gap-3 lg:grid-cols-[8.5rem_8.5rem_10.5rem_minmax(18rem,1fr)_auto]">
           <FieldLabel label="Kind">
             <select value={kindFilter} onChange={(e) => setKindFilter(e.target.value as KindFilter)} className={cn(fieldCls, 'h-9 w-full py-0')}>
               <option value="all">All kinds</option>
@@ -91,12 +106,20 @@ export function AnnotatePage() {
               <option value="labeled">Labeled</option>
             </select>
           </FieldLabel>
+          <FieldLabel label="Source">
+            <select value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value as SourceFilter)} className={cn(fieldCls, 'h-9 w-full py-0')}>
+              <option value="auto">Auto (✅→🤖→⚡)</option>
+              <option value="annotation">✅ Annotation</option>
+              <option value="spot-pre-annotation">🤖 SPOT pre</option>
+              <option value="pre-annotation">⚡ VLM pre</option>
+            </select>
+          </FieldLabel>
           <FieldLabel label="Result file">
             <select value={picked} onChange={(e) => setPicked(e.target.value)} className={cn(fieldCls, 'h-9 w-full truncate py-0')}>
               <option value="">Select result file… ({visible.length})</option>
               {visible.map((r) => (
                 <option key={r.name} value={r.name}>
-                  {hasAnnotation(r.source) ? '✅' : '⚡'}
+                  {sourceMarks(r.source)}
                   {r.kind === 'sideline' ? ' [SIDE]' : ''} {r.name}
                 </option>
               ))}

@@ -1,18 +1,26 @@
 """Rally annotator router."""
 
 import asyncio
+import io
 import json
 import os
+import shutil
+import tempfile
+import zipfile
 from pathlib import Path
+from typing import NamedTuple
 from urllib.parse import unquote
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
+from starlette.background import BackgroundTask
 
 from yp_video.config import (
     ANNOTATIONS_DIR,
     CUT_R2_CATEGORIES,
     PRE_ANNOTATIONS_DIR,
+    RALLY_SPOT_PRE_ANNOTATIONS_DIR,
     RAW_VIDEOS_DIR,
     VIDEOS_DIR,
     cut_kind_of,
@@ -20,10 +28,28 @@ from yp_video.config import (
 )
 from yp_video.app_export import AppExportError, export_one_match
 from yp_video.core.annotation_ids import rally_id
+from yp_video.core.ffmpeg import FFmpegError, export_segment
 from yp_video.core.jsonl import read_jsonl
 from yp_video.web.r2_client import r2_client, serve_video_or_r2_redirect, sync_to_r2
 
 router = APIRouter()
+
+
+class _Source(NamedTuple):
+    tag: str
+    directory: Path
+    r2_category: str
+
+
+# Where a result file may live. Order is the default load priority: reviewed
+# truth first, then the newest ML pass (SPOT), then the VLM pass. The Load UI
+# can force one via the ``source`` query param (by tag).
+_SOURCES = (
+    _Source("annotation", ANNOTATIONS_DIR, "rally-annotations"),
+    _Source("spot-pre-annotation", RALLY_SPOT_PRE_ANNOTATIONS_DIR, "rally-spot-pre-annotations"),
+    _Source("pre-annotation", PRE_ANNOTATIONS_DIR, "rally-pre-annotations"),
+)
+_SOURCE_BY_TAG = {s.tag: s for s in _SOURCES}
 
 
 class Annotation(BaseModel):
@@ -64,20 +90,17 @@ def _with_rally_id(video: str, record: dict, index: int) -> dict:
 
 @router.get("/results")
 def list_results() -> list[dict]:
-    files: dict[str, set[str]] = {}  # name -> set of sources
-    if PRE_ANNOTATIONS_DIR.exists():
-        for f in PRE_ANNOTATIONS_DIR.glob("*.jsonl"):
-            files.setdefault(f.name, set()).add("pre-annotation")
-    if ANNOTATIONS_DIR.exists():
-        for f in ANNOTATIONS_DIR.glob("*.jsonl"):
-            files.setdefault(f.name, set()).add("annotation")
+    files: dict[str, set[str]] = {}  # name -> set of source tags
+    for source in _SOURCES:
+        if source.directory.exists():
+            for f in source.directory.glob("*.jsonl"):
+                files.setdefault(f.name, set()).add(source.tag)
     # Include R2-only files
     if r2_client.configured:
         try:
-            for obj in r2_client.list_objects(prefix="rally-annotations/"):
-                files.setdefault(Path(obj["key"]).name, set()).add("annotation")
-            for obj in r2_client.list_objects(prefix="rally-pre-annotations/"):
-                files.setdefault(Path(obj["key"]).name, set()).add("pre-annotation")
+            for source in _SOURCES:
+                for obj in r2_client.list_objects(prefix=f"{source.r2_category}/"):
+                    files.setdefault(Path(obj["key"]).name, set()).add(source.tag)
         except Exception:
             pass
     def _kind(name: str) -> str:
@@ -92,34 +115,42 @@ def list_results() -> list[dict]:
 
 
 @router.get("/results/{name}")
-async def get_result(name: str) -> dict:
+async def get_result(name: str, source: str | None = None) -> dict:
+    """Load one result file, preferring the highest-priority source.
+
+    ``source`` (a tag from ``_SOURCES``) restricts the lookup to that one
+    location — used by the Load UI to open e.g. the VLM pass even when a SPOT
+    pass or a saved annotation also exists.
+    """
+    if source is not None and source not in _SOURCE_BY_TAG:
+        raise HTTPException(
+            400, f"Unknown source {source!r}; expected one of {[s.tag for s in _SOURCES]}"
+        )
+    candidates = (_SOURCE_BY_TAG[source],) if source else _SOURCES
+
     # Try local files first
-    path = ANNOTATIONS_DIR / name
-    source = "rally-annotations"
-    if not path.exists() or not path.is_file():
-        path = PRE_ANNOTATIONS_DIR / name
-        source = "rally-pre-annotations"
-    if path.exists() and path.is_file():
-        try:
-            data = _read_jsonl_as_dict(path)
-            data["source"] = source
+    for candidate in candidates:
+        path = candidate.directory / name
+        if path.exists() and path.is_file():
+            try:
+                data = _read_jsonl_as_dict(path)
+            except json.JSONDecodeError:
+                raise HTTPException(400, "Invalid JSONL file")
+            data["source"] = candidate.r2_category
             return data
-        except json.JSONDecodeError:
-            raise HTTPException(400, "Invalid JSONL file")
 
     # Fallback: download from R2 and cache locally.
     # boto3 is synchronous, so run in a thread to avoid blocking the event loop.
     if r2_client.configured:
-        for category in ("rally-annotations", "rally-pre-annotations"):
-            r2_key = f"{category}/{name}"
+        for candidate in candidates:
+            r2_key = f"{candidate.r2_category}/{name}"
             exists = await asyncio.to_thread(r2_client.object_exists, r2_key)
             if exists:
-                local_dir = ANNOTATIONS_DIR if category == "rally-annotations" else PRE_ANNOTATIONS_DIR
-                local_dir.mkdir(parents=True, exist_ok=True)
-                local_path = local_dir / name
+                candidate.directory.mkdir(parents=True, exist_ok=True)
+                local_path = candidate.directory / name
                 await asyncio.to_thread(r2_client.download_file, r2_key, local_path)
                 data = _read_jsonl_as_dict(local_path)
-                data["source"] = category
+                data["source"] = candidate.r2_category
                 return data
 
     raise HTTPException(404, "Results file not found")
@@ -195,6 +226,113 @@ async def save_annotations(req: SaveAnnotationsRequest) -> dict:
     sync_to_r2(output_path, "rally-annotations")
 
     return {"saved": str(output_path), "count": len(req.annotations)}
+
+
+# ── Rally clip download ──────────────────────────────────────────────────
+#
+# Cut the source video into mp4 clips at the rally annotation boundaries, so
+# a reviewer can download the actual rally footage (single clip or a zip).
+
+# Global cap on concurrent FFmpeg cuts, matching the Cut page's policy — each
+# FFmpeg process is CPU-heavy and more than 2 at once just thrash the VM.
+_CLIP_SEMAPHORE = asyncio.Semaphore(2)
+
+
+class ClipSegment(BaseModel):
+    start: float
+    end: float
+    label: str = "rally"
+
+
+class ClipRequest(BaseModel):
+    video: str
+    segment: ClipSegment
+
+
+class ClipZipRequest(BaseModel):
+    video: str
+    segments: list[ClipSegment]
+
+
+def _resolve_clip_source(video: str) -> Path:
+    """Resolve an annotation's stored video path to a real file on disk.
+
+    Annotation files store the source video as the path it was cut from.
+    Accept either an absolute path or a bare filename resolved against the
+    cut dirs. The file must be present locally — FFmpeg needs to read it.
+    """
+    p = Path(video)
+    if p.is_absolute() and p.is_file():
+        return p
+    found = find_cut(p.name)
+    if found is not None:
+        return found
+    raise HTTPException(
+        404,
+        f"Source video not found locally: {video}. "
+        "The cut video must be on this machine to export clips.",
+    )
+
+
+def _clip_name(stem: str, seg: ClipSegment, idx: int) -> str:
+    """Stable, sortable clip filename: <video>_<label>NNN_<start>-<end>.mp4."""
+    return f"{stem}_{seg.label}{idx:03d}_{int(seg.start)}-{int(seg.end)}.mp4"
+
+
+async def _cut(source: Path, seg: ClipSegment, out: Path) -> None:
+    """Stream-copy one segment, surfacing FFmpeg failures as HTTP 500."""
+    if seg.end <= seg.start:
+        raise HTTPException(400, f"Segment end must be after start ({seg.start}–{seg.end})")
+    try:
+        async with _CLIP_SEMAPHORE:
+            # copy=True: stream copy, fast but cuts at the nearest keyframe —
+            # same trade-off the Cut page uses for segment export.
+            await export_segment(source, seg.start, seg.end, out, copy=True)
+    except FFmpegError as e:
+        raise HTTPException(500, f"Clip export failed: {e}")
+
+
+@router.post("/clip")
+async def cut_clip(req: ClipRequest):
+    """Cut a single rally segment and return it as an mp4 download."""
+    source = _resolve_clip_source(req.video)
+    tmp = Path(tempfile.mkdtemp(prefix="rally-clip-"))
+    out = tmp / _clip_name(source.stem, req.segment, 1)
+    try:
+        await _cut(source, req.segment, out)
+    except BaseException:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
+    # BackgroundTask removes the temp dir after the response is fully sent.
+    return FileResponse(
+        out, media_type="video/mp4", filename=out.name,
+        background=BackgroundTask(shutil.rmtree, tmp, ignore_errors=True),
+    )
+
+
+@router.post("/clip-zip")
+async def cut_clip_zip(req: ClipZipRequest):
+    """Cut multiple rally segments and bundle them into one zip."""
+    if not req.segments:
+        raise HTTPException(400, "No segments selected")
+    source = _resolve_clip_source(req.video)
+    tmp = Path(tempfile.mkdtemp(prefix="rally-clips-"))
+    try:
+        buf = io.BytesIO()
+        # ZIP_STORED — mp4 is already compressed, deflating just burns CPU.
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as zf:
+            for i, seg in enumerate(req.segments, 1):
+                out = tmp / _clip_name(source.stem, seg, i)
+                await _cut(source, seg, out)
+                zf.write(out, out.name)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    return Response(
+        buf.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="rally-clips.zip"'},
+    )
 
 
 class PublishRequest(BaseModel):

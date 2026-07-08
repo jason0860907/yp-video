@@ -39,12 +39,16 @@ def ensure_action_frame_cache(
     cache_root: Path = ACTION_FRAMES_DIR,
     expected_frames: int | None = None,
     height: int = FRAME_HEIGHT,
+    fps: float | None = None,
     overwrite: bool = False,
 ) -> dict:
     """Ensure a 0-based JPEG frame cache exists for ``video_path``.
 
     The output layout matches ``yp_spot.train``:
     ``<cache_root>/<video_stem>/000000.jpg``.
+
+    ``fps`` resamples the extraction to that rate (rally segment training uses
+    a reduced-fps cache); ``None`` keeps every native frame.
     """
 
     video_path = Path(video_path)
@@ -59,6 +63,7 @@ def ensure_action_frame_cache(
             output_dir=output_dir,
             expected_frames=expected_frames,
             height=height,
+            fps=fps,
             overwrite=overwrite,
         )
 
@@ -70,6 +75,7 @@ def _ensure_action_frame_cache_locked(
     output_dir: Path,
     expected_frames: int | None,
     height: int,
+    fps: float | None,
     overwrite: bool,
 ) -> dict:
     if not overwrite:
@@ -78,6 +84,7 @@ def _ensure_action_frame_cache_locked(
             cache_root=cache_root,
             expected_frames=expected_frames,
             height=height,
+            fps=fps,
         )
         if cached["ready"]:
             return {**cached, "created": False}
@@ -88,6 +95,7 @@ def _ensure_action_frame_cache_locked(
         shutil.rmtree(tmp_dir)
     tmp_dir.mkdir(parents=True)
 
+    vf = f"scale=-2:{height}" if fps is None else f"fps={fps:g},scale=-2:{height}"
     cmd = [
         "ffmpeg",
         "-hide_banner",
@@ -101,7 +109,7 @@ def _ensure_action_frame_cache_locked(
         "-an",
         "-sn",
         "-vf",
-        f"scale=-2:{height}",
+        vf,
         "-q:v",
         "3",
         "-vsync",
@@ -132,6 +140,7 @@ def _ensure_action_frame_cache_locked(
         "source_size": source_stat.st_size,
         "source_mtime_ns": source_stat.st_mtime_ns,
         "height": height,
+        "fps": fps,
         "frame_count": frame_count,
         "expected_frames": expected_frames,
         "created_at": time.time(),
@@ -169,6 +178,7 @@ def inspect_action_frame_cache(
     cache_root: Path = ACTION_FRAMES_DIR,
     expected_frames: int | None = None,
     height: int = FRAME_HEIGHT,
+    fps: float | None = None,
 ) -> dict:
     output_dir = action_frame_dir(Path(video_path), cache_root=cache_root)
     metadata = _read_metadata(output_dir)
@@ -190,6 +200,7 @@ def inspect_action_frame_cache(
             metadata.get("source_size") == source_stat.st_size
             and metadata.get("source_mtime_ns") == source_stat.st_mtime_ns
             and metadata.get("height") == height
+            and metadata.get("fps") == fps
             and metadata.get("frame_count") == frame_count
         )
 
@@ -211,6 +222,7 @@ def ensure_action_frame_caches(
     items: list[tuple[Path, int | None]],
     *,
     cache_root: Path = ACTION_FRAMES_DIR,
+    fps: float | None = None,
     progress: Callable[[int, int, str], None] | None = None,
 ) -> dict:
     created = 0
@@ -225,6 +237,7 @@ def ensure_action_frame_caches(
             video_path,
             cache_root=cache_root,
             expected_frames=expected_frames,
+            fps=fps,
         )
         created += int(bool(info.get("created")))
         reused += int(not info.get("created"))

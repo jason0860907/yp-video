@@ -24,6 +24,7 @@ from .action import (
     LABEL_FILE_GLOB,
     ActionEvent,
     ActionLabelRecord,
+    SegmentLabelEvent,
 )
 from .detector import (
     DetectorInput,
@@ -71,7 +72,11 @@ def build_schema() -> dict:
 
 def build_action_schema() -> dict:
     _, schema = models_json_schema(
-        [(ActionLabelRecord, "validation"), (ActionEvent, "validation")],
+        [
+            (ActionLabelRecord, "validation"),
+            (ActionEvent, "validation"),
+            (SegmentLabelEvent, "validation"),
+        ],
         ref_template="#/$defs/{model}",
         schema_generator=GenerateJsonSchema,
     )

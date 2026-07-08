@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "YP Action-Spotting Label Contract",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Source of truth for the *_actions.jsonl label records and frame cache layout exchanged between yp-video (producer) and yp-spot (consumer). Generated from yp_video/contracts/action.py via make_schema.py \u2014 do not edit by hand. yp-spot mirrors these constants in yp_spot/contract.py under the same version.",
   "x-frame-layout": {
     "height": 224,
@@ -86,6 +86,36 @@
         "num_frames"
       ],
       "title": "ActionLabelRecord",
+      "type": "object"
+    },
+    "SegmentLabelEvent": {
+      "additionalProperties": false,
+      "description": "A label covering a contiguous frame span (e.g. one rally), inclusive.\n\nSegment label files (rally training) reuse the ``ActionLabelRecord`` layout\nwith these events instead of point actions; yp-spot fills every frame of the\nspan with the class during training and evaluates with segment mAP.",
+      "properties": {
+        "frame": {
+          "description": "0-based first frame of the span",
+          "minimum": 0,
+          "title": "Frame",
+          "type": "integer"
+        },
+        "end_frame": {
+          "description": "0-based last frame of the span, inclusive",
+          "minimum": 0,
+          "title": "End Frame",
+          "type": "integer"
+        },
+        "label": {
+          "description": "Segment class, e.g. 'rally'",
+          "title": "Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "frame",
+        "end_frame",
+        "label"
+      ],
+      "title": "SegmentLabelEvent",
       "type": "object"
     }
   }

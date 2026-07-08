@@ -25,7 +25,6 @@ from yp_video.config import (
     ACTION_WAVEFORMS_DIR,
     CUT_R2_CATEGORIES,
     PRE_ANNOTATIONS_DIR,
-    PREDICTIONS_DIR,
     SPOT_DIR,
     cut_kind_of,
     find_cut,
@@ -143,12 +142,9 @@ def _active_annotation_path(video_name: str) -> Path:
 
 
 def _rally_annotation_path(video_name: str) -> Path | None:
-    # Priority: manual rally annotations, then rally pre-annotations, then
-    # tad-predictions (also a rally pre-annotation, but lower quality) as a
-    # last-resort fallback so Action Label still works when only raw TAD
-    # predictions exist.
+    # Priority: manual rally annotations, then rally pre-annotations.
     filename = f"{Path(video_name).stem}_annotations.jsonl"
-    for directory in (ANNOTATIONS_DIR, PRE_ANNOTATIONS_DIR, PREDICTIONS_DIR):
+    for directory in (ANNOTATIONS_DIR, PRE_ANNOTATIONS_DIR):
         path = directory / filename
         if path.exists():
             return path
@@ -162,8 +158,6 @@ def _rally_sources(video_name: str) -> list[str]:
         sources.append("annotation")
     if (PRE_ANNOTATIONS_DIR / filename).exists():
         sources.append("pre-annotation")
-    if (PREDICTIONS_DIR / filename).exists():
-        sources.append("tad-prediction")
     return sources
 
 
@@ -648,27 +642,13 @@ def _spot_progress_fraction(data: dict, *, start: float, span: float, cap: float
     return min(cap, start + span * prelabel.spot_progress_fraction(data))
 
 
-def _spot_progress_message(data: dict) -> str:
-    end_frame = int(data.get("end_frame") or 0)
-    total_frames = int(data.get("total_frames") or 0)
-    batch_done = int(data.get("batch_done") or 0)
-    batch_total = int(data.get("batch_total") or 0)
-    clips_done = int(data.get("clips_done") or 0)
-    clips_total = int(data.get("clips_total") or 0)
-    frame_text = f"frame {min(end_frame, total_frames)}/{total_frames}" if total_frames > 0 else ""
-    batch_text = f"batch {batch_done}/{batch_total}" if batch_total > 0 else ""
-    clip_text = f"clip {clips_done}/{clips_total}" if clips_total > 0 else ""
-    parts = [part for part in (batch_text, clip_text, frame_text) if part]
-    return "SPOT inference " + " · ".join(parts)
-
-
 def _spot_app_log_line(job_id: str, line: str) -> str | None:
     if line.startswith(SPOT_PROGRESS_PREFIX):
         data = prelabel.parse_spot_progress(line.removeprefix(SPOT_PROGRESS_PREFIX))
         if data is None:
             return None
         video = data.get("video_basename") or Path(str(data.get("video") or "")).name
-        return f"[SPOT {job_id}] {video}: {_spot_progress_message(data)}"
+        return f"[SPOT {job_id}] {video}: {prelabel.spot_progress_message(data)}"
     if line.startswith("Starting inference"):
         return f"[SPOT {job_id}] {line}"
     if line.startswith("Timing "):
@@ -909,7 +889,7 @@ async def start_spot_prelabel(req: SpotPrelabelRequest) -> dict:
                     return None
                 return {
                     "progress": _spot_progress_fraction(data, start=0.08, span=0.82, cap=0.9),
-                    "message": _spot_progress_message(data),
+                    "message": prelabel.spot_progress_message(data),
                 }
 
             parsers = [
@@ -1231,7 +1211,7 @@ async def _run_prelabel_batch_subprocess(
                     if data is None:
                         return None
                     item_progress = _spot_progress_fraction(data, start=0.12, span=0.78, cap=0.9)
-                    message = _spot_progress_message(data)
+                    message = prelabel.spot_progress_message(data)
                     asyncio.create_task(
                         _update_batch_item(
                             job_id,

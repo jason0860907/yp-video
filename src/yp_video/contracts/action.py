@@ -22,7 +22,7 @@ from enum import Enum
 from pydantic import BaseModel, Field
 
 # Bump on ANY breaking change to the label record, frame layout, or label set.
-ACTION_CONTRACT_VERSION = "1.0.0"
+ACTION_CONTRACT_VERSION = "1.1.0"
 
 # Env var carrying ACTION_CONTRACT_VERSION from producer to consumer.
 ACTION_CONTRACT_VERSION_ENV = "YP_ACTION_CONTRACT_VERSION"
@@ -79,6 +79,21 @@ class ActionEvent(BaseModel):
         description="Normalized [x, y] court location, each in [0, 1]",
     )
     visible: bool = Field(default=True, description="Whether the action is visible on screen")
+
+
+class SegmentLabelEvent(BaseModel):
+    """A label covering a contiguous frame span (e.g. one rally), inclusive.
+
+    Segment label files (rally training) reuse the ``ActionLabelRecord`` layout
+    with these events instead of point actions; yp-spot fills every frame of the
+    span with the class during training and evaluates with segment mAP.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    frame: int = Field(ge=0, description="0-based first frame of the span")
+    end_frame: int = Field(ge=0, description="0-based last frame of the span, inclusive")
+    label: str = Field(description="Segment class, e.g. 'rally'")
 
 
 class ActionLabelRecord(BaseModel):

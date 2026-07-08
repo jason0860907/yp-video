@@ -9,8 +9,6 @@ import os
 import re
 import shutil
 import traceback
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -38,33 +36,22 @@ from yp_video.contracts.action import (
 from yp_video.action.frames import ensure_action_frame_caches, inspect_action_frame_cache
 from yp_video.action.prelabel import resolve_checkpoint_path
 from yp_video.core.jsonl import read_jsonl, write_jsonl
-from yp_video.web.job_helpers import ProgressParser, stop_vllm_for_job, stream_subprocess
+from yp_video.web.job_helpers import stop_vllm_for_job, stream_subprocess
 from yp_video.web.jobs import JobStatus, job_manager
+from yp_video.web.spot_runs import (
+    PackageExporter,
+    TrainProgress,
+    checkpoint_package_options,
+    export_checkpoint_package,
+    last_resumable_epoch,
+    make_train_parsers,
+    performance_payload,
+    resumable_run_options,
+    validate_checkpoint_dir,
+)
 
 log = logging.getLogger(__name__)
 router = APIRouter()
-
-
-@dataclass(slots=True)
-class _TrainProgress:
-    """Mutable running state for a SPOT training job's progress parsers.
-
-    A dataclass (not a dict) so a mis-typed field raises AttributeError instead
-    of silently creating a dead key — the parsers below all mutate this from
-    different regex callbacks.
-    """
-
-    epochs: int
-    completed_epoch: int = -1
-    current_epoch: int = 0
-    train_total: int = 0
-    latest_train_loss: float | None = None
-    latest_val_loss: float | None = None
-    latest_val_map: float | None = None
-    latest_val_breakdown: dict | None = None
-    best_epoch: int | None = None
-    best_value: float | None = None
-    best_breakdown: dict | None = None
 
 
 class ActionTrainRequest(BaseModel):
@@ -153,24 +140,17 @@ def _resolve_save_dir(req: ActionTrainRequest, dataset: str | None = None) -> Pa
 
 
 def _action_checkpoint_path(path: str | Path) -> Path:
-    return _validate_action_checkpoint_dir(resolve_checkpoint_path(path))
-
-
-def _validate_action_checkpoint_dir(path: Path) -> Path:
-    root = ACTION_CHECKPOINTS_DIR.resolve()
-    resolved = path.expanduser().resolve()
-    if resolved.parent != root:
-        raise HTTPException(
-            400,
-            f"Checkpoint dir must be directly under {ACTION_CHECKPOINTS_DIR}",
-        )
-    return resolved
+    return validate_checkpoint_dir(
+        resolve_checkpoint_path(path), root=ACTION_CHECKPOINTS_DIR
+    )
 
 
 def _resolve_checkpoint_dir(req: ActionTrainRequest, *, save_dir: Path) -> Path:
     if req.checkpoint_dir:
         return _action_checkpoint_path(req.checkpoint_dir)
-    return _validate_action_checkpoint_dir(ACTION_CHECKPOINTS_DIR / save_dir.name)
+    return validate_checkpoint_dir(
+        ACTION_CHECKPOINTS_DIR / save_dir.name, root=ACTION_CHECKPOINTS_DIR
+    )
 
 
 def _count_jsonl_records(path: Path) -> tuple[int, int]:
@@ -540,26 +520,6 @@ def _audio_precompute_command(
     ]
 
 
-def _load_json_file(path: Path) -> dict | list | None:
-    if not path.exists():
-        return None
-    try:
-        with path.open(encoding="utf-8") as f:
-            return json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return None
-
-
-def _reset_checkpoint_package_dir(package_dir: Path) -> None:
-    package_dir = _validate_action_checkpoint_dir(package_dir)
-    package_dir.mkdir(parents=True, exist_ok=True)
-    for child in package_dir.iterdir():
-        if child.is_dir() and not child.is_symlink():
-            shutil.rmtree(child)
-        else:
-            child.unlink(missing_ok=True)
-
-
 def _export_action_checkpoint_package(
     *,
     run_dir: Path,
@@ -568,50 +528,14 @@ def _export_action_checkpoint_package(
     cmd: list[str],
     label_summary: dict | None,
 ) -> dict:
-    best_checkpoint = run_dir / "checkpoint_best.pt"
-    if not best_checkpoint.exists():
-        raise RuntimeError(f"checkpoint_best.pt was not found in {run_dir}")
-
-    _reset_checkpoint_package_dir(package_dir)
-
-    copied: list[str] = []
-    for name in (
-        "checkpoint_best.pt",
-        "checkpoint_best.json",
-        "config.json",
-        "metrics.jsonl",
-        "loss.json",
-        "terminal.log",
-    ):
-        src = run_dir / name
-        if src.exists():
-            dst = package_dir / name
-            shutil.copy2(src, dst)
-            copied.append(name)
-
-    src_label_dir = run_dir / "labels" / "action-annotations"
-    if src_label_dir.exists():
-        dst_label_dir = package_dir / "labels" / "action-annotations"
-        dst_label_dir.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(src_label_dir, dst_label_dir)
-        copied.extend(
-            str(path.relative_to(package_dir))
-            for path in sorted(dst_label_dir.glob("*_actions.jsonl"))
-        )
-
-    best = _load_json_file(run_dir / "checkpoint_best.json")
-    config = _load_json_file(run_dir / "config.json")
-    manifest = {
-        "type": "yp-video-action-checkpoint",
-        "version": 1,
-        "created_at": datetime.now().isoformat(timespec="seconds"),
-        "run_name": package_dir.name,
-        "source_run_dir": str(run_dir),
-        "package_dir": str(package_dir),
-        "checkpoint": "checkpoint_best.pt",
-        "best": best if isinstance(best, dict) else None,
-        "config": config if isinstance(config, dict) else None,
-        "training": {
+    return export_checkpoint_package(
+        run_dir=run_dir,
+        package_dir=package_dir,
+        checkpoints_root=ACTION_CHECKPOINTS_DIR,
+        package_type="yp-video-action-checkpoint",
+        label_subdir="action-annotations",
+        label_glob="*_actions.jsonl",
+        training={
             "source": req.source,
             "training_mode": req.training_mode,
             "dataset": req.dataset or _default_dataset(req.source),
@@ -619,25 +543,8 @@ def _export_action_checkpoint_package(
             "init_checkpoint": req.init_checkpoint or "",
             "label_summary": label_summary,
         },
-        "command": cmd,
-        "files": copied,
-        "omitted": [
-            "checkpoint_*.pt",
-            "optim_*.pt",
-            "pred-val.*",
-            "*.recall.json.gz",
-        ],
-    }
-    manifest_path = package_dir / "manifest.json"
-    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    copied.append("manifest.json")
-
-    return {
-        "dir": str(package_dir),
-        "checkpoint": str(package_dir / "checkpoint_best.pt"),
-        "files": copied,
-        "best": manifest["best"],
-    }
+        cmd=cmd,
+    )
 
 
 def _vnl_stats() -> dict:
@@ -666,63 +573,6 @@ def _vnl_stats() -> dict:
     }
 
 
-def _init_checkpoint_options() -> list[dict]:
-    """Selectable init-checkpoint options: packaged action runs.
-
-    Action checkpoints live under ACTION_CHECKPOINTS_DIR/<run>/checkpoint_best.pt
-    and are returned as absolute paths (passed through _spot_path unchanged).
-    """
-    options: list[dict] = []
-    if ACTION_CHECKPOINTS_DIR.exists():
-        for run_dir in sorted(ACTION_CHECKPOINTS_DIR.iterdir(), reverse=True):
-            ckpt = run_dir / "checkpoint_best.pt"
-            if not run_dir.is_dir() or not ckpt.is_file():
-                continue
-            best = _load_json_file(run_dir / "checkpoint_best.json")
-            value = best.get("value") if isinstance(best, dict) else None
-            label = run_dir.name
-            if isinstance(value, (int, float)):
-                label = f"{run_dir.name} (mAP {value:.3f})"
-            options.append({"label": label, "value": str(ckpt)})
-    return options
-
-
-def _last_resumable_epoch(run_dir: Path) -> int | None:
-    """Latest epoch with optimizer state in ``run_dir``, or None if not resumable.
-
-    Mirrors SPOT's ``get_last_epoch`` (globs ``optim_*.pt``): ``--resume`` needs
-    the optimizer/scheduler snapshot, and SPOT prunes all but the latest one.
-    """
-    epochs = [
-        int(m.group(1))
-        for p in run_dir.glob("optim_*.pt")
-        if (m := re.fullmatch(r"optim_(\d+)", p.stem))
-    ]
-    return max(epochs) if epochs else None
-
-
-def _resumable_run_options() -> list[dict]:
-    """Runs under ``exp/`` that ``--resume`` can continue (have optimizer state)."""
-    exp_dir = SPOT_DIR / "exp"
-    if not exp_dir.exists():
-        return []
-    options: list[dict] = []
-    for run_dir in sorted(exp_dir.iterdir(), reverse=True):
-        if not run_dir.is_dir():
-            continue
-        last_epoch = _last_resumable_epoch(run_dir)
-        if last_epoch is None:
-            continue
-        best = _load_json_file(run_dir / "checkpoint_best.json")
-        best_value = best.get("value") if isinstance(best, dict) else None
-        label = f"{run_dir.name} (E{last_epoch + 1}"
-        if isinstance(best_value, (int, float)):
-            label += f", best {best_value:.3f}"
-        label += ")"
-        options.append({"label": label, "value": str(run_dir)})
-    return options
-
-
 def _action_checkpoint_stats() -> dict:
     count = 0
     if ACTION_CHECKPOINTS_DIR.exists():
@@ -747,8 +597,8 @@ def status() -> dict:
         "spot_available": SPOT_DIR.exists() and SPOT_PYTHON.exists(),
         "spot_dir": str(SPOT_DIR),
         "spot_python": str(SPOT_PYTHON),
-        "init_checkpoints": _init_checkpoint_options(),
-        "resumable_runs": _resumable_run_options(),
+        "init_checkpoints": checkpoint_package_options(ACTION_CHECKPOINTS_DIR),
+        "resumable_runs": resumable_run_options(),
         "vnl_1_5": _vnl_stats(),
         "action_annotations": _action_annotation_stats(),
         "action_checkpoints": _action_checkpoint_stats(),
@@ -756,128 +606,10 @@ def status() -> dict:
     }
 
 
-def _normalize_metrics_entry(rec: dict) -> dict:
-    """Flatten one epoch record into the flat shape the UI reads.
-
-    Handles both the new ``metrics.jsonl`` schema (nested ``mAP``/``loss`` +
-    ``lr``/``per_class``) and the legacy ``loss.json`` schema (flat ``val_mAP*``).
-    """
-    if "mAP" in rec:  # new metrics.jsonl schema
-        m = rec.get("mAP") or {}
-        loss = rec.get("loss") or {}
-        return {
-            "epoch": rec.get("epoch"),
-            "lr": rec.get("lr"),
-            "val_mAP": m.get("harmonic", 0),
-            "val_mAP_temporal": m.get("temporal", 0),
-            "val_mAP_spatial": m.get("spatial", 0),
-            "train_loss": loss.get("train"),
-            "val_loss": loss.get("val"),
-            "per_class": rec.get("per_class") or {},
-            "val_per_video": rec.get("per_video") or [],
-        }
-    return {  # legacy loss.json schema
-        "epoch": rec.get("epoch"),
-        "lr": rec.get("lr"),
-        "val_mAP": rec.get("val_mAP", 0),
-        "val_mAP_temporal": rec.get("val_mAP_temporal", 0),
-        "val_mAP_spatial": rec.get("val_mAP_spatial", 0),
-        "train_loss": rec.get("train"),
-        "val_loss": rec.get("val"),
-        "per_class": rec.get("per_class") or {},
-        "val_per_video": rec.get("val_per_video") or [],
-    }
-
-
-def _read_run_metrics(run_dir: Path) -> tuple[dict | None, list[dict]]:
-    """Read a run's per-epoch metrics, preferring metrics.jsonl over loss.json.
-
-    Returns ``(meta, entries)`` where entries are normalized to the flat UI shape.
-    """
-    jsonl = run_dir / "metrics.jsonl"
-    if jsonl.exists():
-        meta: dict | None = None
-        entries: list[dict] = []
-        for line in jsonl.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                rec = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if rec.get("_meta"):
-                meta = rec
-            else:
-                entries.append(_normalize_metrics_entry(rec))
-        return meta, entries
-
-    loss = _load_json_file(run_dir / "loss.json")
-    if isinstance(loss, list):
-        return None, [_normalize_metrics_entry(r) for r in loss]
-    return None, []
-
-
-def _freshest_metrics_dir(package_dir: Path) -> Path:
-    """The dir whose metrics.jsonl is most current for this run.
-
-    The checkpoint package only re-exports on a new best epoch, so mid-run the
-    live training dir (manifest's source_run_dir) is ahead of the package —
-    read it directly whenever it is fresher, so the per-epoch chart advances
-    every epoch instead of every personal best.
-    """
-    manifest = _load_json_file(package_dir / "manifest.json")
-    src_value = manifest.get("source_run_dir") if isinstance(manifest, dict) else None
-    if not src_value:
-        return package_dir
-    live = Path(src_value) / "metrics.jsonl"
-    packaged = package_dir / "metrics.jsonl"
-    try:
-        if live.exists() and (
-            not packaged.exists() or live.stat().st_mtime > packaged.stat().st_mtime
-        ):
-            return live.parent
-    except OSError:
-        pass
-    return package_dir
-
-
 @router.get("/performance")
 def performance(run: str | None = None) -> dict:
-    """Per-epoch validation metrics (lr, mAP, per-class, per-video) for a run.
-
-    Reads ``metrics.jsonl`` (falling back to the legacy ``loss.json``) from an
-    action-checkpoints package. Defaults to the most recently modified run; pass
-    ``run`` to select one by name. ``runs`` lists the runs (newest first).
-    """
-    base = ACTION_CHECKPOINTS_DIR
-    if not base.exists():
-        return {"entries": [], "runs": []}
-
-    def has_metrics(d: Path) -> bool:
-        return (d / "metrics.jsonl").exists() or (d / "loss.json").exists()
-
-    runs = sorted(
-        (d for d in base.iterdir() if d.is_dir() and has_metrics(d)),
-        key=lambda d: d.stat().st_mtime,
-        reverse=True,
-    )
-    if not runs:
-        return {"entries": [], "runs": []}
-
-    run_dir = (base / run) if run else runs[0]
-    if not has_metrics(run_dir):
-        raise HTTPException(404, f"No metrics for run {run_dir.name!r}")
-
-    meta, entries = _read_run_metrics(_freshest_metrics_dir(run_dir))
-    best = _load_json_file(run_dir / "checkpoint_best.json")
-    return {
-        "run": run_dir.name,
-        "meta": meta,
-        "best": best if isinstance(best, dict) else None,
-        "entries": entries,
-        "runs": [d.name for d in runs],
-    }
+    """Per-epoch validation metrics for an action-checkpoints run."""
+    return performance_payload(ACTION_CHECKPOINTS_DIR, run)
 
 
 def _build_command(
@@ -969,7 +701,7 @@ def _build_command(
     if req.predict_location:
         cmd.append("--predict_location")
     if req.resume:
-        if _last_resumable_epoch(save_dir) is None:
+        if last_resumable_epoch(save_dir) is None:
             raise HTTPException(
                 400,
                 f"Cannot resume: no optimizer checkpoint (optim_*.pt) in {save_dir}",
@@ -1065,7 +797,7 @@ async def start(req: ActionTrainRequest) -> dict:
     )
 
     async def run_job() -> None:
-        checkpoint_exporter: Callable[..., Awaitable[dict | None]] | None = None
+        exporter: PackageExporter | None = None
         try:
             await job_manager.update_job(job.id, status="running", message="Preparing action training...")
             frame_dir = _spot_path(req.frame_dir or _default_frame_dir(req.source))
@@ -1156,179 +888,30 @@ async def start(req: ActionTrainRequest) -> dict:
             async with stop_vllm_for_job(job.id, when=req.stop_vllm):
                 async with job_manager.gpu_lock:
                     await job_manager.update_job(job.id, message="Starting SPOT training...")
-                    ctx = _TrainProgress(epochs=req.num_epochs)
-                    checkpoint_export_lock = asyncio.Lock()
-                    checkpoint_export_tasks: set[asyncio.Task] = set()
+                    ctx = TrainProgress(epochs=req.num_epochs)
+                    exporter = PackageExporter(
+                        job.id,
+                        resolved_save_dir,
+                        lambda: _export_action_checkpoint_package(
+                            run_dir=resolved_save_dir,
+                            package_dir=checkpoint_dir,
+                            req=req,
+                            cmd=cmd,
+                            label_summary=label_summary,
+                        ),
+                    )
 
-                    def training_params(**extra) -> dict:
-                        return {
-                            "action_train_progress": {
-                                "epoch": ctx.current_epoch,
-                                "epoch_display": ctx.current_epoch + 1,
-                                "epochs": max(1, ctx.epochs),
-                                "completed_epoch": ctx.completed_epoch,
-                                "latest_train_loss": ctx.latest_train_loss,
-                                "latest_val_loss": ctx.latest_val_loss,
-                                "latest_val_map": ctx.latest_val_map,
-                                "latest_val_breakdown": ctx.latest_val_breakdown,
-                                "best_epoch": ctx.best_epoch,
-                                "best_value": ctx.best_value,
-                                "best_breakdown": ctx.best_breakdown,
-                                **extra,
-                            }
-                        }
-
-                    def phase_progress(epoch: int, phase: str, step: int, total: int) -> float:
-                        phase_offsets = {"train": 0.0, "val": 0.78, "map": 0.94}
-                        phase_weights = {"train": 0.78, "val": 0.16, "map": 0.06}
-                        frac = step / max(1, total)
-                        epoch_frac = phase_offsets[phase] + phase_weights[phase] * frac
-                        total_epochs = max(1, ctx.epochs)
-                        return min(0.99, 0.2 + 0.79 * ((epoch + epoch_frac) / total_epochs))
-
-                    def on_epoch(match: re.Match) -> dict:
-                        epoch = int(match.group(1))
-                        ctx.completed_epoch = max(ctx.completed_epoch, epoch)
-                        ctx.current_epoch = epoch
-                        return {
-                            "params": training_params(
-                                phase="summary",
-                                phase_label="Epoch summary",
-                            ),
-                        }
-
-                    def on_config_epochs(match: re.Match) -> dict | None:
-                        ctx.epochs = int(match.group(1))
-                        return None
-
-                    def on_tqdm(match: re.Match) -> dict:
-                        step = int(match.group("step"))
-                        total = int(match.group("total"))
-                        tail = match.group("tail") or ""
-                        if "sum=" in tail:
-                            if total >= int(ctx.train_total or 0):
-                                ctx.train_total = total
-                                phase = "train"
-                                epoch = max(0, int(ctx.completed_epoch) + 1)
-                            else:
-                                phase = "val"
-                                epoch = max(0, int(ctx.current_epoch))
-                        else:
-                            phase = "map"
-                            epoch = max(0, int(ctx.current_epoch))
-
-                        ctx.current_epoch = epoch
-                        phase_label = {
-                            "train": "Training",
-                            "val": "Validation loss",
-                            "map": "mAP evaluation",
-                        }[phase]
-                        loss_match = re.search(r"sum=([0-9.]+)", tail)
-                        current_loss = float(loss_match.group(1)) if loss_match else None
-                        pct = int(step * 100 / max(1, total))
-                        total_epochs = max(1, ctx.epochs)
-                        return {
-                            "progress": phase_progress(epoch, phase, step, total),
-                            "message": (
-                                f"Epoch {epoch + 1}/{total_epochs} - "
-                                f"{phase_label} {step}/{total} ({pct}%)"
-                            ),
-                            "params": training_params(
-                                phase=phase,
-                                phase_label=phase_label,
-                                step=step,
-                                total=total,
-                                phase_progress=step / max(1, total),
-                                current_loss=current_loss,
-                            ),
-                        }
-
-                    def on_train_loss(match: re.Match) -> dict:
-                        ctx.latest_train_loss = float(match.group(4))
-                        return {"params": training_params()}
-
-                    def on_val_loss(match: re.Match) -> dict:
-                        ctx.latest_val_loss = float(match.group(4))
-                        return {"params": training_params()}
-
-                    def on_val_map(match: re.Match) -> dict:
-                        ctx.latest_val_map = float(match.group(1)) / 100.0
-                        return {"params": training_params()}
-
-                    def on_val_metrics(match: re.Match) -> dict | None:
-                        try:
-                            ctx.latest_val_breakdown = json.loads(match.group(1))
-                        except json.JSONDecodeError:
-                            return None
-                        return {"params": training_params()}
-
-                    async def export_checkpoint_package_once(
-                        *,
-                        expected_epoch: int | None,
-                        reason: str,
-                        update_job: bool = True,
-                    ) -> dict | None:
-                        for _ in range(120):
-                            best = _load_json_file(resolved_save_dir / "checkpoint_best.json")
-                            best_epoch = best.get("epoch") if isinstance(best, dict) else None
-                            ready = (
-                                (resolved_save_dir / "checkpoint_best.pt").exists()
-                                and isinstance(best_epoch, int)
-                                and (expected_epoch is None or best_epoch == expected_epoch)
-                            )
-                            if ready:
-                                async with checkpoint_export_lock:
-                                    summary = await asyncio.to_thread(
-                                        _export_action_checkpoint_package,
-                                        run_dir=resolved_save_dir,
-                                        package_dir=checkpoint_dir,
-                                        req=req,
-                                        cmd=cmd,
-                                        label_summary=label_summary,
-                                    )
-                                if update_job:
-                                    await job_manager.update_job(
-                                        job.id,
-                                        params={
-                                            **job.params,
-                                            "checkpoint_package": summary,
-                                            "checkpoint_package_reason": reason,
-                                        },
-                                    )
-                                return summary
-                            await asyncio.sleep(0.5)
-
-                        log.warning(
-                            "Timed out waiting to export action checkpoint package "
-                            "for %s (expected_epoch=%s, run_dir=%s)",
-                            reason,
-                            expected_epoch,
-                            resolved_save_dir,
-                        )
-                        return None
-
-                    checkpoint_exporter = export_checkpoint_package_once
-
-                    def schedule_checkpoint_export(expected_epoch: int | None, reason: str) -> None:
-                        task = asyncio.create_task(
-                            export_checkpoint_package_once(
-                                expected_epoch=expected_epoch,
-                                reason=reason,
-                            )
-                        )
-                        checkpoint_export_tasks.add(task)
-                        task.add_done_callback(checkpoint_export_tasks.discard)
-
-                    def on_new_best(_match: re.Match) -> dict:
-                        ctx.best_epoch = ctx.current_epoch
-                        ctx.best_value = (
-                            ctx.latest_val_map
-                            if req.criterion == "map"
-                            else ctx.latest_val_loss
-                        )
-                        ctx.best_breakdown = ctx.latest_val_breakdown
-                        schedule_checkpoint_export(ctx.best_epoch, "new_best")
-                        return {"params": training_params()}
+                    parsers, is_key_line = make_train_parsers(
+                        ctx,
+                        params_key="action_train_progress",
+                        criterion=req.criterion,
+                        headline_pattern=(
+                            r"Harmonic mean \(temporal and spatial mAPs\):\s*([0-9.]+)%"
+                        ),
+                        on_new_best=lambda: exporter.schedule(
+                            ctx.best_epoch, "new_best"
+                        ),
+                    )
 
                     env = {
                         **os.environ,
@@ -1346,45 +929,16 @@ async def start(req: ActionTrainRequest) -> dict:
                         cmd,
                         cwd=SPOT_DIR,
                         env=env,
-                        parsers=[
-                            ProgressParser(r'"num_epochs":\s*(\d+)', on_config_epochs),
-                            ProgressParser(
-                                r"(?P<pct>\d+)%\|.*?\|\s*(?P<step>\d+)/(?P<total>\d+)\s*\[[^\]]+\](?P<tail>.*)",
-                                on_tqdm,
-                            ),
-                            ProgressParser(r"Epoch:\s*(\d+)", on_epoch),
-                            ProgressParser(
-                                r"Train loss\s+([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)",
-                                on_train_loss,
-                            ),
-                            ProgressParser(
-                                r"Val loss\s+([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)",
-                                on_val_loss,
-                            ),
-                            ProgressParser(
-                                r"Harmonic mean \(temporal and spatial mAPs\):\s*([0-9.]+)%",
-                                on_val_map,
-                            ),
-                            ProgressParser(r"SPOT_METRICS (\{.*\})", on_val_metrics),
-                            ProgressParser(r"New best epoch!", on_new_best),
-                        ],
-                        is_key_line=lambda line: (
-                            "Epoch:" in line
-                            or "Best epoch" in line
-                            or "New best epoch" in line
-                            or "Harmonic mean" in line
-                            or "SPOT_METRICS" in line
-                            or "Train loss" in line
-                            or "Val loss" in line
-                        ),
+                        parsers=parsers,
+                        is_key_line=is_key_line,
                         tee_to_terminal=True,
                         terminal_prefix="[action-train] ",
                         log_path=resolved_save_dir / "terminal.log",
                     )
             if rc == 0:
-                if checkpoint_exporter is None:
+                if exporter is None:
                     raise RuntimeError("Checkpoint package exporter was not initialized")
-                checkpoint_summary = await checkpoint_exporter(
+                checkpoint_summary = await exporter.export_once(
                     expected_epoch=None,
                     reason="completed",
                     update_job=False,
@@ -1402,9 +956,9 @@ async def start(req: ActionTrainRequest) -> dict:
                 raise RuntimeError(last_line or f"SPOT training exited with code {rc}")
         except asyncio.CancelledError:
             checkpoint_summary = None
-            if checkpoint_exporter is not None:
+            if exporter is not None:
                 try:
-                    checkpoint_summary = await checkpoint_exporter(
+                    checkpoint_summary = await exporter.export_once(
                         expected_epoch=None,
                         reason="cancelled",
                         update_job=False,
@@ -1426,9 +980,9 @@ async def start(req: ActionTrainRequest) -> dict:
             log.error("Action training failed:\n%s", tb)
             job_obj = job_manager.get_job(job.id)
             checkpoint_summary = None
-            if checkpoint_exporter is not None:
+            if exporter is not None:
                 try:
-                    checkpoint_summary = await checkpoint_exporter(
+                    checkpoint_summary = await exporter.export_once(
                         expected_epoch=None,
                         reason="failed",
                         update_job=False,

@@ -83,6 +83,18 @@ def _build_up_chain(before: list[dict]) -> list[dict]:
     return chain
 
 
+def _rally_bounds(rallies: Sequence[dict]) -> list[tuple[float, float]]:
+    """``(start, end)`` seconds per rally, timeline-sorted."""
+    return sorted(
+        (
+            (float(r["start"]), float(r["end"]))
+            for r in rallies
+            if r.get("start") is not None and r.get("end") is not None
+        ),
+        key=lambda b: b[0],
+    )
+
+
 def build_action_segments(
     events: Sequence[dict],
     rallies: Sequence[dict],
@@ -94,9 +106,9 @@ def build_action_segments(
 
     Args:
         events: SPOT action events (``{frame|time, label, xy, ...}``).
-        rallies: rally dicts carrying a ``segment`` ``[start, end]`` in seconds
-            (the worker's TAD detections work directly). Indexed 1-based in
-            timeline order to match the public rally numbering.
+        rallies: rally dicts carrying ``start`` / ``end`` in seconds (the SPOT
+            rally segments work directly). Indexed 1-based in timeline order
+            to match the public rally numbering.
         fps: frame rate used to convert event frames to seconds.
         anchor: action label to anchor on (default ``"spike"`` — parametric so
             ``"block"`` / ``"serve"`` highlight reels come for free later).
@@ -111,17 +123,10 @@ def build_action_segments(
         ({**e, "_t": _event_time(e, fps)} for e in events),
         key=lambda e: e["_t"],
     )
-    bounds = sorted(
-        (
-            (float(r["segment"][0]), float(r["segment"][1]))
-            for r in rallies
-            if r.get("segment")
-        ),
-        key=lambda b: b[0],
-    )
+    bounds = _rally_bounds(rallies)
 
     def _rally_of(t: float) -> tuple[int, float, float] | None:
-        # 1-based index in timeline order, matching _detections_to_rallies.
+        # 1-based index in timeline order, matching the worker's rally numbering.
         for i, (s, e) in enumerate(bounds, start=1):
             if s <= t <= e:
                 return i, s, e
@@ -190,7 +195,7 @@ def build_score_segments(
 
     Args:
         events: SPOT action events (``{frame|time, label, xy, ...}``).
-        rallies: rally dicts carrying a ``segment`` ``[start, end]`` in seconds.
+        rallies: rally dicts carrying ``start`` / ``end`` in seconds.
         fps: frame rate used to convert event frames to seconds.
         anchor: action label to anchor on (default ``"score"``).
 
@@ -207,14 +212,7 @@ def build_score_segments(
         ({**e, "_t": _event_time(e, fps)} for e in events),
         key=lambda e: e["_t"],
     )
-    bounds = sorted(
-        (
-            (float(r["segment"][0]), float(r["segment"][1]))
-            for r in rallies
-            if r.get("segment")
-        ),
-        key=lambda b: b[0],
-    )
+    bounds = _rally_bounds(rallies)
 
     def _rally_of(t: float) -> tuple[int, float, float] | None:
         for i, (s, e) in enumerate(bounds, start=1):

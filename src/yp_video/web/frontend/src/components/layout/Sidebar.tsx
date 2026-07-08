@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { NavLink } from 'react-router-dom';
 import { API, apiFetch } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { usePresence } from '@/lib/usePresence';
 import { Icon } from '@/components/ui/Icon';
 import type { ActiveCount, SystemStats, VllmStatus } from '@/types/api';
 import { NAV } from './nav';
@@ -20,8 +21,6 @@ const STAT_ROWS: Array<[label: string, key: keyof SystemStats]> = [
   ['Rally Labels', 'annotations'],
   ['Action-Pred', 'action_pre_annotations'],
   ['Action Labels', 'actions'],
-  ['VJEPA-B', 'vjepa_b'],
-  ['TAD-Pred', 'predictions'],
 ];
 
 export function Sidebar() {
@@ -40,6 +39,7 @@ export function Sidebar() {
     queryFn: () => apiFetch<ActiveCount>(API.jobs.activeCount),
     refetchInterval: 30_000,
   });
+  const presence = usePresence();
 
   const jobCount = jobs.data?.count ?? 0;
   const vllmUi = VLLM_UI[vllm.data?.status ?? 'stopped'];
@@ -89,6 +89,22 @@ export function Sidebar() {
           <span className={cn('h-2 w-2 flex-shrink-0 rounded-full ring-2 ring-surface-100', vllmUi.dot)} />
           <span className="font-mono text-[11px]">{vllmUi.label}</span>
         </NavLink>
+        {presence && (
+          <div
+            className="flex items-center gap-2 text-xs text-text-muted"
+            title="Browsers with this page in the foreground; active = input within the last 5 min"
+          >
+            <span
+              className={cn(
+                'h-2 w-2 flex-shrink-0 rounded-full ring-2 ring-surface-100',
+                presence.active > 0 ? 'bg-sky-400 shadow-[0_0_6px_rgba(56,189,248,0.5)]' : 'bg-text-muted',
+              )}
+            />
+            <span className="font-mono text-[11px]">
+              Online: {presence.online} ({presence.active} active)
+            </span>
+          </div>
+        )}
         <div className="h-px w-full bg-border" />
         <div className="space-y-1 text-[11px] text-text-muted">
           {STAT_ROWS.map(([label, key]) => (
