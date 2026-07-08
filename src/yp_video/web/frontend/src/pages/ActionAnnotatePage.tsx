@@ -516,6 +516,13 @@ export function ActionAnnotatePage() {
   // ── Keyboard ──
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Ctrl/Cmd+S saves from anywhere — checked before the input guard so it
+      // works mid-typing, and preventDefault blocks the browser's save dialog.
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        void save();
+        return;
+      }
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
       // On a focused <select> (e.g. the per-action label dropdown) space would
