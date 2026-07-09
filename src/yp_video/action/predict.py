@@ -116,15 +116,19 @@ def run_spot_inference(
         tail: deque[str] = deque(maxlen=20)
         assert proc.stdout is not None
         for raw in proc.stdout:
-            line = raw.rstrip("\n")
-            if not line:
-                continue
-            ratio = _spot_progress_ratio(line)
-            if ratio is not None:
-                if on_progress:
-                    on_progress(ratio)
-            else:
-                tail.append(line)
+            # tqdm redraws end in \r without a newline; merged into stdout they
+            # glue onto the next SPOT_PROGRESS print. Split on \r as well so
+            # the progress prefix always sits at the start of its segment
+            # (stream_subprocess does the same for the web jobs).
+            for line in raw.rstrip("\n").split("\r"):
+                if not line:
+                    continue
+                ratio = _spot_progress_ratio(line)
+                if ratio is not None:
+                    if on_progress:
+                        on_progress(ratio)
+                else:
+                    tail.append(line)
         rc = proc.wait()
         if rc != 0:
             raise SpotInferenceError(
