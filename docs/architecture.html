@@ -345,10 +345,10 @@
       <p>
         Vision-Language Models (VLMs) can understand video content without task-specific training, but they're slow
         and expensive to run on every new video.
-        Temporal Action Detection (TAD) models are fast at inference, but require labeled training data that's
+        Specialized detection models are fast at inference, but require labeled training data that's
         expensive to create from scratch.<br><br>
         <strong>This system bridges the gap:</strong> use a VLM to auto-generate rally labels,
-        let humans review and correct them, then train a lightweight TAD model on the curated data.
+        let humans review and correct them, then train a lightweight SPOT model on the curated data.
         The result is a fast, specialized model &mdash; built without manual annotation from zero.
       </p>
     </div>
@@ -406,21 +406,21 @@
     <!-- Phase B -->
     <div class="phase phase-b fade-in">
       <div class="phase-label">Phase B &mdash; Fast Model</div>
-      <h3>Train &amp; Deploy TAD Model</h3>
+      <h3>Train &amp; Deploy SPOT Model</h3>
       <p class="phase-desc">Specialized model for real-time rally detection</p>
       <div class="phase-steps">
         <div class="ps">
           <div class="ps-icon">&#x1F9EC;</div>
           <div class="ps-text">
-            <strong>Feature Extraction</strong><br>
-            <span>V-JEPA 2.1 encodes video into temporal feature sequences</span>
+            <strong>Frame Extraction</strong><br>
+            <span>Reduced-fps frame caches feed training directly &mdash; no separate feature stage</span>
           </div>
         </div>
         <div class="ps">
           <div class="ps-icon">&#x1F9E0;</div>
           <div class="ps-text">
-            <strong>Train ActionFormer</strong><br>
-            <span>Temporal action detection model learns rally boundaries from features</span>
+            <strong>Train SPOT</strong><br>
+            <span>Per-frame spotting model learns rally boundaries and action events end-to-end</span>
           </div>
         </div>
         <div class="ps">
@@ -453,7 +453,7 @@
   <h2 class="sh fade-in">Architecture</h2>
   <p class="sp fade-in">
     A unified web dashboard orchestrates every step.
-    A single A100 GPU is shared between the VLM server and TAD training
+    A single A100 GPU is shared between the VLM server and SPOT training
     through an async lock &mdash; no manual GPU management needed.
   </p>
 
@@ -472,7 +472,7 @@
       <ul>
         <li>Single A100-80GB GPU</li>
         <li>vLLM serves Qwen3-VL for detection</li>
-        <li>TAD uses GPU for training &amp; inference</li>
+        <li>SPOT uses GPU for training &amp; inference</li>
         <li>Async lock prevents contention</li>
       </ul>
     </div>
@@ -496,11 +496,11 @@
         </ul>
       </div>
       <div class="sys-block">
-        <h4>&#x1F3AF; TAD Path (Fast, Learned)</h4>
+        <h4>&#x1F3AF; SPOT Path (Fast, Learned)</h4>
         <ul>
-          <li>V-JEPA 2.1 ViT-B feature encoder (BF16 + torch.compile)</li>
-          <li>ActionFormer temporal detection head</li>
-          <li>Feature caching for instant re-inference</li>
+          <li>RegNet-Y + GSM frame encoder, trained end-to-end</li>
+          <li>GRU temporal head for per-frame events</li>
+          <li>Frame caching for fast retraining</li>
           <li>Auto rally clip export</li>
         </ul>
       </div>
@@ -515,8 +515,7 @@
   <div class="tech-bar fade-in" style="margin-top: 8px;">
     <span class="tech-pill"><span class="tp-icon">&#x1F916;</span>Qwen3-VL<span class="tp-role">Vision-Language</span></span>
     <span class="tech-pill"><span class="tp-icon">&#x26A1;</span>vLLM<span class="tp-role">Model Serving</span></span>
-    <span class="tech-pill"><span class="tp-icon">&#x1F9EC;</span>V-JEPA 2.1<span class="tp-role">Video Encoder</span></span>
-    <span class="tech-pill"><span class="tp-icon">&#x1F3AF;</span>ActionFormer<span class="tp-role">TAD Model</span></span>
+    <span class="tech-pill"><span class="tp-icon">&#x1F3AF;</span>SPOT<span class="tp-role">Spotting Model</span></span>
     <span class="tech-pill"><span class="tp-icon">&#x1F525;</span>PyTorch<span class="tp-role">Framework</span></span>
     <span class="tech-pill"><span class="tp-icon">&#x1F680;</span>FastAPI<span class="tp-role">Web Server</span></span>
     <span class="tech-pill"><span class="tp-icon">&#x1F3A5;</span>FFmpeg<span class="tp-role">Video Processing</span></span>

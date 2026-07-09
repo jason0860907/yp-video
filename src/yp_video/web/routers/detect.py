@@ -107,7 +107,7 @@ async def start_detection(req: DetectRequest):
                     sync_to_r2(Path(output_file), "seg-annotations")
 
                     # Auto convert-to-rally for this one video
-                    from yp_video.tad.vlm_to_rally import convert_vlm_to_rally
+                    from yp_video.core.vlm_to_rally import convert_vlm_to_rally
                     await job_manager.update_job(
                         job.id, message=f"{prefix} Converting {video_name} to rally...",
                     )
@@ -147,7 +147,7 @@ async def start_detection(req: DetectRequest):
 @router.post("/convert")
 async def convert_to_rally(req: ConvertRequest):
     """Convert VLM detections to rally annotations."""
-    from yp_video.tad.vlm_to_rally import convert_directory
+    from yp_video.core.vlm_to_rally import convert_directory
 
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(
