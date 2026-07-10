@@ -42,6 +42,13 @@ export function formatSpeed(bytesPerSec: number | null | undefined): string {
   return `${formatBytes(bytesPerSec)}/s`;
 }
 
+/** Local wall-clock `HH:MM:SS` from a unix-seconds timestamp. */
+export function formatClock(epochSeconds: number | null | undefined): string {
+  if (!epochSeconds) return '—';
+  const d = new Date(epochSeconds * 1000);
+  return `${pad(d.getHours(), 2)}:${pad(d.getMinutes(), 2)}:${pad(d.getSeconds(), 2)}`;
+}
+
 export function formatDuration(seconds: number | null | undefined): string {
   if (!seconds) return '—';
   const h = Math.floor(seconds / 3600);

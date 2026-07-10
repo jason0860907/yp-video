@@ -67,6 +67,89 @@ def terminal_prefix(job) -> str:
     return f"[{job.type} {job.id}] " if job is not None else ""
 
 
+# ── Batch item tracking ───────────────────────────────────────────────
+#
+# Multi-video jobs publish per-item state through ``params["items"]`` so the
+# frontend can render one expandable row per video. One shape for every job
+# type: {video, status, progress, message, error?, started_at?, finished_at?}.
+
+TERMINAL_ITEM_STATUSES = {"completed", "failed", "cancelled"}
+
+
+def init_batch_items(videos: list[str]) -> list[dict]:
+    """Fresh ``params["items"]`` for a batch job — one entry per video."""
+    return [
+        {"video": name, "status": "pending", "progress": 0.0, "message": "Pending"}
+        for name in videos
+    ]
+
+
+def batch_counts(items: list[dict]) -> dict:
+    return {
+        "total": len(items),
+        "completed": sum(1 for item in items if item.get("status") == "completed"),
+        "failed": sum(1 for item in items if item.get("status") == "failed"),
+        "cancelled": sum(1 for item in items if item.get("status") == "cancelled"),
+    }
+
+
+def batch_progress(index: int, item_progress: float, total: int) -> float:
+    """Overall job fraction with item ``index`` at ``item_progress`` of its share."""
+    return min(0.99, max(0.0, (index + item_progress) / max(1, total)))
+
+
+async def update_batch_item(
+    job_id: str,
+    items: list[dict],
+    index: int,
+    *,
+    status: str | None = None,
+    progress: float | None = None,
+    message: str | None = None,
+    error: str | None = None,
+    overall_progress: float | None = None,
+    overall_message: str | None = None,
+    extra: dict | None = None,
+) -> None:
+    """Update one batch item and republish the job's ``params["items"]``.
+
+    Stamps ``started_at`` on the first transition to running and
+    ``finished_at`` on the first terminal status so the frontend can show
+    when each video started and how long it took. Status-less updates on an
+    already-terminal item are dropped — late progress callbacks race the
+    finalizer.
+    """
+    item = dict(items[index])
+    if status is None and item.get("status") in TERMINAL_ITEM_STATUSES:
+        return
+    if status is not None:
+        item["status"] = status
+        if status == "running":
+            item.setdefault("started_at", time.time())
+        elif status in TERMINAL_ITEM_STATUSES:
+            item.setdefault("finished_at", time.time())
+    if progress is not None:
+        item["progress"] = max(0.0, min(float(progress), 1.0))
+    if message is not None:
+        item["message"] = message
+    if error is not None:
+        item["error"] = error
+    if extra:
+        item.update(extra)
+    items[index] = item
+
+    job = job_manager.get_job(job_id)
+    if job is None:
+        return
+    params = {**job.params, "items": [dict(i) for i in items], **batch_counts(items)}
+    update: dict = {"params": params}
+    if overall_progress is not None:
+        update["progress"] = max(float(job.progress), overall_progress)
+    if overall_message is not None:
+        update["message"] = overall_message
+    await job_manager.update_job(job_id, **update)
+
+
 # ── Subprocess streaming ──────────────────────────────────────────────
 
 

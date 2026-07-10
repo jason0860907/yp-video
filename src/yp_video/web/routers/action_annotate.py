@@ -46,13 +46,17 @@ from yp_video.core.ffmpeg import (
 )
 from yp_video.core.jsonl import read_jsonl
 from yp_video.web.job_helpers import (
+    TERMINAL_ITEM_STATUSES,
     ProgressParser,
     batch_message,
+    batch_progress,
     fail_job_from_exc,
     finalize_batch_job,
+    init_batch_items,
     stop_vllm_for_job,
     stream_subprocess,
     terminal_prefix,
+    update_batch_item,
 )
 from yp_video.web.jobs import job_manager
 from yp_video.web.r2_client import serve_video_or_r2_redirect, sync_to_r2
@@ -550,66 +554,6 @@ async def _save_spot_action_annotation(
     return data
 
 
-_TERMINAL_ITEM_STATUSES = {"completed", "failed", "cancelled"}
-
-
-def _batch_counts(items: list[dict]) -> dict:
-    return {
-        "total": len(items),
-        "completed": sum(1 for item in items if item.get("status") == "completed"),
-        "failed": sum(1 for item in items if item.get("status") == "failed"),
-        "cancelled": sum(1 for item in items if item.get("status") == "cancelled"),
-    }
-
-
-def _batch_progress(index: int, item_progress: float, total: int) -> float:
-    return min(0.99, max(0.0, (index + item_progress) / max(1, total)))
-
-
-async def _update_batch_item(
-    job_id: str,
-    items: list[dict],
-    index: int,
-    *,
-    status: str | None = None,
-    progress: float | None = None,
-    message: str | None = None,
-    error: str | None = None,
-    overall_progress: float | None = None,
-    overall_message: str | None = None,
-    extra: dict | None = None,
-) -> None:
-    item = dict(items[index])
-    if status is None and item.get("status") in _TERMINAL_ITEM_STATUSES:
-        return
-    if status is not None:
-        item["status"] = status
-    if progress is not None:
-        item["progress"] = max(0.0, min(float(progress), 1.0))
-    if message is not None:
-        item["message"] = message
-    if error is not None:
-        item["error"] = error
-    if extra:
-        item.update(extra)
-    items[index] = item
-
-    job = job_manager.get_job(job_id)
-    if job is None:
-        return
-    params = {
-        **job.params,
-        "items": [dict(i) for i in items],
-        **_batch_counts(items),
-    }
-    update: dict = {"params": params}
-    if overall_progress is not None:
-        update["progress"] = max(float(job.progress), overall_progress)
-    if overall_message is not None:
-        update["message"] = overall_message
-    await job_manager.update_job(job_id, **update)
-
-
 def _resolve_prelabel_entries(names: list[str], *, overwrite: bool) -> list[tuple[Path, Path]]:
     entries: list[tuple[Path, Path]] = []
     missing: list[str] = []
@@ -1000,15 +944,7 @@ async def start_spot_prelabel_batch(req: SpotPrelabelBatchRequest) -> dict:
         raise HTTPException(400, str(exc)) from exc
 
     total = len(entries)
-    items = [
-        {
-            "video": video.name,
-            "status": "pending",
-            "progress": 0.0,
-            "message": "Pending",
-        }
-        for video, _ann_path in entries
-    ]
+    items = init_batch_items([video.name for video, _ann_path in entries])
     job = job_manager.create_job(
         "spot_prelabel_batch",
         {
@@ -1044,8 +980,8 @@ async def start_spot_prelabel_batch(req: SpotPrelabelBatchRequest) -> dict:
             await finalize_batch_job(job.id, total, failed)
         except asyncio.CancelledError:
             for idx, item in enumerate(items):
-                if item.get("status") not in _TERMINAL_ITEM_STATUSES:
-                    await _update_batch_item(
+                if item.get("status") not in TERMINAL_ITEM_STATUSES:
+                    await update_batch_item(
                         job.id,
                         items,
                         idx,
@@ -1097,13 +1033,13 @@ async def _run_prelabel_batch_subprocess(
             try:
                 if not pred_file.exists():
                     raise RuntimeError("SPOT did not create prediction output")
-                await _update_batch_item(
+                await update_batch_item(
                     job_id,
                     items,
                     idx,
                     progress=0.92,
                     message="Inference complete; saving pre-label",
-                    overall_progress=_batch_progress(idx, 0.92, total),
+                    overall_progress=batch_progress(idx, 0.92, total),
                     overall_message=batch_message(idx, total, video.name, "saving pre-label"),
                 )
                 data = await _save_spot_action_annotation(
@@ -1116,14 +1052,14 @@ async def _run_prelabel_batch_subprocess(
                     replace_final=req.overwrite,
                 )
                 log.info("%ssaved %s (%d event(s))", prefix, ann_path.name, data["num_events"])
-                await _update_batch_item(
+                await update_batch_item(
                     job_id,
                     items,
                     idx,
                     status="completed",
                     progress=1.0,
                     message=f"Complete: {data['num_events']} event(s)",
-                    overall_progress=_batch_progress(idx, 1.0, total),
+                    overall_progress=batch_progress(idx, 1.0, total),
                     overall_message=batch_message(idx, total, video.name, "complete"),
                     extra={
                         "count": data["num_events"],
@@ -1138,7 +1074,7 @@ async def _run_prelabel_batch_subprocess(
                 if job_obj:
                     job_obj.logs.append(f"[{video.name}] {type(exc).__name__}: {exc}")
                     job_obj.logs.extend(tb.splitlines())
-                await _update_batch_item(
+                await update_batch_item(
                     job_id,
                     items,
                     idx,
@@ -1146,7 +1082,7 @@ async def _run_prelabel_batch_subprocess(
                     progress=1.0,
                     message="Failed",
                     error=f"{type(exc).__name__}: {exc}",
-                    overall_progress=_batch_progress(idx, 1.0, total),
+                    overall_progress=batch_progress(idx, 1.0, total),
                     overall_message=batch_message(idx, total, video.name, "failed"),
                 )
                 return False
@@ -1167,27 +1103,27 @@ async def _run_prelabel_batch_subprocess(
             for idx, ((video, _ann_path), pred_file) in enumerate(zip(entries, pred_files)):
                 failure_lines: list[str] = []
 
-                await _update_batch_item(
+                await update_batch_item(
                     job_id,
                     items,
                     idx,
                     status="running",
                     progress=0.08,
                     message="Launching SPOT inference",
-                    overall_progress=_batch_progress(idx, 0.08, total),
+                    overall_progress=batch_progress(idx, 0.08, total),
                     overall_message=batch_message(idx, total, video.name, "launching SPOT inference"),
                 )
 
                 def start_handler(_match, *, item_idx: int = idx, item_video: Path = video):
                     asyncio.create_task(
-                        _update_batch_item(
+                        update_batch_item(
                             job_id,
                             items,
                             item_idx,
                             status="running",
                             progress=0.10,
                             message="Preparing first batch (decoding frames)",
-                            overall_progress=_batch_progress(item_idx, 0.10, total),
+                            overall_progress=batch_progress(item_idx, 0.10, total),
                             overall_message=batch_message(
                                 item_idx, total, item_video.name, "preparing first batch"
                             ),
@@ -1202,14 +1138,14 @@ async def _run_prelabel_batch_subprocess(
                     item_progress = _spot_progress_fraction(data, start=0.12, span=0.78, cap=0.9)
                     message = prelabel.spot_progress_message(data)
                     asyncio.create_task(
-                        _update_batch_item(
+                        update_batch_item(
                             job_id,
                             items,
                             item_idx,
                             status="running",
                             progress=item_progress,
                             message=message,
-                            overall_progress=_batch_progress(item_idx, item_progress, total),
+                            overall_progress=batch_progress(item_idx, item_progress, total),
                             overall_message=batch_message(item_idx, total, item_video.name, message),
                             extra={
                                 "current_frame": int(data.get("end_frame") or 0),
@@ -1271,7 +1207,7 @@ async def _run_prelabel_batch_subprocess(
                     job_obj = job_manager.get_job(job_id)
                     if job_obj:
                         job_obj.logs.append(f"[{video.name}] RuntimeError: {error}")
-                    await _update_batch_item(
+                    await update_batch_item(
                         job_id,
                         items,
                         idx,
@@ -1279,7 +1215,7 @@ async def _run_prelabel_batch_subprocess(
                         progress=1.0,
                         message="Failed",
                         error=error,
-                        overall_progress=_batch_progress(idx, 1.0, total),
+                        overall_progress=batch_progress(idx, 1.0, total),
                         overall_message=batch_message(idx, total, video.name, "failed"),
                     )
                     continue

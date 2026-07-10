@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { API, ApiError, apiFetch } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
-import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { StatTile } from '@/components/ui/StatTile';
+import { VideoMultiSelectList } from '@/components/video/VideoMultiSelectList';
 import { LiveJob } from '@/components/job/LiveJob';
 import { toast } from '@/components/feedback/toast';
 import { confirm } from '@/components/feedback/confirm';
@@ -51,9 +51,6 @@ const NUM_FIELDS: Array<{ key: keyof PredSettings; label: string; min: number; m
   { key: 'decode_chunk_frames', label: 'Chunk', min: 1, max: 512, step: 16 },
 ];
 
-type StatusFilter = 'unlabeled' | 'all' | 'labeled';
-type KindFilter = 'all' | 'broadcast' | 'sideline';
-
 const fieldCls =
   'w-full rounded-lg border border-border-light bg-surface-50 px-3 py-2 text-sm text-text-primary focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary/15';
 const errMsg = (e: unknown) => (e instanceof ApiError ? e.body : e instanceof Error ? e.message : String(e));
@@ -61,11 +58,8 @@ const hasLabels = (v: ActionVideo) =>
   Boolean(v.has_action_annotation || v.has_action_final_annotation || v.has_action_pre_annotation);
 
 export function ActionPredictPage() {
-  const qc = useQueryClient();
   const navigate = useNavigate();
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [kindFilter, setKindFilter] = useState<KindFilter>('all');
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('unlabeled');
   const [settings, setSettings] = useState<PredSettings>(DEFAULTS);
   const [jobs, setJobs] = useState<Job[]>([]);
 
@@ -88,13 +82,6 @@ export function ActionPredictPage() {
     }
   }, [spot?.default_checkpoint, settings.checkpoint]);
 
-  const visible = videos.filter((v) => {
-    if (kindFilter !== 'all' && v.kind !== kindFilter) return false;
-    if (statusFilter === 'unlabeled' && hasLabels(v)) return false;
-    if (statusFilter === 'labeled' && !hasLabels(v)) return false;
-    return true;
-  });
-
   const labeledCount = videos.filter(hasLabels).length;
   const runningCount = jobs.filter((j) => j.status === 'running').length;
   const checkpoints = spot?.checkpoints ?? [];
@@ -106,21 +93,6 @@ export function ActionPredictPage() {
     : spotQuery.isError
       ? `status check failed: ${errMsg(spotQuery.error)}`
       : spot?.error || (spot?.available ? (checkpoints.length ? null : 'no checkpoint found') : `${spot?.spot_dir || 'yp-spot directory'} not ready`);
-
-  const toggle = (name: string, on: boolean) =>
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (on) next.add(name);
-      else next.delete(name);
-      return next;
-    });
-  const allVisibleSelected = visible.length > 0 && visible.every((v) => selected.has(v.name));
-  const toggleVisible = (on: boolean) =>
-    setSelected((prev) => {
-      const next = new Set(prev);
-      visible.forEach((v) => (on ? next.add(v.name) : next.delete(v.name)));
-      return next;
-    });
 
   const upsertJob = (job: Job) => setJobs((prev) => (prev.some((j) => j.id === job.id) ? prev.map((j) => (j.id === job.id ? job : j)) : [job, ...prev]));
 
@@ -273,57 +245,21 @@ export function ActionPredictPage() {
 
         {/* Videos */}
         <Card>
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <SectionLabel className="mb-0">Videos</SectionLabel>
-            <div className="flex items-center gap-2">
-              <select value={kindFilter} onChange={(e) => setKindFilter(e.target.value as KindFilter)} className={cn(fieldCls, 'w-auto cursor-pointer appearance-none py-1 text-xs')}>
-                <option value="all">All kinds</option>
-                <option value="broadcast">Broadcast</option>
-                <option value="sideline">Sideline</option>
-              </select>
-              <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as StatusFilter)} className={cn(fieldCls, 'w-auto cursor-pointer appearance-none py-1 text-xs')}>
-                <option value="unlabeled">Unlabeled</option>
-                <option value="all">All</option>
-                <option value="labeled">Labeled</option>
-              </select>
-            </div>
-          </div>
-          <div className="mb-2 flex items-center justify-between text-xs text-text-muted">
-            <label className="inline-flex cursor-pointer items-center gap-2">
-              <input type="checkbox" checked={allVisibleSelected} onChange={(e) => toggleVisible(e.target.checked)} className="h-3.5 w-3.5 accent-primary" />
-              Select visible
-            </label>
-            <span className="font-mono tabular-nums">
-              {selected.size} selected / {visible.length} shown
-            </span>
-          </div>
-
-          <div className="max-h-[56vh] space-y-1 overflow-auto pr-1">
-            {visible.length === 0 ? (
-              <EmptyState
-                icon={
-                  <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3" />
-                  </svg>
-                }
-                title="No videos"
-              />
-            ) : (
-              visible.map((v) => (
-                <label
-                  key={v.name}
-                  className="flex w-max min-w-full cursor-pointer items-center gap-3 rounded-lg border border-border bg-surface-50 px-3 py-2 transition-colors hover:border-border-light"
-                >
-                  <input type="checkbox" checked={selected.has(v.name)} onChange={(e) => toggle(v.name, e.target.checked)} className="h-3.5 w-3.5 accent-primary" />
-                  <span className={cn('h-2 w-2 flex-shrink-0 rounded-full', v.kind === 'broadcast' ? 'bg-primary-light' : 'bg-accent-light')} />
-                  <span className="flex-1 whitespace-nowrap text-sm text-text-primary">{v.name}</span>
-                  <span className={cn('font-mono text-[11px] tabular-nums', hasLabels(v) ? 'text-primary-light' : 'text-text-muted')}>
-                    {v.event_count || 0}
-                  </span>
-                </label>
-              ))
+          <VideoMultiSelectList
+            videos={videos}
+            selected={selected}
+            onSelectedChange={setSelected}
+            statusOptions={[
+              { value: 'unlabeled', label: 'Unlabeled', predicate: (v) => !hasLabels(v) },
+              { value: 'all', label: 'All', predicate: () => true },
+              { value: 'labeled', label: 'Labeled', predicate: hasLabels },
+            ]}
+            renderMeta={(v) => (
+              <span className={cn('font-mono text-[11px] tabular-nums', hasLabels(v) ? 'text-primary-light' : 'text-text-muted')}>
+                {v.event_count || 0}
+              </span>
             )}
-          </div>
+          />
         </Card>
       </div>
 
@@ -333,14 +269,7 @@ export function ActionPredictPage() {
           <SectionLabel>SPOT jobs</SectionLabel>
           <div className="space-y-3">
             {jobs.map((job) => (
-              <LiveJob
-                key={job.id}
-                job={job}
-                onUpdate={upsertJob}
-                onSettled={(j) => {
-                  if (j.status === 'completed') void qc.invalidateQueries({ queryKey: ['action-videos'] });
-                }}
-              />
+              <LiveJob key={job.id} job={job} onUpdate={upsertJob} />
             ))}
           </div>
         </Card>

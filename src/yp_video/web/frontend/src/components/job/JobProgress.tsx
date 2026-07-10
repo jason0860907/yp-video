@@ -1,4 +1,5 @@
 import { cn } from '@/lib/cn';
+import { formatClock } from '@/lib/format';
 import { isPartialSuccess, statusLabel, statusTheme } from '@/lib/job';
 import type { Job } from '@/types/api';
 import { ProgressBar } from './ProgressBar';
@@ -23,9 +24,16 @@ export function JobProgress({ job, detail = '', showLogs = false, truncateMsg = 
 
   return (
     <div className="space-y-1.5">
-      <div className="flex items-center justify-between">
-        <span className="truncate text-xs font-medium text-text-primary">{job.name}</span>
-        <span className={cn('text-[11px] font-medium tabular-nums', statusTheme(job.status).text)}>{statusLabel(job)}</span>
+      <div className="flex items-center justify-between gap-2">
+        <span className="min-w-0 truncate text-xs font-medium text-text-primary">{job.name || job.type || 'job'}</span>
+        <span className="flex flex-shrink-0 items-center gap-2">
+          {(job.started_at ?? job.created_at) != null && (
+            <span className="font-mono text-[10px] tabular-nums text-text-muted">
+              started {formatClock(job.started_at ?? job.created_at)}
+            </span>
+          )}
+          <span className={cn('text-[11px] font-medium tabular-nums', statusTheme(job.status).text)}>{statusLabel(job)}</span>
+        </span>
       </div>
       <ProgressBar progress={job.progress} />
       {detail && <div className="text-[11px] tabular-nums text-text-muted">{detail}</div>}

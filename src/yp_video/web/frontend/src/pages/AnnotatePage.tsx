@@ -5,6 +5,8 @@ import { cn } from '@/lib/cn';
 import { copyText } from '@/lib/download';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { KindBadge } from '@/components/video/KindBadge';
+import { VideoCombobox } from '@/components/video/VideoCombobox';
 import { AnnotationEditor, type EditorData } from '@/components/editor/AnnotationEditor';
 import { toast } from '@/components/feedback/toast';
 
@@ -115,15 +117,19 @@ export function AnnotatePage() {
             </select>
           </FieldLabel>
           <FieldLabel label="Result file">
-            <select value={picked} onChange={(e) => setPicked(e.target.value)} className={cn(fieldCls, 'h-9 w-full truncate py-0')}>
-              <option value="">Select result file… ({visible.length})</option>
-              {visible.map((r) => (
-                <option key={r.name} value={r.name}>
-                  {sourceMarks(r.source)}
-                  {r.kind === 'sideline' ? ' [SIDE]' : ''} {r.name}
-                </option>
-              ))}
-            </select>
+            <VideoCombobox
+              items={visible}
+              value={picked}
+              onChange={setPicked}
+              placeholder={`Search ${visible.length} result files…`}
+              renderItem={(r) => (
+                <>
+                  <KindBadge kind={r.kind === 'sideline' ? 'sideline' : 'broadcast'} />
+                  <span className="shrink-0 text-[11px]">{sourceMarks(r.source)}</span>
+                  <span className="min-w-0 flex-1 break-all font-mono">{r.name}</span>
+                </>
+              )}
+            />
           </FieldLabel>
           <Button intent="primary" className="h-9 py-0" onClick={load}>
             Load

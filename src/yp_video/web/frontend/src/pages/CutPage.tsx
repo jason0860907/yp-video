@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { API, ApiError, apiFetch, apiUrl } from '@/lib/api';
 import { cn } from '@/lib/cn';
@@ -8,6 +8,7 @@ import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SectionLabel } from '@/components/ui/SectionLabel';
+import { VideoCombobox } from '@/components/video/VideoCombobox';
 import { toast } from '@/components/feedback/toast';
 import { confirm } from '@/components/feedback/confirm';
 import type { CutKind } from '@/types/api';
@@ -41,6 +42,7 @@ export function CutPage() {
 
   const videosQuery = useQuery({ queryKey: ['cut-videos'], queryFn: () => apiFetch<string[]>(API.cut.videos) });
   const videos = videosQuery.data ?? [];
+  const videoItems = useMemo(() => videos.map((name) => ({ name })), [videos]);
 
   const renumber = (segs: Segment[]): Segment[] => {
     const stem = stemOf(video);
@@ -183,23 +185,18 @@ export function CutPage() {
         }
       />
 
-      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[1.5fr_1fr]">
+      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
         {/* Player */}
         <Card>
           <div className="mb-3 flex items-center gap-3">
             <label className="flex-shrink-0 text-sm font-medium text-text-secondary">Video</label>
-            <select
+            <VideoCombobox
+              items={videoItems}
               value={video}
-              onChange={(e) => selectVideo(e.target.value)}
-              className="flex-1 cursor-pointer appearance-none rounded-lg border border-border-light bg-surface-50 px-3 py-2 text-sm text-text-primary focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary/15"
-            >
-              <option value="">Select a video…</option>
-              {videos.map((v) => (
-                <option key={v} value={v}>
-                  {v}
-                </option>
-              ))}
-            </select>
+              onChange={selectVideo}
+              placeholder={`Search ${videos.length} videos…`}
+              className="flex-1"
+            />
           </div>
           <div className="overflow-hidden rounded-2xl bg-black shadow-lg shadow-black/40 ring-1 ring-white/[0.06]">
             <video

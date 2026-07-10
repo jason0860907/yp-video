@@ -10,7 +10,8 @@ import { StatTile } from '@/components/ui/StatTile';
 import { StatusBadge } from '@/components/job/StatusBadge';
 import { ProgressBar } from '@/components/job/ProgressBar';
 import { JobItems } from '@/components/job/JobItems';
-import { statusTheme } from '@/lib/job';
+import { formatClock } from '@/lib/format';
+import { statusLabel, statusTheme } from '@/lib/job';
 import { toast } from '@/components/feedback/toast';
 import type { Job, SystemStats, VllmStatus } from '@/types/api';
 
@@ -114,7 +115,7 @@ export function JobsPage() {
         />
       </div>
 
-      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[1.6fr_1fr]">
+      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
         {/* Job queue */}
         <Card>
           <SectionLabel>Job queue</SectionLabel>
@@ -187,32 +188,31 @@ export function JobsPage() {
 
 function JobRow({ job, onCancel }: { job: Job; onCancel: (id: string) => void }) {
   const isRunning = job.status === 'running';
-  const pct = Math.round((job.progress ?? 0) * 100);
 
+  // One structure for every status — header, bar (while running), message —
+  // so a job doesn't change shape as it moves through its lifecycle, and a
+  // growing message can never crowd the bar or change any element's width.
   return (
     <div className="rounded-xl border border-border bg-surface-50 px-3.5 py-3">
       <div className="flex items-center gap-3.5">
         <span className={cn('h-2 w-2 flex-shrink-0 rounded-full', statusTheme(job.status).dot, isRunning && 'animate-pulse-dot')} />
-        <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-center gap-2.5">
-            <span className="truncate text-[12.5px] font-medium text-text-primary">{job.name || job.type || 'unknown'}</span>
-            {job.type && (
-              <span className="flex-shrink-0 rounded bg-ink/5 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide text-text-muted">
-                {job.type}
-              </span>
-            )}
-          </div>
-          {job.message && <div className="mt-0.5 truncate font-mono text-[10.5px] text-text-muted">{job.message}</div>}
+        <div className="flex min-w-0 flex-1 items-center gap-2.5">
+          <span className="truncate text-[12.5px] font-medium text-text-primary">{job.name || job.type || 'unknown'}</span>
+          {job.type && (
+            <span className="flex-shrink-0 rounded bg-ink/5 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide text-text-muted">
+              {job.type}
+            </span>
+          )}
         </div>
-        {isRunning && (
-          <div className="hidden w-36 flex-shrink-0 sm:block">
-            <ProgressBar progress={job.progress} />
-          </div>
+        {(job.started_at ?? job.created_at) != null && (
+          <span className="hidden flex-shrink-0 font-mono text-[10px] tabular-nums text-text-muted sm:inline">
+            {formatClock(job.started_at ?? job.created_at)}
+          </span>
         )}
-        <span className="w-9 flex-shrink-0 text-right font-mono text-[11px] tabular-nums text-text-secondary">
-          {isRunning ? `${pct}%` : '—'}
+        <span className={cn('flex-shrink-0 text-right font-mono text-[11px] font-medium tabular-nums', statusTheme(job.status).text)}>
+          {statusLabel(job)}
         </span>
-        {isRunning ? (
+        {isRunning && (
           <button
             type="button"
             onClick={() => onCancel(job.id)}
@@ -220,11 +220,23 @@ function JobRow({ job, onCancel }: { job: Job; onCancel: (id: string) => void })
           >
             Cancel
           </button>
-        ) : (
-          <span className="w-[60px] flex-shrink-0 text-right text-[10px] uppercase text-text-muted">{job.status}</span>
         )}
       </div>
-      {job.error && <p className="mt-2 truncate text-[11px] text-red-400/80">{job.error}</p>}
+      {isRunning && (
+        <div className="mt-2">
+          <ProgressBar progress={job.progress} />
+        </div>
+      )}
+      {job.message && (
+        <div className="mt-1.5 truncate font-mono text-[10.5px] text-text-muted" title={job.message}>
+          {job.message}
+        </div>
+      )}
+      {job.error && (
+        <p className="mt-1.5 truncate text-[11px] text-red-400/80" title={job.error}>
+          {job.error}
+        </p>
+      )}
       <JobItems items={job.params?.items ?? []} maxVisible={16} />
     </div>
   );

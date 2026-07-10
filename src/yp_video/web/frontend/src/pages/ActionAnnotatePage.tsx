@@ -9,6 +9,8 @@ import { SectionLabel } from '@/components/ui/SectionLabel';
 import { toast } from '@/components/feedback/toast';
 import { confirm } from '@/components/feedback/confirm';
 import { ActionTimeline } from '@/components/editor/ActionTimeline';
+import { KindBadge } from '@/components/video/KindBadge';
+import { VideoCombobox } from '@/components/video/VideoCombobox';
 import { useVideoRecovery } from '@/lib/useVideoRecovery';
 import type { ActionAnnotationData, ActionEvent, ActionRally, ActionVideo, WaveformData } from '@/types/api';
 
@@ -151,8 +153,7 @@ export function ActionAnnotatePage() {
   const [selectedLabel, setSelectedLabel] = useState('serve');
   const [kindFilter, setKindFilter] = useState<'all' | 'broadcast' | 'sideline'>('all');
   const [progressFilter, setProgressFilter] = useState<'all' | 'unlabeled' | 'pre-labeled' | 'labeled'>('all');
-  const [search, setSearch] = useState('');
-  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [picked, setPicked] = useState('');
   const [loading, setLoading] = useState(false);
 
   const [ed, setEd] = useState<Editor>(EMPTY);
@@ -237,6 +238,7 @@ export function ActionAnnotatePage() {
   useVideoRecovery(videoRef, {
     src: () => (edRef.current.video ? apiUrl(API.actionAnnotate.video(edRef.current.video)) : ''),
     onRecover: () => toast.info('影片串流中斷，已自動重新載入'),
+    onGiveUp: () => toast.error('影片重載後仍卡在同一處，已停止自動重試 — 請把 DevTools Console 的 [video-recovery] 記錄回報'),
   });
 
   // Track play/pause so the timeline only follows the playhead during playback.
@@ -344,17 +346,18 @@ export function ActionAnnotatePage() {
     document.addEventListener('pointercancel', onUp, { signal: ac.signal });
   };
 
-  // ── Video list filtering ──
-  const filtered = useMemo(() => {
-    const needle = search.trim().toLowerCase();
-    return videos.filter((v) => {
-      if (kindFilter !== 'all' && v.kind !== kindFilter) return false;
-      if (progressFilter === 'unlabeled' && hasActive(v)) return false;
-      if (progressFilter === 'pre-labeled' && !(hasActive(v) && !isReviewed(v))) return false;
-      if (progressFilter === 'labeled' && !isReviewed(v)) return false;
-      return !needle || v.name.toLowerCase().includes(needle);
-    });
-  }, [videos, kindFilter, progressFilter, search]);
+  // ── Video list filtering (text search happens inside the combobox) ──
+  const filtered = useMemo(
+    () =>
+      videos.filter((v) => {
+        if (kindFilter !== 'all' && v.kind !== kindFilter) return false;
+        if (progressFilter === 'unlabeled' && hasActive(v)) return false;
+        if (progressFilter === 'pre-labeled' && !(hasActive(v) && !isReviewed(v))) return false;
+        if (progressFilter === 'labeled' && !isReviewed(v)) return false;
+        return true;
+      }),
+    [videos, kindFilter, progressFilter],
+  );
 
   const loadWaveform = useCallback(async (name: string, duration: number) => {
     const reqId = ++waveformReq.current;
@@ -379,8 +382,7 @@ export function ActionAnnotatePage() {
       if (!ok) return;
       clearActionDraft(ed.video); // user explicitly abandoned this video's edits
     }
-    setSearch(name);
-    setDropdownOpen(false);
+    setPicked(name);
     setLoading(true);
     try {
       const data = await apiFetch<ActionAnnotationData>(API.actionAnnotate.annotation(name));
@@ -587,51 +589,23 @@ export function ActionAnnotatePage() {
             </select>
           </FieldLabel>
           <FieldLabel label="Video">
-            <div className="relative">
-              <input
-                value={search}
-                onChange={(e) => {
-                  setSearch(e.target.value);
-                  setDropdownOpen(true);
-                }}
-                onFocus={() => setDropdownOpen(true)}
-                placeholder="Type to search filename…"
-                className={cn(fieldCls, 'h-9 w-full py-0 pr-8 font-mono text-xs')}
-              />
-              {search && (
-                <button type="button" onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-text-muted hover:text-text-primary">
-                  ✕
-                </button>
+            <VideoCombobox
+              items={filtered}
+              value={picked}
+              onChange={setPicked}
+              placeholder="Type to search filename…"
+              renderItem={(v) => (
+                <>
+                  <KindBadge kind={v.kind} />
+                  <span className={cn('shrink-0 text-[11px]', isReviewed(v) ? 'text-primary-light' : hasActive(v) ? 'text-amber-300' : 'text-text-muted')}>{isReviewed(v) ? '✓' : hasActive(v) ? 'P' : '○'}</span>
+                  <span className="min-w-0 flex-1 break-all font-mono">{v.name}</span>
+                  <span className="shrink-0 text-[10px] text-text-muted">{isReviewed(v) ? `${v.event_count || 0} labeled` : hasActive(v) ? `${v.event_count || 0} pre` : ''}</span>
+                </>
               )}
-              {dropdownOpen && (
-                <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-96 overflow-auto rounded-xl border border-border bg-surface-100 p-1 shadow-2xl" onMouseLeave={() => setDropdownOpen(false)}>
-                  {filtered.length === 0 ? (
-                    <div className="px-3 py-2 text-xs text-text-muted">No videos match</div>
-                  ) : (
-                    filtered.map((v) => (
-                      <button
-                        key={v.name}
-                        type="button"
-                        onMouseDown={(e) => {
-                          e.preventDefault();
-                          setSearch(v.name);
-                          setDropdownOpen(false);
-                        }}
-                        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-text-secondary hover:bg-primary/10 hover:text-text-primary"
-                      >
-                        <span className="shrink-0 rounded bg-ink/5 px-1.5 text-[10px] font-heading text-text-muted">{v.kind === 'sideline' ? 'SIDE' : 'CAST'}</span>
-                        <span className={cn('shrink-0 text-[11px]', isReviewed(v) ? 'text-primary-light' : hasActive(v) ? 'text-amber-300' : 'text-text-muted')}>{isReviewed(v) ? '✓' : hasActive(v) ? 'P' : '○'}</span>
-                        <span className="min-w-0 flex-1 break-all font-mono">{v.name}</span>
-                        <span className="shrink-0 text-[10px] text-text-muted">{isReviewed(v) ? `${v.event_count || 0} labeled` : hasActive(v) ? `${v.event_count || 0} pre` : ''}</span>
-                      </button>
-                    ))
-                  )}
-                </div>
-              )}
-            </div>
+            />
           </FieldLabel>
           <div className="flex items-stretch gap-2">
-            <Button intent="primary" className="h-9 py-0" onClick={() => load(search.trim() || filtered[0]?.name || '')} disabled={loading}>
+            <Button intent="primary" className="h-9 py-0" onClick={() => load(picked || filtered[0]?.name || '')} disabled={loading}>
               {loading ? 'Loading…' : 'Load'}
             </Button>
             <Button className="h-9 py-0" onClick={exportDataset}>

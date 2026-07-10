@@ -31,6 +31,7 @@ class Job:
     error: str | None = None
     logs: list[str] = field(default_factory=list)
     created_at: float = field(default_factory=time.time)
+    started_at: float | None = None
     _task: asyncio.Task | None = field(default=None, repr=False)
     _subscribers: list[asyncio.Queue] = field(default_factory=list, repr=False)
 
@@ -50,6 +51,7 @@ class Job:
             "error": self.error,
             "logs": self.logs,
             "created_at": self.created_at,
+            "started_at": self.started_at,
         }
 
 
@@ -135,7 +137,10 @@ class JobManager:
         if not job:
             return
         if status is not None:
-            job.status = JobStatus(status) if not isinstance(status, JobStatus) else status
+            new_status = JobStatus(status) if not isinstance(status, JobStatus) else status
+            if new_status is JobStatus.RUNNING and job.started_at is None:
+                job.started_at = time.time()
+            job.status = new_status
         if progress is not None:
             job.progress = progress
         if message is not None:

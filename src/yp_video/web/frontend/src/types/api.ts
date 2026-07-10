@@ -8,6 +8,10 @@ export interface JobItem {
   video?: string;
   progress?: number;
   message?: string;
+  error?: string;
+  /** Unix seconds — stamped when the item starts / settles. */
+  started_at?: number;
+  finished_at?: number;
 }
 
 export interface Job {
@@ -19,6 +23,9 @@ export interface Job {
   message?: string;
   error?: string;
   logs?: string[];
+  /** Unix seconds. `started_at` is set on the first transition to running. */
+  created_at?: number;
+  started_at?: number | null;
   // items is the batch sub-progress; other keys are job-type-specific payloads.
   params?: { items?: JobItem[]; [k: string]: unknown };
 }
@@ -83,7 +90,11 @@ export interface ActionPerfData {
   runs?: string[];
 }
 
-export interface ActionTrainProgress {
+/** Either breakdown flavour; discriminate with `'spatial' in bd`. */
+export type MapBreakdown = ActionMapBreakdown | RallyMapBreakdown;
+
+/** Live training progress — job.params.{action,rally}_train_progress. */
+export interface TrainProgress {
   epoch?: number;
   epoch_display?: number;
   epochs?: number;
@@ -96,10 +107,10 @@ export interface ActionTrainProgress {
   latest_train_loss?: number;
   latest_val_loss?: number;
   latest_val_map?: number;
-  latest_val_breakdown?: ActionMapBreakdown;
+  latest_val_breakdown?: MapBreakdown;
   best_value?: number;
   best_epoch?: number;
-  best_breakdown?: ActionMapBreakdown;
+  best_breakdown?: MapBreakdown;
 }
 
 /** SPOT rally (segment) training — /spot-train/status. */
@@ -125,25 +136,6 @@ export interface RallyTrainStatus {
 export interface RallyMapBreakdown {
   temporal: { tolerances: number[]; classes: Record<string, number[]>; overall: number[] };
   per_video?: ActionVideoMap[];
-}
-
-export interface RallyTrainProgress {
-  epoch?: number;
-  epoch_display?: number;
-  epochs?: number;
-  phase?: string;
-  phase_label?: string;
-  phase_progress?: number;
-  step?: number;
-  total?: number;
-  current_loss?: number;
-  latest_train_loss?: number;
-  latest_val_loss?: number;
-  latest_val_map?: number;
-  latest_val_breakdown?: RallyMapBreakdown;
-  best_value?: number;
-  best_epoch?: number;
-  best_breakdown?: RallyMapBreakdown;
 }
 
 /** Video record from the SPOT rally predict listing. */
