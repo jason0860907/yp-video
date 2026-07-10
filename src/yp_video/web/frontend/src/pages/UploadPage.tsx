@@ -19,10 +19,8 @@ import type { Job } from '@/types/api';
 interface Category {
   key: string;
   label: string;
-  localOnly?: boolean;
 }
 const CATEGORIES: Category[] = [
-  { key: 'videos', label: 'Videos', localOnly: true },
   { key: 'cuts-broadcast', label: 'Cuts (Broadcast)' },
   { key: 'cuts-sideline', label: 'Cuts (Sideline)' },
   { key: 'rally-pre-annotations', label: 'Rally Predictions (VLM)' },
@@ -72,9 +70,7 @@ export function UploadPage() {
   const configured = statusQuery.data?.configured ?? false;
 
   const cat = CATEGORIES.find((c) => c.key === category)!;
-  const localOnly = !!cat.localOnly;
-  const effectiveMode: Mode = localOnly ? 'upload' : mode;
-  const isUpload = effectiveMode === 'upload';
+  const isUpload = mode === 'upload';
 
   const loadFiles = async () => {
     if (!configured) return;
@@ -97,7 +93,7 @@ export function UploadPage() {
   useEffect(() => {
     void loadFiles();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [configured, category, effectiveMode]);
+  }, [configured, category, mode]);
 
   useSSE<Job>(job && !isTerminal(job.status) ? API.jobs.eventsSSE(job.id) : null, (data) => {
     setJob(data);
@@ -150,13 +146,10 @@ export function UploadPage() {
 
   const deleteLocal = async () => {
     if (!selected.length) return toast.warning('No files selected');
-    const notUploaded = localOnly ? [] : selected.filter((f) => !f.uploaded);
+    const notUploaded = selected.filter((f) => !f.uploaded);
     let body: string;
     let variant: 'warning' | 'danger' = 'warning';
-    if (localOnly) {
-      body = 'These files only exist locally and are not backed up to R2.';
-      variant = 'danger';
-    } else if (notUploaded.length === 0) {
+    if (notUploaded.length === 0) {
       body = 'They are already on R2, so this is recoverable.';
     } else {
       body = `⚠️ ${notUploaded.length} of them are NOT on R2 and will be lost permanently.`;
@@ -164,7 +157,7 @@ export function UploadPage() {
     }
     const ok = await confirm({ title: `Delete ${selected.length} local files?`, body, confirmText: 'Delete locally', variant });
     if (!ok) return;
-    const force = localOnly || notUploaded.length > 0;
+    const force = notUploaded.length > 0;
     try {
       const res = await apiFetch<{ deleted?: string[]; skipped?: string[] }>(API.upload.deleteLocal, {
         method: 'POST',
@@ -228,20 +221,18 @@ export function UploadPage() {
             </button>
           ))}
         </div>
-        {!localOnly && (
-          <div className="inline-flex rounded-lg border border-border bg-surface-50 p-0.5">
-            {(['upload', 'download'] as Mode[]).map((m) => (
-              <button
-                key={m}
-                type="button"
-                onClick={() => setMode(m)}
-                className={cn('rounded-md px-3.5 py-1.5 text-xs font-medium transition-colors', mode === m ? 'bg-primary text-on-primary' : 'text-text-secondary hover:bg-ink/[0.04]')}
-              >
-                {m === 'upload' ? 'Upload' : 'Download from R2'}
-              </button>
-            ))}
-          </div>
-        )}
+        <div className="inline-flex rounded-lg border border-border bg-surface-50 p-0.5">
+          {(['upload', 'download'] as Mode[]).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setMode(m)}
+              className={cn('rounded-md px-3.5 py-1.5 text-xs font-medium transition-colors', mode === m ? 'bg-primary text-on-primary' : 'text-text-secondary hover:bg-ink/[0.04]')}
+            >
+              {m === 'upload' ? 'Upload' : 'Download from R2'}
+            </button>
+          ))}
+        </div>
       </Card>
 
       {/* File browser */}
@@ -254,16 +245,14 @@ export function UploadPage() {
             <Button size="sm" onClick={() => setSelection(() => true)}>
               Select All
             </Button>
-            {!localOnly && isUpload && (
+            {isUpload && (
               <Button size="sm" intent="default" onClick={() => setSelection((f) => !!f.uploaded)}>
                 Uploaded
               </Button>
             )}
-            {!localOnly && (
-              <Button size="sm" intent="primary" onClick={() => setSelection((f) => (isUpload ? !f.uploaded : !f.local))}>
-                Un-synced
-              </Button>
-            )}
+            <Button size="sm" intent="primary" onClick={() => setSelection((f) => (isUpload ? !f.uploaded : !f.local))}>
+              Un-synced
+            </Button>
           </div>
         </div>
 
@@ -294,7 +283,6 @@ export function UploadPage() {
             <FileTree
               files={files}
               expanded={expanded}
-              localOnly={localOnly}
               isUpload={isUpload}
               onToggleFile={(idx, on) => setFiles((prev) => prev.map((f, i) => (i === idx ? { ...f, selected: on } : f)))}
               onToggleFolder={toggleFolder}
@@ -304,11 +292,7 @@ export function UploadPage() {
         </div>
 
         <div className="mt-3 flex items-center gap-3 border-t border-border pt-3">
-          {localOnly ? (
-            <Button intent="danger" onClick={deleteLocal} disabled={busy}>
-              Delete Local
-            </Button>
-          ) : isUpload ? (
+          {isUpload ? (
             <>
               <Button intent="primary" onClick={() => startTransfer('upload')} disabled={busy}>
                 Upload Selected
@@ -362,7 +346,6 @@ function transferDetail(job: Job): string {
 interface FileTreeProps {
   files: FileRow[];
   expanded: Record<string, boolean>;
-  localOnly: boolean;
   isUpload: boolean;
   onToggleFile: (idx: number, on: boolean) => void;
   onToggleFolder: (key: string, on: boolean) => void;
@@ -371,7 +354,7 @@ interface FileTreeProps {
 
 /** Grouped, collapsible file list. Files sort by (group → sub-dir → name);
  *  nested files collapse under a folder row with an aggregate checkbox. */
-function FileTree({ files, expanded, localOnly, isUpload, onToggleFile, onToggleFolder, onExpand }: FileTreeProps) {
+function FileTree({ files, expanded, isUpload, onToggleFile, onToggleFolder, onExpand }: FileTreeProps) {
   const { order, groupCounts, subTotal, subSelected } = useMemo(() => {
     const order = files.map((_, i) => i).sort((a, b) => {
       const fa = files[a]!;
@@ -440,8 +423,7 @@ function FileTree({ files, expanded, localOnly, isUpload, onToggleFile, onToggle
         <input type="checkbox" checked={f.selected} onChange={(e) => onToggleFile(i, e.target.checked)} className="h-3.5 w-3.5 flex-shrink-0 cursor-pointer accent-primary" />
         <span className="flex-1 whitespace-nowrap text-sm text-text-primary">{f.name}</span>
         <span className="tabular-nums text-[11px] text-text-muted">{formatBytes(f.size)}</span>
-        {!localOnly &&
-          (isSynced ? (
+        {(isSynced ? (
             <span className="flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-0.5 text-[11px] font-medium text-primary-light ring-1 ring-primary/25">
               <span className="h-1.5 w-1.5 rounded-full bg-current" />
               {syncLabel}
