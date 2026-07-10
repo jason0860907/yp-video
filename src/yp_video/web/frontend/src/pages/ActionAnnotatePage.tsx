@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as R
 import { useQuery } from '@tanstack/react-query';
 import { API, ApiError, apiFetch, apiUrl } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { copyText } from '@/lib/download';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -481,9 +482,15 @@ export function ActionAnnotatePage() {
     const t = setTimeout(() => void saveRef.current(true), AUTOSAVE_MS);
     return () => clearTimeout(t);
   }, [ed]);
-  const exportDataset = () => {
-    if (!videos.some(isReviewed)) return toast.warning('No saved action annotations to export yet');
-    window.location.href = apiUrl(API.actionAnnotate.export);
+  const copyVideoName = async () => {
+    const name = ed.video || picked;
+    if (!name) return toast.warning('No video loaded');
+    try {
+      await copyText(name);
+      toast.success(`Copied ${name}`);
+    } catch {
+      toast.error('Copy failed');
+    }
   };
 
   const jumpToEvent = (idx: number) => {
@@ -605,11 +612,11 @@ export function ActionAnnotatePage() {
             />
           </FieldLabel>
           <div className="flex items-stretch gap-2">
-            <Button intent="primary" className="h-9 py-0" onClick={() => load(picked || filtered[0]?.name || '')} disabled={loading}>
+            <Button intent="primary" className="h-9 py-0" onClick={() => load(picked)} disabled={loading || !picked}>
               {loading ? 'Loading…' : 'Load'}
             </Button>
-            <Button className="h-9 py-0" onClick={exportDataset}>
-              Export JSONL
+            <Button className="h-9 py-0" onClick={copyVideoName}>
+              Copy Filename
             </Button>
           </div>
         </div>

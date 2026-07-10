@@ -35,7 +35,15 @@ export function VideoCombobox<T extends { name: string }>({
   const listRef = useRef<HTMLDivElement>(null);
 
   const needle = query.trim().toLowerCase();
-  const shown = needle ? items.filter((i) => i.name.toLowerCase().includes(needle)) : items;
+  // Rank exact match > prefix > substring so a pasted full filename always
+  // sits at the top — Enter must never pick some other file that merely
+  // contains the query. Sort is stable, so list order survives within ranks.
+  const rank = (name: string) => (name === needle ? 0 : name.startsWith(needle) ? 1 : 2);
+  const shown = needle
+    ? items
+        .filter((i) => i.name.toLowerCase().includes(needle))
+        .sort((a, b) => rank(a.name.toLowerCase()) - rank(b.name.toLowerCase()))
+    : items;
 
   useEffect(() => setHighlight(0), [needle, open]);
   useEffect(() => {
