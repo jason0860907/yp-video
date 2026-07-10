@@ -162,6 +162,13 @@ async def export_segment(source: Path | str, start: float, end: float, output: P
         cmd += ["-c:v", "libx264", "-preset", "fast", "-crf", "18", "-c:a", "aac"]
     cmd += ["-movflags", "+faststart", str(output)]
 
+    await _run_ffmpeg(cmd, output)
+    if copy:
+        await _zero_video_start(output)
+    return True
+
+
+async def _run_ffmpeg(cmd: list[str], output: Path | str) -> None:
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.PIPE,
@@ -175,4 +182,47 @@ async def export_segment(source: Path | str, start: float, end: float, output: P
         raise FFmpegTimeoutError(str(output), FFMPEG_TIMEOUT) from e
     if proc.returncode != 0:
         raise FFmpegError(f"FFmpeg failed with code {proc.returncode}: {stderr.decode()[:200]}")
-    return True
+
+
+async def _zero_video_start(output: Path | str) -> None:
+    """Re-align a stream-copied cut so the video track starts at t=0.
+
+    Stream copy can only start video at a keyframe while audio starts at the
+    exact cut point, leaving the video track with start_time > 0 (an
+    audio-only lead). Everything downstream — the annotation UI's
+    currentTime*fps frame numbers, ffmpeg-extracted frame caches, audio
+    features — assumes both tracks start at zero; a nonzero offset silently
+    shifts every label made on the file. Drop the lead by re-remuxing from the
+    first video keyframe (lossless: the video bitstream is untouched).
+    """
+    proc = await asyncio.create_subprocess_exec(
+        "ffprobe", "-v", "error", "-select_streams", "v:0",
+        "-show_entries", "stream=start_time", "-of", "csv=p=0", str(output),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    out, _ = await proc.communicate()
+    try:
+        video_start = float(out.decode().strip())
+    except ValueError:
+        return
+    if video_start <= 0.02:
+        return
+
+    tmp = Path(f"{output}.tszero.mp4")
+    cmd = [
+        "ffmpeg", "-y",
+        "-ss", str(video_start),
+        "-i", str(output),
+        "-map", "0",
+        "-c", "copy",
+        "-avoid_negative_ts", "make_zero",
+        "-movflags", "+faststart",
+        str(tmp),
+    ]
+    try:
+        await _run_ffmpeg(cmd, tmp)
+    except FFmpegError:
+        tmp.unlink(missing_ok=True)
+        raise
+    tmp.replace(output)
