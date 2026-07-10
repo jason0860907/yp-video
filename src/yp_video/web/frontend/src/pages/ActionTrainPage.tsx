@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { API, ApiError, apiFetch, apiUrl } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { isTerminal } from '@/lib/job';
@@ -10,9 +10,10 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { StatTile } from '@/components/ui/StatTile';
 import { JobProgress } from '@/components/job/JobProgress';
-import { ActionPerfCharts } from '@/components/train/ActionPerfCharts';
+import { TrainDetail } from '@/components/train/TrainDetail';
+import { TrainPerfCard } from '@/components/train/TrainPerfCard';
 import { toast } from '@/components/feedback/toast';
-import type { ActionMapBreakdown, ActionPerfData, ActionTrainProgress, ActionTrainStatus, Job } from '@/types/api';
+import type { ActionPerfData, ActionTrainStatus, Job, TrainProgress } from '@/types/api';
 
 interface Form {
   dataset: string;
@@ -91,11 +92,11 @@ const NUM_FIELDS: Array<{ key: keyof Form; label: string; min?: number; max?: nu
 const fieldCls =
   'w-full rounded-lg border border-border-light bg-surface-50 px-3 py-2 text-sm text-text-primary focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary/15';
 const errMsg = (e: unknown) => (e instanceof ApiError ? e.body : e instanceof Error ? e.message : String(e));
-const fmtMetric = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v).toFixed(4) : '');
 
 export function ActionTrainPage() {
   const [form, setForm] = useState<Form>(BASE_FORM);
   const [job, setJob] = useState<Job | null>(null);
+  const [perfRun, setPerfRun] = useState<string>();
 
   const statusQuery = useQuery({
     queryKey: ['action-train-status'],
@@ -106,9 +107,13 @@ export function ActionTrainPage() {
 
   // Per-epoch validation curve + per-video breakdown; refresh while training.
   const perfQuery = useQuery({
-    queryKey: ['action-train-performance'],
-    queryFn: () => apiFetch<ActionPerfData>(API.actionTrain.performance),
+    queryKey: ['action-train-performance', perfRun],
+    queryFn: () =>
+      apiFetch<ActionPerfData>(perfRun ? `${API.actionTrain.performance}?run=${encodeURIComponent(perfRun)}` : API.actionTrain.performance),
     refetchInterval: job && !isTerminal(job.status) ? 30_000 : false,
+    // Keep the card mounted while a newly selected run loads — otherwise the
+    // page collapses and the browser jumps back to the top.
+    placeholderData: keepPreviousData,
   });
   const perf = perfQuery.data;
 
@@ -238,7 +243,7 @@ export function ActionTrainPage() {
         <StatTile label="Status" value={ready ? 'ready' : 'not ready'} tintClass={ready ? 'text-primary-light' : 'text-amber-400'} />
       </div>
 
-      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[1.6fr_1fr]">
+      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
         {/* Training config */}
         <Card>
           <SectionLabel>Training config</SectionLabel>
@@ -430,12 +435,12 @@ export function ActionTrainPage() {
         <Card>
           <SectionLabel>Training job</SectionLabel>
           <JobProgress job={job} showLogs truncateMsg={false} />
-          <TrainDetail progress={job.params?.action_train_progress as ActionTrainProgress | undefined} epochsFallback={form.num_epochs} />
+          <TrainDetail progress={job.params?.action_train_progress as TrainProgress | undefined} epochsFallback={form.num_epochs} />
         </Card>
       )}
 
-      {/* Per-epoch curve + per-video mAP for the latest (or running) run */}
-      {perf && perf.entries.length > 0 && <ActionPerfCharts data={perf} />}
+      {/* Per-epoch curve + per-video mAP for the selected (or latest) run */}
+      {perf && perf.entries.length > 0 && <TrainPerfCard data={perf} onSelectRun={setPerfRun} />}
     </div>
   );
 }
@@ -458,132 +463,5 @@ function SelectArch({ value, options, onChange }: { value: string; options: read
         </option>
       ))}
     </select>
-  );
-}
-
-function TrainDetail({ progress: p, epochsFallback }: { progress?: ActionTrainProgress; epochsFallback: number }) {
-  if (!p) return null;
-  const phaseProgress = Number.isFinite(Number(p.phase_progress)) ? `${Math.round(Number(p.phase_progress) * 100)}%` : '';
-  const step =
-    Number.isFinite(Number(p.step)) && Number.isFinite(Number(p.total)) ? `${p.step}/${p.total}${phaseProgress ? ` (${phaseProgress})` : ''}` : '';
-  const latestMap = Number.isFinite(Number(p.latest_val_map)) ? `${(Number(p.latest_val_map) * 100).toFixed(2)}%` : '';
-  const bestVal = Number.isFinite(Number(p.best_value))
-    ? Number(p.best_value) <= 1
-      ? (Number(p.best_value) * 100).toFixed(2) + '%'
-      : Number(p.best_value).toFixed(4)
-    : '';
-  const best = bestVal ? `${bestVal}${p.best_epoch != null ? ` · Epoch ${Number(p.best_epoch) + 1}` : ''}` : '';
-  const rows: Array<[string, string]> = [
-    ['Epoch', `${p.epoch_display || 1}/${p.epochs || epochsFallback || '?'}`],
-    ['Phase', p.phase_label || p.phase || ''],
-    ['Step', step],
-    ['Cur loss', fmtMetric(p.current_loss)],
-    ['Last train', fmtMetric(p.latest_train_loss)],
-    ['Last val', fmtMetric(p.latest_val_loss)],
-    ['Last mAP', latestMap],
-    ['Best', best],
-  ];
-  const visible = rows.filter(([, v]) => v !== '' && v != null);
-  if (!visible.length) return null;
-  return (
-    <>
-      <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
-        {visible.map(([label, value]) => (
-          <div key={label} className="min-w-0 rounded-lg border border-border bg-surface-100 px-2.5 py-2">
-            <div className="text-[9px] uppercase tracking-wider text-text-muted">{label}</div>
-            <div className="mt-0.5 truncate font-mono text-[11px] tabular-nums text-text-secondary" title={value}>
-              {value}
-            </div>
-          </div>
-        ))}
-      </div>
-      {(p.latest_val_breakdown || p.best_breakdown) && (
-        <details className="mt-2">
-          <summary className="cursor-pointer text-[10px] text-text-muted hover:text-text-primary">mAP breakdown</summary>
-          {p.latest_val_breakdown && <MapBreakdownTable title={`Latest — Epoch ${p.epoch_display ?? 1}`} bd={p.latest_val_breakdown} />}
-          {p.best_breakdown && <MapBreakdownTable title={`Best${p.best_epoch != null ? ` — Epoch ${p.best_epoch + 1}` : ''}`} bd={p.best_breakdown} />}
-        </details>
-      )}
-    </>
-  );
-}
-
-function MapBreakdownTable({ title, bd }: { title: string; bd: ActionMapBreakdown }) {
-  const pct = (v: number | undefined) => (Number.isFinite(v) ? ((v as number) * 100).toFixed(1) : '—');
-  const numCell = 'py-0.5 pl-5 text-right';
-  return (
-    <div className="mt-3">
-      <div className="text-xs font-semibold text-text-primary">{title}</div>
-      <div className="mt-1.5 grid grid-cols-1 items-start gap-3 xl:grid-cols-[auto_minmax(0,1fr)]">
-        {/* By action class */}
-        <div className="rounded-lg border border-border bg-surface-100 px-3 py-2.5">
-          <div className="text-[9px] uppercase tracking-wider text-text-muted">By class</div>
-          <table className="mt-1 font-mono text-[10px] tabular-nums">
-            <thead>
-              <tr className="text-text-muted">
-                <th className="py-0.5 text-left font-normal">Class</th>
-                {bd.temporal.tolerances.map((t) => (
-                  <th key={t} className={cn(numCell, 'font-normal')}>
-                    tol{t}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {Object.entries(bd.temporal.classes).map(([cls, aps]) => (
-                <tr key={cls}>
-                  <td className="py-0.5 pr-2 text-left text-text-secondary">{cls}</td>
-                  {aps.map((v, i) => (
-                    <td key={i} className={cn(numCell, 'text-text-secondary')}>
-                      {pct(v)}
-                    </td>
-                  ))}
-                </tr>
-              ))}
-              <tr className="border-t border-border text-text-primary">
-                <td className="py-0.5 pr-2 text-left">overall</td>
-                {bd.temporal.overall.map((v, i) => (
-                  <td key={i} className={numCell}>
-                    {pct(v)}
-                  </td>
-                ))}
-              </tr>
-            </tbody>
-          </table>
-          <div className="mt-1.5 border-t border-border pt-1.5 text-[10px] text-text-muted">
-            spatial
-            {bd.spatial.pixel_tolerances.map((px, i) => ` ${px}px ${pct(bd.spatial.overall_by_px[i])}`).join('')}
-            {' · overall '}
-            <span className="text-text-secondary">{pct(bd.spatial.overall)}</span>
-          </div>
-        </div>
-        {/* By video */}
-        {bd.per_video && bd.per_video.length > 0 && (
-          <div className="min-w-0 rounded-lg border border-border bg-surface-100 px-3 py-2.5">
-            <div className="text-[9px] uppercase tracking-wider text-text-muted">By video</div>
-            <table className="mt-1 w-full font-mono text-[10px] tabular-nums">
-              <thead>
-                <tr className="text-text-muted">
-                  <th className="py-0.5 text-left font-normal">Video</th>
-                  <th className="w-12 py-0.5 text-right font-normal">mAP</th>
-                  <th className="w-12 py-0.5 text-right font-normal">temp</th>
-                  <th className="w-12 py-0.5 text-right font-normal">spat</th>
-                </tr>
-              </thead>
-              <tbody>
-                {[...bd.per_video].sort((a, b) => b.harmonic - a.harmonic).map((v) => (
-                  <tr key={v.video}>
-                    <td className="max-w-0 truncate py-0.5 pr-3 text-left text-text-secondary" title={v.video}>{v.video}</td>
-                    <td className="py-0.5 text-right text-text-primary">{pct(v.harmonic)}</td>
-                    <td className="py-0.5 text-right text-text-secondary">{pct(v.temporal)}</td>
-                    <td className="py-0.5 text-right text-text-secondary">{pct(v.spatial)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    </div>
   );
 }
