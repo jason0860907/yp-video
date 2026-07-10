@@ -116,6 +116,7 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
   useVideoRecovery(videoRef, {
     src: () => (videoName ? videoStreamPath(videoName) : ''),
     onRecover: () => toast.info('影片串流中斷，已自動重新載入'),
+    onGiveUp: () => toast.error('影片重載後仍卡在同一處，已停止自動重試 — 請把 DevTools Console 的 [video-recovery] 記錄回報'),
   });
 
   // ── Load a file ──
