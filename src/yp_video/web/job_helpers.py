@@ -1,15 +1,21 @@
 """Helpers shared across routers that spawn / orchestrate background jobs.
 
-Three duplicated patterns are factored out here:
+This module is the single source of truth for job display: message formats
+(``batch_message``), terminal prefixes (``terminal_prefix``), and terminal
+status epilogues (``finalize_batch_job``, ``fail_job_from_exc``) — routers
+must not hand-roll their own variants.
+
+The duplicated patterns factored out here:
 
 1. ``stream_subprocess`` — spawn a subprocess, stream stdout into job.logs,
    parse lines for progress, and throttle SSE pushes. Used by SPOT train /
    predict jobs. Subprocess cancel is automatic via ``process.terminate()``,
    which kills the child and lets the OS reclaim its VRAM.
 2. ``finalize_batch_job`` — set the all-success / all-failed / partial
-   final status for a job that processed N items with K failures. Used
-   by detect + spot predict.
-3. ``stop_vllm_for_job`` — async context manager that releases vLLM's GPU
+   final status for a job that processed N items with K failures.
+3. ``fail_job_from_exc`` — the standard failure epilogue (traceback into
+   logs, ``error`` set, last progress message preserved).
+4. ``stop_vllm_for_job`` — async context manager that releases vLLM's GPU
    for the duration of a job and restarts it in the background after.
 
 Cancel semantics across all GPU-using jobs:
@@ -33,6 +39,7 @@ import logging
 import re
 import shlex
 import time
+import traceback
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -40,6 +47,24 @@ from pathlib import Path
 from yp_video.web.jobs import job_manager
 
 log = logging.getLogger(__name__)
+
+
+# ── Message formatting ────────────────────────────────────────────────
+
+
+def batch_message(index: int, total: int, item: str, detail: str = "") -> str:
+    """Standard per-item progress message: ``(i/N) item: detail``.
+
+    ``index`` is the 0-based loop variable (rendered 1-based). Telemetry like
+    percent / speed / ETA goes in ``detail``, joined with `` · `` by the caller.
+    """
+    msg = f"({index + 1}/{total}) {item}"
+    return f"{msg}: {detail}" if detail else msg
+
+
+def terminal_prefix(job) -> str:
+    """One prefix format for every job's terminal echo: ``[{type} {id}] ``."""
+    return f"[{job.type} {job.id}] " if job is not None else ""
 
 
 # ── Subprocess streaming ──────────────────────────────────────────────
@@ -70,7 +95,6 @@ async def stream_subprocess(
     is_key_line: Callable[[str], bool] | None = None,
     push_interval: float = 1.0,
     tee_to_terminal: bool = False,
-    terminal_prefix: str = "",
     log_path: Path | str | None = None,
     log_line: Callable[[str], str | None] | None = None,
     log_command: str | None = None,
@@ -84,10 +108,16 @@ async def stream_subprocess(
     matching ``is_key_line`` pushed immediately so users see epoch/eval
     boundaries without waiting.
 
+    When ``tee_to_terminal`` is set, every line is echoed to the terminal
+    prefixed with ``[{job.type} {job.id}] `` (see ``terminal_prefix``) so all
+    jobs share one prefix format.
+
     On ``CancelledError`` the subprocess is terminated and the exception is
     re-raised; the caller's outer except block is responsible for setting
     the cancelled status.
     """
+    job_obj = job_manager.get_job(job_id)
+    prefix = terminal_prefix(job_obj) if tee_to_terminal else ""
     log_fp = None
     if log_path is not None:
         log_file = Path(log_path)
@@ -96,7 +126,7 @@ async def stream_subprocess(
 
     command_line = shlex.join(str(part) for part in cmd)
     if tee_to_terminal:
-        print(f"{terminal_prefix}$ {command_line}", flush=True)
+        print(f"{prefix}$ {command_line}", flush=True)
     if log_command:
         log.info("%s", log_command)
     if log_fp is not None:
@@ -113,7 +143,6 @@ async def stream_subprocess(
     state: dict = {"progress": 0.0, "message": "", "params": {}}
     last_msg = ""
     last_push = 0.0
-    job_obj = job_manager.get_job(job_id)
     parsers = parsers or []
     is_key = is_key_line or (lambda _t: False)
     decoder = codecs.getincrementaldecoder("utf-8")("replace")
@@ -128,7 +157,7 @@ async def stream_subprocess(
         if job_obj is not None:
             job_obj.logs.append(text)
         if tee_to_terminal:
-            print(f"{terminal_prefix}{text}", flush=True)
+            print(f"{prefix}{text}", flush=True)
         if log_line is not None:
             log_text = log_line(text)
             if log_text:
@@ -216,27 +245,48 @@ async def finalize_batch_job(
     total: int,
     failed: int,
     *,
+    noun: str = "videos",
     name: str | None = None,
 ) -> None:
     """Set the terminal status / progress / message for a multi-item batch job.
 
-    - failed == 0:        completed, "All {total} videos complete"
-    - failed == total:    failed,    "All {total} videos failed — see logs"
+    - failed == 0:        completed, "All {total} {noun} complete"
+    - failed == total:    failed,    "All {total} {noun} failed — see logs"
     - otherwise:          completed, "{ok}/{total} completed, {failed} failed"
+
+    ``params.total`` / ``params.failed`` are written so the frontend can detect
+    partial success structurally instead of sniffing the message text.
     """
-    update: dict = {"progress": 1.0}
+    job = job_manager.get_job(job_id)
+    params = {**(job.params if job else {}), "total": total, "failed": failed}
+    update: dict = {"progress": 1.0, "params": params}
     if name is not None:
         update["name"] = name
     if failed == 0:
-        update.update(status="completed", message=f"All {total} videos complete")
+        update.update(status="completed", message=f"All {total} {noun} complete")
     elif failed == total:
-        update.update(status="failed", message=f"All {total} videos failed — see logs")
+        update.update(status="failed", message=f"All {total} {noun} failed — see logs")
     else:
         update.update(
             status="completed",
             message=f"{total - failed}/{total} completed, {failed} failed",
         )
     await job_manager.update_job(job_id, **update)
+
+
+async def fail_job_from_exc(job_id: str, exc: BaseException) -> None:
+    """Standard failure epilogue for any job.
+
+    The traceback goes into ``job.logs``, ``error`` becomes
+    ``TypeName: message``. The last progress message is left in place so the
+    user can see which step died; the frontend renders ``error`` separately.
+    """
+    job = job_manager.get_job(job_id)
+    if job is not None:
+        job.logs.extend("".join(traceback.format_exception(exc)).splitlines())
+    await job_manager.update_job(
+        job_id, status="failed", error=f"{type(exc).__name__}: {exc}"
+    )
 
 
 # ── vLLM GPU yielding ─────────────────────────────────────────────────

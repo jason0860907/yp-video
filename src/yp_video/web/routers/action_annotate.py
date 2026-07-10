@@ -45,7 +45,15 @@ from yp_video.core.ffmpeg import (
     probe_video_metadata,
 )
 from yp_video.core.jsonl import read_jsonl
-from yp_video.web.job_helpers import ProgressParser, finalize_batch_job, stop_vllm_for_job, stream_subprocess
+from yp_video.web.job_helpers import (
+    ProgressParser,
+    batch_message,
+    fail_job_from_exc,
+    finalize_batch_job,
+    stop_vllm_for_job,
+    stream_subprocess,
+    terminal_prefix,
+)
 from yp_video.web.jobs import job_manager
 from yp_video.web.r2_client import serve_video_or_r2_redirect, sync_to_r2
 
@@ -642,19 +650,18 @@ def _spot_progress_fraction(data: dict, *, start: float, span: float, cap: float
     return min(cap, start + span * prelabel.spot_progress_fraction(data))
 
 
-def _spot_app_log_line(job_id: str, line: str) -> str | None:
+def _spot_app_log_line(prefix: str, line: str) -> str | None:
     if line.startswith(SPOT_PROGRESS_PREFIX):
         data = prelabel.parse_spot_progress(line.removeprefix(SPOT_PROGRESS_PREFIX))
         if data is None:
             return None
         video = data.get("video_basename") or Path(str(data.get("video") or "")).name
-        return f"[SPOT {job_id}] {video}: {prelabel.spot_progress_message(data)}"
-    if line.startswith("Starting inference"):
-        return f"[SPOT {job_id}] {line}"
-    if line.startswith("Timing "):
-        return f"[SPOT {job_id}] {line}"
-    if line.startswith(("Saved predictions", "Failed inference", "Failure summary", "Warning:", "Decode pipeline:")):
-        return f"[SPOT {job_id}] {line}"
+        return f"{prefix}{video}: {prelabel.spot_progress_message(data)}"
+    if line.startswith((
+        "Starting inference", "Timing ", "Saved predictions",
+        "Failed inference", "Failure summary", "Warning:", "Decode pipeline:",
+    )):
+        return f"{prefix}{line}"
     return None
 
 
@@ -853,7 +860,7 @@ async def start_spot_prelabel(req: SpotPrelabelRequest) -> dict:
         raise HTTPException(400, str(exc)) from exc
 
     job = job_manager.create_job(
-        "spot-prelabel",
+        "spot_prelabel",
         {
             "video": video.name,
             "checkpoint": prelabel.checkpoint_ref(checkpoint),
@@ -932,13 +939,12 @@ async def start_spot_prelabel(req: SpotPrelabelRequest) -> dict:
                             ),
                             push_interval=1.0,
                             tee_to_terminal=True,
-                            terminal_prefix=f"[SPOT {job.id} {video.name}] ",
                             log_command=(
-                                f"[SPOT {job.id}] start single video={video.name} "
+                                f"{terminal_prefix(job)}start single video={video.name} "
                                 f"batch={req.batch_size} workers={req.num_workers} "
                                 f"{_spot_decode_settings_text(req)}"
                             ),
-                            log_line=lambda line: _spot_app_log_line(job.id, line),
+                            log_line=lambda line: _spot_app_log_line(terminal_prefix(job), line),
                         )
                 if rc != 0:
                     raise RuntimeError(last_line or f"SPOT exited with code {rc}")
@@ -955,7 +961,7 @@ async def start_spot_prelabel(req: SpotPrelabelRequest) -> dict:
                     min_score=req.min_score,
                     replace_final=req.overwrite,
                 )
-                log.info("[SPOT %s] saved %s (%d event(s))", job.id, pre_path.name, data["num_events"])
+                log.info("%ssaved %s (%d event(s))", terminal_prefix(job), pre_path.name, data["num_events"])
             await job_manager.update_job(
                 job.id,
                 status="completed",
@@ -971,18 +977,8 @@ async def start_spot_prelabel(req: SpotPrelabelRequest) -> dict:
             await job_manager.update_job(job.id, status="cancelled", message="Cancelled")
             raise
         except Exception as exc:  # noqa: BLE001
-            tb = traceback.format_exc()
-            log.error("SPOT pre-label failed for %s:\n%s", video.name, tb)
-            job_obj = job_manager.get_job(job.id)
-            if job_obj:
-                job_obj.logs.append(f"[{video.name}] {type(exc).__name__}: {exc}")
-                job_obj.logs.extend(tb.splitlines())
-            await job_manager.update_job(
-                job.id,
-                status="failed",
-                error=f"{type(exc).__name__}: {exc}",
-                message="SPOT pre-label failed",
-            )
+            log.exception("SPOT pre-label failed for %s", video.name)
+            await fail_job_from_exc(job.id, exc)
 
     task = asyncio.create_task(run_job())
     job_manager.attach_task(job, task)
@@ -1014,7 +1010,7 @@ async def start_spot_prelabel_batch(req: SpotPrelabelBatchRequest) -> dict:
         for video, _ann_path in entries
     ]
     job = job_manager.create_job(
-        "spot-prelabel-batch",
+        "spot_prelabel_batch",
         {
             "videos": [video.name for video, _ann_path in entries],
             "checkpoint": prelabel.checkpoint_ref(checkpoint),
@@ -1057,21 +1053,11 @@ async def start_spot_prelabel_batch(req: SpotPrelabelBatchRequest) -> dict:
                         progress=float(item.get("progress") or 0),
                         message="Cancelled",
                     )
-            await job_manager.update_job(job.id, status="cancelled", message="Batch cancelled")
+            await job_manager.update_job(job.id, status="cancelled", message="Cancelled")
             raise
         except Exception as exc:  # noqa: BLE001
-            tb = traceback.format_exc()
-            log.error("SPOT batch pre-label failed:\n%s", tb)
-            job_obj = job_manager.get_job(job.id)
-            if job_obj:
-                job_obj.logs.append(f"{type(exc).__name__}: {exc}")
-                job_obj.logs.extend(tb.splitlines())
-            await job_manager.update_job(
-                job.id,
-                status="failed",
-                error=f"{type(exc).__name__}: {exc}",
-                message="SPOT batch pre-label failed",
-            )
+            log.exception("SPOT batch pre-label failed")
+            await fail_job_from_exc(job.id, exc)
 
     task = asyncio.create_task(run_job())
     job_manager.attach_task(job, task)
@@ -1088,6 +1074,7 @@ async def _run_prelabel_batch_subprocess(
 ) -> int:
     total = len(entries)
     metas: list[dict] = []
+    prefix = terminal_prefix(job_manager.get_job(job_id))
 
     with tempfile.TemporaryDirectory(prefix=f"yp-spot-batch-{job_id}-") as tmp_root:
         tmp_root_path = Path(tmp_root)
@@ -1096,7 +1083,7 @@ async def _run_prelabel_batch_subprocess(
             await job_manager.update_job(
                 job_id,
                 progress=0.02 + 0.04 * ((idx + 1) / total),
-                message=f"{video.name}: reading metadata",
+                message=batch_message(idx, total, video.name, "reading metadata"),
             )
             metas.append(await asyncio.to_thread(_video_metadata, video))
             pred_file = tmp_root_path / f"{idx:05d}" / "predictions.json"
@@ -1117,7 +1104,7 @@ async def _run_prelabel_batch_subprocess(
                     progress=0.92,
                     message="Inference complete; saving pre-label",
                     overall_progress=_batch_progress(idx, 0.92, total),
-                    overall_message=f"{video.name}: saving pre-label",
+                    overall_message=batch_message(idx, total, video.name, "saving pre-label"),
                 )
                 data = await _save_spot_action_annotation(
                     video=video,
@@ -1128,7 +1115,7 @@ async def _run_prelabel_batch_subprocess(
                     min_score=req.min_score,
                     replace_final=req.overwrite,
                 )
-                log.info("[SPOT %s] saved %s (%d event(s))", job_id, ann_path.name, data["num_events"])
+                log.info("%ssaved %s (%d event(s))", prefix, ann_path.name, data["num_events"])
                 await _update_batch_item(
                     job_id,
                     items,
@@ -1137,7 +1124,7 @@ async def _run_prelabel_batch_subprocess(
                     progress=1.0,
                     message=f"Complete: {data['num_events']} event(s)",
                     overall_progress=_batch_progress(idx, 1.0, total),
-                    overall_message=f"{video.name}: complete",
+                    overall_message=batch_message(idx, total, video.name, "complete"),
                     extra={
                         "count": data["num_events"],
                         "saved": str(ann_path),
@@ -1160,7 +1147,7 @@ async def _run_prelabel_batch_subprocess(
                     message="Failed",
                     error=f"{type(exc).__name__}: {exc}",
                     overall_progress=_batch_progress(idx, 1.0, total),
-                    overall_message=f"{video.name}: failed",
+                    overall_message=batch_message(idx, total, video.name, "failed"),
                 )
                 return False
 
@@ -1188,7 +1175,7 @@ async def _run_prelabel_batch_subprocess(
                     progress=0.08,
                     message="Launching SPOT inference",
                     overall_progress=_batch_progress(idx, 0.08, total),
-                    overall_message=f"{video.name}: launching SPOT inference",
+                    overall_message=batch_message(idx, total, video.name, "launching SPOT inference"),
                 )
 
                 def start_handler(_match, *, item_idx: int = idx, item_video: Path = video):
@@ -1201,7 +1188,9 @@ async def _run_prelabel_batch_subprocess(
                             progress=0.10,
                             message="Preparing first batch (decoding frames)",
                             overall_progress=_batch_progress(item_idx, 0.10, total),
-                            overall_message=f"{item_video.name}: preparing first batch",
+                            overall_message=batch_message(
+                                item_idx, total, item_video.name, "preparing first batch"
+                            ),
                         )
                     )
                     return None
@@ -1221,7 +1210,7 @@ async def _run_prelabel_batch_subprocess(
                             progress=item_progress,
                             message=message,
                             overall_progress=_batch_progress(item_idx, item_progress, total),
-                            overall_message=f"{item_video.name}: {message}",
+                            overall_message=batch_message(item_idx, total, item_video.name, message),
                             extra={
                                 "current_frame": int(data.get("end_frame") or 0),
                                 "total_frames": int(data.get("total_frames") or 0),
@@ -1267,13 +1256,12 @@ async def _run_prelabel_batch_subprocess(
                     ),
                     push_interval=1.0,
                     tee_to_terminal=True,
-                    terminal_prefix=f"[SPOT {job_id}] ",
                     log_command=(
-                        f"[SPOT {job_id}] start video {idx + 1}/{total}: {video.name} "
+                        f"{prefix}start video {idx + 1}/{total}: {video.name} "
                         f"batch={req.batch_size} workers={req.num_workers} "
                         f"{_spot_decode_settings_text(req)}"
                     ),
-                    log_line=lambda line: _spot_app_log_line(job_id, line),
+                    log_line=lambda line: _spot_app_log_line(prefix, line),
                     update_job=False,
                 )
 
@@ -1292,7 +1280,7 @@ async def _run_prelabel_batch_subprocess(
                         message="Failed",
                         error=error,
                         overall_progress=_batch_progress(idx, 1.0, total),
-                        overall_message=f"{video.name}: failed",
+                        overall_message=batch_message(idx, total, video.name, "failed"),
                     )
                     continue
 

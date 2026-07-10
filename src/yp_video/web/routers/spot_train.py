@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import traceback
 from datetime import datetime
 from pathlib import Path
 
@@ -31,7 +30,12 @@ from yp_video.contracts.action import (
     ACTION_CONTRACT_VERSION_ENV,
 )
 from yp_video.action.frames import ensure_action_frame_caches
-from yp_video.web.job_helpers import stop_vllm_for_job, stream_subprocess
+from yp_video.web.job_helpers import (
+    fail_job_from_exc,
+    stop_vllm_for_job,
+    stream_subprocess,
+    terminal_prefix,
+)
 from yp_video.web.jobs import JobStatus, job_manager
 from yp_video.web.spot_runs import (
     PackageExporter,
@@ -408,7 +412,6 @@ async def start(req: RallyTrainRequest) -> dict:
                         parsers=parsers,
                         is_key_line=is_key_line,
                         tee_to_terminal=True,
-                        terminal_prefix="[rally-train] ",
                         log_path=save_dir / "terminal.log",
                     )
             if rc == 0:
@@ -440,26 +443,16 @@ async def start(req: RallyTrainRequest) -> dict:
             await job_manager.update_job(
                 job.id,
                 status="cancelled",
-                message="Training cancelled",
+                message="Cancelled",
                 params={
                     **job.params,
                     **({"checkpoint_package": checkpoint_summary} if checkpoint_summary else {}),
                 },
             )
         except Exception as exc:  # noqa: BLE001
-            tb = traceback.format_exc()
-            print(f"\n[rally-train] Failed:\n{tb}", flush=True)
-            log.error("Rally training failed:\n%s", tb)
-            job_obj = job_manager.get_job(job.id)
-            if job_obj:
-                job_obj.logs.append(f"{type(exc).__name__}: {exc}")
-                job_obj.logs.extend(tb.splitlines())
-            await job_manager.update_job(
-                job.id,
-                status="failed",
-                error=f"{type(exc).__name__}: {exc}",
-                message="SPOT rally training failed",
-            )
+            print(f"{terminal_prefix(job)}Failed: {type(exc).__name__}: {exc}", flush=True)
+            log.exception("Rally training failed")
+            await fail_job_from_exc(job.id, exc)
 
     task = asyncio.create_task(run_job())
     job_manager.attach_task(job, task)

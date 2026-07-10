@@ -13,7 +13,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from yp_video.config import RAW_VIDEOS_DIR
-from yp_video.web.jobs import job_manager
+from yp_video.web.job_helpers import batch_message, finalize_batch_job
+from yp_video.web.jobs import job_manager, threadsafe_update
 
 router = APIRouter()
 
@@ -172,7 +173,7 @@ async def download_videos(session_id: str, videos: list[VideoInfo], quality: str
                 await job_manager.update_job(
                     job_id,
                     progress=base_progress,
-                    message=f"({i + 1}/{total}) {video.title}",
+                    message=batch_message(i, total, video.title),
                 )
             await queue.put({
                 "type": "start",
@@ -187,6 +188,7 @@ async def download_videos(session_id: str, videos: list[VideoInfo], quality: str
                 # hundreds of SSE events per second; the in-session queue still
                 # gets every update for the Download page's byte-level UI.
                 last_pushed = [0.0]
+                update = threadsafe_update(job_id, loop) if job_id else None
                 def hook(d):
                     if d["status"] == "downloading":
                         downloaded = d.get("downloaded_bytes", 0)
@@ -207,7 +209,7 @@ async def download_videos(session_id: str, videos: list[VideoInfo], quality: str
                             }),
                             loop,
                         )
-                        if job_id:
+                        if update is not None:
                             import time as _time
                             now = _time.monotonic()
                             if now - last_pushed[0] >= 1.0:
@@ -215,12 +217,14 @@ async def download_videos(session_id: str, videos: list[VideoInfo], quality: str
                                 # Sub-progress within the current video, scaled
                                 # into its slice of the overall (idx..idx+1)/total.
                                 frac = (idx + (percent / 100.0)) / total
-                                speed_str = f" · {speed / 1e6:.1f} MB/s" if speed else ""
-                                eta_str = f" · ETA {eta}s" if eta else ""
-                                msg = f"({idx + 1}/{total}) {video.title} · {percent:.0f}%{speed_str}{eta_str}"
-                                asyncio.run_coroutine_threadsafe(
-                                    job_manager.update_job(job_id, progress=frac, message=msg),
-                                    loop,
+                                detail = " · ".join(
+                                    [f"{percent:.0f}%"]
+                                    + ([f"{speed / 1e6:.1f} MB/s"] if speed else [])
+                                    + ([f"ETA {eta}s"] if eta else [])
+                                )
+                                update(
+                                    progress=frac,
+                                    message=batch_message(idx, total, video.title, detail),
                                 )
                     elif d["status"] == "finished":
                         asyncio.run_coroutine_threadsafe(
@@ -262,22 +266,7 @@ async def download_videos(session_id: str, videos: list[VideoInfo], quality: str
 
         await queue.put({"type": "done"})
         if job_id:
-            ok = total - failed
-            if failed == 0:
-                await job_manager.update_job(
-                    job_id, status="completed", progress=1.0,
-                    message=f"Downloaded {total} video(s)",
-                )
-            elif failed == total:
-                await job_manager.update_job(
-                    job_id, status="failed", progress=1.0,
-                    message=f"All {total} downloads failed",
-                )
-            else:
-                await job_manager.update_job(
-                    job_id, status="completed", progress=1.0,
-                    message=f"{ok}/{total} downloaded, {failed} failed",
-                )
+            await finalize_batch_job(job_id, total, failed, noun="downloads")
     except asyncio.CancelledError:
         # Job-page Cancel button calls task.cancel(), which lands here.
         # Mirror the cancellation back into the session queue so the

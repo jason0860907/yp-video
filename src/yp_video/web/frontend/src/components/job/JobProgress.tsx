@@ -1,29 +1,7 @@
 import { cn } from '@/lib/cn';
+import { isPartialSuccess, statusLabel, statusTheme } from '@/lib/job';
 import type { Job } from '@/types/api';
 import { ProgressBar } from './ProgressBar';
-
-function statusColor(status: Job['status']): string {
-  switch (status) {
-    case 'running':
-      return 'text-primary-light';
-    case 'completed':
-      return 'text-primary-light';
-    case 'failed':
-      return 'text-red-400';
-    case 'cancelled':
-      return 'text-amber-400';
-    default:
-      return 'text-text-muted';
-  }
-}
-
-function statusLabel(job: Job): string {
-  const pct = Math.round((job.progress ?? 0) * 100);
-  if (job.status === 'failed') return 'failed';
-  if (job.status === 'cancelled') return 'cancelled';
-  if (job.status === 'completed') return job.message?.includes('failed') ? 'partial' : 'done';
-  return `${pct}%`;
-}
 
 interface JobProgressProps {
   job: Job;
@@ -41,13 +19,13 @@ export function JobProgress({ job, detail = '', showLogs = false, truncateMsg = 
   const showMessage = job.message && (isRunning || isDone || isFailed);
   const trunc = truncateMsg ? 'truncate' : '';
   const hasLogs = Array.isArray(job.logs) && job.logs.length > 0;
-  const showLogsBlock = showLogs && hasLogs && (isFailed || (isDone && job.message?.includes('failed')));
+  const showLogsBlock = showLogs && hasLogs && (isFailed || isPartialSuccess(job));
 
   return (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between">
         <span className="truncate text-xs font-medium text-text-primary">{job.name}</span>
-        <span className={cn('text-[11px] font-medium tabular-nums', statusColor(job.status))}>{statusLabel(job)}</span>
+        <span className={cn('text-[11px] font-medium tabular-nums', statusTheme(job.status).text)}>{statusLabel(job)}</span>
       </div>
       <ProgressBar progress={job.progress} />
       {detail && <div className="text-[11px] tabular-nums text-text-muted">{detail}</div>}

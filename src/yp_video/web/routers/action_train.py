@@ -8,7 +8,6 @@ import logging
 import os
 import re
 import shutil
-import traceback
 from datetime import datetime
 from pathlib import Path
 
@@ -36,7 +35,12 @@ from yp_video.contracts.action import (
 from yp_video.action.frames import ensure_action_frame_caches, inspect_action_frame_cache
 from yp_video.action.prelabel import resolve_checkpoint_path
 from yp_video.core.jsonl import read_jsonl, write_jsonl
-from yp_video.web.job_helpers import stop_vllm_for_job, stream_subprocess
+from yp_video.web.job_helpers import (
+    fail_job_from_exc,
+    stop_vllm_for_job,
+    stream_subprocess,
+    terminal_prefix,
+)
 from yp_video.web.jobs import JobStatus, job_manager
 from yp_video.web.spot_runs import (
     PackageExporter,
@@ -210,8 +214,15 @@ def _action_annotation_stats() -> dict:
     }
 
 
-def _action_frame_items() -> list[tuple[Path, int | None]]:
-    items: list[tuple[Path, int | None]] = []
+def _action_label_items() -> list[tuple[Path, Path]]:
+    """One ``(label_file, cut_video)`` pair per annotated video.
+
+    Snapshotted once per training job and shared by the frame-cache and
+    label-preparation phases — annotations saved while a job is already
+    running land in the *next* run instead of desyncing the two phases
+    (label prep would otherwise see a video the cache phase never built).
+    """
+    items: list[tuple[Path, Path]] = []
     missing: list[str] = []
     for path in sorted(ACTION_ANNOTATIONS_DIR.glob("*_actions.jsonl")):
         try:
@@ -225,9 +236,7 @@ def _action_frame_items() -> list[tuple[Path, int | None]]:
             missing.append(f"{stem}.mp4")
             continue
 
-        # Action JSONL metadata can inherit an over-reported MP4 frame count.
-        # The training labels are normalized against the extracted cache later.
-        items.append((video_path, None))
+        items.append((path, video_path))
 
     if missing:
         sample = ", ".join(missing[:5])
@@ -265,17 +274,15 @@ def _rally_match_span(meta: dict, num_frames: int) -> tuple[int, int] | None:
 
 
 def _prepare_action_training_labels(
-    *, frame_dir: Path, save_dir: Path, camera_view: str = "all"
+    *, items: list[tuple[Path, Path]], frame_dir: Path, save_dir: Path, camera_view: str = "all"
 ) -> dict:
     """Write run-local label copies whose frame counts match the SPOT cache.
 
+    ``items`` is the job's label snapshot (see ``_action_label_items``) — the
+    same list the frame-cache phase ran on, so every video here has a cache.
     When ``camera_view`` restricts to a single view, only matching videos are
     written, so the saved label snapshot equals what training actually used.
     """
-
-    label_files = sorted(ACTION_ANNOTATIONS_DIR.glob("*_actions.jsonl"))
-    if not label_files:
-        raise RuntimeError(f"No action JSONL labels found in {ACTION_ANNOTATIONS_DIR}")
 
     label_dir = save_dir / "labels" / "action-annotations"
     label_dir.mkdir(parents=True, exist_ok=True)
@@ -287,17 +294,13 @@ def _prepare_action_training_labels(
     total_frames = 0
     span_frames = 0
     adjusted: list[dict] = []
-    for path in label_files:
+    for path, video_path in items:
         try:
             meta, records = read_jsonl(path)
         except (OSError, json.JSONDecodeError) as exc:
             raise RuntimeError(f"Cannot read action labels: {path.name}") from exc
 
         stem = str(meta.get("video") or path.stem.removesuffix("_actions"))
-        video_path = find_cut(f"{stem}.mp4")
-        if video_path is None:
-            raise RuntimeError(f"Missing source video for action labels: {stem}.mp4")
-
         view = cut_kind_of(video_path)
         if camera_view != "all" and view != camera_view:
             continue
@@ -804,7 +807,7 @@ async def start(req: ActionTrainRequest) -> dict:
             action_label_dir = None
             label_summary = None
             if req.source == "action_annotations":
-                items = await asyncio.to_thread(_action_frame_items)
+                items = await asyncio.to_thread(_action_label_items)
                 if not items:
                     raise RuntimeError(f"No action JSONL labels found in {ACTION_ANNOTATIONS_DIR}")
 
@@ -822,9 +825,12 @@ async def start(req: ActionTrainRequest) -> dict:
                         )
                     )
 
+                # Action JSONL metadata can inherit an over-reported MP4 frame
+                # count, so expected_frames is None — the training labels are
+                # normalized against the extracted cache in the next step.
                 summary = await asyncio.to_thread(
                     ensure_action_frame_caches,
-                    items,
+                    [(video_path, None) for _label, video_path in items],
                     cache_root=frame_dir,
                     progress=frame_progress,
                 )
@@ -836,6 +842,7 @@ async def start(req: ActionTrainRequest) -> dict:
                 )
                 label_summary = await asyncio.to_thread(
                     _prepare_action_training_labels,
+                    items=items,
                     frame_dir=frame_dir,
                     save_dir=save_dir,
                     camera_view=req.camera_view,
@@ -932,7 +939,6 @@ async def start(req: ActionTrainRequest) -> dict:
                         parsers=parsers,
                         is_key_line=is_key_line,
                         tee_to_terminal=True,
-                        terminal_prefix="[action-train] ",
                         log_path=resolved_save_dir / "terminal.log",
                     )
             if rc == 0:
@@ -968,17 +974,15 @@ async def start(req: ActionTrainRequest) -> dict:
             await job_manager.update_job(
                 job.id,
                 status="cancelled",
-                message="Training cancelled",
+                message="Cancelled",
                 params={
                     **job.params,
                     **({"checkpoint_package": checkpoint_summary} if checkpoint_summary else {}),
                 },
             )
         except Exception as exc:  # noqa: BLE001
-            tb = traceback.format_exc()
-            print(f"\n[action-train] Failed:\n{tb}", flush=True)
-            log.error("Action training failed:\n%s", tb)
-            job_obj = job_manager.get_job(job.id)
+            print(f"{terminal_prefix(job)}Failed: {type(exc).__name__}: {exc}", flush=True)
+            log.exception("Action training failed")
             checkpoint_summary = None
             if exporter is not None:
                 try:
@@ -989,19 +993,16 @@ async def start(req: ActionTrainRequest) -> dict:
                     )
                 except Exception:  # noqa: BLE001
                     log.exception("Failed to export action checkpoint package after failure")
-            if job_obj:
-                job_obj.logs.append(f"{type(exc).__name__}: {exc}")
-                job_obj.logs.extend(tb.splitlines())
-            await job_manager.update_job(
-                job.id,
-                status="failed",
-                error=f"{type(exc).__name__}: {exc}",
-                message="SPOT action training failed",
-                params={
-                    **(job_obj.params if job_obj else job.params),
-                    **({"checkpoint_package": checkpoint_summary} if checkpoint_summary else {}),
-                },
-            )
+            if checkpoint_summary:
+                job_obj = job_manager.get_job(job.id)
+                await job_manager.update_job(
+                    job.id,
+                    params={
+                        **(job_obj.params if job_obj else job.params),
+                        "checkpoint_package": checkpoint_summary,
+                    },
+                )
+            await fail_job_from_exc(job.id, exc)
 
     task = asyncio.create_task(run_job())
     job_manager.attach_task(job, task)

@@ -176,7 +176,7 @@ class JobManager:
         if job._task:
             job._task.cancel()
         job.status = JobStatus.CANCELLED
-        job.message = "Cancelled by user"
+        job.message = "Cancelled"
         # Notify subscribers
         event = job.to_dict()
         for q in job._subscribers:
@@ -202,6 +202,30 @@ class JobManager:
         self._vllm_using_gpu = value
 
 
+def threadsafe_update(
+    job_id: str,
+    loop: asyncio.AbstractEventLoop,
+    *,
+    manager: "JobManager | None" = None,
+) -> Callable[..., None]:
+    """Return an ``update(**fields)`` callable usable from any thread.
+
+    Sync code running in ``run_in_executor`` can't await ``update_job``; this
+    wraps it in ``loop.call_soon_threadsafe``. Accepts the same keyword fields
+    as ``JobManager.update_job``. ``manager`` defaults to the module-level
+    ``job_manager``; pass an explicit one if you ever construct your own
+    JobManager (e.g. tests).
+    """
+    mgr = manager if manager is not None else job_manager
+
+    def update(**fields) -> None:
+        loop.call_soon_threadsafe(
+            lambda: asyncio.ensure_future(mgr.update_job(job_id, **fields))
+        )
+
+    return update
+
+
 def make_progress_callback(
     job_id: str,
     loop: asyncio.AbstractEventLoop,
@@ -211,33 +235,21 @@ def make_progress_callback(
 ) -> Callable[..., None]:
     """Create a thread-safe ``(done, total[, msg]) -> None`` progress callback.
 
-    Used by sync code running in ``run_in_executor`` to push progress back to
-    a job. ``loop`` is the async caller's event loop (the callback may fire
-    from any thread). ``manager`` defaults to the module-level ``job_manager``;
-    pass an explicit one if you ever construct your own JobManager (e.g. tests).
-
     The optional third positional ``msg`` lets the caller override the
     formatted template — useful when the natural progress unit is "videos
     completed" (filling the template) but in between completions the caller
     wants to surface "currently processing X" without bumping the count.
     Pass a fractional ``done`` (e.g. 2.4 of 227) to render sub-item progress.
     """
-    mgr = manager if manager is not None else job_manager
+    update = threadsafe_update(job_id, loop, manager=manager)
 
     def callback(done: float, total: float, msg: str | None = None) -> None:
         rendered = msg if msg is not None else message_template.format(
             done=int(done) if done == int(done) else done,
             total=int(total) if total == int(total) else total,
         )
-        loop.call_soon_threadsafe(
-            lambda d=done, t=total, m=rendered: asyncio.ensure_future(
-                mgr.update_job(
-                    job_id,
-                    progress=d / t if t else 0,
-                    message=m,
-                )
-            )
-        )
+        update(progress=done / total if total else 0, message=rendered)
+
     return callback
 
 

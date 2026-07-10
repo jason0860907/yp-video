@@ -13,7 +13,6 @@ import logging
 import os
 import re
 import tempfile
-import traceback
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -39,6 +38,8 @@ from yp_video.core.ffmpeg import probe_video_metadata
 from yp_video.core.jsonl import write_jsonl
 from yp_video.web.job_helpers import (
     ProgressParser,
+    batch_message,
+    fail_job_from_exc,
     finalize_batch_job,
     stop_vllm_for_job,
     stream_subprocess,
@@ -210,9 +211,8 @@ async def start(req: RallyPredictRequest) -> dict:
                     state["index"] = int(match.group(1)) - 1
                     return {
                         "progress": state["index"] / total,
-                        "message": (
-                            f"({state['index'] + 1}/{total}) {current_video()}: "
-                            "preparing first batch"
+                        "message": batch_message(
+                            state["index"], total, current_video(), "preparing first batch"
                         ),
                     }
 
@@ -223,9 +223,9 @@ async def start(req: RallyPredictRequest) -> dict:
                     frac = prelabel.spot_progress_fraction(data)
                     return {
                         "progress": (state["index"] + frac) / total,
-                        "message": (
-                            f"({state['index'] + 1}/{total}) {current_video()}: "
-                            f"{prelabel.spot_progress_message(data)}"
+                        "message": batch_message(
+                            state["index"], total, current_video(),
+                            prelabel.spot_progress_message(data),
                         ),
                     }
 
@@ -252,7 +252,6 @@ async def start(req: RallyPredictRequest) -> dict:
                             ],
                             is_key_line=lambda line: "Starting inference" in line,
                             tee_to_terminal=True,
-                            terminal_prefix="[rally-predict] ",
                         )
 
                 failed = 0
@@ -294,26 +293,14 @@ async def start(req: RallyPredictRequest) -> dict:
                 await job_manager.update_job(
                     job.id, params={**job.params, "results": converted}
                 )
-            await finalize_batch_job(
-                job.id, total, failed, name=f"SPOT rally predict ({total} videos)"
-            )
+            await finalize_batch_job(job.id, total, failed)
         except asyncio.CancelledError:
             await job_manager.update_job(
-                job.id, status="cancelled", message="Prediction cancelled"
+                job.id, status="cancelled", message="Cancelled"
             )
         except Exception as exc:  # noqa: BLE001
-            tb = traceback.format_exc()
-            log.error("Rally prediction failed:\n%s", tb)
-            job_obj = job_manager.get_job(job.id)
-            if job_obj:
-                job_obj.logs.append(f"{type(exc).__name__}: {exc}")
-                job_obj.logs.extend(tb.splitlines())
-            await job_manager.update_job(
-                job.id,
-                status="failed",
-                error=f"{type(exc).__name__}: {exc}",
-                message="SPOT rally prediction failed",
-            )
+            log.exception("Rally prediction failed")
+            await fail_job_from_exc(job.id, exc)
 
     task = asyncio.create_task(run_job())
     job_manager.attach_task(job, task)

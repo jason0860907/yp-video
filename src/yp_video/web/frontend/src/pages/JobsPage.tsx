@@ -10,21 +10,13 @@ import { StatTile } from '@/components/ui/StatTile';
 import { StatusBadge } from '@/components/job/StatusBadge';
 import { ProgressBar } from '@/components/job/ProgressBar';
 import { JobItems } from '@/components/job/JobItems';
+import { statusTheme } from '@/lib/job';
 import { toast } from '@/components/feedback/toast';
 import type { Job, SystemStats, VllmStatus } from '@/types/api';
 
 const POLL_MS = 15_000;
 
 const errMsg = (e: unknown) => (e instanceof ApiError ? e.body : e instanceof Error ? e.message : String(e));
-
-const DOT_CLS: Record<string, string> = {
-  running: 'bg-primary-light',
-  completed: 'bg-primary-light',
-  failed: 'bg-red-400',
-  cancelled: 'bg-amber-400',
-  pending: 'bg-text-muted',
-  stopped: 'bg-text-muted',
-};
 
 const STAT_ROWS: Array<[label: string, key: keyof SystemStats]> = [
   ['Videos', 'videos'],
@@ -200,7 +192,7 @@ function JobRow({ job, onCancel }: { job: Job; onCancel: (id: string) => void })
   return (
     <div className="rounded-xl border border-border bg-surface-50 px-3.5 py-3">
       <div className="flex items-center gap-3.5">
-        <span className={cn('h-2 w-2 flex-shrink-0 rounded-full', DOT_CLS[job.status] ?? DOT_CLS.pending, isRunning && 'animate-pulse-dot')} />
+        <span className={cn('h-2 w-2 flex-shrink-0 rounded-full', statusTheme(job.status).dot, isRunning && 'animate-pulse-dot')} />
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-2.5">
             <span className="truncate text-[12.5px] font-medium text-text-primary">{job.name || job.type || 'unknown'}</span>

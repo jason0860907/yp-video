@@ -12,7 +12,7 @@ from yp_video.config import (
     find_cut,
 )
 from yp_video.web.jobs import job_manager, JobStatus, make_progress_callback
-from yp_video.web.job_helpers import finalize_batch_job
+from yp_video.web.job_helpers import batch_message, finalize_batch_job
 from yp_video.web.r2_client import sync_to_r2, sync_directory_to_r2
 from yp_video.web.vllm_manager import vllm_manager
 from yp_video.config import load_vllm_env
@@ -71,13 +71,11 @@ async def start_detection(req: DetectRequest):
                     raise HTTPException(404, f"Cut video not found: {video_name}")
                 video_path = str(resolved)
                 output_file = str(SEG_ANNOTATIONS_DIR / f"{Path(video_name).stem}.jsonl")
-                prefix = f"({i + 1}/{total})"
 
                 try:
                     await job_manager.update_job(
                         job.id, status="running", progress=0.0,
-                        name=f"Rally Predict ({i + 1}/{total}) — {video_name}",
-                        message=f"{prefix} Counting clips for {video_name}...",
+                        message=batch_message(i, total, video_name, "counting clips..."),
                     )
 
                     duration = await loop.run_in_executor(
@@ -85,7 +83,8 @@ async def start_detection(req: DetectRequest):
                     )
 
                     progress_cb = make_progress_callback(
-                        job.id, loop, prefix + " Processing clips ({done}/{total})",
+                        job.id, loop,
+                        batch_message(i, total, video_name, "processing clips {done}/{total}"),
                     )
                     max_concurrent = int(vllm_manager.config["VLLM_MAX_NUM_SEQS"])
                     await loop.run_in_executor(
@@ -109,7 +108,7 @@ async def start_detection(req: DetectRequest):
                     # Auto convert-to-rally for this one video
                     from yp_video.core.vlm_to_rally import convert_vlm_to_rally
                     await job_manager.update_job(
-                        job.id, message=f"{prefix} Converting {video_name} to rally...",
+                        job.id, message=batch_message(i, total, video_name, "converting to rally..."),
                     )
                     rally_path = PRE_ANNOTATIONS_DIR / f"{Path(video_name).stem}_annotations.jsonl"
                     n_rallies = await loop.run_in_executor(
@@ -121,7 +120,7 @@ async def start_detection(req: DetectRequest):
                     )
                     sync_to_r2(rally_path, "rally-pre-annotations")
                     await job_manager.update_job(
-                        job.id, message=f"{prefix} {video_name}: {n_rallies} rallies",
+                        job.id, message=batch_message(i, total, video_name, f"{n_rallies} rallies"),
                     )
                 except asyncio.CancelledError:
                     await job_manager.update_job(job.id, status="cancelled", message="Cancelled")
@@ -129,14 +128,12 @@ async def start_detection(req: DetectRequest):
                 except Exception as e:
                     failed += 1
                     await job_manager.update_job(
-                        job.id, message=f"{prefix} Failed: {video_name} — {e}",
+                        job.id, message=batch_message(i, total, video_name, f"failed — {e}"),
                     )
 
                 await asyncio.sleep(2)
 
-            await finalize_batch_job(
-                job.id, total, failed, name=f"Rally Predict ({total} videos)",
-            )
+            await finalize_batch_job(job.id, total, failed)
 
     task = asyncio.create_task(run_all())
     job_manager.attach_task([job], task)

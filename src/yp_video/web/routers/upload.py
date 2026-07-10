@@ -9,7 +9,13 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from yp_video.config import R2_CATEGORIES
-from yp_video.web.jobs import job_manager
+from yp_video.web.job_helpers import (
+    batch_message,
+    fail_job_from_exc,
+    finalize_batch_job,
+    terminal_prefix,
+)
+from yp_video.web.jobs import job_manager, threadsafe_update
 from yp_video.web.r2_client import r2_client
 
 router = APIRouter()
@@ -191,19 +197,8 @@ async def _run_batch_transfer(
             job, files, category, base_dir, transfer_fn, verb,
         )
     except Exception as e:
-        import traceback
-        tb = traceback.format_exc()
-        print(f"\n[{verb.lower()}] batch transfer crashed:\n{tb}", flush=True)
-        job_obj = job_manager.get_job(job.id)
-        if job_obj:
-            job_obj.logs.append(f"{type(e).__name__}: {e}")
-            for line in tb.splitlines():
-                job_obj.logs.append(line)
-        await job_manager.update_job(
-            job.id, status="failed",
-            error=f"{type(e).__name__}: {e}",
-            message=f"{verb} crashed: {type(e).__name__}: {e}",
-        )
+        print(f"{terminal_prefix(job)}batch transfer crashed: {type(e).__name__}: {e}", flush=True)
+        await fail_job_from_exc(job.id, e)
 
 
 async def _run_batch_transfer_inner(
@@ -232,15 +227,16 @@ async def _run_batch_transfer_inner(
         except OSError:
             pass
 
+    update = threadsafe_update(job.id, loop)
+
     for i, file_path in enumerate(files):
         local_path = base_dir / file_path
         r2_key = f"{category}/{file_path}"
-        prefix = f"({i + 1}/{total})"
         name = Path(file_path).name
 
         await job_manager.update_job(
             job.id, status="running", progress=i / total,
-            message=f"{prefix} {verb}ing {name}...",
+            message=batch_message(i, total, name, f"{verb.lower()}ing..."),
             params={
                 **job.params,
                 "current_file": name,
@@ -252,7 +248,7 @@ async def _run_batch_transfer_inner(
         last_emit = 0.0
         prev_done_in_file = 0
 
-        def make_cb(file_idx=i, file_name=name, file_prefix=prefix):
+        def make_cb(file_idx=i, file_name=name):
             def on_bytes(done: int, total_bytes: int):
                 nonlocal last_emit, prev_done_in_file, bytes_done_so_far
                 now = time.monotonic()
@@ -284,14 +280,12 @@ async def _run_batch_transfer_inner(
                     "eta": eta,
                 }
                 pct_str = done * 100 // max(total_bytes, 1)
-                loop.call_soon_threadsafe(
-                    lambda: asyncio.ensure_future(
-                        job_manager.update_job(
-                            job.id, progress=overall,
-                            message=f"{file_prefix} {verb}ing {file_name} — {pct_str}%",
-                            params=snapshot,
-                        )
-                    )
+                update(
+                    progress=overall,
+                    message=batch_message(
+                        file_idx, total, file_name, f"{verb.lower()}ing · {pct_str}%",
+                    ),
+                    params=snapshot,
                 )
             return on_bytes
 
@@ -314,19 +308,10 @@ async def _run_batch_transfer_inner(
         except Exception as e:
             failed += 1
             await job_manager.update_job(
-                job.id, message=f"{prefix} Failed: {name} — {e}",
+                job.id, message=batch_message(i, total, name, f"failed — {e}"),
             )
 
-    if failed == 0:
-        await job_manager.update_job(
-            job.id, status="completed", progress=1.0,
-            message=f"{verb}ed all {total} files",
-        )
-    else:
-        await job_manager.update_job(
-            job.id, status="completed", progress=1.0,
-            message=f"{total - failed}/{total} {verb.lower()}ed, {failed} failed",
-        )
+    await finalize_batch_job(job.id, total, failed, noun="files")
 
 
 @router.post("/start")
