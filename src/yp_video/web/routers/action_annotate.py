@@ -810,7 +810,7 @@ async def start_spot_prelabel(req: SpotPrelabelRequest) -> dict:
             "checkpoint": prelabel.checkpoint_ref(checkpoint),
             "min_score": req.min_score,
         },
-        name=f"SPOT pre-label — {video.name}",
+        name=f"Action Predict — {video.name}",
     )
 
     async def run_job() -> None:
@@ -957,7 +957,7 @@ async def start_spot_prelabel_batch(req: SpotPrelabelBatchRequest) -> dict:
             "cancelled": 0,
             "items": [dict(item) for item in items],
         },
-        name=f"SPOT pre-label batch ({total} videos)",
+        name=f"Action Predict ({total} videos)",
     )
 
     async def run_job() -> None:

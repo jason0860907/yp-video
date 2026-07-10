@@ -126,7 +126,7 @@ export function SpotPredictPage() {
         },
       });
       upsertJob(job);
-      toast.success(`Started SPOT rally predict for ${names.length} video(s)`);
+      toast.success(`Started Rally SPOT Predict for ${names.length} video(s)`);
     } catch (e) {
       toast.error(`SPOT start failed: ${errMsg(e)}`);
     }
@@ -246,7 +246,7 @@ export function SpotPredictPage() {
       {/* Jobs */}
       {jobs.length > 0 && (
         <Card>
-          <SectionLabel>SPOT jobs</SectionLabel>
+          <SectionLabel>Rally SPOT Predict jobs</SectionLabel>
           <div className="space-y-3">
             {jobs.map((job) => (
               <LiveJob key={job.id} job={job} onUpdate={upsertJob} />

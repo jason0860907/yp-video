@@ -48,8 +48,8 @@ export const NAV: NavSection[] = [
     items: [
       { path: '/detect', label: 'Rally Predict', icon: ICON.detect },
       { path: '/annotate', label: 'Rally Label', icon: ICON.annotate },
-      { path: '/spot-train', label: 'SPOT Train', icon: ICON.train },
-      { path: '/spot-predict', label: 'SPOT Predict', icon: ICON.predict },
+      { path: '/spot-train', label: 'Rally SPOT Train', icon: ICON.train },
+      { path: '/spot-predict', label: 'Rally SPOT Predict', icon: ICON.predict },
     ],
   },
   {
@@ -85,8 +85,8 @@ export const PAGE_TITLES: Record<string, string> = {
   '/cut': 'Cut into sets',
   '/detect': 'Rally Predict',
   '/annotate': 'Rally Label',
-  '/spot-train': 'SPOT Train',
-  '/spot-predict': 'SPOT Predict',
+  '/spot-train': 'Rally SPOT Train',
+  '/spot-predict': 'Rally SPOT Predict',
   '/action-train': 'Action Train',
   '/action-predict': 'Action Predict',
   '/action-annotate': 'Action Label',

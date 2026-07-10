@@ -300,7 +300,7 @@ async def start(req: RallyTrainRequest) -> dict:
             "feature_arch": req.feature_arch,
             "criterion": req.criterion,
         },
-        name=f"SPOT rally training (fps{req.extract_fps:g})",
+        name=f"Rally SPOT Train (fps{req.extract_fps:g})",
     )
 
     async def run_job() -> None:

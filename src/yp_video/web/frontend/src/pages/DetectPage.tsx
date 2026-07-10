@@ -165,11 +165,11 @@ export function DetectPage() {
         </Card>
       </div>
 
-      {/* Inference progress — same shared card as every other job display */}
+      {/* Same shared job card as every other page's job list */}
       {job && (
         <Card>
           <div className="mb-3 flex items-center justify-between">
-            <SectionLabel className="mb-0">Inference progress</SectionLabel>
+            <SectionLabel className="mb-0">Rally Predict jobs</SectionLabel>
             {job.status === 'failed' && (
               <Button size="sm" intent="primary" onClick={startDetection}>
                 Retry Failed

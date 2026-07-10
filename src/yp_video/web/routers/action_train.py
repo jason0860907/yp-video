@@ -796,7 +796,7 @@ async def start(req: ActionTrainRequest) -> dict:
     job = job_manager.create_job(
         "action_train",
         initial_params,
-        name=f"SPOT action training ({dataset})",
+        name=f"Action Train ({dataset})",
     )
 
     async def run_job() -> None:

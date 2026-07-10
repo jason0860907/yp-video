@@ -137,7 +137,7 @@ export function ActionPredictPage() {
         },
       });
       upsertJob(job);
-      toast.success(`Started SPOT batch for ${names.length} video(s)`);
+      toast.success(`Started Action Predict for ${names.length} video(s)`);
     } catch (e) {
       toast.error(`SPOT start failed: ${errMsg(e)}`);
     }
@@ -266,7 +266,7 @@ export function ActionPredictPage() {
       {/* Jobs */}
       {jobs.length > 0 && (
         <Card>
-          <SectionLabel>SPOT jobs</SectionLabel>
+          <SectionLabel>Action Predict jobs</SectionLabel>
           <div className="space-y-3">
             {jobs.map((job) => (
               <LiveJob key={job.id} job={job} onUpdate={upsertJob} />
