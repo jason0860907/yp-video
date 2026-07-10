@@ -35,9 +35,12 @@ echo "----------------------------------------"
 echo "Attach with: tmux attach -t ${SESSION_NAME}"
 echo "Tail log with: tail -f ${LOG_FILE}"
 
-# Start vLLM server in a new tmux session
+# Start vLLM server in a new tmux session.
+# VLLM_USE_FLASHINFER_SAMPLER=0: the system nvcc is CUDA 12.0 but torch is
+# cu130, so flashinfer's JIT sampler fails to compile — fall back to the
+# native torch sampler until the CUDA toolkit is upgraded to 13.
 tmux new-session -d -s "${SESSION_NAME}" \
-    "cd ${SCRIPT_DIR} && source .venv/bin/activate && export GLOO_SOCKET_IFNAME=lo && python -m vllm.entrypoints.openai.api_server \
+    "cd ${SCRIPT_DIR} && source .venv/bin/activate && export GLOO_SOCKET_IFNAME=lo VLLM_USE_FLASHINFER_SAMPLER=0 && python -m vllm.entrypoints.openai.api_server \
     --model '${MODEL_NAME}' \
     --port '${PORT}' \
     --max-model-len '${VLLM_MAX_MODEL_LEN}' \

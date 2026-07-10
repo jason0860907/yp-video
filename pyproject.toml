@@ -21,8 +21,12 @@ dependencies = [
     # Web application (vLLM serves the VLM detect flow; brings torch with it)
     "fastapi>=0.110.0",
     "uvicorn>=0.27.0",
-    "vllm>=0.17.0",
+    # vllm>=0.24 moves to transformers 5, which rfdetr>=1.8 requires too —
+    # these two must stay on the same side of the transformers 4/5 boundary.
+    "vllm>=0.24.0",
     "google-genai>=1.0.0",
+    # Player ReID: person detection on action frames
+    "rfdetr>=1.8.3",
 ]
 
 
