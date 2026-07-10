@@ -37,12 +37,17 @@ from yp_video.contracts.action import (
 from yp_video.core.ffmpeg import probe_video_metadata
 from yp_video.core.jsonl import write_jsonl
 from yp_video.web.job_helpers import (
+    TERMINAL_ITEM_STATUSES,
     ProgressParser,
+    batch_items_params,
     batch_message,
     fail_job_from_exc,
     finalize_batch_job,
+    init_batch_items,
+    mark_batch_item,
     stop_vllm_for_job,
     stream_subprocess,
+    update_batch_item,
 )
 from yp_video.web.jobs import job_manager
 from yp_video.web.r2_client import sync_to_r2
@@ -103,7 +108,7 @@ def spot_info() -> dict:
     if not checkpoints:
         info["error"] = (
             f"No rally checkpoints under {RALLY_SPOT_CHECKPOINTS_DIR}; "
-            "train one on the SPOT Train page first."
+            "train one on the Rally SPOT Train page first."
         )
     return info
 
@@ -177,11 +182,13 @@ async def start(req: RallyPredictRequest) -> dict:
             "videos": [p.name for p in video_paths],
             "skipped_existing": skipped,
             "checkpoint": prelabel.checkpoint_ref(checkpoint),
+            "items": init_batch_items([p.name for p in video_paths]),
         },
-        name=f"SPOT rally predict ({total} videos)",
+        name=f"Rally SPOT Predict ({total} videos)",
     )
 
     async def run_job() -> None:
+        items = job.params["items"]
         try:
             await job_manager.update_job(
                 job.id, status="running", message="Waiting for inference slot..."
@@ -208,12 +215,23 @@ async def start(req: RallyPredictRequest) -> dict:
                     return video_paths[state["index"]].name
 
                 def on_video_start(match: re.Match) -> dict:
+                    prev = state["index"]
                     state["index"] = int(match.group(1)) - 1
+                    if state["index"] > prev:
+                        mark_batch_item(
+                            items, prev, progress=1.0,
+                            message="inference done — converting after batch",
+                        )
+                    mark_batch_item(
+                        items, state["index"],
+                        status="running", message="preparing first batch",
+                    )
                     return {
                         "progress": state["index"] / total,
                         "message": batch_message(
                             state["index"], total, current_video(), "preparing first batch"
                         ),
+                        "params": batch_items_params(items),
                     }
 
                 def on_spot_progress(match: re.Match) -> dict | None:
@@ -221,12 +239,14 @@ async def start(req: RallyPredictRequest) -> dict:
                     if data is None:
                         return None
                     frac = prelabel.spot_progress_fraction(data)
+                    detail = prelabel.spot_progress_message(data)
+                    mark_batch_item(items, state["index"], progress=frac, message=detail)
                     return {
                         "progress": (state["index"] + frac) / total,
                         "message": batch_message(
-                            state["index"], total, current_video(),
-                            prelabel.spot_progress_message(data),
+                            state["index"], total, current_video(), detail,
                         ),
+                        "params": batch_items_params(items),
                     }
 
                 env = {
@@ -256,35 +276,51 @@ async def start(req: RallyPredictRequest) -> dict:
 
                 failed = 0
                 converted: list[dict] = []
-                for video_path in video_paths:
+                for i, video_path in enumerate(video_paths):
                     predictions_file = tmp_dir / video_path.stem / "predictions.json"
                     if not predictions_file.exists():
                         failed += 1
                         job_manager.get_job(job.id).logs.append(
                             f"[{video_path.stem}] no predictions written"
                         )
+                        await update_batch_item(
+                            job.id, items, i, status="failed",
+                            message="no predictions written",
+                            error="no predictions written",
+                        )
                         continue
                     try:
-                        converted.append(
-                            await asyncio.to_thread(
-                                _save_rally_pre_annotation,
-                                video_path=video_path,
-                                predictions_file=predictions_file,
-                                checkpoint=checkpoint,
-                                req=req,
-                            )
+                        await update_batch_item(
+                            job.id, items, i, message="converting rallies...",
                         )
+                        result = await asyncio.to_thread(
+                            _save_rally_pre_annotation,
+                            video_path=video_path,
+                            predictions_file=predictions_file,
+                            checkpoint=checkpoint,
+                            req=req,
+                        )
+                        converted.append(result)
                         # Must run on the event loop: sync_to_r2 is a no-op
                         # inside a worker thread (fire-and-forget needs a loop).
                         sync_to_r2(
                             _pre_annotation_path(video_path.stem),
                             "rally-spot-pre-annotations",
                         )
+                        await update_batch_item(
+                            job.id, items, i, status="completed", progress=1.0,
+                            message=f"{result['rallies']} rallies",
+                        )
                     except Exception as exc:  # noqa: BLE001
                         failed += 1
                         log.exception("Rally conversion failed for %s", video_path.stem)
                         job_manager.get_job(job.id).logs.append(
                             f"[{video_path.stem}] {type(exc).__name__}: {exc}"
+                        )
+                        await update_batch_item(
+                            job.id, items, i, status="failed",
+                            message=f"{type(exc).__name__}: {exc}",
+                            error=str(exc),
                         )
                 if rc != 0 and failed == 0:
                     raise RuntimeError(
@@ -295,8 +331,13 @@ async def start(req: RallyPredictRequest) -> dict:
                 )
             await finalize_batch_job(job.id, total, failed)
         except asyncio.CancelledError:
+            for i in range(len(items)):
+                if items[i].get("status") not in TERMINAL_ITEM_STATUSES:
+                    mark_batch_item(items, i, status="cancelled", message="Cancelled")
+            current = job_manager.get_job(job.id)
             await job_manager.update_job(
-                job.id, status="cancelled", message="Cancelled"
+                job.id, status="cancelled", message="Cancelled",
+                params={**(current.params if current else {}), **batch_items_params(items)},
             )
         except Exception as exc:  # noqa: BLE001
             log.exception("Rally prediction failed")

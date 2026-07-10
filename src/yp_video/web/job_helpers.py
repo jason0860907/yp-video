@@ -98,8 +98,7 @@ def batch_progress(index: int, item_progress: float, total: int) -> float:
     return min(0.99, max(0.0, (index + item_progress) / max(1, total)))
 
 
-async def update_batch_item(
-    job_id: str,
+def mark_batch_item(
     items: list[dict],
     index: int,
     *,
@@ -107,21 +106,20 @@ async def update_batch_item(
     progress: float | None = None,
     message: str | None = None,
     error: str | None = None,
-    overall_progress: float | None = None,
-    overall_message: str | None = None,
     extra: dict | None = None,
-) -> None:
-    """Update one batch item and republish the job's ``params["items"]``.
+) -> bool:
+    """Mutate one batch item in place; the sync half of ``update_batch_item``.
 
     Stamps ``started_at`` on the first transition to running and
     ``finished_at`` on the first terminal status so the frontend can show
     when each video started and how long it took. Status-less updates on an
-    already-terminal item are dropped — late progress callbacks race the
-    finalizer.
+    already-terminal item are dropped (returns False) — late progress
+    callbacks race the finalizer. Callers must republish via
+    ``batch_items_params`` (or use ``update_batch_item``).
     """
     item = dict(items[index])
     if status is None and item.get("status") in TERMINAL_ITEM_STATUSES:
-        return
+        return False
     if status is not None:
         item["status"] = status
         if status == "running":
@@ -137,12 +135,38 @@ async def update_batch_item(
     if extra:
         item.update(extra)
     items[index] = item
+    return True
+
+
+def batch_items_params(items: list[dict]) -> dict:
+    """The ``params`` fragment that publishes item state — merge over job.params."""
+    return {"items": [dict(i) for i in items], **batch_counts(items)}
+
+
+async def update_batch_item(
+    job_id: str,
+    items: list[dict],
+    index: int,
+    *,
+    status: str | None = None,
+    progress: float | None = None,
+    message: str | None = None,
+    error: str | None = None,
+    overall_progress: float | None = None,
+    overall_message: str | None = None,
+    extra: dict | None = None,
+) -> None:
+    """Update one batch item and republish the job's ``params["items"]``."""
+    if not mark_batch_item(
+        items, index,
+        status=status, progress=progress, message=message, error=error, extra=extra,
+    ):
+        return
 
     job = job_manager.get_job(job_id)
     if job is None:
         return
-    params = {**job.params, "items": [dict(i) for i in items], **batch_counts(items)}
-    update: dict = {"params": params}
+    update: dict = {"params": {**job.params, **batch_items_params(items)}}
     if overall_progress is not None:
         update["progress"] = max(float(job.progress), overall_progress)
     if overall_message is not None:
