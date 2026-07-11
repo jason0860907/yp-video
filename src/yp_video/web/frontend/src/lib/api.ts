@@ -148,5 +148,6 @@ export const API = {
     crop: (name: string, cropFile: string) => `/reid/crop/${encodeURIComponent(name)}/${encodeURIComponent(cropFile)}`,
     clusters: (name: string, threshold: number) => `/reid/clusters/${encodeURIComponent(name)}?threshold=${threshold}`,
     players: (name: string) => `/reid/players/${encodeURIComponent(name)}`,
+    actorFix: (name: string) => `/reid/actor-fix/${encodeURIComponent(name)}`,
   },
 } as const;

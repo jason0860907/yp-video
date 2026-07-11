@@ -259,6 +259,12 @@ export interface ReidRecord {
   crop?: string | null;
   /** 17 COCO keypoints of the matched player, crop-relative [x, y, conf]. */
   keypoints?: [number, number, number][] | null;
+  /** ALL person detections on the event frame — the actor picker's choices. */
+  detections?: { box: [number, number, number, number]; score: number }[];
+  /** "manual" once the user re-pointed (or cleared) the actor; absent = auto. */
+  box_source?: 'auto' | 'manual';
+  /** The automatic pick, kept when a manual fix overrides it. */
+  auto_box?: [number, number, number, number] | null;
 }
 
 export interface ReidCluster {

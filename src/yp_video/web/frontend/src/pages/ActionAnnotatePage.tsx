@@ -13,17 +13,9 @@ import { ActionTimeline } from '@/components/editor/ActionTimeline';
 import { KindBadge } from '@/components/video/KindBadge';
 import { VideoCombobox } from '@/components/video/VideoCombobox';
 import { useVideoRecovery } from '@/lib/useVideoRecovery';
+import { ACTION_COLORS, actionColor } from '@/lib/actionColors';
 import type { ActionAnnotationData, ActionEvent, ActionRally, ActionVideo, WaveformData } from '@/types/api';
 
-// Six fixed action hues (kept identical to the legacy editor).
-const ACTION_COLORS: Record<string, string> = {
-  serve: '#38BDF8',
-  receive: '#22C55E',
-  set: '#A78BFA',
-  spike: '#F97316',
-  block: '#EF4444',
-  score: '#FBBF24',
-};
 const DEFAULT_LABELS = ['serve', 'receive', 'set', 'spike', 'block', 'score'];
 const OUTSIDE = '__outside__';
 
@@ -637,7 +629,7 @@ export function ActionAnnotatePage() {
               <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
                 {labels.map((l, i) => {
                   const active = l === selectedLabel;
-                  const color = ACTION_COLORS[l] || '#8E8E93';
+                  const color = actionColor(l);
                   return (
                     <button
                       key={l}
@@ -673,7 +665,7 @@ export function ActionAnnotatePage() {
                     .map((e, idx) => ({ e, idx }))
                     .filter(({ e }) => e.visible && (selectedRallyId === 'all' || e.rally_id === selectedRallyId) && Math.abs(e.frame - frame) <= 2)
                     .map(({ e, idx }) => {
-                      const color = ACTION_COLORS[e.label] || '#8E8E93';
+                      const color = actionColor(e.label);
                       return (
                         <button
                           key={e.id}
@@ -791,11 +783,17 @@ export function ActionAnnotatePage() {
                     const entries = eventsByRally(rally.rally_id);
                     const isOpen = expanded === String(rally.rally_id);
                     const sel = selectedRallyId === rally.rally_id;
+                    const t = frame / (ed.fps || 30);
+                    const live = t >= rally.start && t < rally.end;
                     return (
                       <div key={rally.rally_id} className="space-y-1.5">
                         <div
                           onClick={() => selectRally(rally.rally_id)}
-                          className={cn('flex cursor-pointer items-center gap-2.5 rounded-xl border px-3 py-2.5 transition-colors', sel ? 'border-primary/40 bg-primary/[0.1]' : 'border-primary/15 bg-primary/[0.04] hover:bg-primary/[0.08]')}
+                          className={cn(
+                            'flex cursor-pointer items-center gap-2.5 rounded-xl border px-3 py-2.5 transition-colors',
+                            sel ? 'border-primary/40 bg-primary/[0.1]' : 'border-primary/15 bg-primary/[0.04] hover:bg-primary/[0.08]',
+                            live && 'ring-1 ring-accent/50',
+                          )}
                         >
                           <span className="w-4 select-none text-right font-heading text-[10px] text-text-muted/60">{i + 1}</span>
                           <button
@@ -815,7 +813,7 @@ export function ActionAnnotatePage() {
                           </span>
                           <span className="rounded bg-surface-200/40 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-text-muted">{Math.max(0, rally.end - rally.start).toFixed(1)}s</span>
                         </div>
-                        {isOpen && <EventPanel entries={entries} empty="No actions in this rally" {...{ labels, selectedIdx, fps: ed.fps, onEdit: editEvent, onDelete: deleteEvent, onJump: jumpToEvent }} />}
+                        {isOpen && <EventPanel entries={entries} empty="No actions in this rally" {...{ labels, selectedIdx, fps: ed.fps, frame, onEdit: editEvent, onDelete: deleteEvent, onJump: jumpToEvent }} />}
                       </div>
                     );
                   })}
@@ -835,7 +833,7 @@ export function ActionAnnotatePage() {
                         </button>
                         <span className="ml-auto font-heading text-[11px] text-text-muted">outside rally</span>
                       </div>
-                      {expanded === OUTSIDE && <EventPanel entries={outside} empty="No outside actions" {...{ labels, selectedIdx, fps: ed.fps, onEdit: editEvent, onDelete: deleteEvent, onJump: jumpToEvent }} />}
+                      {expanded === OUTSIDE && <EventPanel entries={outside} empty="No outside actions" {...{ labels, selectedIdx, fps: ed.fps, frame, onEdit: editEvent, onDelete: deleteEvent, onJump: jumpToEvent }} />}
                     </div>
                   )}
                 </>
@@ -881,21 +879,29 @@ interface EventPanelProps {
   labels: string[];
   selectedIdx: number;
   fps: number;
+  /** Current playhead frame — rows within ±½ s light up (Rally Label rule). */
+  frame: number;
   onEdit: (idx: number, patch: Partial<ActionEvent>) => void;
   onDelete: (idx: number) => void;
   onJump: (idx: number) => void;
 }
-function EventPanel({ entries, empty, labels, selectedIdx, fps, onEdit, onDelete, onJump }: EventPanelProps) {
+function EventPanel({ entries, empty, labels, selectedIdx, fps, frame, onEdit, onDelete, onJump }: EventPanelProps) {
   if (!entries.length) return <div className="ml-6 rounded-xl border border-border bg-surface-100 px-3 py-2 text-xs text-text-muted">{empty}</div>;
+  const windowFrames = Math.max(1, Math.round((fps || 30) / 2));
   return (
     <div className="ml-6 space-y-1.5 rounded-xl border border-border bg-surface-100 p-2">
       {entries.map(({ e, idx }, row) => {
-        const color = ACTION_COLORS[e.label] || '#8E8E93';
+        const color = actionColor(e.label);
+        const active = Math.abs(e.frame - frame) <= windowFrames;
         return (
           <div
             key={e.id}
             onClick={() => onJump(idx)}
-            className={cn('grid cursor-pointer grid-cols-[1rem_minmax(5rem,1fr)_3.6rem_2.6rem_2.4rem] items-center gap-1.5 rounded-lg border px-2 py-1.5 transition-colors', idx === selectedIdx ? 'border-primary/35 bg-primary/10' : 'border-border bg-surface-50 hover:bg-surface-200/40')}
+            className={cn(
+              'grid cursor-pointer grid-cols-[1rem_minmax(5rem,1fr)_3.6rem_2.6rem_2.4rem] items-center gap-1.5 rounded-lg border px-2 py-1.5 transition-colors',
+              idx === selectedIdx ? 'border-primary/35 bg-primary/10' : 'border-border bg-surface-50 hover:bg-surface-200/40',
+              active && 'ring-1 ring-accent/50',
+            )}
           >
             <span className="text-right font-heading text-[10px] text-text-muted/70">{row + 1}</span>
             <span className="flex min-w-0 items-center gap-1.5" onClick={(ev) => ev.stopPropagation()}>

@@ -11,11 +11,11 @@ import {
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { API, ApiError, apiFetch, apiUrl } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { actionColor } from '@/lib/actionColors';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { CropImage } from '@/components/video/CropImage';
 import { KindBadge } from '@/components/video/KindBadge';
@@ -24,7 +24,7 @@ import { RallyTimeline } from '@/components/editor/RallyTimeline';
 import type { EditorAnnotation } from '@/components/editor/AnnotationEditor';
 import { toast } from '@/components/feedback/toast';
 import { confirm } from '@/components/feedback/confirm';
-import type { ReidCluster, ReidPlayers, ReidRecord, ReidVideo } from '@/types/api';
+import type { ActionAnnotationData, ReidCluster, ReidPlayers, ReidRecord, ReidVideo } from '@/types/api';
 
 // CLIP-ReID's ViT features sit in a tight cosine cone, hence the small values.
 const THRESHOLDS = [0.12, 0.15, 0.18, 0.21, 0.24];
@@ -40,6 +40,8 @@ const STATUS_DOT: Record<ReidRecord['status'], string> = {
 
 const selectCls =
   'w-auto cursor-pointer appearance-none rounded-lg border border-border-light bg-surface-50 px-3 py-1 text-xs text-text-primary focus:border-primary/50 focus:outline-none';
+
+const fieldCls = 'rounded-lg border border-border-light bg-surface-50 px-3 py-2 text-sm text-text-primary focus:border-primary/50 focus:outline-none';
 
 const errMsg = (e: unknown) => (e instanceof ApiError ? e.body : e instanceof Error ? e.message : String(e));
 
@@ -63,15 +65,32 @@ interface Rally {
   end: number;
 }
 
+/** {box} = manual pick, {none} = nobody is the actor, {} = revert to auto. */
+type ActorFix = { box?: [number, number, number, number]; none?: boolean };
+
 interface ReidVideoPlayerProps {
   src: string;
   fps: number;
   frameSize: [number, number];
   records: ReidRecord[];
+  /** Full action annotation — includes score / non-visible events that the
+   *  ReID extraction skips, so the sidebar can still list their times. */
+  actionEvents: SidebarAction[];
   matches: ReidPlayers['matches'];
   rallies: Rally[];
   selectedRally: number | 'all';
   onSelectRally: (rally: number | 'all') => void;
+  onFixActor: (eventId: string, fix: ActorFix) => void;
+}
+
+/** One sidebar row: an action event's time, whether or not it has a ReID
+ *  record (score / non-visible events have none — no box, just the time). */
+interface SidebarAction {
+  id: string;
+  frame: number;
+  time: number | null;
+  label?: string;
+  visible: boolean;
 }
 
 function FieldLabel({ label, children }: { label: string; children: ReactNode }) {
@@ -85,16 +104,82 @@ function FieldLabel({ label, children }: { label: string; children: ReactNode })
 
 const fmtTime = (s: number) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 
+const OUTSIDE = '__outside__';
+
+interface ReidEventPanelProps {
+  entries: SidebarAction[];
+  empty: string;
+  matches: ReidPlayers['matches'];
+  selectedEventId: string | null;
+  fps: number;
+  /** Current playhead frame — rows within ±½ s light up (Rally Label rule). */
+  playheadFrame: number;
+  onJump: (a: SidebarAction) => void;
+}
+
+/** Read-only twin of the Action Label event panel: action dot + label,
+ *  matched player, frame and time — click a row to park the video there. */
+function ReidEventPanel({ entries, empty, matches, selectedEventId, fps, playheadFrame, onJump }: ReidEventPanelProps) {
+  if (!entries.length) return <div className="ml-6 rounded-xl border border-border bg-surface-100 px-3 py-2 text-xs text-text-muted">{empty}</div>;
+  const windowFrames = Math.max(1, Math.round(fps / 2));
+  return (
+    <div className="ml-6 space-y-1.5 rounded-xl border border-border bg-surface-100 p-2">
+      {entries.map((a, row) => {
+        const m = matches[a.id];
+        const color = actionColor(a.label);
+        const active = Math.abs(a.frame - playheadFrame) <= windowFrames;
+        return (
+          <div
+            key={a.id}
+            onClick={() => onJump(a)}
+            title="Click to jump the video to this action"
+            className={cn(
+              'grid cursor-pointer grid-cols-[1rem_minmax(4.5rem,1fr)_minmax(3rem,6.5rem)_3.6rem_2.6rem] items-center gap-1.5 rounded-lg border px-2 py-1.5 transition-colors',
+              a.id === selectedEventId ? 'border-primary/35 bg-primary/10' : 'border-border bg-surface-50 hover:bg-surface-200/40',
+              active && 'ring-1 ring-accent/50',
+            )}
+          >
+            <span className="text-right font-heading text-[10px] text-text-muted/70">{row + 1}</span>
+            <span className="flex min-w-0 items-center gap-1.5">
+              <span
+                className={cn('h-2.5 w-2.5 flex-shrink-0 rounded-full', !a.visible && 'border')}
+                style={a.visible ? { background: color } : { borderColor: color }}
+                title={a.visible ? undefined : 'Non-visible action'}
+              />
+              <span className="truncate text-xs text-text-primary">{a.label ?? '—'}</span>
+            </span>
+            <span className={cn('truncate text-right text-[11px]', m?.assigned ? 'text-primary-light' : 'text-text-muted')}>{m?.player ?? ''}</span>
+            <span className="text-center font-heading text-[11px] tabular-nums text-text-primary">f{a.frame}</span>
+            <span className="text-center font-heading text-[10px] tabular-nums text-text-muted">{fmtTime(a.time != null ? a.time : a.frame / (fps || 30))}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /** Video player whose overlay mirrors the ReID results: every event whose
  *  frame is within ±½ s of the playhead shows its player box + identity,
  *  sharpening as playback crosses the exact annotated frame. */
 const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(function ReidVideoPlayer(
-  { src, fps, frameSize, records, matches, rallies, selectedRally, onSelectRally },
+  { src, fps, frameSize, records, actionEvents, matches, rallies, selectedRally, onSelectRally, onFixActor },
   ref,
 ) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [frame, setFrame] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  // Expanded rally (or OUTSIDE) in the sidebar + last event jumped to — same
+  // interaction as the Action Label rally list.
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+  // Actor-picker mode: park on an event's frame, then click the right person.
+  const [pickMode, setPickMode] = useState(false);
+  useEffect(() => {
+    setExpanded(null);
+    setSelectedEventId(null);
+    setPickMode(false);
+  }, [src]);
   // Read inside the frame-clock callback without re-arming it.
   const rallyEndRef = useRef<number | null>(null);
   rallyEndRef.current =
@@ -166,20 +251,51 @@ const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(function 
   const windowFrames = Math.max(1, Math.round(fps / 2));
   const visible = records.filter((r) => r.box && Math.abs(r.frame - frame) <= windowFrames);
   const time = frame / fps;
-  const eventTime = (r: ReidRecord) => (r.time != null ? r.time : r.frame / fps);
-  const rallyCounts = useMemo(() => {
-    const counts = new Map<number, number>();
-    for (const rally of rallies) {
-      counts.set(rally.rally_id, records.filter((r) => eventTime(r) >= rally.start && eventTime(r) <= rally.end).length);
+  // The event whose actor is being picked: the record closest to the playhead.
+  const pickTarget = useMemo(() => {
+    if (!pickMode) return null;
+    const near = records.filter((r) => Math.abs(r.frame - frame) <= 2);
+    if (!near.length) return null;
+    return near.reduce((a, b) => (Math.abs(a.frame - frame) <= Math.abs(b.frame - frame) ? a : b));
+  }, [pickMode, records, frame]);
+  // Sidebar rows come from the full action annotation, so score / non-visible
+  // events keep their time even though extraction skipped them (no box to
+  // draw, nothing to re-identify). Falls back to the extraction records when
+  // no annotation is loaded (yet).
+  const sidebarActions = useMemo<SidebarAction[]>(() => {
+    const rows: SidebarAction[] = actionEvents.length
+      ? actionEvents
+      : records.map((r) => ({ id: r.id, frame: r.frame, time: r.time ?? null, label: r.label, visible: true }));
+    return [...rows].sort((a, b) => a.frame - b.frame);
+  }, [actionEvents, records]);
+
+  // Actions grouped per rally, plus the ones outside any rally — mirrors the
+  // Action Label sidebar.
+  const { byRally, outside } = useMemo(() => {
+    const map = new Map<number, SidebarAction[]>(rallies.map((r) => [r.rally_id, []]));
+    const out: SidebarAction[] = [];
+    for (const a of sidebarActions) {
+      const t = a.time != null ? a.time : a.frame / fps;
+      const rally = rallies.find((x) => t >= x.start && t <= x.end);
+      if (rally) map.get(rally.rally_id)!.push(a);
+      else out.push(a);
     }
-    return counts;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rallies, records, fps]);
+    return { byRally: map, outside: out };
+  }, [rallies, sidebarActions, fps]);
 
   const jumpToRally = (rally: Rally) => {
     onSelectRally(rally.rally_id);
+    setExpanded(String(rally.rally_id));
     const el = videoRef.current;
     if (el) el.currentTime = rally.start + 0.5 / fps;
+  };
+
+  const seekEvent = (a: SidebarAction) => {
+    setSelectedEventId(a.id);
+    const el = videoRef.current;
+    if (!el) return;
+    el.pause();
+    el.currentTime = (a.frame + 0.5) / fps;
   };
 
   const timelineAnnotations = useMemo<EditorAnnotation[]>(
@@ -187,125 +303,272 @@ const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(function 
     [rallies],
   );
 
+  const aspect = w / h;
   return (
-    <div className={cn('grid gap-3', rallies.length > 0 && 'lg:grid-cols-[minmax(0,1fr)_14rem]')}>
-      <div>
-      <div className="relative overflow-hidden rounded-xl border border-border bg-black">
-        <video
-          ref={videoRef}
-          src={src}
-          preload="metadata"
-          onClick={togglePlay}
-          onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
-          className="vq-video block w-full cursor-pointer"
-        />
-        <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="pointer-events-none absolute left-0 top-0 h-full w-full">
-        {visible.map((r) => {
-          const [x0, y0, x1, y1] = r.box!;
-          const m = matches[r.id];
-          const color = m ? (m.assigned ? '#34d399' : '#fbbf24') : '#e8e8e8';
-          const exact = Math.abs(r.frame - frame) <= 2;
-          const label = m ? m.player : r.label ?? '';
-          return (
-            <g key={r.id} opacity={exact ? 1 : 0.45}>
-              <rect
-                x={x0}
-                y={y0}
-                width={x1 - x0}
-                height={y1 - y0}
-                fill="none"
-                stroke={color}
-                strokeWidth={exact ? 2.5 : 1.5}
-                vectorEffect="non-scaling-stroke"
+    <div className="flex flex-col gap-5 lg:flex-row lg:items-start">
+      {/* Player — same console styling as the Rally Label / Action Label editors */}
+      <div className="min-w-0 flex-1">
+        <Card>
+          <div className="overflow-hidden rounded-2xl bg-black shadow-lg shadow-black/40 ring-1 ring-white/[0.06]">
+            <div className="relative mx-auto" style={{ aspectRatio: `${aspect}`, maxWidth: `calc(var(--video-max-h, 45vh) * ${aspect})` }}>
+              <video
+                ref={videoRef}
+                src={src}
+                preload="metadata"
+                onClick={pickMode ? undefined : togglePlay}
+                onPlay={() => setPlaying(true)}
+                onPause={() => setPlaying(false)}
+                onEnded={() => setPlaying(false)}
+                onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
+                className="block h-full w-full cursor-pointer bg-black object-contain"
               />
-              <text
-                x={x0 + 4}
-                y={Math.max(y0 - 8, 22)}
-                fill={color}
-                stroke="#000"
-                strokeWidth={4}
-                paintOrder="stroke"
-                fontSize={Math.round(h / 42)}
-                fontFamily="ui-monospace, SF Mono, Menlo"
-              >
-                {label} · f{r.frame}
-              </text>
-            </g>
-          );
-        })}
-        </svg>
-        <div className="pointer-events-none absolute left-2 top-2 rounded-md bg-black/60 px-2 py-0.5 font-mono text-[10.5px] tabular-nums text-white">
-          f{frame} · {visible.length} box(es)
-        </div>
-      </div>
-      <div className="mt-2 flex items-center gap-3">
-        <input
-          type="range"
-          min={0}
-          max={duration || 0}
-          step={1 / fps}
-          value={Math.min(time, duration || 0)}
-          onChange={(e) => {
-            const el = videoRef.current;
-            if (el) el.currentTime = Number(e.target.value);
-          }}
-          onPointerUp={(e) => e.currentTarget.blur()}
-          className="h-1.5 flex-1 cursor-pointer accent-primary"
-        />
-        <span className="flex-shrink-0 font-mono text-[11px] tabular-nums text-text-muted">
-          {fmtTime(time)} / {fmtTime(duration)}
-        </span>
-      </div>
-      {rallies.length > 0 && (
-        <div className="mt-2">
-          <RallyTimeline
-            videoRef={videoRef}
-            annotations={timelineAnnotations}
-            duration={duration}
-            markStart={null}
-            onSeek={(t) => {
-              const el = videoRef.current;
-              if (el) el.currentTime = t;
-            }}
-          />
-        </div>
-      )}
-      </div>
-      {rallies.length > 0 && (
-        <div className="vq-list max-h-[60vh] space-y-1.5 overflow-y-auto pr-1">
-          <div
-            onClick={() => onSelectRally('all')}
-            className={cn(
-              'ae-row flex cursor-pointer items-center gap-1.5 rounded-xl border px-3 py-2.5 transition-colors',
-              selectedRally === 'all'
-                ? 'border-primary/45 bg-primary/[0.12]'
-                : 'border-primary/20 bg-primary/[0.05] hover:bg-primary/[0.10]',
-            )}
-          >
-            <span className="text-xs font-medium text-text-primary">All rallies</span>
-            <span className="ml-auto font-mono text-[10px] tabular-nums text-text-muted">{records.length}ev</span>
+              <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="pointer-events-none absolute left-0 top-0 h-full w-full">
+              {visible.map((r) => {
+                const [x0, y0, x1, y1] = r.box!;
+                const m = matches[r.id];
+                // Same hue per action as the Action Label editor.
+                const color = actionColor(r.label);
+                const exact = Math.abs(r.frame - frame) <= 2;
+                const label = m ? m.player : r.label ?? '';
+                return (
+                  <g key={r.id} opacity={exact ? 1 : 0.45}>
+                    <rect
+                      x={x0}
+                      y={y0}
+                      width={x1 - x0}
+                      height={y1 - y0}
+                      fill="none"
+                      stroke={color}
+                      strokeWidth={exact ? 2.5 : 1.5}
+                      vectorEffect="non-scaling-stroke"
+                    />
+                    <text
+                      x={x0 + 4}
+                      y={Math.max(y0 - 8, 22)}
+                      fill={color}
+                      stroke="#000"
+                      strokeWidth={4}
+                      paintOrder="stroke"
+                      fontSize={Math.round(h / 42)}
+                      fontFamily="ui-monospace, SF Mono, Menlo"
+                    >
+                      {label}
+                      {r.box_source === 'manual' ? ' ✎' : ''} · f{r.frame}
+                    </text>
+                  </g>
+                );
+              })}
+              {/* Actor picker: every detected person as a clickable outline */}
+              {pickMode &&
+                pickTarget?.detections?.map((d, i) => {
+                  const [x0, y0, x1, y1] = d.box;
+                  return (
+                    <rect
+                      key={`det-${i}`}
+                      x={x0}
+                      y={y0}
+                      width={x1 - x0}
+                      height={y1 - y0}
+                      fill="transparent"
+                      stroke="#fff"
+                      strokeOpacity={0.9}
+                      strokeWidth={1.5}
+                      strokeDasharray="6 4"
+                      vectorEffect="non-scaling-stroke"
+                      className="pointer-events-auto cursor-pointer hover:fill-white/20"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onFixActor(pickTarget.id, { box: d.box });
+                      }}
+                    >
+                      <title>{`person ${(d.score * 100).toFixed(0)}% — click to set as the actor`}</title>
+                    </rect>
+                  );
+                })}
+              </svg>
+              <div className="pointer-events-none absolute left-2 top-2 rounded-md bg-black/60 px-2 py-0.5 font-mono text-[10.5px] tabular-nums text-white">
+                f{frame} · {visible.length} box(es)
+              </div>
+            </div>
           </div>
-          {rallies.map((rally, i) => {
-            const playing = time >= rally.start && time <= rally.end;
-            const selected = selectedRally === rally.rally_id;
-            return (
+          {rallies.length > 0 && (
+            <div className="mt-3">
+              <RallyTimeline
+                videoRef={videoRef}
+                annotations={timelineAnnotations}
+                duration={duration}
+                markStart={null}
+                onSeek={(t) => {
+                  const el = videoRef.current;
+                  if (el) el.currentTime = t;
+                }}
+              />
+            </div>
+          )}
+          <div className="mt-2 flex items-center gap-3">
+            <button
+              type="button"
+              onClick={togglePlay}
+              aria-label={playing ? 'Pause' : 'Play'}
+              className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-primary text-on-primary transition-colors hover:brightness-110"
+            >
+              {playing ? (
+                <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
+                  <rect x="6" y="5" width="4" height="14" rx="1" />
+                  <rect x="14" y="5" width="4" height="14" rx="1" />
+                </svg>
+              ) : (
+                <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M8 5.14v13.72a1 1 0 001.54.84l10.7-6.86a1 1 0 000-1.68L9.54 4.3A1 1 0 008 5.14z" />
+                </svg>
+              )}
+            </button>
+            <input
+              type="range"
+              min={0}
+              max={duration || 0}
+              step={1 / fps}
+              value={Math.min(time, duration || 0)}
+              onChange={(e) => {
+                const el = videoRef.current;
+                if (el) el.currentTime = Number(e.target.value);
+              }}
+              onPointerUp={(e) => e.currentTarget.blur()}
+              className="h-1.5 min-w-0 flex-1 cursor-pointer accent-primary"
+            />
+            <span className="flex-shrink-0 rounded-lg border border-border bg-surface-200/50 px-2.5 py-1 font-mono text-sm tabular-nums text-text-primary">
+              {fmtTime(time)} / {fmtTime(duration)}
+            </span>
+            <Button
+              size="sm"
+              intent={pickMode ? 'primary' : 'default'}
+              onClick={() => setPickMode((m) => !m)}
+              title="Pick actor: park on an action's frame, then click the person who performed it"
+            >
+              Pick actor
+            </Button>
+          </div>
+          {pickMode && (
+            <div className="mt-3 flex flex-wrap items-center gap-2.5 rounded-xl border border-primary/20 bg-primary/10 p-3 text-xs">
+              {pickTarget ? (
+                <>
+                  <span className="h-2 w-2 flex-shrink-0 rounded-full animate-pulse-dot" style={{ background: actionColor(pickTarget.label) }} />
+                  <span className="text-primary-light">
+                    Picking actor for <strong>{pickTarget.label}</strong> f{pickTarget.frame}
+                    {pickTarget.detections?.length
+                      ? ' — click the correct person in the video'
+                      : ' — no stored detections (re-run extraction for this video)'}
+                  </span>
+                  <span className="ml-auto flex items-center gap-2">
+                    <Button size="sm" onClick={() => onFixActor(pickTarget.id, { none: true })} title="Nobody in frame is the actor — clears this event's crop">
+                      No actor
+                    </Button>
+                    {pickTarget.box_source === 'manual' && (
+                      <Button size="sm" onClick={() => onFixActor(pickTarget.id, {})} title="Discard the manual fix and re-run the automatic pick">
+                        Revert to auto
+                      </Button>
+                    )}
+                  </span>
+                </>
+              ) : (
+                <span className="text-text-muted">Jump to an action first (click a crop or a sidebar row), then click the right person.</span>
+              )}
+            </div>
+          )}
+          <p className="mt-3 text-[11px] text-text-muted">
+            Boxes appear within ±½ s of each event and sharpen on the exact frame — click any crop below to jump there.
+            Wrong person boxed? Toggle <span className="text-text-secondary">Pick actor</span> and click the right one (✎ marks fixed events).
+          </p>
+        </Card>
+      </div>
+
+      {/* Rally list — same sidebar as the Rally Label / Action Label editors */}
+      {rallies.length > 0 && (
+        <div className="min-w-0 lg:w-[420px] lg:flex-shrink-0">
+          <Card>
+            <SectionLabel>
+              Rallies ({rallies.length} rally · {sidebarActions.length} action)
+            </SectionLabel>
+            <div className="vq-list max-h-[calc(45vh+2.25rem)] space-y-1.5 overflow-y-auto pr-1">
               <div
-                key={rally.rally_id}
-                onClick={() => jumpToRally(rally)}
+                onClick={() => onSelectRally('all')}
                 className={cn(
                   'ae-row flex cursor-pointer items-center gap-1.5 rounded-xl border px-3 py-2.5 transition-colors',
-                  selected ? 'border-primary/45 bg-primary/[0.12]' : 'border-primary/20 bg-primary/[0.05] hover:bg-primary/[0.10]',
-                  playing && 'ring-1 ring-accent/50',
+                  selectedRally === 'all'
+                    ? 'border-primary/45 bg-primary/[0.12]'
+                    : 'border-primary/20 bg-primary/[0.05] hover:bg-primary/[0.10]',
                 )}
               >
-                <span className="w-4 select-none text-right font-heading text-[10px] text-text-muted/60">{i + 1}</span>
-                <span className="text-xs font-medium text-text-primary">R{rally.rally_id}</span>
-                <span className="ml-auto font-mono text-[10px] tabular-nums text-text-muted">
-                  {fmtTime(rally.start)}–{fmtTime(rally.end)} · {rallyCounts.get(rally.rally_id) ?? 0}ev
-                </span>
+                <span className="text-xs font-medium text-text-primary">All rallies</span>
+                <span className="ml-auto font-mono text-[10px] tabular-nums text-text-muted">{sidebarActions.length} action</span>
               </div>
-            );
-          })}
+              {rallies.map((rally, i) => {
+                const entries = byRally.get(rally.rally_id) ?? [];
+                const isOpen = expanded === String(rally.rally_id);
+                const active = time >= rally.start && time <= rally.end;
+                const selected = selectedRally === rally.rally_id;
+                return (
+                  <div key={rally.rally_id} className="space-y-1.5">
+                    <div
+                      onClick={() => jumpToRally(rally)}
+                      className={cn(
+                        'ae-row flex cursor-pointer items-center gap-2.5 rounded-xl border px-3 py-2.5 transition-colors',
+                        selected ? 'border-primary/45 bg-primary/[0.12]' : 'border-primary/20 bg-primary/[0.05] hover:bg-primary/[0.10]',
+                        active && 'ring-1 ring-accent/50',
+                      )}
+                    >
+                      <span className="w-4 select-none text-right font-heading text-[10px] text-text-muted/60">{i + 1}</span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          // Collapse if open; otherwise select + expand + seek to the rally start.
+                          if (isOpen) setExpanded(null);
+                          else jumpToRally(rally);
+                        }}
+                        className="flex items-center gap-1 rounded-full bg-primary/20 px-2 py-0.5 text-[11px] font-medium text-primary-text ring-1 ring-primary/25"
+                      >
+                        <span className={cn('transition-transform', isOpen && 'rotate-90')}>▸</span> actions <span className="opacity-70">{entries.length}</span>
+                      </button>
+                      <span className="ml-auto font-mono text-[11px] tabular-nums text-text-muted">
+                        {fmtTime(rally.start)} → {fmtTime(rally.end)}
+                      </span>
+                      <span className="rounded bg-surface-200/40 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-text-muted">
+                        {Math.max(0, rally.end - rally.start).toFixed(1)}s
+                      </span>
+                    </div>
+                    {isOpen && (
+                      <ReidEventPanel entries={entries} empty="No actions in this rally" matches={matches} selectedEventId={selectedEventId} fps={fps} playheadFrame={frame} onJump={seekEvent} />
+                    )}
+                  </div>
+                );
+              })}
+              {outside.length > 0 && (
+                <div className="space-y-1.5">
+                  <div
+                    onClick={() => setExpanded(OUTSIDE)}
+                    className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-amber-500/20 bg-amber-500/[0.04] px-3 py-2.5 hover:bg-amber-500/[0.08]"
+                  >
+                    <span className="w-4 select-none text-right font-heading text-[10px] text-text-muted/60">out</span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setExpanded(expanded === OUTSIDE ? null : OUTSIDE);
+                      }}
+                      className="flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-300 ring-1 ring-amber-500/25"
+                    >
+                      <span className={cn('transition-transform', expanded === OUTSIDE && 'rotate-90')}>▸</span> outside <span className="opacity-70">{outside.length}</span>
+                    </button>
+                    <span className="ml-auto font-heading text-[11px] text-text-muted">outside rally</span>
+                  </div>
+                  {expanded === OUTSIDE && (
+                    <ReidEventPanel entries={outside} empty="No outside actions" matches={matches} selectedEventId={selectedEventId} fps={fps} playheadFrame={frame} onJump={seekEvent} />
+                  )}
+                </div>
+              )}
+            </div>
+          </Card>
         </div>
       )}
     </div>
@@ -357,6 +620,33 @@ export function ReidLabelPage() {
   const seekToEvent = (r?: ReidRecord) => {
     if (r) playerRef.current?.seek(r.frame);
   };
+
+  // Full action annotation — the sidebar lists every action's time, including
+  // score / non-visible events the ReID extraction skipped.
+  const actionsQuery = useQuery({
+    queryKey: ['reid-action-events', picked],
+    queryFn: () => apiFetch<ActionAnnotationData>(API.actionAnnotate.annotation(picked)),
+    enabled: Boolean(picked),
+  });
+  const actionEvents = useMemo<SidebarAction[]>(
+    () =>
+      (actionsQuery.data?.events ?? []).flatMap((raw) => {
+        const x = raw as Record<string, unknown>;
+        if (x.frame == null) return [];
+        const frame = Math.max(0, Math.round(Number(x.frame) || 0));
+        return [
+          {
+            // Same id fallback as the extraction pipeline, so matches line up.
+            id: typeof x.id === 'string' && x.id ? x.id : `f${frame}`,
+            frame,
+            time: typeof x.time === 'number' ? x.time : null,
+            label: typeof x.label === 'string' ? x.label : undefined,
+            visible: x.visible !== false,
+          },
+        ];
+      }),
+    [actionsQuery.data],
+  );
 
   const clustersQuery = useQuery({
     queryKey: ['reid-clusters', picked, threshold],
@@ -494,6 +784,22 @@ export function ReidLabelPage() {
     }
   };
 
+  // Actor fix: persists into the players file server-side, re-crops and
+  // re-embeds the event, then refreshes everything derived from embeddings.
+  const fixActor = async (eventId: string, fix: ActorFix) => {
+    try {
+      await apiFetch(API.reid.actorFix(picked), { method: 'POST', body: { event_id: eventId, ...fix } });
+      toast.success(fix.none ? 'Marked as no actor' : fix.box ? 'Actor updated' : 'Reverted to the auto pick');
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['reid-results', picked] }),
+        qc.invalidateQueries({ queryKey: ['reid-clusters', picked] }),
+        qc.invalidateQueries({ queryKey: ['reid-players', picked] }),
+      ]);
+    } catch (e) {
+      toast.error(`Actor fix failed: ${errMsg(e)}`);
+    }
+  };
+
   const rebuildFromSaved = () => {
     setGroups([]); // dropping every lock lets the effect rebuild from saved state
     setDirty(false);
@@ -558,40 +864,18 @@ export function ReidLabelPage() {
 
   return (
     <div className="mx-auto max-w-screen-2xl space-y-5">
-      <PageHeader
-        actions={
-          <>
-            {dirty && <Badge tone="warning">unsaved</Badge>}
-            <Button size="sm" onClick={reset} disabled={!dirty}>
-              Reset
-            </Button>
-            <Button intent="primary" onClick={save} disabled={!picked}>
-              Save
-            </Button>
-          </>
-        }
-      />
-
       {/* Picker — same shape as the Action Label / Rally Label pickers */}
       <Card>
         <div className="grid grid-cols-1 items-end gap-3 lg:grid-cols-[8.5rem_8.5rem_minmax(18rem,1fr)]">
           <FieldLabel label="Kind">
-            <select
-              value={kindFilter}
-              onChange={(e) => setKindFilter(e.target.value as typeof kindFilter)}
-              className="h-9 w-full cursor-pointer appearance-none rounded-lg border border-border-light bg-surface-50 px-3 text-sm text-text-primary focus:border-primary/50 focus:outline-none"
-            >
+            <select value={kindFilter} onChange={(e) => setKindFilter(e.target.value as typeof kindFilter)} className={cn(fieldCls, 'h-9 w-full py-0')}>
               <option value="all">All kinds</option>
               <option value="broadcast">Broadcast</option>
               <option value="sideline">Sideline</option>
             </select>
           </FieldLabel>
           <FieldLabel label="Status">
-            <select
-              value={pickStatus}
-              onChange={(e) => setPickStatus(e.target.value as typeof pickStatus)}
-              className="h-9 w-full cursor-pointer appearance-none rounded-lg border border-border-light bg-surface-50 px-3 text-sm text-text-primary focus:border-primary/50 focus:outline-none"
-            >
+            <select value={pickStatus} onChange={(e) => setPickStatus(e.target.value as typeof pickStatus)} className={cn(fieldCls, 'h-9 w-full py-0')}>
               <option value="all">All</option>
               <option value="unlabeled">Unlabeled</option>
               <option value="labeled">Labeled</option>
@@ -615,6 +899,22 @@ export function ReidLabelPage() {
           </FieldLabel>
         </div>
       </Card>
+
+      {picked && showVideo && meta.fps && meta.frame_size && (
+        <ReidVideoPlayer
+          ref={playerRef}
+          src={apiUrl(API.actionAnnotate.video(picked))}
+          fps={meta.fps}
+          frameSize={meta.frame_size}
+          records={records}
+          actionEvents={actionEvents}
+          matches={matches}
+          rallies={meta.rallies ?? []}
+          selectedRally={selectedRally}
+          onSelectRally={setSelectedRally}
+          onFixActor={fixActor}
+        />
+      )}
 
       <Card>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -671,27 +971,15 @@ export function ReidLabelPage() {
                 <option value="miss">miss</option>
               </select>
             )}
+            <Button size="sm" onClick={reset} disabled={!dirty}>
+              Reset
+            </Button>
+            <Button size="sm" intent="primary" onClick={save} disabled={!picked}>
+              {dirty ? 'Save •' : 'Save'}
+            </Button>
           </div>
         </div>
 
-        {picked && showVideo && meta.fps && meta.frame_size && (
-          <div className="mb-4">
-            <ReidVideoPlayer
-              ref={playerRef}
-              src={apiUrl(API.actionAnnotate.video(picked))}
-              fps={meta.fps}
-              frameSize={meta.frame_size}
-              records={records}
-              matches={matches}
-              rallies={meta.rallies ?? []}
-              selectedRally={selectedRally}
-              onSelectRally={setSelectedRally}
-            />
-            <p className="mt-1.5 text-center text-[11px] text-text-muted">
-              Boxes appear within ±½ s of each event and sharpen on the exact frame — click any crop below to jump there.
-            </p>
-          </div>
-        )}
         {!picked ? (
           <EmptyState
             icon={
