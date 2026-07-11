@@ -25,8 +25,12 @@ dependencies = [
     # these two must stay on the same side of the transformers 4/5 boundary.
     "vllm>=0.24.0",
     "google-genai>=1.0.0",
-    # Player ReID: person detection on action frames
+    # Player ReID: person detection on action frames + embedding clustering.
+    # onnxruntime runs the CLIP-ReID embedder (ONNX export; CPU is fast enough
+    # for a few hundred crops per video).
     "rfdetr>=1.8.3",
+    "scipy>=1.11",
+    "onnxruntime>=1.20",
 ]
 
 

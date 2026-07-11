@@ -82,6 +82,9 @@ RALLY_SPOT_CHECKPOINTS_DIR = VIDEOS_DIR / "rally-spot-checkpoints"
 # SPOT rally predictions live beside (not inside) the VLM pre-annotations so
 # the two model families never overwrite each other; Rally Label can load either.
 RALLY_SPOT_PRE_ANNOTATIONS_DIR = VIDEOS_DIR / "rally-spot-pre-annotations"
+# Player ReID: per-action-event person crops + appearance embeddings.
+# player-reid/embeddings/<stem>_reid.jsonl, player-reid/crops/<stem>/<event_id>.jpg
+PLAYER_REID_DIR = VIDEOS_DIR / "player-reid"
 
 # R2 category → local directory + glob pattern mapping
 class R2Category(NamedTuple):

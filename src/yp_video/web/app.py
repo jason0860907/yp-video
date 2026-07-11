@@ -19,6 +19,7 @@ from yp_video.web.routers import (
     detect,
     download,
     jobs,
+    reid,
     spot_predict,
     spot_train,
     system,
@@ -101,6 +102,7 @@ app.include_router(annotate.router, prefix="/api/annotate", tags=["annotate"])
 app.include_router(detect.router, prefix="/api/detect", tags=["detect"])
 app.include_router(spot_train.router, prefix="/api/spot-train", tags=["spot-train"])
 app.include_router(spot_predict.router, prefix="/api/spot-predict", tags=["spot-predict"])
+app.include_router(reid.router, prefix="/api/reid", tags=["reid"])
 app.include_router(jobs.router, prefix="/api/jobs", tags=["jobs"])
 app.include_router(system.router, prefix="/api/system", tags=["system"])
 app.include_router(upload.router, prefix="/api/upload", tags=["upload"])

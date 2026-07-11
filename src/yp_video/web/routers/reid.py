@@ -1,0 +1,272 @@
+"""Player ReID router.
+
+Runs the tracking-free ReID extraction (RF-DETR person detection → contact
+point association → OSNet embedding) over the annotated action events of
+selected cut videos. Results land in player-reid/ as per-video jsonl +
+crop images; identity matching consumes them later.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import time
+from pathlib import Path
+from urllib.parse import unquote
+
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
+
+from yp_video.config import cut_kind_of, find_cut, iter_all_cuts
+from yp_video.core.jsonl import read_jsonl
+from yp_video.reid import identity, pipeline
+from yp_video.reid.embedder import DEFAULT_EMBEDDER, EMBEDDER_WEIGHTS
+from yp_video.web.job_helpers import (
+    TERMINAL_ITEM_STATUSES,
+    batch_items_params,
+    batch_message,
+    batch_progress,
+    fail_job_from_exc,
+    finalize_batch_job,
+    init_batch_items,
+    mark_batch_item,
+    stop_vllm_for_job,
+    update_batch_item,
+)
+from yp_video.web.jobs import job_manager
+
+log = logging.getLogger(__name__)
+router = APIRouter()
+
+
+class ReidStartRequest(BaseModel):
+    videos: list[str] = Field(min_length=1)
+    overwrite: bool = False
+    stop_vllm: bool = False
+
+
+def _read_header(stem: str) -> dict | None:
+    path = pipeline.reid_path(stem)
+    if not path.exists():
+        return None
+    import json
+
+    with open(path, encoding="utf-8") as f:
+        line = f.readline().strip()
+    if not line:
+        return None
+    header = json.loads(line)
+    header.pop("_meta", None)
+    return header
+
+
+@router.get("/videos")
+def list_videos() -> list[dict]:
+    """Cut videos that have action events — the ReID work list."""
+    results = []
+    for f in sorted(iter_all_cuts(), key=lambda p: p.name):
+        events = pipeline.load_events(f.stem)
+        if not events:
+            continue
+        header = _read_header(f.stem)
+        results.append({
+            "name": f.name,
+            "kind": cut_kind_of(f),
+            "event_count": len(events),
+            "has_reid": header is not None,
+            "reid_counts": (
+                {k: header.get(k, 0) for k in ("ok", "multi", "miss")} if header else None
+            ),
+        })
+    return results
+
+
+@router.post("/start")
+async def start(req: ReidStartRequest) -> dict:
+    video_paths: list[Path] = []
+    skipped: list[str] = []
+    for name in req.videos:
+        path = find_cut(name)
+        if path is None:
+            raise HTTPException(404, f"Video not found: {name}")
+        if pipeline.action_annotation_path(path.stem) is None:
+            raise HTTPException(400, f"No action annotations for: {name}")
+        if not req.overwrite and pipeline.reid_path(path.stem).exists():
+            skipped.append(path.stem)
+            continue
+        video_paths.append(path)
+
+    if not video_paths:
+        raise HTTPException(400, "All selected videos already have ReID results (enable overwrite)")
+
+    total = len(video_paths)
+    job = job_manager.create_job(
+        "player_reid",
+        {
+            "videos": [p.name for p in video_paths],
+            "skipped_existing": skipped,
+            "items": init_batch_items([p.name for p in video_paths]),
+        },
+        name=f"Player ReID ({total} videos)",
+    )
+
+    async def run_job() -> None:
+        items = job.params["items"]
+        loop = asyncio.get_event_loop()
+        failed = 0
+        try:
+            await job_manager.update_job(
+                job.id, status="running", message="Waiting for inference slot..."
+            )
+            async with stop_vllm_for_job(job.id, when=req.stop_vllm):
+                async with job_manager.inference_lock:
+                    for i, video_path in enumerate(video_paths):
+                        await update_batch_item(
+                            job.id, items, i, status="running", message="detecting players...",
+                            overall_progress=batch_progress(i, 0.0, total),
+                            overall_message=batch_message(i, total, video_path.name, "detecting players..."),
+                        )
+
+                        last_push = {"t": 0.0}
+
+                        def on_progress(done, total_events, _status, *, index=i, name=video_path.name):
+                            # Executor thread → schedule onto the loop; throttle
+                            # to ~1/s except the final event.
+                            now = time.monotonic()
+                            if done != total_events and now - last_push["t"] < 1.0:
+                                return
+                            last_push["t"] = now
+                            frac = done / total_events if total_events else 0.0
+                            detail = f"event {done}/{total_events}"
+                            loop.call_soon_threadsafe(
+                                asyncio.ensure_future,
+                                update_batch_item(
+                                    job.id, items, index, progress=frac, message=detail,
+                                    overall_progress=batch_progress(index, frac, total),
+                                    overall_message=batch_message(index, total, name, detail),
+                                ),
+                            )
+
+                        try:
+                            counts = await loop.run_in_executor(
+                                None,
+                                lambda p=video_path, cb=on_progress: pipeline.extract_video(p, on_progress=cb),
+                            )
+                            await update_batch_item(
+                                job.id, items, i, status="completed", progress=1.0,
+                                message=f"{counts['ok']} ok · {counts['multi']} multi · {counts['miss']} miss",
+                                overall_progress=batch_progress(i, 1.0, total),
+                                overall_message=batch_message(i, total, video_path.name, "done"),
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            failed += 1
+                            log.exception("ReID extraction failed for %s", video_path.name)
+                            await update_batch_item(
+                                job.id, items, i, status="failed",
+                                message=f"{type(exc).__name__}: {exc}", error=str(exc),
+                                overall_message=batch_message(i, total, video_path.name, f"failed — {exc}"),
+                            )
+            await finalize_batch_job(job.id, total, failed)
+        except asyncio.CancelledError:
+            for idx in range(len(items)):
+                if items[idx].get("status") not in TERMINAL_ITEM_STATUSES:
+                    mark_batch_item(items, idx, status="cancelled", message="Cancelled")
+            current = job_manager.get_job(job.id)
+            await job_manager.update_job(
+                job.id, status="cancelled", message="Cancelled",
+                params={**(current.params if current else {}), **batch_items_params(items)},
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.exception("Player ReID job failed")
+            await fail_job_from_exc(job.id, exc)
+
+    task = asyncio.create_task(run_job())
+    job_manager.attach_task(job, task)
+    return job.to_dict()
+
+
+@router.get("/results/{name}")
+def results(name: str) -> dict:
+    """One video's extraction records, embeddings stripped (UI payload)."""
+    stem = Path(unquote(name)).stem
+    path = pipeline.reid_path(stem)
+    if not path.exists():
+        raise HTTPException(404, f"No ReID results for {stem}")
+    meta, records = read_jsonl(path)
+    for r in records:
+        r.pop("embeddings", None)
+    return {"meta": meta, "records": records}
+
+
+@router.get("/crop/{name}/{crop_file}")
+def crop(name: str, crop_file: str) -> FileResponse:
+    stem = Path(unquote(name)).stem
+    path = pipeline.crop_dir(stem) / Path(unquote(crop_file)).name
+    if not path.exists():
+        raise HTTPException(404, "Crop not found")
+    return FileResponse(path, media_type="image/jpeg")
+
+
+def _validated_model(model: str) -> str:
+    if model not in EMBEDDER_WEIGHTS:
+        raise HTTPException(400, f"Unknown embedder: {model} (have: {', '.join(EMBEDDER_WEIGHTS)})")
+    return model
+
+
+@router.get("/clusters/{name}")
+def clusters(
+    name: str,
+    threshold: float = identity.DEFAULT_CLUSTER_THRESHOLD,
+    model: str = DEFAULT_EMBEDDER,
+) -> dict:
+    """Unsupervised grouping of one video's embeddings (event ids per cluster)."""
+    stem = Path(unquote(name)).stem
+    try:
+        records, matrix = identity.load_embeddings(stem, model=_validated_model(model))
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    labels = identity.cluster(matrix, threshold=threshold)
+    grouped: dict[int, list[str]] = {}
+    for record, label in zip(records, labels):
+        grouped.setdefault(int(label), []).append(record["id"])
+    return {
+        "threshold": threshold,
+        "model": model,
+        "clusters": [
+            {"id": label, "size": len(ids), "event_ids": ids}
+            for label, ids in sorted(grouped.items())
+        ],
+    }
+
+
+class SaveAssignmentsRequest(BaseModel):
+    assignments: dict[str, str]
+
+
+@router.get("/players/{name}")
+def get_players(name: str, model: str = DEFAULT_EMBEDDER) -> dict:
+    """Saved identities + nearest-centroid match for every embedded event."""
+    stem = Path(unquote(name)).stem
+    assignments = identity.load_assignments(stem)
+    matches: dict[str, dict] = {}
+    if assignments:
+        try:
+            records, matrix = identity.load_embeddings(stem, model=_validated_model(model))
+            matches = identity.match(records, matrix, assignments)
+        except FileNotFoundError:
+            pass
+    return {
+        "assignments": assignments,
+        "players": sorted(set(assignments.values())),
+        "matches": matches,
+    }
+
+
+@router.put("/players/{name}")
+def put_players(name: str, req: SaveAssignmentsRequest, model: str = DEFAULT_EMBEDDER) -> dict:
+    stem = Path(unquote(name)).stem
+    if not pipeline.reid_path(stem).exists():
+        raise HTTPException(404, f"No ReID results for {stem}")
+    identity.save_assignments(stem, req.assignments)
+    return get_players(name, model=model)

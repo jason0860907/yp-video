@@ -1,0 +1,119 @@
+"""RF-DETR keypoint detection + contact-point → player association.
+
+The keypoint model (GroupPose-style DETR head) predicts boxes and 17 COCO
+keypoints for every person in one pass, at constant cost regardless of player
+count (~29 ms/frame on a 4090). The keypoints buy a far more physical
+association than box geometry: a volleyball contact happens at a hand, so the
+annotated xy should sit next to somebody's wrist.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import numpy as np
+
+PERSON_SCORE_THRESHOLD = 0.5
+DETECTOR_NAME = "rf-detr-keypoint-preview"
+
+# COCO keypoint indices for left/right wrist.
+WRIST_IDXS = (9, 10)
+MIN_KEYPOINT_CONF = 0.3
+# A wrist match counts when the contact point is within this fraction of the
+# person's box height from the wrist — roughly ball-diameter reach at contact.
+WRIST_REACH_FRAC = 0.6
+
+# Box-geometry fallback for people whose wrists weren't found: the contact
+# point may sit up to 35% of box height above the top (ball above the raised
+# hand) and 20% of box width outside the horizontal span. Validated on
+# annotated sideline footage.
+X_PAD_FRAC = 0.20
+Y_ABOVE_FRAC = 0.35
+# Fallback candidates always rank below any wrist match.
+FALLBACK_PENALTY = 10.0
+
+
+@dataclass(frozen=True)
+class PersonBox:
+    xyxy: tuple[float, float, float, float]
+    score: float
+    keypoints: np.ndarray | None = None  # (17, 2) pixel coords
+    keypoint_conf: np.ndarray | None = None  # (17,)
+
+
+class PersonDetector:
+    """RF-DETR keypoint wrapper returning person boxes with their skeletons.
+
+    Loads lazily on first detect() — the model download / CUDA init must not
+    happen at import time inside the web server.
+    """
+
+    def __init__(self, score_threshold: float = PERSON_SCORE_THRESHOLD):
+        self.score_threshold = score_threshold
+        self._model = None
+
+    def _ensure_model(self):
+        if self._model is not None:
+            return
+        from rfdetr import RFDETRKeypointPreview
+
+        self._model = RFDETRKeypointPreview()
+
+    def detect(self, frame_bgr: np.ndarray) -> list[PersonBox]:
+        import cv2
+        from PIL import Image
+
+        self._ensure_model()
+        img = Image.fromarray(cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB))
+        kp = self._model.predict(img, threshold=self.score_threshold)
+        if kp.xy is None or not len(kp.xy):
+            return []
+        det = kp.as_detections()
+        confs = det.confidence if det.confidence is not None else np.ones(len(det.xyxy))
+        kp_conf = np.asarray(kp.keypoint_confidence)
+        return [
+            PersonBox(
+                tuple(float(v) for v in xyxy),
+                float(score),
+                keypoints=np.asarray(points, dtype=np.float32),
+                keypoint_conf=kp_conf[i].astype(np.float32),
+            )
+            for i, (xyxy, score, points) in enumerate(zip(det.xyxy, confs, kp.xy))
+        ]
+
+
+def associate(boxes: list[PersonBox], x: float, y: float) -> list[PersonBox]:
+    """Rank persons by how plausibly they own the contact point (x, y).
+
+    Wrist distance first — the contact IS at a hand — with the old box-top
+    geometry as a fallback for players whose wrists weren't confidently
+    detected. Scores are normalized by box height so near and far players
+    compare fairly. Returns candidates best-first; empty when nobody is
+    geometrically compatible. Pixel coordinates.
+    """
+    scored: list[tuple[float, PersonBox]] = []
+    for box in boxes:
+        x0, y0, x1, y1 = box.xyxy
+        w, h = max(x1 - x0, 1.0), max(y1 - y0, 1.0)
+
+        wrist_d = None
+        if box.keypoints is not None and box.keypoint_conf is not None:
+            dists = [
+                float(np.hypot(box.keypoints[i][0] - x, box.keypoints[i][1] - y))
+                for i in WRIST_IDXS
+                if box.keypoint_conf[i] >= MIN_KEYPOINT_CONF
+            ]
+            if dists:
+                wrist_d = min(dists)
+
+        if wrist_d is not None and wrist_d <= WRIST_REACH_FRAC * h:
+            scored.append((wrist_d / h, box))
+            continue
+
+        in_x = x0 - X_PAD_FRAC * w <= x <= x1 + X_PAD_FRAC * w
+        in_y = y0 - Y_ABOVE_FRAC * h <= y <= y1
+        if in_x and in_y:
+            d = float(np.hypot(x - (x0 + x1) / 2, y - y0))
+            scored.append((d / h + FALLBACK_PENALTY, box))
+
+    return [box for _, box in sorted(scored, key=lambda t: t[0])]
