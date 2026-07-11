@@ -24,14 +24,15 @@ interface CropImageProps {
   title?: string;
   draggable?: boolean;
   onDragStart?: (e: DragEvent<HTMLDivElement>) => void;
+  onClick?: () => void;
   children?: ReactNode;
 }
 
 /** A crop thumbnail with an optional SVG skeleton overlay drawn from data —
  *  the jpg itself stays raw, so toggling costs nothing. */
-export function CropImage({ src, keypoints, skeleton, className, alt, title, draggable, onDragStart, children }: CropImageProps) {
+export function CropImage({ src, keypoints, skeleton, className, alt, title, draggable, onDragStart, onClick, children }: CropImageProps) {
   return (
-    <div className="relative inline-block" draggable={draggable} onDragStart={onDragStart} title={title}>
+    <div className="relative inline-block" draggable={draggable} onDragStart={onDragStart} onClick={onClick} title={title}>
       <img src={src} alt={alt ?? ''} loading="lazy" draggable={false} className={cn('block', className)} />
       {skeleton && keypoints && keypoints.length >= 17 && (
         <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">

@@ -1,4 +1,13 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent,
+  type ReactNode,
+} from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { API, ApiError, apiFetch, apiUrl } from '@/lib/api';
 import { cn } from '@/lib/cn';
@@ -9,7 +18,10 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { CropImage } from '@/components/video/CropImage';
+import { KindBadge } from '@/components/video/KindBadge';
 import { VideoCombobox } from '@/components/video/VideoCombobox';
+import { RallyTimeline } from '@/components/editor/RallyTimeline';
+import type { EditorAnnotation } from '@/components/editor/AnnotationEditor';
 import { toast } from '@/components/feedback/toast';
 import { confirm } from '@/components/feedback/confirm';
 import type { ReidCluster, ReidPlayers, ReidRecord, ReidVideo } from '@/types/api';
@@ -41,12 +53,276 @@ interface Group {
   locked: boolean;
 }
 
+interface PlayerHandle {
+  seek: (frame: number) => void;
+}
+
+interface Rally {
+  rally_id: number;
+  start: number;
+  end: number;
+}
+
+interface ReidVideoPlayerProps {
+  src: string;
+  fps: number;
+  frameSize: [number, number];
+  records: ReidRecord[];
+  matches: ReidPlayers['matches'];
+  rallies: Rally[];
+  selectedRally: number | 'all';
+  onSelectRally: (rally: number | 'all') => void;
+}
+
+function FieldLabel({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <label className="block min-w-0 space-y-1.5">
+      <span className="block text-[10px] font-semibold uppercase tracking-widest text-text-muted">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+const fmtTime = (s: number) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+
+/** Video player whose overlay mirrors the ReID results: every event whose
+ *  frame is within ±½ s of the playhead shows its player box + identity,
+ *  sharpening as playback crosses the exact annotated frame. */
+const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(function ReidVideoPlayer(
+  { src, fps, frameSize, records, matches, rallies, selectedRally, onSelectRally },
+  ref,
+) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [frame, setFrame] = useState(0);
+  const [duration, setDuration] = useState(0);
+  // Read inside the frame-clock callback without re-arming it.
+  const rallyEndRef = useRef<number | null>(null);
+  rallyEndRef.current =
+    selectedRally === 'all' ? null : rallies.find((r) => r.rally_id === selectedRally)?.end ?? null;
+
+  const togglePlay = () => {
+    const el = videoRef.current;
+    if (!el) return;
+    if (el.paused) void el.play();
+    else el.pause();
+  };
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      seek: (f: number) => {
+        const el = videoRef.current;
+        if (!el) return;
+        el.pause();
+        el.currentTime = (f + 0.5) / fps;
+        el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      },
+    }),
+    [fps],
+  );
+
+  // Frame clock via requestVideoFrameCallback — same approach as the Action
+  // Label editor, re-armed per presented frame.
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el) return;
+    let alive = true;
+    let id = 0;
+    const tick = (_now: number, meta: { mediaTime: number }) => {
+      if (!alive) return;
+      setFrame(Math.round(meta.mediaTime * fps));
+      // With a rally selected, playback stops at its end (Action Label rule).
+      if (rallyEndRef.current != null && meta.mediaTime >= rallyEndRef.current && !el.paused) el.pause();
+      id = el.requestVideoFrameCallback(tick);
+    };
+    id = el.requestVideoFrameCallback(tick);
+    const onSeeked = () => setFrame(Math.round(el.currentTime * fps));
+    el.addEventListener('seeked', onSeeked);
+    return () => {
+      alive = false;
+      el.cancelVideoFrameCallback(id);
+      el.removeEventListener('seeked', onSeeked);
+    };
+  }, [fps, src]);
+
+  // Space = play/pause everywhere on the page (same contract as Action
+  // Label): text fields keep the key for typing, but the seek slider and
+  // <select>s hand it back so scrubbing → space "just works".
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== ' ') return;
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (tag === 'TEXTAREA') return;
+      if (tag === 'INPUT' && (target as HTMLInputElement).type !== 'range') return;
+      e.preventDefault();
+      togglePlay();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
+
+  const [w, h] = frameSize;
+  const windowFrames = Math.max(1, Math.round(fps / 2));
+  const visible = records.filter((r) => r.box && Math.abs(r.frame - frame) <= windowFrames);
+  const time = frame / fps;
+  const eventTime = (r: ReidRecord) => (r.time != null ? r.time : r.frame / fps);
+  const rallyCounts = useMemo(() => {
+    const counts = new Map<number, number>();
+    for (const rally of rallies) {
+      counts.set(rally.rally_id, records.filter((r) => eventTime(r) >= rally.start && eventTime(r) <= rally.end).length);
+    }
+    return counts;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rallies, records, fps]);
+
+  const jumpToRally = (rally: Rally) => {
+    onSelectRally(rally.rally_id);
+    const el = videoRef.current;
+    if (el) el.currentTime = rally.start + 0.5 / fps;
+  };
+
+  const timelineAnnotations = useMemo<EditorAnnotation[]>(
+    () => rallies.map((r) => ({ rally_id: r.rally_id, start: r.start, end: r.end, label: 'rally' })),
+    [rallies],
+  );
+
+  return (
+    <div className={cn('grid gap-3', rallies.length > 0 && 'lg:grid-cols-[minmax(0,1fr)_14rem]')}>
+      <div>
+      <div className="relative overflow-hidden rounded-xl border border-border bg-black">
+        <video
+          ref={videoRef}
+          src={src}
+          preload="metadata"
+          onClick={togglePlay}
+          onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
+          className="vq-video block w-full cursor-pointer"
+        />
+        <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="pointer-events-none absolute left-0 top-0 h-full w-full">
+        {visible.map((r) => {
+          const [x0, y0, x1, y1] = r.box!;
+          const m = matches[r.id];
+          const color = m ? (m.assigned ? '#34d399' : '#fbbf24') : '#e8e8e8';
+          const exact = Math.abs(r.frame - frame) <= 2;
+          const label = m ? m.player : r.label ?? '';
+          return (
+            <g key={r.id} opacity={exact ? 1 : 0.45}>
+              <rect
+                x={x0}
+                y={y0}
+                width={x1 - x0}
+                height={y1 - y0}
+                fill="none"
+                stroke={color}
+                strokeWidth={exact ? 2.5 : 1.5}
+                vectorEffect="non-scaling-stroke"
+              />
+              <text
+                x={x0 + 4}
+                y={Math.max(y0 - 8, 22)}
+                fill={color}
+                stroke="#000"
+                strokeWidth={4}
+                paintOrder="stroke"
+                fontSize={Math.round(h / 42)}
+                fontFamily="ui-monospace, SF Mono, Menlo"
+              >
+                {label} · f{r.frame}
+              </text>
+            </g>
+          );
+        })}
+        </svg>
+        <div className="pointer-events-none absolute left-2 top-2 rounded-md bg-black/60 px-2 py-0.5 font-mono text-[10.5px] tabular-nums text-white">
+          f{frame} · {visible.length} box(es)
+        </div>
+      </div>
+      <div className="mt-2 flex items-center gap-3">
+        <input
+          type="range"
+          min={0}
+          max={duration || 0}
+          step={1 / fps}
+          value={Math.min(time, duration || 0)}
+          onChange={(e) => {
+            const el = videoRef.current;
+            if (el) el.currentTime = Number(e.target.value);
+          }}
+          onPointerUp={(e) => e.currentTarget.blur()}
+          className="h-1.5 flex-1 cursor-pointer accent-primary"
+        />
+        <span className="flex-shrink-0 font-mono text-[11px] tabular-nums text-text-muted">
+          {fmtTime(time)} / {fmtTime(duration)}
+        </span>
+      </div>
+      {rallies.length > 0 && (
+        <div className="mt-2">
+          <RallyTimeline
+            videoRef={videoRef}
+            annotations={timelineAnnotations}
+            duration={duration}
+            markStart={null}
+            onSeek={(t) => {
+              const el = videoRef.current;
+              if (el) el.currentTime = t;
+            }}
+          />
+        </div>
+      )}
+      </div>
+      {rallies.length > 0 && (
+        <div className="vq-list max-h-[60vh] space-y-1.5 overflow-y-auto pr-1">
+          <div
+            onClick={() => onSelectRally('all')}
+            className={cn(
+              'ae-row flex cursor-pointer items-center gap-1.5 rounded-xl border px-3 py-2.5 transition-colors',
+              selectedRally === 'all'
+                ? 'border-primary/45 bg-primary/[0.12]'
+                : 'border-primary/20 bg-primary/[0.05] hover:bg-primary/[0.10]',
+            )}
+          >
+            <span className="text-xs font-medium text-text-primary">All rallies</span>
+            <span className="ml-auto font-mono text-[10px] tabular-nums text-text-muted">{records.length}ev</span>
+          </div>
+          {rallies.map((rally, i) => {
+            const playing = time >= rally.start && time <= rally.end;
+            const selected = selectedRally === rally.rally_id;
+            return (
+              <div
+                key={rally.rally_id}
+                onClick={() => jumpToRally(rally)}
+                className={cn(
+                  'ae-row flex cursor-pointer items-center gap-1.5 rounded-xl border px-3 py-2.5 transition-colors',
+                  selected ? 'border-primary/45 bg-primary/[0.12]' : 'border-primary/20 bg-primary/[0.05] hover:bg-primary/[0.10]',
+                  playing && 'ring-1 ring-accent/50',
+                )}
+              >
+                <span className="w-4 select-none text-right font-heading text-[10px] text-text-muted/60">{i + 1}</span>
+                <span className="text-xs font-medium text-text-primary">R{rally.rally_id}</span>
+                <span className="ml-auto font-mono text-[10px] tabular-nums text-text-muted">
+                  {fmtTime(rally.start)}–{fmtTime(rally.end)} · {rallyCounts.get(rally.rally_id) ?? 0}ev
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+});
+
 export function ReidLabelPage() {
   const qc = useQueryClient();
   const [picked, setPicked] = useState('');
+  const [kindFilter, setKindFilter] = useState<'all' | 'broadcast' | 'sideline'>('all');
+  const [pickStatus, setPickStatus] = useState<'all' | 'unlabeled' | 'labeled'>('all');
+  const [selectedRally, setSelectedRally] = useState<number | 'all'>('all');
   const [view, setView] = useState<'groups' | 'crops'>('groups');
   const [threshold, setThreshold] = useState<number>(DEFAULT_THRESHOLD);
   const [showSkeleton, setShowSkeleton] = useState(true);
+  const [showVideo, setShowVideo] = useState(true);
+  const playerRef = useRef<PlayerHandle>(null);
   const [statusFilter, setStatusFilter] = useState<'all' | ReidRecord['status']>('all');
   const [groups, setGroups] = useState<Group[]>([]);
   const [dirty, setDirty] = useState(false);
@@ -58,6 +334,13 @@ export function ReidLabelPage() {
     queryFn: () => apiFetch<ReidVideo[]>(API.reid.videos),
   });
   const extracted = (videosQuery.data ?? []).filter((v) => v.has_reid);
+  // Picker filters, mirroring the Action Label / Rally Label pickers.
+  const pickable = extracted.filter((v) => {
+    if (kindFilter !== 'all' && v.kind !== kindFilter) return false;
+    if (pickStatus === 'unlabeled' && (v.player_count ?? 0) > 0) return false;
+    if (pickStatus === 'labeled' && (v.player_count ?? 0) === 0) return false;
+    return true;
+  });
 
   const resultsQuery = useQuery({
     queryKey: ['reid-results', picked],
@@ -66,6 +349,14 @@ export function ReidLabelPage() {
   });
   const records = useMemo(() => resultsQuery.data?.records ?? [], [resultsQuery.data]);
   const recordById = useMemo(() => new Map(records.map((r) => [r.id, r])), [records]);
+  const meta = (resultsQuery.data?.meta ?? {}) as {
+    fps?: number;
+    frame_size?: [number, number];
+    rallies?: Rally[];
+  };
+  const seekToEvent = (r?: ReidRecord) => {
+    if (r) playerRef.current?.seek(r.frame);
+  };
 
   const clustersQuery = useQuery({
     queryKey: ['reid-clusters', picked, threshold],
@@ -234,6 +525,7 @@ export function ReidLabelPage() {
     }
     setGroups([]);
     setDirty(false);
+    setSelectedRally('all');
     setPicked(name);
   };
 
@@ -253,7 +545,15 @@ export function ReidLabelPage() {
     );
   };
 
-  const shown = statusFilter === 'all' ? records : records.filter((r) => r.status === statusFilter);
+  const rallySpan = selectedRally === 'all' ? null : (meta.rallies ?? []).find((r) => r.rally_id === selectedRally);
+  const shown = records.filter((r) => {
+    if (statusFilter !== 'all' && r.status !== statusFilter) return false;
+    if (rallySpan) {
+      const t = r.time != null ? r.time : meta.fps ? r.frame / meta.fps : null;
+      if (t == null || t < rallySpan.start || t > rallySpan.end) return false;
+    }
+    return true;
+  });
   const namedCount = groups.filter((g) => g.name.trim()).length;
 
   return (
@@ -271,6 +571,50 @@ export function ReidLabelPage() {
           </>
         }
       />
+
+      {/* Picker — same shape as the Action Label / Rally Label pickers */}
+      <Card>
+        <div className="grid grid-cols-1 items-end gap-3 lg:grid-cols-[8.5rem_8.5rem_minmax(18rem,1fr)]">
+          <FieldLabel label="Kind">
+            <select
+              value={kindFilter}
+              onChange={(e) => setKindFilter(e.target.value as typeof kindFilter)}
+              className="h-9 w-full cursor-pointer appearance-none rounded-lg border border-border-light bg-surface-50 px-3 text-sm text-text-primary focus:border-primary/50 focus:outline-none"
+            >
+              <option value="all">All kinds</option>
+              <option value="broadcast">Broadcast</option>
+              <option value="sideline">Sideline</option>
+            </select>
+          </FieldLabel>
+          <FieldLabel label="Status">
+            <select
+              value={pickStatus}
+              onChange={(e) => setPickStatus(e.target.value as typeof pickStatus)}
+              className="h-9 w-full cursor-pointer appearance-none rounded-lg border border-border-light bg-surface-50 px-3 text-sm text-text-primary focus:border-primary/50 focus:outline-none"
+            >
+              <option value="all">All</option>
+              <option value="unlabeled">Unlabeled</option>
+              <option value="labeled">Labeled</option>
+            </select>
+          </FieldLabel>
+          <FieldLabel label="Video">
+            <VideoCombobox
+              items={pickable}
+              value={picked}
+              onChange={pickVideo}
+              placeholder={`Search ${pickable.length} extracted videos…`}
+              renderItem={(v) => (
+                <>
+                  <KindBadge kind={v.kind} />
+                  <span className="min-w-0 flex-1 break-all font-mono">{v.name}</span>
+                  <span className="shrink-0 font-mono text-[10px] tabular-nums text-text-muted">{v.event_count}ev</span>
+                  {(v.player_count ?? 0) > 0 && <Badge tone="brand">{v.player_count}P</Badge>}
+                </>
+              )}
+            />
+          </FieldLabel>
+        </div>
+      </Card>
 
       <Card>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -296,6 +640,15 @@ export function ReidLabelPage() {
             <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-text-secondary">
               <input
                 type="checkbox"
+                checked={showVideo}
+                onChange={(e) => setShowVideo(e.target.checked)}
+                className="h-3.5 w-3.5 accent-primary"
+              />
+              Video
+            </label>
+            <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-text-secondary">
+              <input
+                type="checkbox"
                 checked={showSkeleton}
                 onChange={(e) => setShowSkeleton(e.target.checked)}
                 className="h-3.5 w-3.5 accent-primary"
@@ -318,12 +671,27 @@ export function ReidLabelPage() {
                 <option value="miss">miss</option>
               </select>
             )}
-            <div className="w-80">
-              <VideoCombobox items={extracted} value={picked} onChange={pickVideo} placeholder={`Search ${extracted.length} extracted videos…`} />
-            </div>
           </div>
         </div>
 
+        {picked && showVideo && meta.fps && meta.frame_size && (
+          <div className="mb-4">
+            <ReidVideoPlayer
+              ref={playerRef}
+              src={apiUrl(API.actionAnnotate.video(picked))}
+              fps={meta.fps}
+              frameSize={meta.frame_size}
+              records={records}
+              matches={matches}
+              rallies={meta.rallies ?? []}
+              selectedRally={selectedRally}
+              onSelectRally={setSelectedRally}
+            />
+            <p className="mt-1.5 text-center text-[11px] text-text-muted">
+              Boxes appear within ±½ s of each event and sharpen on the exact frame — click any crop below to jump there.
+            </p>
+          </div>
+        )}
         {!picked ? (
           <EmptyState
             icon={
@@ -415,7 +783,8 @@ export function ReidLabelPage() {
                             alt={id}
                             draggable
                             onDragStart={(e) => e.dataTransfer.setData('text/plain', `event\n${id}\n${g.key}`)}
-                            title={`${r.label} f${r.frame} — drag to move`}
+                            onClick={() => seekToEvent(r)}
+                            title={`${r.label} f${r.frame} — drag to move, click to jump the video there`}
                             className="h-28 w-auto cursor-grab rounded-md border border-border active:cursor-grabbing"
                           />
                         );
@@ -447,7 +816,12 @@ export function ReidLabelPage() {
           <>
             <div className="grid max-h-[70vh] grid-cols-3 gap-2 overflow-auto pr-1 sm:grid-cols-5 lg:grid-cols-8">
               {shown.map((r) => (
-                <figure key={r.id} className="overflow-hidden rounded-lg border border-border bg-surface-50">
+                <figure
+                  key={r.id}
+                  onClick={() => seekToEvent(r)}
+                  title="Click to jump the video to this event"
+                  className="cursor-pointer overflow-hidden rounded-lg border border-border bg-surface-50"
+                >
                   {r.crop ? (
                     <CropImage
                       src={apiUrl(API.reid.crop(picked, r.crop))}

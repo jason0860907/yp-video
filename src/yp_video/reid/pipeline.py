@@ -27,6 +27,10 @@ from yp_video.reid.embedder import EMBEDDER_WEIGHTS, build_embedders
 EMBEDDINGS_DIR = PLAYER_REID_DIR / "embeddings"
 CROPS_DIR = PLAYER_REID_DIR / "crops"
 
+# Actions that are not performed BY a player — "score" marks where the ball
+# lands, so there is nobody to re-identify at that point.
+SKIP_LABELS = frozenset({"score"})
+
 # One instance per process: the models stay loaded across jobs.
 _detector = PersonDetector()
 _embedders = build_embedders()
@@ -59,7 +63,10 @@ def load_events(stem: str) -> list[dict]:
     _meta, rows = read_jsonl(path)
     events = [
         r for r in rows
-        if r.get("visible", True) and r.get("xy") and r.get("frame") is not None
+        if r.get("visible", True)
+        and r.get("xy")
+        and r.get("frame") is not None
+        and r.get("label") not in SKIP_LABELS
     ]
     events.sort(key=lambda e: e["frame"])
     return events
@@ -106,6 +113,7 @@ def extract_video(video_path: Path, *, on_progress: ProgressFn | None = None) ->
     cap = cv2.VideoCapture(str(video_path))
     frame_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = float(cap.get(cv2.CAP_PROP_FPS)) or 30.0
 
     records: list[dict] = []
     crops: list = []
@@ -181,6 +189,7 @@ def extract_video(video_path: Path, *, on_progress: ProgressFn | None = None) ->
         "video": stem,
         "source": {"detector": DETECTOR_NAME, "embedders": EMBEDDER_WEIGHTS},
         "frame_size": [frame_w, frame_h],
+        "fps": fps,
         "created_at": time.time(),
         **counts,
     }

@@ -240,6 +240,8 @@ export interface ReidVideo {
   event_count: number;
   has_reid: boolean;
   reid_counts?: { ok: number; multi: number; miss: number } | null;
+  /** Distinct saved identities (0 = extracted but not labeled yet). */
+  player_count?: number;
 }
 
 /** One action event's extraction outcome (embedding stripped server-side). */

@@ -78,6 +78,7 @@ def list_videos() -> list[dict]:
             "reid_counts": (
                 {k: header.get(k, 0) for k in ("ok", "multi", "miss")} if header else None
             ),
+            "player_count": len(set(identity.load_assignments(f.stem).values())),
         })
     return results
 
@@ -194,6 +195,17 @@ def results(name: str) -> dict:
     if not path.exists():
         raise HTTPException(404, f"No ReID results for {stem}")
     meta, records = read_jsonl(path)
+    # The video-sync overlay needs fps (frame ↔ time) and the rally spans for
+    # its rally navigator — both live in the annotation header, not the
+    # extraction header.
+    ann = pipeline.action_annotation_path(stem)
+    if ann is not None:
+        ann_meta, _ = read_jsonl(ann)
+        if not meta.get("fps") and ann_meta.get("fps"):
+            meta["fps"] = ann_meta["fps"]
+        meta["rallies"] = ann_meta.get("rallies") or []
+    # Drop score events from old extractions too (see pipeline.SKIP_LABELS).
+    records = [r for r in records if r.get("label") not in pipeline.SKIP_LABELS]
     for r in records:
         r.pop("embeddings", None)
     return {"meta": meta, "records": records}

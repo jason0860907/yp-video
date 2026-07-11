@@ -24,7 +24,7 @@ import numpy as np
 from yp_video.config import PLAYER_REID_DIR
 from yp_video.core.jsonl import read_jsonl
 from yp_video.reid.embedder import DEFAULT_EMBEDDER
-from yp_video.reid.pipeline import reid_path
+from yp_video.reid.pipeline import SKIP_LABELS, reid_path
 
 PLAYERS_DIR = PLAYER_REID_DIR / "players"
 
@@ -48,7 +48,8 @@ def load_embeddings(stem: str, model: str = DEFAULT_EMBEDDER) -> tuple[list[dict
     def vec(r: dict) -> list[float] | None:
         return (r.get("embeddings") or {}).get(model)
 
-    with_emb = [r for r in records if vec(r)]
+    # SKIP_LABELS guards extractions that predate the skip rule.
+    with_emb = [r for r in records if vec(r) and r.get("label") not in SKIP_LABELS]
     matrix = np.array([vec(r) for r in with_emb], dtype=np.float32)
     if len(with_emb):
         matrix /= np.linalg.norm(matrix, axis=1, keepdims=True) + 1e-12
