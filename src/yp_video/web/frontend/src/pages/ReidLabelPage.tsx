@@ -173,14 +173,28 @@ export function ReidLabelPage() {
   };
 
   const save = async () => {
+    // Locked-but-unnamed rows are curated work — persist them under a
+    // placeholder identity (P1, P2, …) the user can rename any time.
+    // Untouched auto-clusters stay ephemeral by design.
+    const used = new Set(groups.map((g) => g.name.trim()).filter(Boolean));
+    let seq = 1;
+    const nextPlaceholder = () => {
+      while (used.has(`P${seq}`)) seq += 1;
+      const name = `P${seq}`;
+      used.add(name);
+      return name;
+    };
+    const named = groups.map((g) => (g.locked && !g.name.trim() ? { ...g, name: nextPlaceholder() } : g));
+
     const next: Record<string, string> = {};
-    for (const g of groups) {
+    for (const g of named) {
       const name = g.name.trim();
       if (!name) continue;
       for (const id of g.eventIds) next[id] = name;
     }
     try {
       await apiFetch(API.reid.players(picked), { method: 'PUT', body: { assignments: next } });
+      setGroups(named); // show the placeholders the save just minted
       setDirty(false);
       await qc.invalidateQueries({ queryKey: ['reid-players', picked] });
       toast.success(`Saved ${new Set(Object.values(next)).size} player(s), ${Object.keys(next).length} events`);
@@ -328,8 +342,8 @@ export function ReidLabelPage() {
               <p className="text-xs text-text-muted">
                 {namedCount} named player(s) · drag a crop onto another group to reassign it, or drag a row's
                 number handle onto another row to merge them (target name wins). Edited rows lock themselves
-                (🔒) and survive threshold changes; unlocked rows re-cluster freely. Save persists and
-                re-matches everything.
+                (🔒) and survive threshold changes; unlocked rows re-cluster freely. Save persists named rows
+                — locked rows without a name get a placeholder (P1, P2, …) you can rename later.
               </p>
               <div className="max-h-[70vh] space-y-2 overflow-auto pr-1">
                 {groups.map((g, i) => (
