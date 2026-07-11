@@ -12,6 +12,14 @@ Two consumers, one data source (the per-video reid jsonl):
 Assignments persist in player-reid/players/<stem>_players.json as a flat
 ``{event_id: player_name}`` map — the smallest thing that can express both
 cluster-level and single-event corrections.
+
+The same file carries ``actor_fixes``: box-level corrections for events where
+the automatic contact-point association picked the wrong person
+(``{event_id: {"box": [x0,y0,x1,y1]} | {"none": true}}``). Fixes are the
+durable human record — extraction replays them (matching boxes by IoU against
+fresh detections), so re-extraction never loses correction work. They are
+also the training set for a learned actor-association model later: each fix
+is a labeled (frame, action point, candidate boxes) → correct-box example.
 """
 
 from __future__ import annotations
@@ -76,21 +84,50 @@ def cluster(matrix: np.ndarray, threshold: float = DEFAULT_CLUSTER_THRESHOLD) ->
     return np.array([remap[c] for c in raw], dtype=int)
 
 
-def load_assignments(stem: str) -> dict[str, str]:
+def _load_players_file(stem: str) -> dict:
     path = players_path(stem)
     if not path.exists():
         return {}
-    data = json.loads(path.read_text(encoding="utf-8"))
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _save_players_file(stem: str, data: dict) -> None:
+    PLAYERS_DIR.mkdir(parents=True, exist_ok=True)
+    players_path(stem).write_text(
+        json.dumps(data, ensure_ascii=False, indent=1),
+        encoding="utf-8",
+    )
+
+
+def load_assignments(stem: str) -> dict[str, str]:
+    data = _load_players_file(stem)
     return {str(k): str(v) for k, v in data.get("assignments", {}).items()}
 
 
 def save_assignments(stem: str, assignments: dict[str, str]) -> None:
-    PLAYERS_DIR.mkdir(parents=True, exist_ok=True)
-    clean = {k: v.strip() for k, v in assignments.items() if v and v.strip()}
-    players_path(stem).write_text(
-        json.dumps({"assignments": clean}, ensure_ascii=False, indent=1),
-        encoding="utf-8",
-    )
+    data = _load_players_file(stem)
+    data["assignments"] = {k: v.strip() for k, v in assignments.items() if v and v.strip()}
+    _save_players_file(stem, data)
+
+
+def load_actor_fixes(stem: str) -> dict[str, dict]:
+    data = _load_players_file(stem)
+    return {str(k): v for k, v in data.get("actor_fixes", {}).items() if isinstance(v, dict)}
+
+
+def save_actor_fix(stem: str, event_id: str, box: list[float] | None) -> None:
+    """Record a manual actor pick; ``box=None`` means "nobody is the actor"."""
+    data = _load_players_file(stem)
+    fixes = data.setdefault("actor_fixes", {})
+    fixes[event_id] = {"none": True} if box is None else {"box": [round(float(v), 1) for v in box]}
+    _save_players_file(stem, data)
+
+
+def remove_actor_fix(stem: str, event_id: str) -> None:
+    """Revert an event to the automatic pick."""
+    data = _load_players_file(stem)
+    if data.get("actor_fixes", {}).pop(event_id, None) is not None:
+        _save_players_file(stem, data)
 
 
 def match(

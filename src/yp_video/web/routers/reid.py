@@ -208,6 +208,9 @@ def results(name: str) -> dict:
     records = [r for r in records if r.get("label") not in pipeline.SKIP_LABELS]
     for r in records:
         r.pop("embeddings", None)
+        # The actor picker only needs boxes + scores; skeletons stay server-side.
+        for d in r.get("detections") or []:
+            d.pop("keypoints", None)
     return {"meta": meta, "records": records}
 
 
@@ -282,3 +285,41 @@ def put_players(name: str, req: SaveAssignmentsRequest, model: str = DEFAULT_EMB
         raise HTTPException(404, f"No ReID results for {stem}")
     identity.save_assignments(stem, req.assignments)
     return get_players(name, model=model)
+
+
+class ActorFixRequest(BaseModel):
+    event_id: str
+    # box = manual pick; none = nobody is the actor; neither = revert to auto.
+    box: list[float] | None = Field(default=None, min_length=4, max_length=4)
+    none: bool = False
+
+
+@router.post("/actor-fix/{name}")
+def actor_fix(name: str, req: ActorFixRequest) -> dict:
+    """Re-point one event at the person the user clicked (or nobody / auto).
+
+    The fix lands in the players file (the durable human record, replayed on
+    re-extraction) and is applied to the extraction jsonl immediately: the
+    chosen box is cropped and re-embedded, so clusters/centroids follow.
+    """
+    video_path = find_cut(unquote(name))
+    if video_path is None:
+        raise HTTPException(404, f"Video not found: {name}")
+    stem = video_path.stem
+    if not pipeline.reid_path(stem).exists():
+        raise HTTPException(404, f"No ReID results for {stem}")
+    try:
+        if req.box is not None:
+            identity.save_actor_fix(stem, req.event_id, req.box)
+        elif req.none:
+            identity.save_actor_fix(stem, req.event_id, None)
+        else:
+            identity.remove_actor_fix(stem, req.event_id)
+        record = pipeline.apply_actor_fix(video_path, req.event_id, req.box, none=req.none)
+    except KeyError as e:
+        raise HTTPException(404, str(e)) from e
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    for d in record.get("detections") or []:
+        d.pop("keypoints", None)
+    return {"record": record}
