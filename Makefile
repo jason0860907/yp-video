@@ -49,9 +49,10 @@ serve:
 	@echo "   make stop    關閉整個服務"
 
 # 從 tunnel 視窗的輸出撈出 trycloudflare 公開網址。
+# (排除 api.trycloudflare.com — 那是 cloudflared 自己的 API,錯誤訊息裡會出現)
 url:
 	@u=$$(tmux capture-pane -t $(SESSION):tunnel -p -S - 2>/dev/null \
-		| grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' | tail -1); \
+		| grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' | grep -v '^https://api\.' | tail -1); \
 	if [ -n "$$u" ]; then echo "$$u"; \
 	else echo "⏳ 還抓不到網址 — tunnel 可能還在啟動,等幾秒再 make url(或 make attach 看 tunnel 視窗)"; fi
 
