@@ -141,4 +141,12 @@ export const API = {
     spot: '/spot-predict/spot',
     start: '/spot-predict/start',
   },
+  reid: {
+    videos: '/reid/videos',
+    start: '/reid/start',
+    results: (name: string) => `/reid/results/${encodeURIComponent(name)}`,
+    crop: (name: string, cropFile: string) => `/reid/crop/${encodeURIComponent(name)}/${encodeURIComponent(cropFile)}`,
+    clusters: (name: string, threshold: number) => `/reid/clusters/${encodeURIComponent(name)}?threshold=${threshold}`,
+    players: (name: string) => `/reid/players/${encodeURIComponent(name)}`,
+  },
 } as const;

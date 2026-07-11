@@ -73,6 +73,7 @@ const STALE_QUERIES: Record<string, string[][]> = {
   rally_spot_predict: [['spot-predict-videos'], ['annotate-results']],
   spot_prelabel: [['action-videos']],
   spot_prelabel_batch: [['action-videos']],
+  player_reid: [['reid-videos']],
   rally_spot_train: [['spot-train-status'], ['spot-predict-info']],
   action_train: [['action-train-status'], ['spot-info']],
   download: [['cut-videos']],

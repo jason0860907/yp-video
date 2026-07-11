@@ -233,6 +233,45 @@ export interface SpotInfo {
   error?: string;
 }
 
+/** Video record from the player-reid listing. */
+export interface ReidVideo {
+  name: string;
+  kind: CutKind;
+  event_count: number;
+  has_reid: boolean;
+  reid_counts?: { ok: number; multi: number; miss: number } | null;
+}
+
+/** One action event's extraction outcome (embedding stripped server-side). */
+export interface ReidRecord {
+  id: string;
+  frame: number;
+  time?: number | null;
+  label?: string;
+  xy: [number, number];
+  /** ok = unique person box, multi = ranked pick among overlaps, miss = none. */
+  status: 'ok' | 'multi' | 'miss';
+  box?: [number, number, number, number] | null;
+  score?: number | null;
+  candidates: number;
+  crop?: string | null;
+  /** 17 COCO keypoints of the matched player, crop-relative [x, y, conf]. */
+  keypoints?: [number, number, number][] | null;
+}
+
+export interface ReidCluster {
+  id: number;
+  size: number;
+  event_ids: string[];
+}
+
+/** Saved identities + nearest-centroid matches for one video. */
+export interface ReidPlayers {
+  assignments: Record<string, string>;
+  players: string[];
+  matches: Record<string, { player: string; sim: number; assigned: boolean }>;
+}
+
 export interface SystemStats {
   videos?: number;
   cuts?: number;
