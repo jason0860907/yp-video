@@ -316,13 +316,19 @@ export function ActionAnnotatePage() {
     e.stopPropagation();
     setSelectedIdx(idx);
     videoRef.current?.pause();
-    const f = computeFrame();
-    mutate((prev) => ({ ...prev, events: prev.events.map((x) => (x.id === evt.id ? withRally({ ...x, frame: f }, prev) : x)) }));
     drag.current = { id: evt.id, moved: false };
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
     const onMove = (ev: PointerEvent) => {
       if (!drag.current) return;
-      drag.current.moved = true;
+      if (!drag.current.moved) {
+        // Re-stamp the event's frame to the playhead only once an actual drag
+        // begins — a bare click must never touch the time, or xy and frame
+        // drift apart (clicking a point while parked on another frame used to
+        // silently move the event there).
+        drag.current.moved = true;
+        const f = computeFrame();
+        mutate((prev) => ({ ...prev, events: prev.events.map((x) => (x.id === drag.current!.id ? withRally({ ...x, frame: f }, prev) : x)) }));
+      }
       const p = clientToPoint(ev.clientX, ev.clientY);
       if (!p) return;
       setEd((prev) => ({ ...prev, dirty: true, events: prev.events.map((x) => (x.id === drag.current!.id ? { ...x, xy: p } : x)) }));
