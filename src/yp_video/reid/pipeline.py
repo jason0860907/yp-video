@@ -48,8 +48,8 @@ CROPS_DIR = PLAYER_REID_DIR / "crops"
 SKIP_LABELS = frozenset({"score"})
 
 # One instance per process: the models stay loaded across jobs.
-_keypoint_sources = build_keypoint_sources()
-_embedders = build_embedders()
+keypoint_sources = build_keypoint_sources()
+embedders = build_embedders()
 
 ProgressFn = Callable[[int, int, str], None]
 
@@ -293,7 +293,7 @@ def extract_video(
             }
             if ok:
                 x, y = event["xy"][0] * frame_w, event["xy"][1] * frame_h
-                detections = _keypoint_sources[keypoints].detect(frame, focus=(x, y))
+                detections = keypoint_sources[keypoints].detect(frame, focus=(x, y))
                 # ALL person boxes, unfiltered — the UI's actor picker and the
                 # future association training set both need the ones the
                 # heuristic rejected.
@@ -334,7 +334,7 @@ def extract_video(
 
     # Every registered embedder runs on the same crops so models can be
     # A/B-compared on identical inputs without re-extracting.
-    for name, embedder in _embedders.items():
+    for name, embedder in embedders.items():
         matrix = embedder.embed(crops, prompts=crop_prompts)
         for owner, emb in zip(crop_owners, matrix):
             records[owner].setdefault("embeddings", {})[name] = [round(float(v), 5) for v in emb]
@@ -347,7 +347,7 @@ def extract_video(
     }
     header = {
         "video": stem,
-        "source": {"detector": DETECTOR_NAME, "keypoints": KEYPOINT_SOURCES[keypoints], "embedders": {k: EMBEDDER_WEIGHTS[k] for k in _embedders}},
+        "source": {"detector": DETECTOR_NAME, "keypoints": KEYPOINT_SOURCES[keypoints], "embedders": {k: EMBEDDER_WEIGHTS[k] for k in embedders}},
         "frame_size": [frame_w, frame_h],
         "fps": fps,
         "created_at": time.time(),
@@ -435,7 +435,7 @@ def _apply_actor_fix(video_path: Path, event_id: str, box: list[float] | None, *
         else:
             record["status"] = "ok"
         prompt = _crop_prompt(record, person)
-        for name, embedder in _embedders.items():
+        for name, embedder in embedders.items():
             emb = embedder.embed([crop], prompts=[prompt])[0]
             record.setdefault("embeddings", {})[name] = [round(float(v), 5) for v in emb]
 

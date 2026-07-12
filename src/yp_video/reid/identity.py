@@ -25,14 +25,13 @@ is a labeled (frame, action point, candidate boxes) → correct-box example.
 from __future__ import annotations
 
 import json
-import os
 import threading
 from pathlib import Path
 
 import numpy as np
 
 from yp_video.config import PLAYER_REID_DIR
-from yp_video.core.jsonl import read_jsonl_cached
+from yp_video.core.jsonl import atomic_write, read_jsonl_cached
 from yp_video.reid.embedder import DEFAULT_EMBEDDER
 from yp_video.reid.pipeline import SKIP_LABELS, reid_path
 
@@ -98,12 +97,9 @@ def _load_players_file(stem: str) -> dict:
 
 
 def _save_players_file(stem: str, data: dict) -> None:
-    PLAYERS_DIR.mkdir(parents=True, exist_ok=True)
-    path = players_path(stem)
     # Atomic replace — auto-save and actor fixes hit this file concurrently.
-    tmp = path.with_name(f"{path.name}.tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
-    os.replace(tmp, path)
+    with atomic_write(players_path(stem)) as f:
+        json.dump(data, f, ensure_ascii=False, indent=1)
 
 
 def seeded_groups(

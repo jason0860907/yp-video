@@ -88,16 +88,16 @@ def list_videos() -> list[dict]:
 
 @router.get("/options")
 def options() -> dict:
-    """Available keypoint-source / embedder choices for the Predict page."""
-    return {"keypoint_sources": list(pipeline._keypoint_sources), "embedders": list(pipeline._embedders)}
+    """Available keypoint-source / embedder choices for the Predict / Label pages."""
+    return {"keypoint_sources": list(pipeline.keypoint_sources), "embedders": list(pipeline.embedders)}
 
 
 @router.post("/start")
 async def start(req: ReidStartRequest) -> dict:
-    if req.keypoints not in pipeline._keypoint_sources:
+    if req.keypoints not in pipeline.keypoint_sources:
         raise HTTPException(
             400,
-            f"Unknown keypoint source: {req.keypoints} (available: {', '.join(pipeline._keypoint_sources)} — "
+            f"Unknown keypoint source: {req.keypoints} (available: {', '.join(pipeline.keypoint_sources)} — "
             "sam-3d-body needs its gated HF checkpoint downloaded first)",
         )
     video_paths: list[Path] = []

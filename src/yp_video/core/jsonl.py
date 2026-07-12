@@ -4,13 +4,33 @@ import json
 import os
 import threading
 from collections import OrderedDict
+from contextlib import contextmanager
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Iterable
+from typing import Iterable, Iterator, TextIO
 
 
 def _dumps(obj: dict) -> str:
     return json.dumps(obj, ensure_ascii=False) + "\n"
+
+
+@contextmanager
+def atomic_write(path: Path) -> Iterator[TextIO]:
+    """Open a temp file for writing and rename it over ``path`` on success.
+
+    A concurrent reader sees the old or the new file — never a half-written
+    one. On failure the temp file is removed and nothing changes.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with NamedTemporaryFile(
+        "w", encoding="utf-8", dir=path.parent, prefix=f"{path.name}.", suffix=".tmp", delete=False
+    ) as f:
+        try:
+            yield f
+        except BaseException:
+            os.unlink(f.name)
+            raise
+    os.replace(f.name, path)
 
 
 def read_jsonl(path: Path) -> tuple[dict, list[dict]]:
@@ -76,23 +96,13 @@ def write_jsonl(path: Path, meta: dict, records: Iterable[dict]) -> None:
     Use this for one-shot writes (e.g. converters); training loops that append
     rows over time should use ``write_meta_header`` + ``append_jsonl`` instead.
 
-    The write is atomic (temp file + rename), so a concurrent reader sees the
-    old or the new file — never a half-written one.
+    The write is atomic (see ``atomic_write``).
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
     meta_out = {"_meta": True, **meta} if "_meta" not in meta else meta
-    with NamedTemporaryFile(
-        "w", encoding="utf-8", dir=path.parent, prefix=f"{path.name}.", suffix=".tmp", delete=False
-    ) as f:
-        tmp = f.name
-        try:
-            f.write(_dumps(meta_out))
-            for rec in records:
-                f.write(_dumps(rec))
-        except BaseException:
-            os.unlink(tmp)
-            raise
-    os.replace(tmp, path)
+    with atomic_write(path) as f:
+        f.write(_dumps(meta_out))
+        for rec in records:
+            f.write(_dumps(rec))
 
 
 def write_meta_header(path: Path, meta: dict) -> None:
