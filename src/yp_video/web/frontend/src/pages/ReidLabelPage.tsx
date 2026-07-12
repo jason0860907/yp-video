@@ -118,6 +118,31 @@ function FieldLabel({ label, children }: { label: string; children: ReactNode })
 
 const fmtTime = (s: number) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 
+/** Name field that keeps edits local until committed (Enter or blur).
+ *  Committing renames + locks the group, which can relocate the row (dock,
+ *  autosave rebuild) and unmount the input — so it must not run per
+ *  keystroke. Esc reverts. */
+function NameInput({ value, onCommit, placeholder, className }: { value: string; onCommit: (name: string) => void; placeholder?: string; className?: string }) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  return (
+    <input
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => {
+        if (draft !== value) onCommit(draft);
+      }}
+      onKeyDown={(e) => {
+        e.stopPropagation(); // keep Space/Esc from the page-level shortcuts
+        if (e.key === 'Enter') e.currentTarget.blur();
+        else if (e.key === 'Escape') setDraft(value);
+      }}
+      placeholder={placeholder}
+      className={className}
+    />
+  );
+}
+
 const OUTSIDE = '__outside__';
 
 interface ReidEventPanelProps {
@@ -971,6 +996,12 @@ export function ReidLabelPage() {
   const toggleLock = (key: string) =>
     setGroups((prev) => prev.map((g) => (g.key === key ? { ...g, locked: !g.locked } : g)));
 
+  /** Renaming is an edit too — lock so the name sticks through re-clustering. */
+  const renameGroup = (key: string, name: string) => {
+    setGroups((prev) => prev.map((g) => (g.key === key ? { ...g, name, locked: true } : g)));
+    setDirty(true);
+  };
+
   /** Move a whole row so it sits before/after targetKey. View-only —
    *  ordering isn't persisted, but locked rows keep it for the session. */
   const reorderGroup = (fromKey: string, targetKey: string, mode: 'before' | 'after') => {
@@ -1551,14 +1582,9 @@ export function ReidLabelPage() {
                           No group — tiny clusters (&lt; {MIN_CLUSTER_SIZE})
                         </span>
                       ) : (
-                        <input
+                        <NameInput
                           value={g.name}
-                          onChange={(e) => {
-                            const name = e.target.value;
-                            // Renaming is an edit too — lock so the name sticks.
-                            setGroups((prev) => prev.map((x) => (x.key === g.key ? { ...x, name, locked: true } : x)));
-                            setDirty(true);
-                          }}
+                          onCommit={(name) => renameGroup(g.key, name)}
                           placeholder="Player name…"
                           className="w-44 rounded-lg border border-border-light bg-surface-100 px-2.5 py-1 text-xs text-text-primary focus:border-primary/50 focus:outline-none"
                         />
@@ -1635,13 +1661,9 @@ export function ReidLabelPage() {
                             <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
                           </svg>
                         </button>
-                        <input
+                        <NameInput
                           value={g.name}
-                          onChange={(e) => {
-                            const name = e.target.value;
-                            setGroups((prev) => prev.map((x) => (x.key === g.key ? { ...x, name, locked: true } : x)));
-                            setDirty(true);
-                          }}
+                          onCommit={(name) => renameGroup(g.key, name)}
                           placeholder="Player name…"
                           className="w-full min-w-0 rounded-md border border-border-light bg-surface-100 px-2 py-0.5 text-xs text-text-primary focus:border-primary/50 focus:outline-none"
                         />
