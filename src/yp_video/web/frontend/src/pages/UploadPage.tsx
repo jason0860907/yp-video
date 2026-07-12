@@ -238,7 +238,7 @@ export function UploadPage() {
       {/* File browser */}
       <Card>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <SectionLabel className="mb-0">
+          <SectionLabel className="!mb-0">
             {cat.label} · {files.length} files
           </SectionLabel>
           <div className="flex items-center gap-2">

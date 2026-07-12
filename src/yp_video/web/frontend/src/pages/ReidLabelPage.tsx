@@ -1338,10 +1338,10 @@ export function ReidLabelPage() {
       <Card>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-3">
-            <SectionLabel className="mb-0">Identities</SectionLabel>
+            <SectionLabel className="!mb-0 leading-none">Identities</SectionLabel>
             {picked && (
               <span
-                className="font-mono text-[11px] tabular-nums text-text-muted"
+                className="font-mono text-[11px] leading-none tabular-nums text-text-muted"
                 title="Assigned to a player / actions with someone to identify (score and non-visible events excluded)"
               >
                 <span className={assignedCount >= actionableCount ? 'text-primary-light' : undefined}>{assignedCount}</span>/{actionableCount} actions

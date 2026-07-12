@@ -758,7 +758,7 @@ export function ActionAnnotatePage() {
         <div className="min-w-0 lg:w-[420px] lg:flex-shrink-0">
           <Card>
             <div className="mb-3 flex items-center justify-between gap-2">
-              <SectionLabel className="mb-0">
+              <SectionLabel className="!mb-0">
                 Rallies ({ed.rallies.length} rally · {ed.events.length} action){ed.dirty ? ' ·' : ''}
               </SectionLabel>
               <div className="flex items-center gap-2">

@@ -102,7 +102,7 @@ export function VideoMultiSelectList<T extends VideoListItem>({
   return (
     <>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <SectionLabel className="mb-0">{title}</SectionLabel>
+        <SectionLabel className="!mb-0">{title}</SectionLabel>
         <div className="flex items-center gap-2">
           {quickSelects?.map((qs) => (
             <Button key={qs.label} size="sm" onClick={() => setVisibleSelection(qs.predicate)}>
