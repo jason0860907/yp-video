@@ -13,8 +13,24 @@ from dataclasses import dataclass
 
 import numpy as np
 
-PERSON_SCORE_THRESHOLD = 0.5
+# Detection floor. Deliberately low: every box above it is stored on the
+# record and offered in the UI's actor picker (which has its own score
+# slider), so even a barely-detected player can still be clicked. The
+# automatic pick applies its own stricter floor below.
+PERSON_SCORE_THRESHOLD = 0.1
+# Automatic contact-point association only trusts confident detections — the
+# 0.1–0.5 band exists solely to give the human picker more boxes.
+AUTO_PICK_MIN_SCORE = 0.5
+
+# Detection (boxes + scores) is ALWAYS RF-DETR; what's selectable is who
+# estimates the 17 COCO keypoints on those boxes. name → weights identifier,
+# recorded in extraction headers.
 DETECTOR_NAME = "rf-detr-keypoint-preview"
+KEYPOINT_SOURCES = {
+    "rf-detr": "rf-detr-keypoint-preview head",
+    "sam-3d-body": "sam-3d-body-dinov3 (MHR projection)",
+}
+DEFAULT_KEYPOINT_SOURCE = "rf-detr"
 
 # COCO keypoint indices for left/right wrist.
 WRIST_IDXS = (9, 10)
@@ -59,7 +75,10 @@ class PersonDetector:
 
         self._model = RFDETRKeypointPreview()
 
-    def detect(self, frame_bgr: np.ndarray) -> list[PersonBox]:
+    def detect(self, frame_bgr: np.ndarray, focus: tuple[float, float] | None = None) -> list[PersonBox]:
+        # ``focus`` (event contact point) is part of the shared detector
+        # interface; RF-DETR is single-pass whole-frame, nothing to narrow.
+        del focus
         import cv2
         from PIL import Image
 
@@ -90,9 +109,14 @@ def associate(boxes: list[PersonBox], x: float, y: float) -> list[PersonBox]:
     detected. Scores are normalized by box height so near and far players
     compare fairly. Returns candidates best-first; empty when nobody is
     geometrically compatible. Pixel coordinates.
+
+    Low-confidence detections (< AUTO_PICK_MIN_SCORE) never compete here —
+    they exist only as manual-picker choices.
     """
     scored: list[tuple[float, PersonBox]] = []
     for box in boxes:
+        if box.score < AUTO_PICK_MIN_SCORE:
+            continue
         x0, y0, x1, y1 = box.xyxy
         w, h = max(x1 - x0, 1.0), max(y1 - y0, 1.0)
 
@@ -117,3 +141,17 @@ def associate(boxes: list[PersonBox], x: float, y: float) -> list[PersonBox]:
             scored.append((d / h + FALLBACK_PENALTY, box))
 
     return [box for _, box in sorted(scored, key=lambda t: t[0])]
+
+
+def build_keypoint_sources() -> dict:
+    """Every available keypoint source; SAM 3D Body joins when its weights
+    exist. Both entries share ONE RF-DETR instance — "sam-3d-body" wraps it
+    for boxes and replaces only the keypoints (see reid/sam3d.py).
+    """
+    from yp_video.reid.sam3d import Sam3dBodyDetector, sam3d_available
+
+    rf = PersonDetector()
+    out: dict = {"rf-detr": rf}
+    if sam3d_available():
+        out["sam-3d-body"] = Sam3dBodyDetector(rf)
+    return out

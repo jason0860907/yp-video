@@ -44,6 +44,9 @@ class ReidStartRequest(BaseModel):
     videos: list[str] = Field(min_length=1)
     overwrite: bool = False
     stop_vllm: bool = False
+    # Keypoint source from the registry (see /reid/options); detection
+    # itself is always RF-DETR.
+    keypoints: str = "rf-detr"
 
 
 def _read_header(stem: str) -> dict | None:
@@ -83,8 +86,20 @@ def list_videos() -> list[dict]:
     return results
 
 
+@router.get("/options")
+def options() -> dict:
+    """Available keypoint-source / embedder choices for the Predict page."""
+    return {"keypoint_sources": list(pipeline._keypoint_sources), "embedders": list(pipeline._embedders)}
+
+
 @router.post("/start")
 async def start(req: ReidStartRequest) -> dict:
+    if req.keypoints not in pipeline._keypoint_sources:
+        raise HTTPException(
+            400,
+            f"Unknown keypoint source: {req.keypoints} (available: {', '.join(pipeline._keypoint_sources)} — "
+            "sam-3d-body needs its gated HF checkpoint downloaded first)",
+        )
     video_paths: list[Path] = []
     skipped: list[str] = []
     for name in req.videos:
@@ -152,7 +167,7 @@ async def start(req: ReidStartRequest) -> dict:
                         try:
                             counts = await loop.run_in_executor(
                                 None,
-                                lambda p=video_path, cb=on_progress: pipeline.extract_video(p, on_progress=cb),
+                                lambda p=video_path, cb=on_progress: pipeline.extract_video(p, keypoints=req.keypoints, on_progress=cb),
                             )
                             await update_batch_item(
                                 job.id, items, i, status="completed", progress=1.0,

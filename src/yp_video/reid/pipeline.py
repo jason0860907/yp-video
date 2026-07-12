@@ -29,7 +29,14 @@ from yp_video.config import (
     PLAYER_REID_DIR,
 )
 from yp_video.core.jsonl import read_jsonl, write_jsonl
-from yp_video.reid.detector import DETECTOR_NAME, PersonBox, PersonDetector, associate
+from yp_video.reid.detector import (
+    DEFAULT_KEYPOINT_SOURCE,
+    DETECTOR_NAME,
+    KEYPOINT_SOURCES,
+    PersonBox,
+    associate,
+    build_keypoint_sources,
+)
 from yp_video.reid.embedder import EMBEDDER_WEIGHTS, build_embedders
 
 EMBEDDINGS_DIR = PLAYER_REID_DIR / "embeddings"
@@ -40,7 +47,7 @@ CROPS_DIR = PLAYER_REID_DIR / "crops"
 SKIP_LABELS = frozenset({"score"})
 
 # One instance per process: the models stay loaded across jobs.
-_detector = PersonDetector()
+_keypoint_sources = build_keypoint_sources()
 _embedders = build_embedders()
 
 ProgressFn = Callable[[int, int, str], None]
@@ -133,6 +140,47 @@ def _person_from_detection(d: dict) -> PersonBox:
     )
 
 
+def _crop_prompt(record: dict, person: PersonBox) -> dict:
+    """Keypoint prompts for promptable embedders (KPR).
+
+    The chosen person's keypoints form the positive prompt and every other
+    detected person's keypoints that fall inside the saved crop become
+    negatives — all in crop-pixel coordinates of the display crop.
+    """
+    import numpy as np
+
+    dx0, dy0, dx1, dy1 = record["box"]
+    cw, ch = max(dx1 - dx0, 1), max(dy1 - dy0, 1)
+
+    # KPR's transform stack validates that every keypoint lies inside the
+    # crop, so clamp — points pushed out by frame-edge clipping land on the
+    # border, which is where the person is cut off anyway.
+    def clamped(kx: float, ky: float, c: float) -> list[float]:
+        return [min(max(kx, 0.0), cw - 1.0), min(max(ky, 0.0), ch - 1.0), c]
+
+    pos = None
+    if record.get("keypoints"):
+        # Stored crop-relative (0-1) → crop pixels.
+        pos = np.array([clamped(k[0] * cw, k[1] * ch, k[2]) for k in record["keypoints"]], dtype=np.float32)
+    negs = []
+    for d in record.get("detections") or []:
+        kps = d.get("keypoints")
+        if not kps or _iou(d["box"], list(person.xyxy)) > 0.8:
+            continue  # no keypoints, or this IS the chosen person
+        pts, any_inside = [], False
+        for px, py, c in kps:
+            kx, ky = px - dx0, py - dy0
+            inside = 0 <= kx <= cw and 0 <= ky <= ch and c > 0
+            any_inside = any_inside or inside
+            pts.append(clamped(kx, ky, c if inside else 0.0))
+        if any_inside:
+            negs.append(pts)
+    return {
+        "keypoints_xyc": pos,
+        "negative_kps": np.array(negs, dtype=np.float32) if negs else None,
+    }
+
+
 def _iou(a: list[float], b: list[float]) -> float:
     ix0, iy0 = max(a[0], b[0]), max(a[1], b[1])
     ix1, iy1 = min(a[2], b[2]), min(a[3], b[3])
@@ -191,11 +239,15 @@ def _attach_person(
     return crop
 
 
-def extract_video(video_path: Path, *, on_progress: ProgressFn | None = None) -> dict:
+def extract_video(
+    video_path: Path, *, keypoints: str = DEFAULT_KEYPOINT_SOURCE, on_progress: ProgressFn | None = None
+) -> dict:
     """Run the full detect → associate → crop → embed pass for one video.
 
-    Returns the summary counts also written to the jsonl header.
-    Synchronous and GPU-bound — callers run it in an executor.
+    Detection is always RF-DETR; ``keypoints`` picks who estimates the
+    skeletons on those boxes (see detector.build_keypoint_sources). Returns
+    the summary counts also written to the jsonl header. Synchronous and
+    GPU-bound — callers run it in an executor.
     """
     import cv2
 
@@ -220,6 +272,7 @@ def extract_video(video_path: Path, *, on_progress: ProgressFn | None = None) ->
     records: list[dict] = []
     crops: list = []
     crop_owners: list[int] = []  # records index each crop belongs to
+    crop_prompts: list[dict] = []  # keypoint prompts, aligned with crops
     total = len(events)
     try:
         for i, event in enumerate(events):
@@ -239,7 +292,7 @@ def extract_video(video_path: Path, *, on_progress: ProgressFn | None = None) ->
             }
             if ok:
                 x, y = event["xy"][0] * frame_w, event["xy"][1] * frame_h
-                detections = _detector.detect(frame)
+                detections = _keypoint_sources[keypoints].detect(frame, focus=(x, y))
                 # ALL person boxes, unfiltered — the UI's actor picker and the
                 # future association training set both need the ones the
                 # heuristic rejected.
@@ -255,6 +308,7 @@ def extract_video(video_path: Path, *, on_progress: ProgressFn | None = None) ->
                             record["status"] = "ok" if len(candidates) == 1 else "multi"
                             crops.append(crop)
                             crop_owners.append(len(records))
+                            crop_prompts.append(_crop_prompt(record, auto))
                 else:
                     # Replay the user's actor fix; keep the auto pick alongside
                     # so the disagreement survives re-extraction.
@@ -270,6 +324,7 @@ def extract_video(video_path: Path, *, on_progress: ProgressFn | None = None) ->
                             record["status"] = "ok"
                             crops.append(crop)
                             crop_owners.append(len(records))
+                            crop_prompts.append(_crop_prompt(record, person))
             records.append(record)
             if on_progress:
                 on_progress(i + 1, total, record["status"])
@@ -279,7 +334,7 @@ def extract_video(video_path: Path, *, on_progress: ProgressFn | None = None) ->
     # Every registered embedder runs on the same crops so models can be
     # A/B-compared on identical inputs without re-extracting.
     for name, embedder in _embedders.items():
-        matrix = embedder.embed(crops)
+        matrix = embedder.embed(crops, prompts=crop_prompts)
         for owner, emb in zip(crop_owners, matrix):
             records[owner].setdefault("embeddings", {})[name] = [round(float(v), 5) for v in emb]
 
@@ -291,7 +346,7 @@ def extract_video(video_path: Path, *, on_progress: ProgressFn | None = None) ->
     }
     header = {
         "video": stem,
-        "source": {"detector": DETECTOR_NAME, "embedders": EMBEDDER_WEIGHTS},
+        "source": {"detector": DETECTOR_NAME, "keypoints": KEYPOINT_SOURCES[keypoints], "embedders": {k: EMBEDDER_WEIGHTS[k] for k in _embedders}},
         "frame_size": [frame_w, frame_h],
         "fps": fps,
         "created_at": time.time(),
@@ -368,8 +423,9 @@ def apply_actor_fix(video_path: Path, event_id: str, box: list[float] | None, *,
             record["status"] = "ok" if n_candidates == 1 else "multi"
         else:
             record["status"] = "ok"
+        prompt = _crop_prompt(record, person)
         for name, embedder in _embedders.items():
-            emb = embedder.embed([crop])[0]
+            emb = embedder.embed([crop], prompts=[prompt])[0]
             record.setdefault("embeddings", {})[name] = [round(float(v), 5) for v in emb]
 
     write_jsonl(path, meta, records)

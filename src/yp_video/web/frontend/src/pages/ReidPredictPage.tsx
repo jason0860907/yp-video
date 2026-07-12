@@ -20,12 +20,18 @@ export function ReidPredictPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [overwrite, setOverwrite] = useState(false);
   const [stopVllm, setStopVllm] = useState(false);
+  const [keypoints, setKeypoints] = useState('rf-detr');
   const [jobs, setJobs] = useState<Job[]>([]);
 
   const videosQuery = useQuery({
     queryKey: ['reid-videos'],
     queryFn: () => apiFetch<ReidVideo[]>(API.reid.videos),
   });
+  const optionsQuery = useQuery({
+    queryKey: ['reid-options'],
+    queryFn: () => apiFetch<{ keypoint_sources: string[]; embedders: string[] }>(API.reid.options),
+  });
+  const keypointSources = optionsQuery.data?.keypoint_sources ?? ['rf-detr'];
   const videos = videosQuery.data ?? [];
   const extracted = videos.filter((v) => v.has_reid);
 
@@ -41,7 +47,7 @@ export function ReidPredictPage() {
     try {
       const job = await apiFetch<Job>(API.reid.start, {
         method: 'POST',
-        body: { videos: names, overwrite, stop_vllm: stopVllm },
+        body: { videos: names, overwrite, stop_vllm: stopVllm, keypoints },
       });
       upsertJob(job);
       toast.success(`Started ReID Predict for ${names.length} video(s)`);
@@ -78,10 +84,29 @@ export function ReidPredictPage() {
           <SectionLabel>Config</SectionLabel>
           <p className="mb-3 text-xs leading-relaxed text-text-muted">
             For every annotated action event: detect players on that frame (RF-DETR), pick the box the
-            contact point belongs to, crop it and compute an OSNet appearance embedding. No tracking
-            involved. Review and name the players on the ReID Label page afterwards.
+            contact point belongs to, crop it and compute appearance embeddings (CLIP-ReID + KPR).
+            Keypoints decides who estimates the skeletons on those boxes — sam-3d-body is slower but
+            far more accurate. Review and name the players on the ReID Label page afterwards.
           </p>
           <div className="space-y-2">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-text-secondary">Detector</span>
+              <span className="font-mono text-text-muted">rf-detr</span>
+            </div>
+            <label className="block text-xs text-text-secondary">
+              <span className="mb-1 block">Keypoints</span>
+              <select
+                value={keypoints}
+                onChange={(e) => setKeypoints(e.target.value)}
+                className="w-full cursor-pointer appearance-none rounded-lg border border-border-light bg-surface-50 px-3 py-1.5 text-xs text-text-primary focus:border-primary/50 focus:outline-none"
+              >
+                {keypointSources.map((k) => (
+                  <option key={k} value={k}>
+                    {k === 'sam-3d-body' ? 'sam-3d-body (better, slower)' : k}
+                  </option>
+                ))}
+              </select>
+            </label>
             <label className="flex cursor-pointer items-center gap-2 text-xs text-text-secondary">
               <input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} className="h-3.5 w-3.5 accent-primary" />
               Overwrite existing ReID results

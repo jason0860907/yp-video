@@ -146,8 +146,9 @@ export const API = {
     start: '/reid/start',
     results: (name: string) => `/reid/results/${encodeURIComponent(name)}`,
     crop: (name: string, cropFile: string) => `/reid/crop/${encodeURIComponent(name)}/${encodeURIComponent(cropFile)}`,
-    clusters: (name: string, threshold: number) => `/reid/clusters/${encodeURIComponent(name)}?threshold=${threshold}`,
-    players: (name: string) => `/reid/players/${encodeURIComponent(name)}`,
+    clusters: (name: string, threshold: number, model = 'clip-reid') => `/reid/clusters/${encodeURIComponent(name)}?threshold=${threshold}&model=${encodeURIComponent(model)}`,
+    players: (name: string, model = 'clip-reid') => `/reid/players/${encodeURIComponent(name)}?model=${encodeURIComponent(model)}`,
     actorFix: (name: string) => `/reid/actor-fix/${encodeURIComponent(name)}`,
+    options: '/reid/options',
   },
 } as const;

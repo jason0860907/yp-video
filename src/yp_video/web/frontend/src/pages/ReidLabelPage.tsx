@@ -26,9 +26,16 @@ import { toast } from '@/components/feedback/toast';
 import { confirm } from '@/components/feedback/confirm';
 import type { ActionAnnotationData, ReidCluster, ReidPlayers, ReidRecord, ReidVideo } from '@/types/api';
 
-// CLIP-ReID's ViT features sit in a tight cosine cone, hence the small values.
-const THRESHOLDS = [0.12, 0.15, 0.18, 0.21, 0.24];
-const DEFAULT_THRESHOLD = 0.15;
+// Appearance embedders available server-side (see reid/embedder.py registry).
+const EMBEDDERS = ['clip-reid', 'kpr'] as const;
+type Embedder = (typeof EMBEDDERS)[number];
+// Cosine-distance scales differ per model: CLIP-ReID's ViT features sit in a
+// tight cone (hence tiny cutoffs); KPR's foreground embeddings spread wide.
+// Grids calibrated on real match footage (~12 people on court).
+const EMBEDDER_THRESHOLDS: Record<Embedder, { options: number[]; def: number }> = {
+  'clip-reid': { options: [0.12, 0.15, 0.18, 0.21, 0.24], def: 0.15 },
+  kpr: { options: [0.45, 0.5, 0.55, 0.6, 0.65], def: 0.55 },
+};
 // Below this cosine similarity a predicted identity is rendered as doubtful.
 const LOW_SIM = 0.6;
 
@@ -175,6 +182,9 @@ const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(function 
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   // Actor-picker mode: park on an event's frame, then click the right person.
   const [pickMode, setPickMode] = useState(false);
+  // Picker display floor: extraction stores every detection ≥ 0.1, this
+  // slider decides how deep into the low-confidence pile to show.
+  const [minDetScore, setMinDetScore] = useState(0.5);
   useEffect(() => {
     setExpanded(null);
     setSelectedEventId(null);
@@ -358,9 +368,9 @@ const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(function 
                   </g>
                 );
               })}
-              {/* Actor picker: every detected person as a clickable outline */}
+              {/* Actor picker: every detected person above the score slider as a clickable outline */}
               {pickMode &&
-                pickTarget?.detections?.map((d, i) => {
+                pickTarget?.detections?.filter((d) => d.score >= minDetScore).map((d, i) => {
                   const [x0, y0, x1, y1] = d.box;
                   return (
                     <rect
@@ -371,9 +381,9 @@ const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(function 
                       height={y1 - y0}
                       fill="transparent"
                       stroke="#fff"
-                      strokeOpacity={0.9}
+                      strokeOpacity={d.score >= 0.5 ? 0.9 : 0.45}
                       strokeWidth={1.5}
-                      strokeDasharray="6 4"
+                      strokeDasharray={d.score >= 0.5 ? undefined : '3 5'}
                       vectorEffect="non-scaling-stroke"
                       className="pointer-events-auto cursor-pointer hover:fill-white/20"
                       onClick={(e) => {
@@ -381,7 +391,7 @@ const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(function 
                         onFixActor(pickTarget.id, { box: d.box });
                       }}
                     >
-                      <title>{`person ${(d.score * 100).toFixed(0)}% — click to set as the actor`}</title>
+                      <title>{`person · score ${d.score.toFixed(2)} — click to set as the actor`}</title>
                     </rect>
                   );
                 })}
@@ -459,7 +469,25 @@ const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(function 
                       ? ' — click the correct person in the video'
                       : ' — no stored detections (re-run extraction for this video)'}
                   </span>
-                  <span className="ml-auto flex items-center gap-2">
+                  <span className="ml-auto flex items-center gap-3">
+                    <label className="flex items-center gap-1.5 text-[11px] text-text-secondary" title="Hide detections below this score — drag left to reveal weaker boxes (extraction keeps everything ≥ 0.1)">
+                      <span className="whitespace-nowrap">
+                        score ≥ <span className="font-mono tabular-nums">{minDetScore.toFixed(2)}</span>
+                      </span>
+                      <input
+                        type="range"
+                        min={0.1}
+                        max={1}
+                        step={0.05}
+                        value={minDetScore}
+                        onChange={(e) => setMinDetScore(Number(e.target.value))}
+                        onPointerUp={(e) => e.currentTarget.blur()}
+                        className="h-1 w-24 cursor-pointer accent-primary"
+                      />
+                      <span className="font-mono text-[10px] tabular-nums text-text-muted">
+                        {(pickTarget.detections ?? []).filter((d) => d.score >= minDetScore).length}/{(pickTarget.detections ?? []).length}
+                      </span>
+                    </label>
                     <Button size="sm" onClick={() => onFixActor(pickTarget.id, { none: true })} title="Nobody in frame is the actor — clears this event's crop">
                       No actor
                     </Button>
@@ -582,7 +610,8 @@ export function ReidLabelPage() {
   const [pickStatus, setPickStatus] = useState<'all' | 'unlabeled' | 'labeled'>('all');
   const [selectedRally, setSelectedRally] = useState<number | 'all'>('all');
   const [view, setView] = useState<'groups' | 'crops'>('groups');
-  const [threshold, setThreshold] = useState<number>(DEFAULT_THRESHOLD);
+  const [embedder, setEmbedder] = useState<Embedder>('clip-reid');
+  const [threshold, setThreshold] = useState<number>(EMBEDDER_THRESHOLDS['clip-reid'].def);
   const [showSkeleton, setShowSkeleton] = useState(true);
   const [showVideo, setShowVideo] = useState(true);
   const playerRef = useRef<PlayerHandle>(null);
@@ -649,15 +678,15 @@ export function ReidLabelPage() {
   );
 
   const clustersQuery = useQuery({
-    queryKey: ['reid-clusters', picked, threshold],
-    queryFn: () => apiFetch<{ clusters: ReidCluster[] }>(API.reid.clusters(picked, threshold)),
+    queryKey: ['reid-clusters', picked, threshold, embedder],
+    queryFn: () => apiFetch<{ clusters: ReidCluster[] }>(API.reid.clusters(picked, threshold, embedder)),
     enabled: Boolean(picked),
   });
   const clusters = useMemo(() => clustersQuery.data?.clusters ?? [], [clustersQuery.data]);
 
   const playersQuery = useQuery({
-    queryKey: ['reid-players', picked],
-    queryFn: () => apiFetch<ReidPlayers>(API.reid.players(picked)),
+    queryKey: ['reid-players', picked, embedder],
+    queryFn: () => apiFetch<ReidPlayers>(API.reid.players(picked, embedder)),
     enabled: Boolean(picked),
   });
   const assignments = useMemo(() => playersQuery.data?.assignments ?? {}, [playersQuery.data]);
@@ -689,7 +718,7 @@ export function ReidLabelPage() {
 
       for (const c of clusters) {
         const rest = c.event_ids.filter((id) => !covered.has(id));
-        if (rest.length) out.push({ key: `c:${threshold}:${c.id}`, name: '', eventIds: rest, locked: false });
+        if (rest.length) out.push({ key: `c:${embedder}:${threshold}:${c.id}`, name: '', eventIds: rest, locked: false });
       }
       return out;
     });
@@ -774,7 +803,7 @@ export function ReidLabelPage() {
       for (const id of g.eventIds) next[id] = name;
     }
     try {
-      await apiFetch(API.reid.players(picked), { method: 'PUT', body: { assignments: next } });
+      await apiFetch(API.reid.players(picked, embedder), { method: 'PUT', body: { assignments: next } });
       setGroups(named); // show the placeholders the save just minted
       setDirty(false);
       await qc.invalidateQueries({ queryKey: ['reid-players', picked] });
@@ -955,9 +984,25 @@ export function ReidLabelPage() {
               />
               Skeleton
             </label>
+            <select
+              value={embedder}
+              onChange={(e) => {
+                const m = e.target.value as Embedder;
+                setEmbedder(m);
+                setThreshold(EMBEDDER_THRESHOLDS[m].def); // distance scales differ per model
+              }}
+              className={selectCls}
+              title="Appearance embedding model — compare how each one groups the players"
+            >
+              {EMBEDDERS.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
             {view === 'groups' ? (
               <select value={threshold} onChange={(e) => setThreshold(Number(e.target.value))} className={selectCls} title="Cluster threshold for unassigned events">
-                {THRESHOLDS.map((t) => (
+                {EMBEDDER_THRESHOLDS[embedder].options.map((t) => (
                   <option key={t} value={t}>
                     threshold {t}
                   </option>

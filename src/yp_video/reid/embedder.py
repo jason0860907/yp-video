@@ -11,6 +11,8 @@ it sidesteps onnxruntime-gpu / CUDA wheel matching entirely.
 
 from __future__ import annotations
 
+import tempfile
+
 import numpy as np
 
 CLIP_REID_HF_REPO = "occurra/person_vit_clip_reid"
@@ -39,8 +41,12 @@ class ClipReidEmbedder:
         path = hf_hub_download(CLIP_REID_HF_REPO, CLIP_REID_ONNX)
         self._session = ort.InferenceSession(path, providers=["CPUExecutionProvider"])
 
-    def embed(self, crops_bgr: list[np.ndarray], batch_size: int = 32) -> np.ndarray:
-        """Embed BGR person crops → (N, 512) float32, L2-normalized."""
+    def embed(self, crops_bgr: list[np.ndarray], prompts: list[dict] | None = None, batch_size: int = 32) -> np.ndarray:
+        """Embed BGR person crops → (N, 512) float32, L2-normalized.
+
+        ``prompts`` (keypoint prompts) is part of the shared embedder
+        interface; CLIP-ReID is not promptable and ignores it.
+        """
         import cv2
 
         self._ensure_session()
@@ -61,10 +67,96 @@ class ClipReidEmbedder:
         return matrix
 
 
+KPR_CONFIG = "configs/kpr/imagenet/kpr_occ_posetrack_test.yaml"
+KPR_WEIGHTS = "kpr_occ_pt_IN_82.34_92.33_42323828.pth.tar"
+
+
+class KprEmbedder:
+    """KPR — Keypoint Promptable ReID (ECCV'24, Swin backbone), GPU.
+
+    The crop's own keypoints act as a positive prompt and other people's
+    keypoints as negatives, so the embedding locks onto the intended player
+    in multi-person crops — exactly our spike/block pile-up failure mode.
+
+    KPR is part-based; we keep only the batch-normed foreground embedding
+    (test_embeddings[0], prompt-guided whole-person vector) so it drops into
+    the same flat-cosine centroid math as the other embedders. Part-level
+    matching with visibility scores is a possible future upgrade.
+    """
+
+    def __init__(self):
+        self._extractor = None
+
+    def _ensure(self):
+        if self._extractor is not None:
+            return
+        import sys
+
+        import torch
+
+        from yp_video.config import KPR_DIR
+
+        if str(KPR_DIR) not in sys.path:
+            sys.path.insert(0, str(KPR_DIR))
+        from torchreid.scripts.builder import build_config
+        from torchreid.tools.feature_extractor import KPRFeatureExtractor
+        from yacs.config import CfgNode
+
+        override = CfgNode({
+            "model": CfgNode({"load_weights": str(KPR_DIR / "pretrained_models" / KPR_WEIGHTS)}),
+            # build_config mints a run dir under save_dir on every init —
+            # keep that noise out of the repo.
+            "data": CfgNode({"save_dir": tempfile.mkdtemp(prefix="kpr-")}),
+        })
+        cfg = build_config(config_path=str(KPR_DIR / KPR_CONFIG), config=override)
+        cfg.use_gpu = torch.cuda.is_available()
+        self._extractor = KPRFeatureExtractor(cfg, verbose=False)
+
+    def embed(self, crops_bgr: list[np.ndarray], prompts: list[dict] | None = None, batch_size: int = 32) -> np.ndarray:
+        """Embed BGR person crops → (N, 512) float32, L2-normalized.
+
+        ``prompts[i]`` may carry ``keypoints_xyc`` (17, 3) and ``negative_kps``
+        (M, 17, 3) in crop-pixel coordinates. A batch must be prompt-uniform
+        (the extractor stacks prompt masks), so missing prompts are replaced
+        with an all-zero-confidence dummy, which KPR treats as "no prompt".
+        """
+        if not len(crops_bgr):
+            return np.empty((0, EMBEDDING_DIM), dtype=np.float32)
+        self._ensure()
+        import torch
+
+        no_prompt = np.zeros((17, 3), dtype=np.float32)
+        no_negs = np.empty((0, 17, 3), dtype=np.float32)
+        feats: list[np.ndarray] = []
+        for start in range(0, len(crops_bgr), batch_size):
+            samples = []
+            for i in range(start, min(start + batch_size, len(crops_bgr))):
+                p = (prompts[i] if prompts else None) or {}
+                pos = p.get("keypoints_xyc")
+                negs = p.get("negative_kps")
+                samples.append({
+                    "image": crops_bgr[i],
+                    "keypoints_xyc": np.asarray(pos, dtype=np.float32) if pos is not None else no_prompt,
+                    "negative_kps": np.asarray(negs, dtype=np.float32) if negs is not None and len(negs) else no_negs,
+                })
+            with torch.inference_mode():
+                _, emb, _vis, _masks = self._extractor(samples)
+            feats.append(emb[:, 0].cpu().numpy())  # bn_foreg: prompt-guided whole-person vector
+        matrix = np.concatenate(feats).astype(np.float32)
+        matrix /= np.linalg.norm(matrix, axis=1, keepdims=True) + 1e-12
+        return matrix
+
+
 # name → weights identifier, recorded in each extraction's header.
-EMBEDDER_WEIGHTS = {"clip-reid": CLIP_REID_ONNX}
+EMBEDDER_WEIGHTS = {"clip-reid": CLIP_REID_ONNX, "kpr": KPR_WEIGHTS}
 DEFAULT_EMBEDDER = "clip-reid"
 
 
-def build_embedders() -> dict[str, ClipReidEmbedder]:
-    return {"clip-reid": ClipReidEmbedder()}
+def build_embedders() -> dict:
+    """Every available embedder; KPR joins when its checkout + weights exist."""
+    from yp_video.config import KPR_DIR
+
+    out: dict = {"clip-reid": ClipReidEmbedder()}
+    if (KPR_DIR / "pretrained_models" / KPR_WEIGHTS).exists():
+        out["kpr"] = KprEmbedder()
+    return out
