@@ -5,7 +5,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type DragEvent,
   type DragEvent as ReactDragEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
@@ -29,16 +28,19 @@ import { toast } from '@/components/feedback/toast';
 import { confirm } from '@/components/feedback/confirm';
 import type { ActionAnnotationData, ReidCluster, ReidPlayers, ReidRecord, ReidVideo } from '@/types/api';
 
-// Appearance embedders available server-side (see reid/embedder.py registry).
-const EMBEDDERS = ['clip-reid', 'kpr'] as const;
-type Embedder = (typeof EMBEDDERS)[number];
 // Cosine-distance scales differ per model: CLIP-ReID's ViT features sit in a
 // tight cone (hence tiny cutoffs); KPR's foreground embeddings spread wide.
-// Ranges calibrated on real match footage (~12 people on court).
-const EMBEDDER_THRESHOLDS: Record<Embedder, { min: number; max: number; def: number }> = {
+// Ranges calibrated on real match footage (~12 people on court). The embedder
+// list itself comes from /reid/options — models we haven't calibrated yet get
+// a wide neutral range.
+const EMBEDDER_THRESHOLDS: Record<string, { min: number; max: number; def: number }> = {
   'clip-reid': { min: 0.08, max: 0.3, def: 0.15 },
   kpr: { min: 0.3, max: 0.8, def: 0.55 },
 };
+const thresholdsFor = (m: string) => EMBEDDER_THRESHOLDS[m] ?? { min: 0.05, max: 0.95, def: 0.3 };
+// Detections below this score never win automatic association — they exist
+// only as manual-picker choices (mirrors reid/detector.AUTO_PICK_MIN_SCORE).
+const AUTO_PICK_MIN_SCORE = 0.5;
 // Auto clusters this small are noise, not players — they pool into one
 // shared "unsorted" row instead of each getting its own.
 const MIN_CLUSTER_SIZE = 3;
@@ -466,9 +468,9 @@ const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(function 
                       height={y1 - y0}
                       fill="transparent"
                       stroke="#fff"
-                      strokeOpacity={d.score >= 0.5 ? 0.9 : 0.45}
+                      strokeOpacity={d.score >= AUTO_PICK_MIN_SCORE ? 0.9 : 0.45}
                       strokeWidth={1.5}
-                      strokeDasharray={d.score >= 0.5 ? undefined : '3 5'}
+                      strokeDasharray={d.score >= AUTO_PICK_MIN_SCORE ? undefined : '3 5'}
                       vectorEffect="non-scaling-stroke"
                       className="pointer-events-auto cursor-pointer hover:fill-white/20"
                       onClick={(e) => {
@@ -695,11 +697,11 @@ export function ReidLabelPage() {
   // Where locked groups live on the groups board: pinned on top as full rows,
   // or docked in a sticky right rail showing just 3 crops per group.
   const [lockedDock, setLockedDock] = useState<'top' | 'right'>('right');
-  const [embedder, setEmbedder] = useState<Embedder>('clip-reid');
+  const [embedder, setEmbedder] = useState('clip-reid');
   // Draft follows the slider live; the applied value (= clusters query key)
   // trails it by a debounce so dragging doesn't fire a re-cluster per pixel.
-  const [thresholdDraft, setThresholdDraft] = useState<number>(EMBEDDER_THRESHOLDS['clip-reid'].def);
-  const [threshold, setThreshold] = useState<number>(EMBEDDER_THRESHOLDS['clip-reid'].def);
+  const [thresholdDraft, setThresholdDraft] = useState<number>(thresholdsFor('clip-reid').def);
+  const [threshold, setThreshold] = useState<number>(thresholdsFor('clip-reid').def);
   useEffect(() => {
     const t = setTimeout(() => setThreshold(thresholdDraft), 350);
     return () => clearTimeout(t);
@@ -710,6 +712,13 @@ export function ReidLabelPage() {
   const [statusFilter, setStatusFilter] = useState<'all' | ReidRecord['status']>('all');
   const [groups, setGroups] = useState<Group[]>([]);
   const [dirty, setDirty] = useState(false);
+  // Bumped on every board edit; a save only clears dirty when nothing was
+  // edited while its PUT was in flight.
+  const editSeq = useRef(0);
+  const markDirty = () => {
+    editSeq.current += 1;
+    setDirty(true);
+  };
   // What's under the cursor during a drag. mode: 'merge' drops INTO the row,
   // 'before'/'after' reorder around it (group drags only, via edge bands).
   const [dragOver, setDragOver] = useState<{ key: string; mode: 'merge' | 'before' | 'after' } | null>(null);
@@ -725,6 +734,13 @@ export function ReidLabelPage() {
     queryKey: ['reid-videos'],
     queryFn: () => apiFetch<ReidVideo[]>(API.reid.videos),
   });
+  // Embedder choices come from the server registry — KPR only shows up when
+  // its checkout + weights actually exist there.
+  const optionsQuery = useQuery({
+    queryKey: ['reid-options'],
+    queryFn: () => apiFetch<{ keypoint_sources: string[]; embedders: string[] }>(API.reid.options),
+  });
+  const embedderOptions = optionsQuery.data?.embedders ?? ['clip-reid'];
   const extracted = (videosQuery.data ?? []).filter((v) => v.has_reid);
   // Picker filters, mirroring the Action Label / Rally Label pickers.
   const pickable = extracted.filter((v) => {
@@ -753,24 +769,44 @@ export function ReidLabelPage() {
   };
 
   // Reverse jump (video → board): scroll the event's crop into view and pulse
-  // it. Works in both views — crops carry data-event-id either way.
+  // it. Crops aren't always rendered (docked groups show only 3 tiles, the
+  // status filter hides some) — then the group card holding it pulses instead.
   const [flashCrop, setFlashCrop] = useState<string | null>(null);
+  const [flashGroup, setFlashGroup] = useState<string | null>(null);
   const flashTimer = useRef(0);
   useEffect(() => () => window.clearTimeout(flashTimer.current), []);
+  const pulse = (el: Element, kind: 'crop' | 'group', id: string) => {
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    window.clearTimeout(flashTimer.current);
+    setFlashCrop(kind === 'crop' ? id : null);
+    setFlashGroup(kind === 'group' ? id : null);
+    flashTimer.current = window.setTimeout(() => {
+      setFlashCrop(null);
+      setFlashGroup(null);
+    }, 1600);
+  };
   const jumpToCrop = (eventId: string) => {
-    if (!recordById.get(eventId)?.crop) {
+    const record = recordById.get(eventId);
+    if (!record?.crop) {
       toast.warning('This event has no crop (score / non-visible action)');
       return;
     }
-    const el = document.querySelector(`[data-event-id="${CSS.escape(eventId)}"]`);
-    if (!el) {
-      toast.warning('Crop is hidden by the current status/rally filter');
+    const tile = document.querySelector(`[data-event-id="${CSS.escape(eventId)}"]`);
+    if (tile) {
+      pulse(tile, 'crop', eventId);
       return;
     }
-    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    window.clearTimeout(flashTimer.current);
-    setFlashCrop(eventId);
-    flashTimer.current = window.setTimeout(() => setFlashCrop(null), 1600);
+    const group = groups.find((g) => g.eventIds.includes(eventId));
+    const card = group && document.querySelector(`[data-group-key="${CSS.escape(group.key)}"]`);
+    if (card) {
+      pulse(card, 'group', group.key);
+      return;
+    }
+    toast.warning(
+      statusFilter !== 'all' && record.status !== statusFilter
+        ? `Crop is hidden by the status filter (its status is "${record.status}")`
+        : 'Crop is not on the board yet',
+    );
   };
 
   // Full action annotation — the sidebar lists every action's time, including
@@ -871,7 +907,7 @@ export function ReidLabelPage() {
         .filter((g) => g.eventIds.length > 0 || g.name.trim()),
     );
     setSelectedCrops(new Set());
-    setDirty(true);
+    markDirty();
   };
 
   /** Merge every event of one row into another; the target's name wins,
@@ -889,7 +925,7 @@ export function ReidLabelPage() {
             : g,
         );
     });
-    setDirty(true);
+    markDirty();
   };
 
   useEffect(() => {
@@ -999,7 +1035,7 @@ export function ReidLabelPage() {
   /** Renaming is an edit too — lock so the name sticks through re-clustering. */
   const renameGroup = (key: string, name: string) => {
     setGroups((prev) => prev.map((g) => (g.key === key ? { ...g, name, locked: true } : g)));
-    setDirty(true);
+    markDirty();
   };
 
   /** Move a whole row so it sits before/after targetKey. View-only —
@@ -1017,7 +1053,7 @@ export function ReidLabelPage() {
     });
   };
 
-  const onDropTo = (toKey: string) => (e: DragEvent) => {
+  const onDropTo = (toKey: string) => (e: ReactDragEvent) => {
     e.preventDefault();
     const mode = dragOver?.key === toKey ? dragOver.mode : 'merge';
     setDragOver(null);
@@ -1037,21 +1073,35 @@ export function ReidLabelPage() {
   };
 
   const savingRef = useRef(false);
+  // Save called while a PUT is in flight → run once more when it settles,
+  // through the latest closure (the stale one would save stale groups).
+  const queuedRef = useRef(false);
   const save = async (auto = false) => {
-    if (savingRef.current) return;
+    if (savingRef.current) {
+      queuedRef.current = true;
+      return;
+    }
     savingRef.current = true;
+    const seq = editSeq.current;
     // Locked-but-unnamed rows are curated work — persist them under a
     // placeholder identity (P1, P2, …) the user can rename any time.
     // Untouched auto-clusters stay ephemeral by design.
     const used = new Set(groups.map((g) => g.name.trim()).filter(Boolean));
-    let seq = 1;
+    let n = 1;
     const nextPlaceholder = () => {
-      while (used.has(`P${seq}`)) seq += 1;
-      const name = `P${seq}`;
+      while (used.has(`P${n}`)) n += 1;
+      const name = `P${n}`;
       used.add(name);
       return name;
     };
-    const named = groups.map((g) => (g.locked && !g.name.trim() ? { ...g, name: nextPlaceholder() } : g));
+    // key → freshly minted placeholder name.
+    const minted = new Map<string, string>();
+    const named = groups.map((g) => {
+      if (!g.locked || g.name.trim()) return g;
+      const name = nextPlaceholder();
+      minted.set(g.key, name);
+      return { ...g, name };
+    });
 
     const next: Record<string, string> = {};
     for (const g of named) {
@@ -1061,16 +1111,28 @@ export function ReidLabelPage() {
     }
     try {
       await apiFetch(API.reid.players(picked, embedder), { method: 'PUT', body: { assignments: next } });
-      setGroups(named); // show the placeholders the save just minted
-      setDirty(false);
+      // Patch the minted placeholders into whatever the board looks like NOW —
+      // never replace the array wholesale, edits may have landed mid-PUT and a
+      // snapshot would silently revert them.
+      if (minted.size) {
+        setGroups((cur) => cur.map((g) => (minted.has(g.key) && !g.name.trim() ? { ...g, name: minted.get(g.key)! } : g)));
+      }
+      // Mid-PUT edits keep the board dirty; the auto-save effect re-fires.
+      if (editSeq.current === seq) setDirty(false);
       await qc.invalidateQueries({ queryKey: ['reid-players', picked] });
       if (!auto) toast.success(`Saved ${new Set(Object.values(next)).size} player(s), ${Object.keys(next).length} events`);
     } catch (e) {
       toast.error(`Save failed: ${errMsg(e)}`);
     } finally {
       savingRef.current = false;
+      if (queuedRef.current) {
+        queuedRef.current = false;
+        void saveRef.current(true);
+      }
     }
   };
+  const saveRef = useRef(save);
+  saveRef.current = save;
 
   // Auto-save: group edits persist ~1.5 s after the last change; failures
   // leave dirty=true so the next edit (or the Save button) retries.
@@ -1125,7 +1187,7 @@ export function ReidLabelPage() {
         if (tiny.length) out.push({ key: `pool:seed:${embedder}:${threshold}`, name: '', eventIds: tiny, locked: false });
         return out;
       });
-      setDirty(true);
+      markDirty();
       toast.success(`Assigned ${assigned} event(s) to ${seeds.length} seeded group(s) · ${res.leftover_clusters.length} leftover pool(s)`);
     } catch (e) {
       toast.error(`Seed regroup failed: ${errMsg(e)}`);
@@ -1338,7 +1400,7 @@ export function ReidLabelPage() {
       <Card>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-3">
-            <SectionLabel className="!mb-0 leading-none">Identities</SectionLabel>
+            <SectionLabel className="mb-0 leading-none">Identities</SectionLabel>
             {picked && (
               <span
                 className="font-mono text-[11px] leading-none tabular-nums text-text-muted"
@@ -1393,16 +1455,16 @@ export function ReidLabelPage() {
             <select
               value={embedder}
               onChange={(e) => {
-                const m = e.target.value as Embedder;
+                const m = e.target.value;
                 setEmbedder(m);
                 // Distance scales differ per model — jump to its default.
-                setThresholdDraft(EMBEDDER_THRESHOLDS[m].def);
-                setThreshold(EMBEDDER_THRESHOLDS[m].def);
+                setThresholdDraft(thresholdsFor(m).def);
+                setThreshold(thresholdsFor(m).def);
               }}
               className={selectCls}
               title="Appearance embedding model — compare how each one groups the players"
             >
-              {EMBEDDERS.map((m) => (
+              {embedderOptions.map((m) => (
                 <option key={m} value={m}>
                   {m}
                 </option>
@@ -1417,8 +1479,8 @@ export function ReidLabelPage() {
               </span>
               <input
                 type="range"
-                min={EMBEDDER_THRESHOLDS[embedder].min}
-                max={EMBEDDER_THRESHOLDS[embedder].max}
+                min={thresholdsFor(embedder).min}
+                max={thresholdsFor(embedder).max}
                 step={0.01}
                 value={thresholdDraft}
                 onChange={(e) => setThresholdDraft(Number(e.target.value))}
@@ -1500,6 +1562,7 @@ export function ReidLabelPage() {
                   return (
                   <div
                     key={g.key}
+                    data-group-key={g.key}
                     onDragOver={(e) => {
                       e.preventDefault();
                       let mode: 'merge' | 'before' | 'after' = 'merge';
@@ -1524,6 +1587,7 @@ export function ReidLabelPage() {
                         : isPool
                           ? 'border-dashed border-amber-500/40'
                           : 'border-border',
+                      flashGroup === g.key && 'animate-pulse border-accent ring-2 ring-accent/70',
                     )}
                     style={
                       dragOver?.key === g.key
@@ -1639,6 +1703,7 @@ export function ReidLabelPage() {
                     return (
                     <div
                       key={g.key}
+                      data-group-key={g.key}
                       onDragOver={(e) => {
                         e.preventDefault();
                         setDragOver((prev) => (prev?.key === g.key && prev.mode === 'merge' ? prev : { key: g.key, mode: 'merge' }));
@@ -1648,6 +1713,7 @@ export function ReidLabelPage() {
                       className={cn(
                         'rounded-xl border bg-surface-50 p-2 transition-colors',
                         dragOver?.key === g.key ? 'border-primary/60 bg-primary/5' : 'border-border',
+                        flashGroup === g.key && 'animate-pulse border-accent ring-2 ring-accent/70',
                       )}
                     >
                       <div className="mb-1.5 flex items-center gap-1.5">
