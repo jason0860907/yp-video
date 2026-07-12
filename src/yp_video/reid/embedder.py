@@ -67,8 +67,12 @@ class ClipReidEmbedder:
         return matrix
 
 
-KPR_CONFIG = "configs/kpr/imagenet/kpr_occ_posetrack_test.yaml"
-KPR_WEIGHTS = "kpr_occ_pt_IN_82.34_92.33_42323828.pth.tar"
+# SOLIDER (human-centric foundation) backbone: slightly below the ImageNet
+# variant on Occluded-PoseTrack itself, but clearly stronger on the OTHER
+# occlusion benchmarks (Occluded-ReID 82.6 vs 79.1, Partial-ReID 90.7 vs
+# 86.0) — better cross-domain behaviour is what volleyball footage needs.
+KPR_CONFIG = "configs/kpr/solider/kpr_occ_posetrack_test.yaml"
+KPR_WEIGHTS = "kpr_occ_pt_SOLIDER_81.24_90.59_42326409.pth.tar"
 
 
 class KprEmbedder:
@@ -110,7 +114,17 @@ class KprEmbedder:
         })
         cfg = build_config(config_path=str(KPR_DIR / KPR_CONFIG), config=override)
         cfg.use_gpu = torch.cuda.is_available()
-        self._extractor = KPRFeatureExtractor(cfg, verbose=False)
+        # The extractor does NOT read input size / normalization from cfg —
+        # they are constructor args. SOLIDER runs 384x128 with 0.5-norm,
+        # ImageNet-Swin 256x128 with ImageNet stats; feed whatever the
+        # loaded config says so the preprocessing always matches training.
+        self._extractor = KPRFeatureExtractor(
+            cfg,
+            image_size=(cfg.data.height, cfg.data.width),
+            pixel_mean=list(cfg.data.norm_mean),
+            pixel_std=list(cfg.data.norm_std),
+            verbose=False,
+        )
 
     def embed(self, crops_bgr: list[np.ndarray], prompts: list[dict] | None = None, batch_size: int = 32) -> np.ndarray:
         """Embed BGR person crops → (N, 512) float32, L2-normalized.
