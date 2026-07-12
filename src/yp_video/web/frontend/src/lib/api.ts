@@ -150,5 +150,6 @@ export const API = {
     players: (name: string, model = 'clip-reid') => `/reid/players/${encodeURIComponent(name)}?model=${encodeURIComponent(model)}`,
     actorFix: (name: string) => `/reid/actor-fix/${encodeURIComponent(name)}`,
     options: '/reid/options',
+    seedCluster: (name: string) => `/reid/seed-cluster/${encodeURIComponent(name)}`,
   },
 } as const;

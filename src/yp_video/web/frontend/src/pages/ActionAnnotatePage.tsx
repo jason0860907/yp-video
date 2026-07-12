@@ -179,19 +179,24 @@ export function ActionAnnotatePage() {
     const t = presented.current != null && Number.isFinite(presented.current) ? presented.current : el?.currentTime || 0;
     return clamp(Math.round(t * (e.fps || 30)), 0, Math.max(0, e.numFrames - 1));
   };
+  const prevPlayFrame = useRef(0);
   const refreshPlayhead = () => {
     const f = computeFrame();
     setFrame(f);
+    const prev = prevPlayFrame.current;
+    prevPlayFrame.current = f;
     // Auto-pause at the end of the selected rally during playback, so a rally
-    // doesn't run on into the next one.
+    // doesn't run on into the next one — but only when crossing the end from
+    // inside the rally; a playhead parked beyond it must never trip this.
     const el = videoRef.current;
     const e = edRef.current;
     const rid = selRallyRef.current;
     if (!el || el.paused || rid === 'all' || !e.fps) return;
     const rally = e.rallies.find((r) => r.rally_id === rid);
     if (!rally) return;
+    const startFrame = Math.round(rally.start * e.fps);
     const endFrame = Math.max(0, Math.ceil(rally.end * e.fps) - 1);
-    if (f >= endFrame) {
+    if (prev >= startFrame && prev < endFrame && f >= endFrame) {
       el.pause();
       seekFrame(endFrame);
     }
@@ -269,6 +274,14 @@ export function ActionAnnotatePage() {
     const el = videoRef.current;
     if (!el?.src) return;
     if (el.paused) {
+      // Parked at the selected rally's end — refreshPlayhead would pause again
+      // on the very next tick, so play there means "replay the rally".
+      const rid = selRallyRef.current;
+      const { fps, rallies } = edRef.current;
+      const rally = rid === 'all' || !fps ? undefined : rallies.find((r) => r.rally_id === rid);
+      if (rally && computeFrame() >= Math.max(0, Math.ceil(rally.end * fps) - 1)) {
+        seekFrame(Math.round(rally.start * fps));
+      }
       // Release any seek lock so the playhead tracks playback from frame one.
       lockedFrame.current = null;
       void el.play().catch((e) => toast.error(`Play failed: ${errMsg(e)}`));
