@@ -393,7 +393,7 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
       <div className="lg:w-[420px] lg:flex-shrink-0">
         <Card>
           <div className="mb-3 flex items-center justify-between gap-2">
-            <SectionLabel className="!mb-0">
+            <SectionLabel className="mb-0">
               Annotations ({annotations.length} rally){totalDuration > 0 ? ` · ${formatTime(totalDuration)} played` : ''}
             </SectionLabel>
             <div className="flex items-center gap-2">

@@ -182,7 +182,7 @@ export function DownloadPage() {
         {/* Playlist queue */}
         <Card>
           <div className="mb-2.5 flex items-center justify-between gap-3">
-            <SectionLabel className="!mb-0">{hasPlaylist ? title || 'Download queue' : 'Download queue'}</SectionLabel>
+            <SectionLabel className="mb-0">{hasPlaylist ? title || 'Download queue' : 'Download queue'}</SectionLabel>
             {hasPlaylist && (
               <div className="flex items-center gap-2">
                 <Button size="sm" intent="primary" onClick={() => toggleAll(true)}>

@@ -169,7 +169,7 @@ export function DetectPage() {
       {job && (
         <Card>
           <div className="mb-3 flex items-center justify-between">
-            <SectionLabel className="!mb-0">Rally Predict jobs</SectionLabel>
+            <SectionLabel className="mb-0">Rally Predict jobs</SectionLabel>
             {job.status === 'failed' && (
               <Button size="sm" intent="primary" onClick={startDetection}>
                 Retry Failed
