@@ -1,7 +1,11 @@
 """Shared JSONL read/write utilities for _meta-header JSONL files."""
 
 import json
+import os
+import threading
+from collections import OrderedDict
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Iterable
 
 
@@ -33,19 +37,62 @@ def read_jsonl(path: Path) -> tuple[dict, list[dict]]:
     return meta, records
 
 
+# Parsed-file cache for the large, frequently re-read jsonls (a 10 MB ReID
+# file costs ~0.6 s per parse and every clusters/players request needs it).
+# Keyed by (mtime, size), so the atomic rewrites in write_jsonl invalidate
+# entries naturally.
+_READ_CACHE_SIZE = 4
+_read_cache: OrderedDict[Path, tuple[tuple[int, int], dict, list[dict]]] = OrderedDict()
+_read_cache_lock = threading.Lock()
+
+
+def read_jsonl_cached(path: Path) -> tuple[dict, list[dict]]:
+    """``read_jsonl`` behind a small mtime-keyed LRU.
+
+    Every caller receives the SAME meta/record objects — treat them as
+    read-only. Callers that mutate (or feed a read-modify-write) must use
+    ``read_jsonl`` directly.
+    """
+    stat = path.stat()
+    key = (stat.st_mtime_ns, stat.st_size)
+    with _read_cache_lock:
+        hit = _read_cache.get(path)
+        if hit and hit[0] == key:
+            _read_cache.move_to_end(path)
+            return hit[1], hit[2]
+    meta, records = read_jsonl(path)
+    with _read_cache_lock:
+        _read_cache[path] = (key, meta, records)
+        _read_cache.move_to_end(path)
+        while len(_read_cache) > _READ_CACHE_SIZE:
+            _read_cache.popitem(last=False)
+    return meta, records
+
+
 def write_jsonl(path: Path, meta: dict, records: Iterable[dict]) -> None:
     """Write a JSONL file with a _meta header line plus records in one go.
 
     The meta dict is augmented with `"_meta": True` if missing.
     Use this for one-shot writes (e.g. converters); training loops that append
     rows over time should use ``write_meta_header`` + ``append_jsonl`` instead.
+
+    The write is atomic (temp file + rename), so a concurrent reader sees the
+    old or the new file — never a half-written one.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     meta_out = {"_meta": True, **meta} if "_meta" not in meta else meta
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(_dumps(meta_out))
-        for rec in records:
-            f.write(_dumps(rec))
+    with NamedTemporaryFile(
+        "w", encoding="utf-8", dir=path.parent, prefix=f"{path.name}.", suffix=".tmp", delete=False
+    ) as f:
+        tmp = f.name
+        try:
+            f.write(_dumps(meta_out))
+            for rec in records:
+                f.write(_dumps(rec))
+        except BaseException:
+            os.unlink(tmp)
+            raise
+    os.replace(tmp, path)
 
 
 def write_meta_header(path: Path, meta: dict) -> None:

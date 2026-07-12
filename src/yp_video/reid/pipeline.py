@@ -19,6 +19,7 @@ data.
 from __future__ import annotations
 
 import json
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -357,6 +358,11 @@ def extract_video(
     return counts
 
 
+# Serializes apply_actor_fix's read-modify-write of the reid jsonl: two
+# quick picks would otherwise interleave and one would be lost.
+_actor_fix_lock = threading.Lock()
+
+
 def apply_actor_fix(video_path: Path, event_id: str, box: list[float] | None, *, none: bool = False) -> dict:
     """Re-point one extracted event at a user-chosen person, in place.
 
@@ -369,6 +375,11 @@ def apply_actor_fix(video_path: Path, event_id: str, box: list[float] | None, *,
 
     Returns the updated record without embeddings (the UI payload).
     """
+    with _actor_fix_lock:
+        return _apply_actor_fix(video_path, event_id, box, none=none)
+
+
+def _apply_actor_fix(video_path: Path, event_id: str, box: list[float] | None, *, none: bool = False) -> dict:
     import cv2
 
     stem = video_path.stem

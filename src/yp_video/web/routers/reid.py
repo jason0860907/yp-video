@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from yp_video.config import cut_kind_of, find_cut, iter_all_cuts
-from yp_video.core.jsonl import read_jsonl
+from yp_video.core.jsonl import read_jsonl, read_jsonl_cached
 from yp_video.reid import identity, pipeline
 from yp_video.reid.embedder import DEFAULT_EMBEDDER, EMBEDDER_WEIGHTS
 from yp_video.web.job_helpers import (
@@ -209,7 +209,10 @@ def results(name: str) -> dict:
     path = pipeline.reid_path(stem)
     if not path.exists():
         raise HTTPException(404, f"No ReID results for {stem}")
-    meta, records = read_jsonl(path)
+    # Cached parse shares objects across requests — strip into copies, never
+    # mutate what read_jsonl_cached hands out.
+    meta, records = read_jsonl_cached(path)
+    meta = dict(meta)
     # The video-sync overlay needs fps (frame ↔ time) and the rally spans for
     # its rally navigator — both live in the annotation header, not the
     # extraction header.
@@ -219,14 +222,17 @@ def results(name: str) -> dict:
         if not meta.get("fps") and ann_meta.get("fps"):
             meta["fps"] = ann_meta["fps"]
         meta["rallies"] = ann_meta.get("rallies") or []
+    out = []
     # Drop score events from old extractions too (see pipeline.SKIP_LABELS).
-    records = [r for r in records if r.get("label") not in pipeline.SKIP_LABELS]
     for r in records:
-        r.pop("embeddings", None)
+        if r.get("label") in pipeline.SKIP_LABELS:
+            continue
+        r = {k: v for k, v in r.items() if k != "embeddings"}
         # The actor picker only needs boxes + scores; skeletons stay server-side.
-        for d in r.get("detections") or []:
-            d.pop("keypoints", None)
-    return {"meta": meta, "records": records}
+        if r.get("detections"):
+            r["detections"] = [{k: v for k, v in d.items() if k != "keypoints"} for d in r["detections"]]
+        out.append(r)
+    return {"meta": meta, "records": out}
 
 
 @router.get("/crop/{name}/{crop_file}")
@@ -300,6 +306,39 @@ def put_players(name: str, req: SaveAssignmentsRequest, model: str = DEFAULT_EMB
         raise HTTPException(404, f"No ReID results for {stem}")
     identity.save_assignments(stem, req.assignments)
     return get_players(name, model=model)
+
+
+class SeedClusterRequest(BaseModel):
+    # Seed key (the UI's group row key) -> event ids anchoring that group.
+    seeds: dict[str, list[str]]
+    threshold: float = identity.DEFAULT_CLUSTER_THRESHOLD
+    model: str = DEFAULT_EMBEDDER
+
+
+@router.post("/seed-cluster/{name}")
+def seed_cluster(name: str, req: SeedClusterRequest) -> dict:
+    """Distribute unassigned events to the nearest user-seeded group.
+
+    Events farther than ``threshold`` from every seed centroid stay out;
+    they come back agglomeratively clustered (same threshold) so the UI can
+    show them as leftover pools for further seeding.
+    """
+    stem = Path(unquote(name)).stem
+    try:
+        records, matrix = identity.load_embeddings(stem, model=_validated_model(req.model))
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    groups, leftover_ids = identity.seeded_groups(records, matrix, req.seeds, req.threshold)
+    leftover_clusters: list[list[str]] = []
+    if leftover_ids:
+        index = {r["id"]: i for i, r in enumerate(records)}
+        rows = [index[i] for i in leftover_ids]
+        labels = identity.cluster(matrix[rows], threshold=req.threshold)
+        grouped: dict[int, list[str]] = {}
+        for event_id, label in zip(leftover_ids, labels):
+            grouped.setdefault(int(label), []).append(event_id)
+        leftover_clusters = [ids for _, ids in sorted(grouped.items())]
+    return {"groups": groups, "leftover_clusters": leftover_clusters}
 
 
 class ActorFixRequest(BaseModel):

@@ -25,16 +25,22 @@ is a labeled (frame, action point, candidate boxes) → correct-box example.
 from __future__ import annotations
 
 import json
+import os
+import threading
 from pathlib import Path
 
 import numpy as np
 
 from yp_video.config import PLAYER_REID_DIR
-from yp_video.core.jsonl import read_jsonl
+from yp_video.core.jsonl import read_jsonl_cached
 from yp_video.reid.embedder import DEFAULT_EMBEDDER
 from yp_video.reid.pipeline import SKIP_LABELS, reid_path
 
 PLAYERS_DIR = PLAYER_REID_DIR / "players"
+
+# Serializes read-modify-write of the players file: the UI auto-saves
+# assignments while actor fixes land, and interleaving would drop one edit.
+_players_lock = threading.Lock()
 
 # Average-linkage cosine-distance cutoff on CLIP-ReID's scale — its ViT
 # features sit in a tight cone (pairwise distances p5–p95 ≈ 0.12–0.32), so
@@ -51,7 +57,7 @@ def load_embeddings(stem: str, model: str = DEFAULT_EMBEDDER) -> tuple[list[dict
     path = reid_path(stem)
     if not path.exists():
         raise FileNotFoundError(f"No ReID results for {stem}")
-    _meta, records = read_jsonl(path)
+    _meta, records = read_jsonl_cached(path)  # read-only from here on
 
     def vec(r: dict) -> list[float] | None:
         return (r.get("embeddings") or {}).get(model)
@@ -93,10 +99,53 @@ def _load_players_file(stem: str) -> dict:
 
 def _save_players_file(stem: str, data: dict) -> None:
     PLAYERS_DIR.mkdir(parents=True, exist_ok=True)
-    players_path(stem).write_text(
-        json.dumps(data, ensure_ascii=False, indent=1),
-        encoding="utf-8",
-    )
+    path = players_path(stem)
+    # Atomic replace — auto-save and actor fixes hit this file concurrently.
+    tmp = path.with_name(f"{path.name}.tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def seeded_groups(
+    records: list[dict],
+    matrix: np.ndarray,
+    seeds: dict[str, list[str]],
+    cutoff: float,
+) -> tuple[dict[str, list[str]], list[str]]:
+    """Distribute every non-seed event to its nearest seed centroid.
+
+    ``seeds`` maps a caller-chosen key to the event ids anchoring that group.
+    Each seed group's centroid is the mean of its members' embeddings; every
+    other embedded event joins the closest centroid when its cosine distance
+    is within ``cutoff``, otherwise it lands in the returned leftover list.
+    Turns clustering into classification once the user has pinned one clean
+    group per player.
+    """
+    index = {r["id"]: i for i, r in enumerate(records)}
+    seed_members = {i for ids in seeds.values() for i in ids}
+    keys: list[str] = []
+    centroids = []
+    for key, ids in seeds.items():
+        rows = [index[i] for i in ids if i in index]
+        if not rows:
+            continue
+        c = matrix[rows].mean(axis=0)
+        centroids.append(c / (np.linalg.norm(c) + 1e-12))
+        keys.append(key)
+    out: dict[str, list[str]] = {k: [] for k in keys}
+    leftover: list[str] = []
+    if not keys:
+        return out, [r["id"] for r in records if r["id"] not in seed_members]
+    sims = matrix @ np.stack(centroids).T  # (N, S)
+    for i, record in enumerate(records):
+        if record["id"] in seed_members:
+            continue
+        best = int(np.argmax(sims[i]))
+        if 1.0 - float(sims[i][best]) <= cutoff:
+            out[keys[best]].append(record["id"])
+        else:
+            leftover.append(record["id"])
+    return out, leftover
 
 
 def load_assignments(stem: str) -> dict[str, str]:
@@ -105,9 +154,10 @@ def load_assignments(stem: str) -> dict[str, str]:
 
 
 def save_assignments(stem: str, assignments: dict[str, str]) -> None:
-    data = _load_players_file(stem)
-    data["assignments"] = {k: v.strip() for k, v in assignments.items() if v and v.strip()}
-    _save_players_file(stem, data)
+    with _players_lock:
+        data = _load_players_file(stem)
+        data["assignments"] = {k: v.strip() for k, v in assignments.items() if v and v.strip()}
+        _save_players_file(stem, data)
 
 
 def load_actor_fixes(stem: str) -> dict[str, dict]:
@@ -117,17 +167,19 @@ def load_actor_fixes(stem: str) -> dict[str, dict]:
 
 def save_actor_fix(stem: str, event_id: str, box: list[float] | None) -> None:
     """Record a manual actor pick; ``box=None`` means "nobody is the actor"."""
-    data = _load_players_file(stem)
-    fixes = data.setdefault("actor_fixes", {})
-    fixes[event_id] = {"none": True} if box is None else {"box": [round(float(v), 1) for v in box]}
-    _save_players_file(stem, data)
+    with _players_lock:
+        data = _load_players_file(stem)
+        fixes = data.setdefault("actor_fixes", {})
+        fixes[event_id] = {"none": True} if box is None else {"box": [round(float(v), 1) for v in box]}
+        _save_players_file(stem, data)
 
 
 def remove_actor_fix(stem: str, event_id: str) -> None:
     """Revert an event to the automatic pick."""
-    data = _load_players_file(stem)
-    if data.get("actor_fixes", {}).pop(event_id, None) is not None:
-        _save_players_file(stem, data)
+    with _players_lock:
+        data = _load_players_file(stem)
+        if data.get("actor_fixes", {}).pop(event_id, None) is not None:
+            _save_players_file(stem, data)
 
 
 def match(
