@@ -24,7 +24,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from yp_video.core.jsonl import read_jsonl, write_jsonl
+from yp_video.core.jsonl import read_jsonl, read_jsonl_cached, write_jsonl
 from yp_video.reid.detector import (
     DEFAULT_KEYPOINT_SOURCE,
     DETECTOR_NAME,
@@ -52,11 +52,15 @@ ProgressFn = Callable[[int, int, str], None]
 
 
 def load_events(stem: str) -> list[dict]:
-    """Visible action events with a location, sorted by frame."""
+    """Visible action events with a location, sorted by frame.
+
+    Cached parse (list_videos calls this for EVERY cut on every page load);
+    events are read-only downstream — extract_video builds fresh records.
+    """
     path = action_annotation_path(stem)
     if path is None:
         return []
-    _meta, rows = read_jsonl(path)
+    _meta, rows = read_jsonl_cached(path)
     events = [
         r for r in rows
         if r.get("visible", True)

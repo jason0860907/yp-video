@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from logging.handlers import RotatingFileHandler
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -92,6 +93,10 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="YP Video Analysis", lifespan=lifespan)
+
+# Numeric JSON payloads (reid tracks ships ~100k boxes) compress 4-5x;
+# small responses and streams (SSE, video ranges) pass through untouched.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 # Mount API routers
 app.include_router(download.router, prefix="/api/download", tags=["download"])
