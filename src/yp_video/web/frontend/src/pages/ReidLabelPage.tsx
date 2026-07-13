@@ -28,19 +28,15 @@ import { toast } from '@/components/feedback/toast';
 import { confirm } from '@/components/feedback/confirm';
 import type { ActionAnnotationData, ReidCluster, ReidPlayers, ReidRecord, ReidVideo } from '@/types/api';
 
-// Cosine-distance scales differ per model: CLIP-ReID's ViT features sit in a
-// tight cone (hence tiny cutoffs); KPR's foreground embeddings spread wide.
-// Ranges calibrated on real match footage (~12 people on court). The embedder
-// list itself comes from /reid/options — models we haven't calibrated yet get
-// a wide neutral range.
-const EMBEDDER_THRESHOLDS: Record<string, { min: number; max: number; def: number; step: number }> = {
-  'clip-reid': { min: 0.08, max: 0.3, def: 0.15, step: 0.01 },
-  kpr: { min: 0.3, max: 0.8, def: 0.55, step: 0.01 },
-  // CLIP-ReIdent's fine-tuned ViT-L features sit in an extremely tight cone —
-  // labeled-pair sweeps put the optimum at 0.020–0.026 on both test videos.
-  'clip-reident': { min: 0.008, max: 0.06, def: 0.022, step: 0.002 },
-};
-const thresholdsFor = (m: string) => EMBEDDER_THRESHOLDS[m] ?? { min: 0.05, max: 0.95, def: 0.3, step: 0.01 };
+// Embedders and their threshold-slider calibration both come from
+// /reid/options — cosine-distance scales differ wildly per model and the
+// backend registry is the single source of truth. Fallback covers only the
+// pre-fetch instant.
+interface EmbedderOption {
+  name: string;
+  threshold: { min: number; max: number; default: number; step: number };
+}
+const FALLBACK_THRESHOLD = { min: 0.05, max: 0.95, default: 0.3, step: 0.01 };
 // Show enough decimals to tell adjacent slider stops apart.
 const fmtThreshold = (v: number, step: number) => v.toFixed(step < 0.01 ? 3 : 2);
 // Detections below this score never win automatic association — they exist
@@ -792,8 +788,10 @@ export function ReidLabelPage() {
   const [embedder, setEmbedder] = useState('clip-reid');
   // Draft follows the slider live; the applied value (= clusters query key)
   // trails it by a debounce so dragging doesn't fire a re-cluster per pixel.
-  const [thresholdDraft, setThresholdDraft] = useState<number>(thresholdsFor('clip-reid').def);
-  const [threshold, setThreshold] = useState<number>(thresholdsFor('clip-reid').def);
+  // Seeded with clip-reid's known default; snaps to the server calibration
+  // the moment /reid/options lands (see effect below).
+  const [thresholdDraft, setThresholdDraft] = useState<number>(0.15);
+  const [threshold, setThreshold] = useState<number>(0.15);
   useEffect(() => {
     const t = setTimeout(() => setThreshold(thresholdDraft), 350);
     return () => clearTimeout(t);
@@ -826,13 +824,24 @@ export function ReidLabelPage() {
     queryKey: ['reid-videos'],
     queryFn: () => apiFetch<ReidVideo[]>(API.reid.videos),
   });
-  // Embedder choices come from the server registry — KPR only shows up when
-  // its checkout + weights actually exist there.
+  // Embedder choices AND their threshold calibration come from the server
+  // registry — a model only shows up when its weights actually exist there.
   const optionsQuery = useQuery({
     queryKey: ['reid-options'],
-    queryFn: () => apiFetch<{ keypoint_sources: string[]; embedders: string[] }>(API.reid.options),
+    queryFn: () => apiFetch<{ keypoint_sources: string[]; embedders: EmbedderOption[] }>(API.reid.options),
+    staleTime: Infinity, // static per server run
   });
-  const embedderOptions = optionsQuery.data?.embedders ?? ['clip-reid'];
+  const embedderOptions = useMemo(() => optionsQuery.data?.embedders ?? [], [optionsQuery.data]);
+  const thresholdsFor = (m: string) => embedderOptions.find((e) => e.name === m)?.threshold ?? FALLBACK_THRESHOLD;
+  // Snap the slider to the current model's calibrated default once the
+  // calibration arrives (exactly once — staleTime is Infinity).
+  useEffect(() => {
+    if (!optionsQuery.data) return;
+    const def = thresholdsFor(embedder).default;
+    setThresholdDraft(def);
+    setThreshold(def);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [optionsQuery.data]);
   const extracted = (videosQuery.data ?? []).filter((v) => v.has_reid);
   // Picker filters, mirroring the Action Label / Rally Label pickers.
   const pickable = extracted.filter((v) => {
@@ -1674,15 +1683,15 @@ export function ReidLabelPage() {
                 const m = e.target.value;
                 setEmbedder(m);
                 // Distance scales differ per model — jump to its default.
-                setThresholdDraft(thresholdsFor(m).def);
-                setThreshold(thresholdsFor(m).def);
+                setThresholdDraft(thresholdsFor(m).default);
+                setThreshold(thresholdsFor(m).default);
               }}
               className={selectCls}
               title="Appearance embedding model — compare how each one groups the players"
             >
-              {embedderOptions.map((m) => (
-                <option key={m} value={m}>
-                  {m}
+              {embedderOptions.map((e) => (
+                <option key={e.name} value={e.name}>
+                  {e.name}
                 </option>
               ))}
             </select>

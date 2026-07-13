@@ -8,9 +8,7 @@ crop images; identity matching consumes them later.
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import time
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -20,20 +18,9 @@ from pydantic import BaseModel, Field
 
 from yp_video.config import cut_kind_of, find_cut, iter_all_cuts
 from yp_video.core.jsonl import read_jsonl, read_jsonl_cached
-from yp_video.reid import identity, pipeline, tracking
-from yp_video.reid.embedder import DEFAULT_EMBEDDER, EMBEDDER_WEIGHTS
-from yp_video.web.job_helpers import (
-    TERMINAL_ITEM_STATUSES,
-    batch_items_params,
-    batch_message,
-    batch_progress,
-    fail_job_from_exc,
-    finalize_batch_job,
-    init_batch_items,
-    mark_batch_item,
-    stop_vllm_for_job,
-    update_batch_item,
-)
+from yp_video.reid import identity, pipeline, store, tracking
+from yp_video.reid.embedder import DEFAULT_EMBEDDER, EMBEDDER_WEIGHTS, threshold_calibration
+from yp_video.web.job_helpers import init_batch_items, spawn_batch_video_job
 from yp_video.web.jobs import job_manager
 
 log = logging.getLogger(__name__)
@@ -50,7 +37,7 @@ class ReidStartRequest(BaseModel):
 
 
 def _read_header(stem: str) -> dict | None:
-    path = pipeline.reid_path(stem)
+    path = store.reid_path(stem)
     if not path.exists():
         return None
     import json
@@ -88,8 +75,13 @@ def list_videos() -> list[dict]:
 
 @router.get("/options")
 def options() -> dict:
-    """Available keypoint-source / embedder choices for the Predict / Label pages."""
-    return {"keypoint_sources": list(pipeline.keypoint_sources), "embedders": list(pipeline.embedders)}
+    """Available keypoint-source / embedder choices for the Predict / Label
+    pages. Each embedder ships its cluster-threshold slider calibration, so
+    adding a model server-side never needs a frontend edit."""
+    return {
+        "keypoint_sources": list(pipeline.keypoint_sources),
+        "embedders": [{"name": n, "threshold": threshold_calibration(n)} for n in pipeline.embedders],
+    }
 
 
 @router.post("/start")
@@ -106,9 +98,9 @@ async def start(req: ReidStartRequest) -> dict:
         path = find_cut(name)
         if path is None:
             raise HTTPException(404, f"Video not found: {name}")
-        if pipeline.action_annotation_path(path.stem) is None:
+        if store.action_annotation_path(path.stem) is None:
             raise HTTPException(400, f"No action annotations for: {name}")
-        if not req.overwrite and pipeline.reid_path(path.stem).exists():
+        if not req.overwrite and store.reid_path(path.stem).exists():
             skipped.append(path.stem)
             continue
         video_paths.append(path)
@@ -125,7 +117,7 @@ async def start(req: ReidStartRequest) -> dict:
         },
         name=f"Player ReID ({len(video_paths)} videos)",
     )
-    _spawn_batch_job(
+    spawn_batch_video_job(
         job,
         video_paths,
         stop_vllm=req.stop_vllm,
@@ -135,88 +127,6 @@ async def start(req: ReidStartRequest) -> dict:
         start_message="detecting players...",
     )
     return job.to_dict()
-
-
-def _spawn_batch_job(job, video_paths: list[Path], *, stop_vllm: bool, work, done_message, progress_noun: str, start_message: str) -> None:
-    """Run ``work(video_path, on_progress)`` per video inside the standard
-    batch-job scaffolding: inference lock, throttled per-item progress,
-    cancellation, and the final ok/failed roll-up. ``work`` is synchronous
-    and GPU-bound — it runs in an executor thread.
-    """
-    total = len(video_paths)
-
-    async def run_job() -> None:
-        items = job.params["items"]
-        loop = asyncio.get_event_loop()
-        failed = 0
-        try:
-            await job_manager.update_job(
-                job.id, status="running", message="Waiting for inference slot..."
-            )
-            async with stop_vllm_for_job(job.id, when=stop_vllm):
-                async with job_manager.inference_lock:
-                    for i, video_path in enumerate(video_paths):
-                        await update_batch_item(
-                            job.id, items, i, status="running", message=start_message,
-                            overall_progress=batch_progress(i, 0.0, total),
-                            overall_message=batch_message(i, total, video_path.name, start_message),
-                        )
-
-                        last_push = {"t": 0.0}
-
-                        def on_progress(done, total_units, _status, *, index=i, name=video_path.name):
-                            # Executor thread → schedule onto the loop; throttle
-                            # to ~1/s except the final unit.
-                            now = time.monotonic()
-                            if done != total_units and now - last_push["t"] < 1.0:
-                                return
-                            last_push["t"] = now
-                            frac = done / total_units if total_units else 0.0
-                            detail = f"{progress_noun} {done}/{total_units}"
-                            loop.call_soon_threadsafe(
-                                asyncio.ensure_future,
-                                update_batch_item(
-                                    job.id, items, index, progress=frac, message=detail,
-                                    overall_progress=batch_progress(index, frac, total),
-                                    overall_message=batch_message(index, total, name, detail),
-                                ),
-                            )
-
-                        try:
-                            counts = await loop.run_in_executor(
-                                None,
-                                lambda p=video_path, cb=on_progress: work(p, cb),
-                            )
-                            await update_batch_item(
-                                job.id, items, i, status="completed", progress=1.0,
-                                message=done_message(counts),
-                                overall_progress=batch_progress(i, 1.0, total),
-                                overall_message=batch_message(i, total, video_path.name, "done"),
-                            )
-                        except Exception as exc:  # noqa: BLE001
-                            failed += 1
-                            log.exception("%s failed for %s", job.name, video_path.name)
-                            await update_batch_item(
-                                job.id, items, i, status="failed",
-                                message=f"{type(exc).__name__}: {exc}", error=str(exc),
-                                overall_message=batch_message(i, total, video_path.name, f"failed — {exc}"),
-                            )
-            await finalize_batch_job(job.id, total, failed)
-        except asyncio.CancelledError:
-            for idx in range(len(items)):
-                if items[idx].get("status") not in TERMINAL_ITEM_STATUSES:
-                    mark_batch_item(items, idx, status="cancelled", message="Cancelled")
-            current = job_manager.get_job(job.id)
-            await job_manager.update_job(
-                job.id, status="cancelled", message="Cancelled",
-                params={**(current.params if current else {}), **batch_items_params(items)},
-            )
-        except Exception as exc:  # noqa: BLE001
-            log.exception("%s job failed", job.name)
-            await fail_job_from_exc(job.id, exc)
-
-    task = asyncio.create_task(run_job())
-    job_manager.attach_task(job, task)
 
 
 class TrackStartRequest(BaseModel):
@@ -236,9 +146,9 @@ async def track(req: TrackStartRequest) -> dict:
         path = find_cut(name)
         if path is None:
             raise HTTPException(404, f"Video not found: {name}")
-        if pipeline.action_annotation_path(path.stem) is None:
+        if store.action_annotation_path(path.stem) is None:
             raise HTTPException(400, f"No action annotations for: {name}")
-        if not req.overwrite and tracking.tracks_path(path.stem).exists():
+        if not req.overwrite and store.tracks_path(path.stem).exists():
             skipped.append(path.stem)
             continue
         video_paths.append(path)
@@ -255,7 +165,7 @@ async def track(req: TrackStartRequest) -> dict:
         },
         name=f"Rally Tracking ({len(video_paths)} videos)",
     )
-    _spawn_batch_job(
+    spawn_batch_video_job(
         job,
         video_paths,
         stop_vllm=req.stop_vllm,
@@ -273,11 +183,11 @@ def tracks(name: str) -> dict:
     badges and propagation). Boxes are truncated to whole pixels — the
     overlay doesn't need tenths and the payload holds ~100k boxes."""
     stem = Path(unquote(name)).stem
-    if not tracking.tracks_path(stem).exists():
+    if not store.tracks_path(stem).exists():
         raise HTTPException(404, f"No tracking for {stem} — run tracking on the ReID Predict page first")
-    if not pipeline.reid_path(stem).exists():
+    if not store.reid_path(stem).exists():
         raise HTTPException(404, f"No ReID results for {stem}")
-    _meta, tracklets = read_jsonl_cached(tracking.tracks_path(stem))  # read-only — copy, never mutate
+    _meta, tracklets = read_jsonl_cached(store.tracks_path(stem))  # read-only — copy, never mutate
     slim = [
         {
             "rally_id": t["rally_id"],
@@ -294,7 +204,7 @@ def tracks(name: str) -> dict:
 def results(name: str) -> dict:
     """One video's extraction records, embeddings stripped (UI payload)."""
     stem = Path(unquote(name)).stem
-    path = pipeline.reid_path(stem)
+    path = store.reid_path(stem)
     if not path.exists():
         raise HTTPException(404, f"No ReID results for {stem}")
     # Cached parse shares objects across requests — strip into copies, never
@@ -304,16 +214,16 @@ def results(name: str) -> dict:
     # The video-sync overlay needs fps (frame ↔ time) and the rally spans for
     # its rally navigator — both live in the annotation header, not the
     # extraction header.
-    ann = pipeline.action_annotation_path(stem)
+    ann = store.action_annotation_path(stem)
     if ann is not None:
         ann_meta, _ = read_jsonl(ann)
         if not meta.get("fps") and ann_meta.get("fps"):
             meta["fps"] = ann_meta["fps"]
         meta["rallies"] = ann_meta.get("rallies") or []
     out = []
-    # Drop score events from old extractions too (see pipeline.SKIP_LABELS).
+    # Drop score events from old extractions too (see store.SKIP_LABELS).
     for r in records:
-        if r.get("label") in pipeline.SKIP_LABELS:
+        if r.get("label") in store.SKIP_LABELS:
             continue
         r = {k: v for k, v in r.items() if k != "embeddings"}
         # The actor picker only needs boxes + scores; skeletons stay server-side.
@@ -326,7 +236,7 @@ def results(name: str) -> dict:
 @router.get("/crop/{name}/{crop_file}")
 def crop(name: str, crop_file: str) -> FileResponse:
     stem = Path(unquote(name)).stem
-    path = pipeline.crop_dir(stem) / Path(unquote(crop_file)).name
+    path = store.crop_dir(stem) / Path(unquote(crop_file)).name
     if not path.exists():
         raise HTTPException(404, "Crop not found")
     return FileResponse(path, media_type="image/jpeg")
@@ -390,7 +300,7 @@ def get_players(name: str, model: str = DEFAULT_EMBEDDER) -> dict:
 @router.put("/players/{name}")
 def put_players(name: str, req: SaveAssignmentsRequest, model: str = DEFAULT_EMBEDDER) -> dict:
     stem = Path(unquote(name)).stem
-    if not pipeline.reid_path(stem).exists():
+    if not store.reid_path(stem).exists():
         raise HTTPException(404, f"No ReID results for {stem}")
     identity.save_assignments(stem, req.assignments)
     return get_players(name, model=model)
@@ -448,7 +358,7 @@ def actor_fix(name: str, req: ActorFixRequest) -> dict:
     if video_path is None:
         raise HTTPException(404, f"Video not found: {name}")
     stem = video_path.stem
-    if not pipeline.reid_path(stem).exists():
+    if not store.reid_path(stem).exists():
         raise HTTPException(404, f"No ReID results for {stem}")
     try:
         if req.box is not None:

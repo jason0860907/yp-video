@@ -12,6 +12,7 @@ it sidesteps onnxruntime-gpu / CUDA wheel matching entirely.
 from __future__ import annotations
 
 import tempfile
+from typing import Protocol
 
 import numpy as np
 
@@ -20,6 +21,60 @@ CLIP_REID_ONNX = "person_vit_clip_reid.onnx"
 # ReID-standard input aspect (h, w) the checkpoint was trained at.
 INPUT_H, INPUT_W = 256, 128
 EMBEDDING_DIM = 512
+
+
+class Embedder(Protocol):
+    """One entry in the embedder registry (see build_embedders).
+
+    Embedding dimension may differ per model — downstream cosine math never
+    assumes one. ``prompts[i]`` optionally carries keypoint prompts (see
+    ``build_crop_prompt``); non-promptable embedders ignore them.
+    """
+
+    def embed(self, crops_bgr: list[np.ndarray], prompts: list[dict] | None = None, batch_size: int = 32) -> np.ndarray: ...
+
+
+def build_crop_prompt(record: dict, person_box: list[float]) -> dict:
+    """Keypoint prompts for promptable embedders (KPR) from one extraction
+    record: the chosen person's keypoints form the positive prompt and every
+    other detected person's keypoints that fall inside the saved crop become
+    negatives — all in crop-pixel coordinates of the display crop.
+
+    ``person_box`` is the chosen person's raw detector box (frame pixels),
+    used only to exclude them from the negatives.
+    """
+    from yp_video.reid.detector import iou
+
+    dx0, dy0, dx1, dy1 = record["box"]
+    cw, ch = max(dx1 - dx0, 1), max(dy1 - dy0, 1)
+
+    # KPR's transform stack validates that every keypoint lies inside the
+    # crop, so clamp — points pushed out by frame-edge clipping land on the
+    # border, which is where the person is cut off anyway.
+    def clamped(kx: float, ky: float, c: float) -> list[float]:
+        return [min(max(kx, 0.0), cw - 1.0), min(max(ky, 0.0), ch - 1.0), c]
+
+    pos = None
+    if record.get("keypoints"):
+        # Stored crop-relative (0-1) → crop pixels.
+        pos = np.array([clamped(k[0] * cw, k[1] * ch, k[2]) for k in record["keypoints"]], dtype=np.float32)
+    negs = []
+    for d in record.get("detections") or []:
+        kps = d.get("keypoints")
+        if not kps or iou(d["box"], person_box) > 0.8:
+            continue  # no keypoints, or this IS the chosen person
+        pts, any_inside = [], False
+        for px, py, c in kps:
+            kx, ky = px - dx0, py - dy0
+            inside = 0 <= kx <= cw and 0 <= ky <= ch and c > 0
+            any_inside = any_inside or inside
+            pts.append(clamped(kx, ky, c if inside else 0.0))
+        if any_inside:
+            negs.append(pts)
+    return {
+        "keypoints_xyc": pos,
+        "negative_kps": np.array(negs, dtype=np.float32) if negs else None,
+    }
 
 
 class ClipReidEmbedder:
@@ -169,13 +224,30 @@ EMBEDDER_WEIGHTS = {
 }
 DEFAULT_EMBEDDER = "clip-reid"
 
+# Cluster-threshold slider calibration per embedder, served to the UI via
+# /reid/options. Cosine-distance scales differ wildly per model: CLIP-ReID's
+# ViT features sit in a tight cone, KPR's foreground embeddings spread wide,
+# CLIP-ReIdent's fine-tuned ViT-L is extremely tight (labeled-pair optimum
+# ~0.02). Calibrated on real match footage (~12 people on court); models
+# without an entry get the wide neutral fallback.
+EMBEDDER_THRESHOLDS = {
+    "clip-reid": {"min": 0.08, "max": 0.3, "default": 0.15, "step": 0.01},
+    "kpr": {"min": 0.3, "max": 0.8, "default": 0.55, "step": 0.01},
+    "clip-reident": {"min": 0.008, "max": 0.06, "default": 0.022, "step": 0.002},
+}
+FALLBACK_THRESHOLD = {"min": 0.05, "max": 0.95, "default": 0.3, "step": 0.01}
 
-def build_embedders() -> dict:
+
+def threshold_calibration(name: str) -> dict:
+    return EMBEDDER_THRESHOLDS.get(name, FALLBACK_THRESHOLD)
+
+
+def build_embedders() -> dict[str, Embedder]:
     """Every available embedder; optional ones join when their checkout + weights exist."""
     from yp_video.config import KPR_DIR
     from yp_video.reid.clip_reident import ClipReidentEmbedder, clip_reident_available
 
-    out: dict = {"clip-reid": ClipReidEmbedder()}
+    out: dict[str, Embedder] = {"clip-reid": ClipReidEmbedder()}
     if (KPR_DIR / "pretrained_models" / KPR_WEIGHTS).exists():
         out["kpr"] = KprEmbedder()
     if clip_reident_available():

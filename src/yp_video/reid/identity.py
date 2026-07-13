@@ -26,16 +26,12 @@ from __future__ import annotations
 
 import json
 import threading
-from pathlib import Path
 
 import numpy as np
 
-from yp_video.config import PLAYER_REID_DIR
 from yp_video.core.jsonl import atomic_write, read_jsonl_cached
 from yp_video.reid.embedder import DEFAULT_EMBEDDER
-from yp_video.reid.pipeline import SKIP_LABELS, reid_path
-
-PLAYERS_DIR = PLAYER_REID_DIR / "players"
+from yp_video.reid.store import SKIP_LABELS, players_path, reid_path
 
 # Serializes read-modify-write of the players file: the UI auto-saves
 # assignments while actor fixes land, and interleaving would drop one edit.
@@ -45,10 +41,6 @@ _players_lock = threading.Lock()
 # features sit in a tight cone (pairwise distances p5–p95 ≈ 0.12–0.32), so
 # cutoffs are far smaller than typical CNN-feature values. The UI exposes it.
 DEFAULT_CLUSTER_THRESHOLD = 0.15
-
-
-def players_path(stem: str) -> Path:
-    return PLAYERS_DIR / f"{stem}_players.json"
 
 
 def load_embeddings(stem: str, model: str = DEFAULT_EMBEDDER) -> tuple[list[dict], np.ndarray]:

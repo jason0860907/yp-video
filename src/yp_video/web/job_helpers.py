@@ -418,3 +418,88 @@ async def stop_vllm_for_job(job_id: str, *, when: bool):
     finally:
         log.info("Auto-restarting vLLM after job %s", job_id)
         asyncio.create_task(vllm_manager.start())
+
+
+def spawn_batch_video_job(
+    job, video_paths: list[Path], *, stop_vllm: bool, work, done_message, progress_noun: str, start_message: str
+) -> None:
+    """Run ``work(video_path, on_progress)`` per video inside the standard
+    batch-job scaffolding: inference lock, throttled per-item progress,
+    cancellation, and the final ok/failed roll-up. ``work`` is synchronous
+    and GPU-bound — it runs in an executor thread; ``on_progress`` receives
+    ``(done, total, status)`` and may be called from that thread.
+    """
+    total = len(video_paths)
+
+    async def run_job() -> None:
+        items = job.params["items"]
+        loop = asyncio.get_event_loop()
+        failed = 0
+        try:
+            await job_manager.update_job(
+                job.id, status="running", message="Waiting for inference slot..."
+            )
+            async with stop_vllm_for_job(job.id, when=stop_vllm):
+                async with job_manager.inference_lock:
+                    for i, video_path in enumerate(video_paths):
+                        await update_batch_item(
+                            job.id, items, i, status="running", message=start_message,
+                            overall_progress=batch_progress(i, 0.0, total),
+                            overall_message=batch_message(i, total, video_path.name, start_message),
+                        )
+
+                        last_push = {"t": 0.0}
+
+                        def on_progress(done, total_units, _status, *, index=i, name=video_path.name):
+                            # Executor thread → schedule onto the loop; throttle
+                            # to ~1/s except the final unit.
+                            now = time.monotonic()
+                            if done != total_units and now - last_push["t"] < 1.0:
+                                return
+                            last_push["t"] = now
+                            frac = done / total_units if total_units else 0.0
+                            detail = f"{progress_noun} {done}/{total_units}"
+                            loop.call_soon_threadsafe(
+                                asyncio.ensure_future,
+                                update_batch_item(
+                                    job.id, items, index, progress=frac, message=detail,
+                                    overall_progress=batch_progress(index, frac, total),
+                                    overall_message=batch_message(index, total, name, detail),
+                                ),
+                            )
+
+                        try:
+                            counts = await loop.run_in_executor(
+                                None,
+                                lambda p=video_path, cb=on_progress: work(p, cb),
+                            )
+                            await update_batch_item(
+                                job.id, items, i, status="completed", progress=1.0,
+                                message=done_message(counts),
+                                overall_progress=batch_progress(i, 1.0, total),
+                                overall_message=batch_message(i, total, video_path.name, "done"),
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            failed += 1
+                            log.exception("%s failed for %s", job.name, video_path.name)
+                            await update_batch_item(
+                                job.id, items, i, status="failed",
+                                message=f"{type(exc).__name__}: {exc}", error=str(exc),
+                                overall_message=batch_message(i, total, video_path.name, f"failed — {exc}"),
+                            )
+            await finalize_batch_job(job.id, total, failed)
+        except asyncio.CancelledError:
+            for idx in range(len(items)):
+                if items[idx].get("status") not in TERMINAL_ITEM_STATUSES:
+                    mark_batch_item(items, idx, status="cancelled", message="Cancelled")
+            current = job_manager.get_job(job.id)
+            await job_manager.update_job(
+                job.id, status="cancelled", message="Cancelled",
+                params={**(current.params if current else {}), **batch_items_params(items)},
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.exception("%s job failed", job.name)
+            await fail_job_from_exc(job.id, exc)
+
+    task = asyncio.create_task(run_job())
+    job_manager.attach_task(job, task)

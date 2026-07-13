@@ -29,7 +29,8 @@ export function ReidPredictPage() {
   });
   const optionsQuery = useQuery({
     queryKey: ['reid-options'],
-    queryFn: () => apiFetch<{ keypoint_sources: string[]; embedders: string[] }>(API.reid.options),
+    queryFn: () => apiFetch<{ keypoint_sources: string[] }>(API.reid.options),
+    staleTime: Infinity, // static per server run
   });
   const keypointSources = optionsQuery.data?.keypoint_sources ?? ['rf-detr'];
   const videos = videosQuery.data ?? [];

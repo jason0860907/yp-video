@@ -24,51 +24,31 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from yp_video.config import (
-    ACTION_ANNOTATIONS_DIR,
-    ACTION_PRE_ANNOTATIONS_DIR,
-    PLAYER_REID_DIR,
-)
 from yp_video.core.jsonl import read_jsonl, write_jsonl
 from yp_video.reid.detector import (
     DEFAULT_KEYPOINT_SOURCE,
     DETECTOR_NAME,
     KEYPOINT_SOURCES,
+    KeypointSource,
     PersonBox,
     associate,
     build_keypoint_sources,
+    iou,
 )
-from yp_video.reid.embedder import EMBEDDER_WEIGHTS, build_embedders
-
-EMBEDDINGS_DIR = PLAYER_REID_DIR / "embeddings"
-CROPS_DIR = PLAYER_REID_DIR / "crops"
-
-# Actions that are not performed BY a player — "score" marks where the ball
-# lands, so there is nobody to re-identify at that point.
-SKIP_LABELS = frozenset({"score"})
+from yp_video.reid.embedder import EMBEDDER_WEIGHTS, Embedder, build_crop_prompt, build_embedders
+from yp_video.reid.store import (
+    EMBEDDINGS_DIR,
+    SKIP_LABELS,
+    action_annotation_path,
+    crop_dir,
+    reid_path,
+)
 
 # One instance per process: the models stay loaded across jobs.
-keypoint_sources = build_keypoint_sources()
-embedders = build_embedders()
+keypoint_sources: dict[str, KeypointSource] = build_keypoint_sources()
+embedders: dict[str, Embedder] = build_embedders()
 
 ProgressFn = Callable[[int, int, str], None]
-
-
-def reid_path(stem: str) -> Path:
-    return EMBEDDINGS_DIR / f"{stem}_reid.jsonl"
-
-
-def crop_dir(stem: str) -> Path:
-    return CROPS_DIR / stem
-
-
-def action_annotation_path(stem: str) -> Path | None:
-    """Manual action annotations win over pre-annotations."""
-    for directory in (ACTION_ANNOTATIONS_DIR, ACTION_PRE_ANNOTATIONS_DIR):
-        path = directory / f"{stem}_actions.jsonl"
-        if path.exists():
-            return path
-    return None
 
 
 def load_events(stem: str) -> list[dict]:
@@ -141,56 +121,6 @@ def _person_from_detection(d: dict) -> PersonBox:
     )
 
 
-def _crop_prompt(record: dict, person: PersonBox) -> dict:
-    """Keypoint prompts for promptable embedders (KPR).
-
-    The chosen person's keypoints form the positive prompt and every other
-    detected person's keypoints that fall inside the saved crop become
-    negatives — all in crop-pixel coordinates of the display crop.
-    """
-    import numpy as np
-
-    dx0, dy0, dx1, dy1 = record["box"]
-    cw, ch = max(dx1 - dx0, 1), max(dy1 - dy0, 1)
-
-    # KPR's transform stack validates that every keypoint lies inside the
-    # crop, so clamp — points pushed out by frame-edge clipping land on the
-    # border, which is where the person is cut off anyway.
-    def clamped(kx: float, ky: float, c: float) -> list[float]:
-        return [min(max(kx, 0.0), cw - 1.0), min(max(ky, 0.0), ch - 1.0), c]
-
-    pos = None
-    if record.get("keypoints"):
-        # Stored crop-relative (0-1) → crop pixels.
-        pos = np.array([clamped(k[0] * cw, k[1] * ch, k[2]) for k in record["keypoints"]], dtype=np.float32)
-    negs = []
-    for d in record.get("detections") or []:
-        kps = d.get("keypoints")
-        if not kps or _iou(d["box"], list(person.xyxy)) > 0.8:
-            continue  # no keypoints, or this IS the chosen person
-        pts, any_inside = [], False
-        for px, py, c in kps:
-            kx, ky = px - dx0, py - dy0
-            inside = 0 <= kx <= cw and 0 <= ky <= ch and c > 0
-            any_inside = any_inside or inside
-            pts.append(clamped(kx, ky, c if inside else 0.0))
-        if any_inside:
-            negs.append(pts)
-    return {
-        "keypoints_xyc": pos,
-        "negative_kps": np.array(negs, dtype=np.float32) if negs else None,
-    }
-
-
-def _iou(a: list[float], b: list[float]) -> float:
-    ix0, iy0 = max(a[0], b[0]), max(a[1], b[1])
-    ix1, iy1 = min(a[2], b[2]), min(a[3], b[3])
-    inter = max(0.0, ix1 - ix0) * max(0.0, iy1 - iy0)
-    area_a = max(0.0, a[2] - a[0]) * max(0.0, a[3] - a[1])
-    area_b = max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1])
-    return inter / (area_a + area_b - inter or 1.0)
-
-
 # A fix box must overlap a fresh detection this much to snap onto it (and
 # inherit its keypoints); below that the fix box is embedded as drawn.
 FIX_SNAP_IOU = 0.5
@@ -200,9 +130,9 @@ def _snap_to_detection(detections: list[dict], box: list[float]) -> PersonBox | 
     """The stored detection a fix box refers to, matched by IoU."""
     best, best_iou = None, FIX_SNAP_IOU
     for d in detections:
-        iou = _iou(d["box"], box)
-        if iou >= best_iou:
-            best, best_iou = d, iou
+        overlap = iou(d["box"], box)
+        if overlap >= best_iou:
+            best, best_iou = d, overlap
     return _person_from_detection(best) if best else None
 
 
@@ -309,7 +239,7 @@ def extract_video(
                             record["status"] = "ok" if len(candidates) == 1 else "multi"
                             crops.append(crop)
                             crop_owners.append(len(records))
-                            crop_prompts.append(_crop_prompt(record, auto))
+                            crop_prompts.append(build_crop_prompt(record, list(auto.xyxy)))
                 else:
                     # Replay the user's actor fix; keep the auto pick alongside
                     # so the disagreement survives re-extraction.
@@ -325,7 +255,7 @@ def extract_video(
                             record["status"] = "ok"
                             crops.append(crop)
                             crop_owners.append(len(records))
-                            crop_prompts.append(_crop_prompt(record, person))
+                            crop_prompts.append(build_crop_prompt(record, list(person.xyxy)))
             records.append(record)
             if on_progress:
                 on_progress(i + 1, total, record["status"])
@@ -434,7 +364,7 @@ def _apply_actor_fix(video_path: Path, event_id: str, box: list[float] | None, *
             record["status"] = "ok" if n_candidates == 1 else "multi"
         else:
             record["status"] = "ok"
-        prompt = _crop_prompt(record, person)
+        prompt = build_crop_prompt(record, list(person.xyxy))
         for name, embedder in embedders.items():
             emb = embedder.embed([crop], prompts=[prompt])[0]
             record.setdefault("embeddings", {})[name] = [round(float(v), 5) for v in emb]

@@ -28,12 +28,9 @@ from pathlib import Path
 
 import numpy as np
 
-from yp_video.config import PLAYER_REID_DIR
 from yp_video.core.jsonl import read_jsonl, read_jsonl_cached, write_jsonl
 from yp_video.reid.detector import DETECTOR_NAME, PERSON_SCORE_THRESHOLD
-from yp_video.reid.pipeline import action_annotation_path, reid_path
-
-TRACKS_DIR = PLAYER_REID_DIR / "tracks"
+from yp_video.reid.store import action_annotation_path, reid_path, tracks_path
 
 # Tracklets shorter than this many detections are detector flicker, not a player.
 MIN_TRACK_FRAMES = 5
@@ -50,10 +47,6 @@ BATCH_SIZE = 16
 _QUEUE_FRAMES = 4 * BATCH_SIZE
 
 ProgressFn = Callable[[int, int, str], None]
-
-
-def tracks_path(stem: str) -> Path:
-    return TRACKS_DIR / f"{stem}_tracks.jsonl"
 
 
 class _BatchDetector:

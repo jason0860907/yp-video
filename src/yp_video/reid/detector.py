@@ -10,6 +10,7 @@ annotated xy should sit next to somebody's wrist.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Protocol
 
 import numpy as np
 
@@ -55,6 +56,28 @@ class PersonBox:
     score: float
     keypoints: np.ndarray | None = None  # (17, 2) pixel coords
     keypoint_conf: np.ndarray | None = None  # (17,)
+
+
+class KeypointSource(Protocol):
+    """One entry in the keypoint-source registry (see build_keypoint_sources).
+
+    Boxes and scores always come from RF-DETR; implementations differ only in
+    who estimates the 17 COCO keypoints. ``focus`` (the event's contact point)
+    is a hint — whole-frame detectors ignore it, top-down ones use it to skip
+    implausible actors.
+    """
+
+    def detect(self, frame_bgr: np.ndarray, focus: tuple[float, float] | None = None) -> list[PersonBox]: ...
+
+
+def iou(a: list[float], b: list[float]) -> float:
+    """Plain box IoU, xyxy lists."""
+    ix0, iy0 = max(a[0], b[0]), max(a[1], b[1])
+    ix1, iy1 = min(a[2], b[2]), min(a[3], b[3])
+    inter = max(0.0, ix1 - ix0) * max(0.0, iy1 - iy0)
+    area_a = max(0.0, a[2] - a[0]) * max(0.0, a[3] - a[1])
+    area_b = max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1])
+    return inter / (area_a + area_b - inter or 1.0)
 
 
 class PersonDetector:
@@ -143,7 +166,7 @@ def associate(boxes: list[PersonBox], x: float, y: float) -> list[PersonBox]:
     return [box for _, box in sorted(scored, key=lambda t: t[0])]
 
 
-def build_keypoint_sources() -> dict:
+def build_keypoint_sources() -> dict[str, KeypointSource]:
     """Every available keypoint source; SAM 3D Body joins when its weights
     exist. Both entries share ONE RF-DETR instance — "sam-3d-body" wraps it
     for boxes and replaces only the keypoints (see reid/sam3d.py).
@@ -151,7 +174,7 @@ def build_keypoint_sources() -> dict:
     from yp_video.reid.sam3d import Sam3dBodyDetector, sam3d_available
 
     rf = PersonDetector()
-    out: dict = {"rf-detr": rf}
+    out: dict[str, KeypointSource] = {"rf-detr": rf}
     if sam3d_available():
         out["sam-3d-body"] = Sam3dBodyDetector(rf)
     return out
