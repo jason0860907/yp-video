@@ -7,7 +7,8 @@ ReID pipeline 的三個外部研究 repo 住在 `<volleyiq>/third_party/`(yp-vid
 2. **匯入**是執行時 lazy 地把 checkout 塞進 `sys.path`(依賴裝在 yp-video 自己的 venv,checkout 本身不 pip install)
 3. **註冊**只在權重檔存在時發生 —— 缺權重就自動從 registry 退場,`/reid/options` 不會列出它,其餘功能不受影響
 
-換機器重建時,照下面各節的步驟 clone + 下載權重即可,程式碼零修改。
+換機器重建時,照下面各節的步驟 clone + 下載權重即可,yp-video 的程式碼零修改
+(KPR 的 checkout 本身需要兩個小 patch,見該節 —— 上游 2024/08 之後未再維護)。
 三個 checkout 的 **Python 依賴都宣告在 yp-video 的 `pyproject.toml`**(實測的
 runtime import 閉包),`uv sync` 一次裝齊 —— 不需要照各 repo 自己的
 requirements 安裝。
@@ -26,9 +27,25 @@ requirements 安裝。
 
 ```bash
 git clone https://github.com/VlSomers/keypoint_promptable_reidentification third_party/kpr
-# 權重:到 repo README 的 model zoo 下載 SOLIDER / Occluded-PoseTrack 版,放到:
+# 權重:model zoo 資料夾裡的 SOLIDER / Occluded-PoseTrack 版(GDrive file id 如下),放到:
 #   third_party/kpr/pretrained_models/kpr_occ_pt_SOLIDER_81.24_90.59_42326409.pth.tar
+gdown 1Ah4iOjz_VOMnl0QUKYaRb5v5AOfLyG51 \
+    -O third_party/kpr/pretrained_models/kpr_occ_pt_SOLIDER_81.24_90.59_42326409.pth.tar
 ```
+
+上游停在 torch 2.5 / Python 3.10 年代,fresh clone 要打兩個 patch 才能在本 venv 跑:
+
+1. `torchreid/data/datasets/image/occluded_posetrack21.py`:`TrackingSet.image_gt`
+   用 DataFrame 實例當 dataclass 預設值 —— Python ≥3.11 直接拒絕,改成
+   `field(default_factory=lambda: pd.DataFrame(columns=["video_id"]))`(記得從
+   dataclasses 多 import `field`)
+2. `torchreid/utils/torchtools.py`:`load_checkpoint` 的兩個 `torch.load` 加上
+   `weights_only=False` —— torch 2.6 起預設翻成 True,而 KPR checkpoint 內嵌
+   yacs CfgNode,weights-only unpickler 結構上不支援(allowlist 也救不了),
+   權重來自論文作者屬信任來源
+
+另外 KPR 在 import 時呼叫 matplotlib ≥3.9 移除的 `cm.get_cmap` —— 這個不用
+patch,`pyproject.toml` 已 pin `matplotlib<3.9`。
 
 設定檔 `configs/kpr/solider/kpr_occ_posetrack_test.yaml` 由 `reid/embedder.py` 的 `KPR_CONFIG` 指定;輸入尺寸/normalization 是 extractor 的建構參數,不從 cfg 讀 —— 兩處都跟著 config 走,升級時別讓它們分岔。
 
