@@ -8,6 +8,9 @@ ReID pipeline 的三個外部研究 repo 住在 `<volleyiq>/third_party/`(yp-vid
 3. **註冊**只在權重檔存在時發生 —— 缺權重就自動從 registry 退場,`/reid/options` 不會列出它,其餘功能不受影響
 
 換機器重建時,照下面各節的步驟 clone + 下載權重即可,程式碼零修改。
+三個 checkout 的 **Python 依賴都宣告在 yp-video 的 `pyproject.toml`**(實測的
+runtime import 閉包),`uv sync` 一次裝齊 —— 不需要照各 repo 自己的
+requirements 安裝。
 
 ## 總覽
 
