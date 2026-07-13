@@ -162,15 +162,22 @@ class KprEmbedder:
 
 
 # name → weights identifier, recorded in each extraction's header.
-EMBEDDER_WEIGHTS = {"clip-reid": CLIP_REID_ONNX, "kpr": KPR_WEIGHTS}
+EMBEDDER_WEIGHTS = {
+    "clip-reid": CLIP_REID_ONNX,
+    "kpr": KPR_WEIGHTS,
+    "clip-reident": "ViT-L-14_openai/all_data_seed_1/weights_e4.pth",
+}
 DEFAULT_EMBEDDER = "clip-reid"
 
 
 def build_embedders() -> dict:
-    """Every available embedder; KPR joins when its checkout + weights exist."""
+    """Every available embedder; optional ones join when their checkout + weights exist."""
     from yp_video.config import KPR_DIR
+    from yp_video.reid.clip_reident import ClipReidentEmbedder, clip_reident_available
 
     out: dict = {"clip-reid": ClipReidEmbedder()}
     if (KPR_DIR / "pretrained_models" / KPR_WEIGHTS).exists():
         out["kpr"] = KprEmbedder()
+    if clip_reident_available():
+        out["clip-reident"] = ClipReidentEmbedder()
     return out

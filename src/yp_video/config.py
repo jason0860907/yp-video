@@ -101,6 +101,14 @@ SAM3D_DIR = Path(
     or Path(__file__).resolve().parents[2].parent / "third_party" / "sam-3d-body"
 )
 
+# CLIP-ReIdent (MMSports'22) — optional third embedder, trained on basketball
+# broadcast footage. Same third_party pattern; weights via the repo's Google
+# Drive release (see reid/clip_reident.py).
+CLIP_REIDENT_DIR = Path(
+    os.environ.get("CLIP_REIDENT_DIR")
+    or Path(__file__).resolve().parents[2].parent / "third_party" / "clip_reident"
+)
+
 # R2 category → local directory + glob pattern mapping
 class R2Category(NamedTuple):
     local_dir: Path
