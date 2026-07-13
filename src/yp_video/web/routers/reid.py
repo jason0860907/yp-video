@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 
 from yp_video.config import cut_kind_of, find_cut, iter_all_cuts
 from yp_video.core.jsonl import read_jsonl, read_jsonl_cached
-from yp_video.reid import identity, pipeline
+from yp_video.reid import identity, pipeline, tracking
 from yp_video.reid.embedder import DEFAULT_EMBEDDER, EMBEDDER_WEIGHTS
 from yp_video.web.job_helpers import (
     TERMINAL_ITEM_STATUSES,
@@ -116,7 +116,6 @@ async def start(req: ReidStartRequest) -> dict:
     if not video_paths:
         raise HTTPException(400, "All selected videos already have ReID results (enable overwrite)")
 
-    total = len(video_paths)
     job = job_manager.create_job(
         "player_reid",
         {
@@ -124,8 +123,27 @@ async def start(req: ReidStartRequest) -> dict:
             "skipped_existing": skipped,
             "items": init_batch_items([p.name for p in video_paths]),
         },
-        name=f"Player ReID ({total} videos)",
+        name=f"Player ReID ({len(video_paths)} videos)",
     )
+    _spawn_batch_job(
+        job,
+        video_paths,
+        stop_vllm=req.stop_vllm,
+        work=lambda p, cb: pipeline.extract_video(p, keypoints=req.keypoints, on_progress=cb),
+        done_message=lambda c: f"{c['ok']} ok · {c['multi']} multi · {c['miss']} miss",
+        progress_noun="event",
+        start_message="detecting players...",
+    )
+    return job.to_dict()
+
+
+def _spawn_batch_job(job, video_paths: list[Path], *, stop_vllm: bool, work, done_message, progress_noun: str, start_message: str) -> None:
+    """Run ``work(video_path, on_progress)`` per video inside the standard
+    batch-job scaffolding: inference lock, throttled per-item progress,
+    cancellation, and the final ok/failed roll-up. ``work`` is synchronous
+    and GPU-bound — it runs in an executor thread.
+    """
+    total = len(video_paths)
 
     async def run_job() -> None:
         items = job.params["items"]
@@ -135,26 +153,26 @@ async def start(req: ReidStartRequest) -> dict:
             await job_manager.update_job(
                 job.id, status="running", message="Waiting for inference slot..."
             )
-            async with stop_vllm_for_job(job.id, when=req.stop_vllm):
+            async with stop_vllm_for_job(job.id, when=stop_vllm):
                 async with job_manager.inference_lock:
                     for i, video_path in enumerate(video_paths):
                         await update_batch_item(
-                            job.id, items, i, status="running", message="detecting players...",
+                            job.id, items, i, status="running", message=start_message,
                             overall_progress=batch_progress(i, 0.0, total),
-                            overall_message=batch_message(i, total, video_path.name, "detecting players..."),
+                            overall_message=batch_message(i, total, video_path.name, start_message),
                         )
 
                         last_push = {"t": 0.0}
 
-                        def on_progress(done, total_events, _status, *, index=i, name=video_path.name):
+                        def on_progress(done, total_units, _status, *, index=i, name=video_path.name):
                             # Executor thread → schedule onto the loop; throttle
-                            # to ~1/s except the final event.
+                            # to ~1/s except the final unit.
                             now = time.monotonic()
-                            if done != total_events and now - last_push["t"] < 1.0:
+                            if done != total_units and now - last_push["t"] < 1.0:
                                 return
                             last_push["t"] = now
-                            frac = done / total_events if total_events else 0.0
-                            detail = f"event {done}/{total_events}"
+                            frac = done / total_units if total_units else 0.0
+                            detail = f"{progress_noun} {done}/{total_units}"
                             loop.call_soon_threadsafe(
                                 asyncio.ensure_future,
                                 update_batch_item(
@@ -167,17 +185,17 @@ async def start(req: ReidStartRequest) -> dict:
                         try:
                             counts = await loop.run_in_executor(
                                 None,
-                                lambda p=video_path, cb=on_progress: pipeline.extract_video(p, keypoints=req.keypoints, on_progress=cb),
+                                lambda p=video_path, cb=on_progress: work(p, cb),
                             )
                             await update_batch_item(
                                 job.id, items, i, status="completed", progress=1.0,
-                                message=f"{counts['ok']} ok · {counts['multi']} multi · {counts['miss']} miss",
+                                message=done_message(counts),
                                 overall_progress=batch_progress(i, 1.0, total),
                                 overall_message=batch_message(i, total, video_path.name, "done"),
                             )
                         except Exception as exc:  # noqa: BLE001
                             failed += 1
-                            log.exception("ReID extraction failed for %s", video_path.name)
+                            log.exception("%s failed for %s", job.name, video_path.name)
                             await update_batch_item(
                                 job.id, items, i, status="failed",
                                 message=f"{type(exc).__name__}: {exc}", error=str(exc),
@@ -194,12 +212,82 @@ async def start(req: ReidStartRequest) -> dict:
                 params={**(current.params if current else {}), **batch_items_params(items)},
             )
         except Exception as exc:  # noqa: BLE001
-            log.exception("Player ReID job failed")
+            log.exception("%s job failed", job.name)
             await fail_job_from_exc(job.id, exc)
 
     task = asyncio.create_task(run_job())
     job_manager.attach_task(job, task)
+
+
+class TrackStartRequest(BaseModel):
+    videos: list[str] = Field(min_length=1)
+    overwrite: bool = False
+    stop_vllm: bool = False
+    # Detect every Nth rally frame; ByteTrack is told the effective rate.
+    stride: int = Field(1, ge=1, le=10)
+
+
+@router.post("/track")
+async def track(req: TrackStartRequest) -> dict:
+    """Dense per-rally detection + ByteTrack (see reid/tracking.py)."""
+    video_paths: list[Path] = []
+    skipped: list[str] = []
+    for name in req.videos:
+        path = find_cut(name)
+        if path is None:
+            raise HTTPException(404, f"Video not found: {name}")
+        if pipeline.action_annotation_path(path.stem) is None:
+            raise HTTPException(400, f"No action annotations for: {name}")
+        if not req.overwrite and tracking.tracks_path(path.stem).exists():
+            skipped.append(path.stem)
+            continue
+        video_paths.append(path)
+
+    if not video_paths:
+        raise HTTPException(400, "All selected videos already have tracking (enable overwrite)")
+
+    job = job_manager.create_job(
+        "player_tracking",
+        {
+            "videos": [p.name for p in video_paths],
+            "skipped_existing": skipped,
+            "items": init_batch_items([p.name for p in video_paths]),
+        },
+        name=f"Rally Tracking ({len(video_paths)} videos)",
+    )
+    _spawn_batch_job(
+        job,
+        video_paths,
+        stop_vllm=req.stop_vllm,
+        work=lambda p, cb: tracking.track_video(p, stride=req.stride, on_progress=cb),
+        done_message=lambda c: f"{c['tracklets']} tracklets over {c['frames']} frames",
+        progress_noun="frame",
+        start_message="tracking rallies...",
+    )
     return job.to_dict()
+
+
+@router.get("/tracks/{name}")
+def tracks(name: str) -> dict:
+    """Tracklets (for the video overlay) + event→tracklet links (for crop
+    badges and propagation). Boxes are truncated to whole pixels — the
+    overlay doesn't need tenths and the payload holds ~100k boxes."""
+    stem = Path(unquote(name)).stem
+    if not tracking.tracks_path(stem).exists():
+        raise HTTPException(404, f"No tracking for {stem} — run tracking on the ReID Predict page first")
+    if not pipeline.reid_path(stem).exists():
+        raise HTTPException(404, f"No ReID results for {stem}")
+    _meta, tracklets = read_jsonl_cached(tracking.tracks_path(stem))  # read-only — copy, never mutate
+    slim = [
+        {
+            "rally_id": t["rally_id"],
+            "track_id": t["track_id"],
+            "frames": t["frames"],
+            "boxes": [[int(v) for v in b] for b in t["boxes"]],
+        }
+        for t in tracklets
+    ]
+    return {"tracklets": slim, "links": tracking.link_events(stem)}
 
 
 @router.get("/results/{name}")
