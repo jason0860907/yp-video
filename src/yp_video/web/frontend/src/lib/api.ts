@@ -151,5 +151,7 @@ export const API = {
     actorFix: (name: string) => `/reid/actor-fix/${encodeURIComponent(name)}`,
     options: '/reid/options',
     seedCluster: (name: string) => `/reid/seed-cluster/${encodeURIComponent(name)}`,
+    track: '/reid/track',
+    tracks: (name: string) => `/reid/tracks/${encodeURIComponent(name)}`,
   },
 } as const;

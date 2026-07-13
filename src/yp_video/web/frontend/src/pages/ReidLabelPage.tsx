@@ -33,14 +33,31 @@ import type { ActionAnnotationData, ReidCluster, ReidPlayers, ReidRecord, ReidVi
 // Ranges calibrated on real match footage (~12 people on court). The embedder
 // list itself comes from /reid/options — models we haven't calibrated yet get
 // a wide neutral range.
-const EMBEDDER_THRESHOLDS: Record<string, { min: number; max: number; def: number }> = {
-  'clip-reid': { min: 0.08, max: 0.3, def: 0.15 },
-  kpr: { min: 0.3, max: 0.8, def: 0.55 },
+const EMBEDDER_THRESHOLDS: Record<string, { min: number; max: number; def: number; step: number }> = {
+  'clip-reid': { min: 0.08, max: 0.3, def: 0.15, step: 0.01 },
+  kpr: { min: 0.3, max: 0.8, def: 0.55, step: 0.01 },
+  // CLIP-ReIdent's fine-tuned ViT-L features sit in an extremely tight cone —
+  // labeled-pair sweeps put the optimum at 0.020–0.026 on both test videos.
+  'clip-reident': { min: 0.008, max: 0.06, def: 0.022, step: 0.002 },
 };
-const thresholdsFor = (m: string) => EMBEDDER_THRESHOLDS[m] ?? { min: 0.05, max: 0.95, def: 0.3 };
+const thresholdsFor = (m: string) => EMBEDDER_THRESHOLDS[m] ?? { min: 0.05, max: 0.95, def: 0.3, step: 0.01 };
+// Show enough decimals to tell adjacent slider stops apart.
+const fmtThreshold = (v: number, step: number) => v.toFixed(step < 0.01 ? 3 : 2);
 // Detections below this score never win automatic association — they exist
 // only as manual-picker choices (mirrors reid/detector.AUTO_PICK_MIN_SCORE).
 const AUTO_PICK_MIN_SCORE = 0.5;
+
+/** ByteTrack tracklets + which tracklet each event's actor sits on. */
+interface TrackData {
+  tracklets: { rally_id: number; track_id: number; frames: number[]; boxes: [number, number, number, number][] }[];
+  links: Record<string, { rally_id: number; track_id: number }>;
+}
+/** Stable hue per tracklet, shared by the video overlay and crop badges. */
+const trackColor = (key: string) => {
+  let h = 0;
+  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+  return `hsl(${h % 360} 75% 62%)`;
+};
 // Auto clusters this small are noise, not players — they pool into one
 // shared "unsorted" row instead of each getting its own.
 const MIN_CLUSTER_SIZE = 3;
@@ -97,6 +114,11 @@ interface ReidVideoPlayerProps {
   onSelectRally: (rally: number | 'all') => void;
   onFixActor: (eventId: string, fix: ActorFix) => void;
   onJumpToCrop: (eventId: string) => void;
+  /** frame → ByteTrack boxes, for the tracklet overlay (empty = no tracking). */
+  trackBoxes: Map<number, { key: string; trackId: number; box: [number, number, number, number] }[]>;
+  /** Tracklet-linked action events, frame-sorted — the previous/next action's
+   *  tracklets are the only persistently shown boxes. */
+  trackEventTimeline: { frame: number; key: string; label?: string; player?: string }[];
 }
 
 /** One sidebar row: an action event's time, whether or not it has a ReID
@@ -223,13 +245,14 @@ function ReidEventPanel({ entries, empty, matches, selectedEventId, fps, playhea
  *  frame is within ±½ s of the playhead shows its player box + identity,
  *  sharpening as playback crosses the exact annotated frame. */
 const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(function ReidVideoPlayer(
-  { src, fps, frameSize, records, actionEvents, matches, rallies, selectedRally, onSelectRally, onFixActor, onJumpToCrop },
+  { src, fps, frameSize, records, actionEvents, matches, rallies, selectedRally, onSelectRally, onFixActor, onJumpToCrop, trackBoxes, trackEventTimeline },
   ref,
 ) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [frame, setFrame] = useState(0);
   const [duration, setDuration] = useState(0);
   const [playing, setPlaying] = useState(false);
+  const [showTracks, setShowTracks] = useState(false);
   // Expanded rally (or OUTSIDE) in the sidebar + last event jumped to — same
   // interaction as the Action Label rally list.
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -293,7 +316,9 @@ const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(function 
     id = el.requestVideoFrameCallback(tick);
     const onSeeked = () => {
       prevTimeRef.current = el.currentTime;
-      setFrame(Math.round(el.currentTime * fps));
+      // floor, not round: seeks park mid-frame ((f + 0.5) / fps), and the
+      // frame under a timestamp is floor(t·fps) — round would land on f+1.
+      setFrame(Math.floor(el.currentTime * fps));
     };
     el.addEventListener('seeked', onSeeked);
     return () => {
@@ -321,8 +346,9 @@ const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(function 
   }, []);
 
   const [w, h] = frameSize;
-  const windowFrames = Math.max(1, Math.round(fps / 2));
-  const visible = records.filter((r) => r.box && Math.abs(r.frame - frame) <= windowFrames);
+  // The event box (person ∪ keypoints ∪ ball, +4% margin) belongs to ONE
+  // frame — the action frame — so it only draws when the playhead is on it.
+  const visible = records.filter((r) => r.box && r.frame === frame);
   const time = frame / fps;
   // The event whose actor is being picked: the record closest to the playhead.
   const pickTarget = useMemo(() => {
@@ -420,15 +446,31 @@ const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(function 
                 className="block h-full w-full cursor-pointer bg-black object-contain"
               />
               <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="pointer-events-none absolute left-0 top-0 h-full w-full">
-              {visible.map((r) => {
-                const [x0, y0, x1, y1] = r.box!;
-                const m = matches[r.id];
-                // Same hue per action as the Action Label editor.
-                const color = actionColor(r.label);
-                const exact = Math.abs(r.frame - frame) <= 2;
-                const label = m ? m.player : r.label ?? '';
+              {/* ByteTrack tracklets at the playhead — under the event boxes.
+                  Exact frame first; ±1 covers stride-decoded tracks. Only the
+                  PREVIOUS and NEXT action's tracklets show persistently (solid,
+                  the action's color) — at most two boxes at a time; the rest
+                  (dashed, hashed hue) hide behind the Tracks toggle. */}
+              {(() => {
+                let prevEv: (typeof trackEventTimeline)[number] | null = null;
+                let nextEv: (typeof trackEventTimeline)[number] | null = null;
+                for (const e of trackEventTimeline) {
+                  if (e.frame <= frame) prevEv = e;
+                  else {
+                    nextEv = e;
+                    break;
+                  }
+                }
+                const active = new Map<string, { label?: string; player?: string }>();
+                if (nextEv) active.set(nextEv.key, nextEv);
+                if (prevEv) active.set(prevEv.key, prevEv); // same track twice → the just-done action's color wins
+                return (trackBoxes.get(frame) ?? trackBoxes.get(frame - 1) ?? trackBoxes.get(frame + 1))?.map((t) => {
+                const ev = active.get(t.key);
+                if (!ev && !showTracks) return null;
+                const color = ev ? actionColor(ev.label) : trackColor(t.key);
+                const [x0, y0, x1, y1] = t.box;
                 return (
-                  <g key={r.id} opacity={exact ? 1 : 0.45}>
+                  <g key={t.key} opacity={ev ? 0.95 : 0.85}>
                     <rect
                       x={x0}
                       y={y0}
@@ -436,7 +478,43 @@ const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(function 
                       height={y1 - y0}
                       fill="none"
                       stroke={color}
-                      strokeWidth={exact ? 2.5 : 1.5}
+                      strokeWidth={ev ? 3 : 2}
+                      strokeDasharray={ev ? undefined : '5 4'}
+                      vectorEffect="non-scaling-stroke"
+                    />
+                    <text
+                      x={x0 + 3}
+                      y={y1 - 5}
+                      fill={color}
+                      stroke="#000"
+                      strokeWidth={4}
+                      paintOrder="stroke"
+                      fontSize={Math.round(h / (ev ? 44 : 52))}
+                      fontWeight="bold"
+                      fontFamily="ui-monospace, SF Mono, Menlo"
+                    >
+                      {ev ? `${ev.player ?? ev.label ?? ''} · t${t.trackId}` : `t${t.trackId}`}
+                    </text>
+                  </g>
+                );
+                });
+              })()}
+              {visible.map((r) => {
+                const [x0, y0, x1, y1] = r.box!;
+                const m = matches[r.id];
+                // Same hue per action as the Action Label editor.
+                const color = actionColor(r.label);
+                const label = m ? m.player : r.label ?? '';
+                return (
+                  <g key={r.id}>
+                    <rect
+                      x={x0}
+                      y={y0}
+                      width={x1 - x0}
+                      height={y1 - y0}
+                      fill="none"
+                      stroke={color}
+                      strokeWidth={2.5}
                       vectorEffect="non-scaling-stroke"
                     />
                     <text
@@ -536,6 +614,20 @@ const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(function 
             <span className="flex-shrink-0 rounded-lg border border-border bg-surface-200/50 px-2.5 py-1 font-mono text-sm tabular-nums text-text-primary">
               {fmtTime(time)} / {fmtTime(duration)}
             </span>
+            {trackBoxes.size > 0 && (
+              <label
+                className="inline-flex flex-shrink-0 cursor-pointer items-center gap-1.5 text-xs text-text-secondary"
+                title="Also show tracklets without an action event (dashed, one hue per track) — action tracklets always show in their action's color"
+              >
+                <input
+                  type="checkbox"
+                  checked={showTracks}
+                  onChange={(e) => setShowTracks(e.target.checked)}
+                  className="h-3.5 w-3.5 accent-primary"
+                />
+                Tracks
+              </label>
+            )}
             <Button
               size="sm"
               intent={pickMode ? 'primary' : 'default'}
@@ -809,6 +901,43 @@ export function ReidLabelPage() {
     );
   };
 
+  // Tracklets + event→tracklet links; null = no tracking run yet (404).
+  const tracksQuery = useQuery({
+    queryKey: ['reid-tracks', picked],
+    queryFn: async (): Promise<TrackData | null> => {
+      try {
+        return await apiFetch<TrackData>(API.reid.tracks(picked));
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 404) return null;
+        throw e;
+      }
+    },
+    enabled: Boolean(picked),
+    staleTime: 60_000,
+  });
+  const trackLinks = useMemo(() => tracksQuery.data?.links ?? {}, [tracksQuery.data]);
+  const trackKeyOf = (id: string) => {
+    const l = trackLinks[id];
+    return l ? `${l.rally_id}:${l.track_id}` : null;
+  };
+  // frame → track boxes, for the video overlay (~100k boxes, built once).
+  const trackBoxesByFrame = useMemo(() => {
+    const map = new Map<number, { key: string; trackId: number; box: [number, number, number, number] }[]>();
+    for (const t of tracksQuery.data?.tracklets ?? []) {
+      const key = `${t.rally_id}:${t.track_id}`;
+      t.frames.forEach((f, i) => {
+        const box = t.boxes[i];
+        if (!box) return;
+        let arr = map.get(f);
+        if (!arr) map.set(f, (arr = []));
+        arr.push({ key, trackId: t.track_id, box });
+      });
+    }
+    return map;
+  }, [tracksQuery.data]);
+  // Hovered crop's tracklet — same-track crops light up across the board.
+  const [hoverTrack, setHoverTrack] = useState<string | null>(null);
+
   // Full action annotation — the sidebar lists every action's time, including
   // score / non-visible events the ReID extraction skipped.
   const actionsQuery = useQuery({
@@ -850,6 +979,19 @@ export function ReidLabelPage() {
   });
   const assignments = useMemo(() => playersQuery.data?.assignments ?? {}, [playersQuery.data]);
   const matches = playersQuery.data?.matches ?? {};
+
+  // Tracklet-linked action events, frame-sorted. The video overlay keeps only
+  // the previous and the next action's tracklets on screen — never more than
+  // two persistent boxes at once.
+  const trackEventTimeline = useMemo(() => {
+    const rows: { frame: number; key: string; label?: string; player?: string }[] = [];
+    for (const [eid, l] of Object.entries(trackLinks)) {
+      const r = recordById.get(eid);
+      if (r) rows.push({ frame: r.frame, key: `${l.rally_id}:${l.track_id}`, label: r.label, player: matches[eid]?.player });
+    }
+    return rows.sort((a, b) => a.frame - b.frame);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trackLinks, recordById, playersQuery.data]);
 
   // (Re)build the board whenever the clustering or saved players change:
   // locked rows carry over untouched, saved players fill in what locked rows
@@ -1153,6 +1295,9 @@ export function ReidLabelPage() {
         qc.invalidateQueries({ queryKey: ['reid-results', picked] }),
         qc.invalidateQueries({ queryKey: ['reid-clusters', picked] }),
         qc.invalidateQueries({ queryKey: ['reid-players', picked] }),
+        // The event's box changed, so its event→tracklet link did too — a
+        // "no actor" event must drop off the overlay immediately.
+        qc.invalidateQueries({ queryKey: ['reid-tracks', picked] }),
       ]);
     } catch (e) {
       toast.error(`Actor fix failed: ${errMsg(e)}`);
@@ -1192,6 +1337,55 @@ export function ReidLabelPage() {
     } catch (e) {
       toast.error(`Seed regroup failed: ${errMsg(e)}`);
     }
+  };
+
+  /** Track propagate: within a rally, events whose actor boxes lie on the
+   *  same ByteTrack tracklet are the same player — every locked/named group
+   *  claims the tracklets its members sit on, and unanchored events on a
+   *  claimed tracklet follow. Tracklets claimed by two groups are skipped. */
+  const trackPropagate = () => {
+    if (tracksQuery.data === null) {
+      toast.warning('No tracking for this video yet — run Rally Tracking on the ReID Predict page');
+      return;
+    }
+    if (!tracksQuery.data) return; // still loading
+    const anchors = groups.filter((g) => g.locked || g.name.trim());
+    const trackOwner = new Map<string, string>();
+    const conflicts = new Set<string>();
+    for (const g of anchors) {
+      for (const id of g.eventIds) {
+        const k = trackKeyOf(id);
+        if (!k) continue;
+        const owner = trackOwner.get(k);
+        if (owner && owner !== g.key) conflicts.add(k);
+        else trackOwner.set(k, g.key);
+      }
+    }
+    conflicts.forEach((k) => trackOwner.delete(k));
+    const anchored = new Set(anchors.flatMap((g) => g.eventIds));
+    const moves = new Map<string, string[]>();
+    for (const r of records) {
+      if (anchored.has(r.id)) continue;
+      const owner = trackOwner.get(trackKeyOf(r.id) ?? '');
+      if (owner) moves.set(owner, [...(moves.get(owner) ?? []), r.id]);
+    }
+    if (!moves.size) {
+      toast.warning(
+        trackOwner.size
+          ? 'No unassigned events share a tracklet with a locked/named group'
+          : 'Lock or name a group first — its events anchor the tracklets',
+      );
+      return;
+    }
+    let moved = 0;
+    for (const [groupKey, ids] of moves) {
+      moveEvents(ids, groupKey);
+      moved += ids.length;
+    }
+    toast.success(
+      `Propagated ${moved} event(s) along ${trackOwner.size} tracklet(s)` +
+        (conflicts.size ? ` · ${conflicts.size} conflicting tracklet(s) skipped` : ''),
+    );
   };
 
   const rebuildFromSaved = () => {
@@ -1253,6 +1447,9 @@ export function ReidLabelPage() {
       });
     },
     onDoubleClick: () => seekToEvent(r),
+    // Hovering a tracked crop lights up its whole tracklet across the board.
+    onMouseEnter: () => setHoverTrack(trackKeyOf(id)),
+    onMouseLeave: () => setHoverTrack(null),
   });
 
   const tileSelectCls = (id: string) =>
@@ -1267,6 +1464,8 @@ export function ReidLabelPage() {
   const renderCrop = (id: string, heightCls = 'h-28') => {
     const r = recordById.get(id);
     if (!r) return null;
+    const trackKey = trackKeyOf(id);
+    const sameTrackHover = trackKey != null && hoverTrack === trackKey;
     if (!r.crop) {
       return (
         <div
@@ -1310,6 +1509,21 @@ export function ReidLabelPage() {
           style={{ background: actionColor(r.label) }}
           title={`${r.label} · ${r.status} · ${r.candidates} candidate(s)`}
         />
+        {trackKey && (
+          <span
+            className="pointer-events-none absolute bottom-0.5 left-0.5 rounded px-1 font-mono text-[8px] font-bold leading-tight text-black/80"
+            style={{ background: trackColor(trackKey) }}
+            title={`Tracklet ${trackKey} — hover highlights every crop on it`}
+          >
+            t{trackLinks[id]?.track_id}
+          </span>
+        )}
+        {sameTrackHover && (
+          <span
+            className="pointer-events-none absolute inset-0 rounded-md"
+            style={{ boxShadow: `inset 0 0 0 2.5px ${trackColor(trackKey)}` }}
+          />
+        )}
       </CropImage>
     );
   };
@@ -1394,6 +1608,8 @@ export function ReidLabelPage() {
           onSelectRally={setSelectedRally}
           onFixActor={fixActor}
           onJumpToCrop={jumpToCrop}
+          trackBoxes={trackBoxesByFrame}
+          trackEventTimeline={trackEventTimeline}
         />
       )}
 
@@ -1475,13 +1691,13 @@ export function ReidLabelPage() {
               title="Cluster threshold for unassigned events — lower splits, higher merges. Locked rows are unaffected."
             >
               <span className="whitespace-nowrap">
-                threshold <span className="font-mono tabular-nums">{thresholdDraft.toFixed(2)}</span>
+                threshold <span className="font-mono tabular-nums">{fmtThreshold(thresholdDraft, thresholdsFor(embedder).step)}</span>
               </span>
               <input
                 type="range"
                 min={thresholdsFor(embedder).min}
                 max={thresholdsFor(embedder).max}
-                step={0.01}
+                step={thresholdsFor(embedder).step}
                 value={thresholdDraft}
                 onChange={(e) => setThresholdDraft(Number(e.target.value))}
                 onPointerUp={(e) => e.currentTarget.blur()}
@@ -1501,6 +1717,14 @@ export function ReidLabelPage() {
               title="Use every locked/named group as a player anchor: all other events join the nearest anchor (within the threshold); the rest re-cluster into leftover pools"
             >
               Seed regroup
+            </Button>
+            <Button
+              size="sm"
+              onClick={trackPropagate}
+              disabled={!picked || !groups.some((g) => (g.locked || g.name.trim()) && g.eventIds.length > 0)}
+              title="Within a rally, events on the same ByteTrack tracklet are the same player — unassigned events follow the locked/named group their tracklet belongs to (needs Rally Tracking, see ReID Predict)"
+            >
+              Track propagate
             </Button>
             <Button size="sm" onClick={reset} disabled={!dirty}>
               Reset

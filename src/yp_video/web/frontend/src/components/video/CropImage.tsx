@@ -26,6 +26,8 @@ interface CropImageProps {
   onDragStart?: (e: DragEvent<HTMLDivElement>) => void;
   onClick?: (e: MouseEvent<HTMLDivElement>) => void;
   onDoubleClick?: (e: MouseEvent<HTMLDivElement>) => void;
+  onMouseEnter?: (e: MouseEvent<HTMLDivElement>) => void;
+  onMouseLeave?: (e: MouseEvent<HTMLDivElement>) => void;
   /** Rendered as data-event-id so page-level marquee selection can hit-test. */
   dataId?: string;
   children?: ReactNode;
@@ -33,9 +35,9 @@ interface CropImageProps {
 
 /** A crop thumbnail with an optional SVG skeleton overlay drawn from data —
  *  the jpg itself stays raw, so toggling costs nothing. */
-export function CropImage({ src, keypoints, skeleton, className, alt, title, draggable, onDragStart, onClick, onDoubleClick, dataId, children }: CropImageProps) {
+export function CropImage({ src, keypoints, skeleton, className, alt, title, draggable, onDragStart, onClick, onDoubleClick, onMouseEnter, onMouseLeave, dataId, children }: CropImageProps) {
   return (
-    <div className="relative inline-block" data-event-id={dataId} draggable={draggable} onDragStart={onDragStart} onClick={onClick} onDoubleClick={onDoubleClick} title={title}>
+    <div className="relative inline-block" data-event-id={dataId} draggable={draggable} onDragStart={onDragStart} onClick={onClick} onDoubleClick={onDoubleClick} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave} title={title}>
       <img src={src} alt={alt ?? ''} loading="lazy" draggable={false} className={cn('block', className)} />
       {skeleton && keypoints && keypoints.length >= 17 && (
         <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">

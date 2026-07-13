@@ -56,6 +56,24 @@ export function ReidPredictPage() {
     }
   };
 
+  const runTracking = async () => {
+    const names = [...selected];
+    if (!names.length) {
+      toast.warning('Select at least one video');
+      return;
+    }
+    try {
+      const job = await apiFetch<Job>(API.reid.track, {
+        method: 'POST',
+        body: { videos: names, overwrite, stop_vllm: stopVllm },
+      });
+      upsertJob(job);
+      toast.success(`Started Rally Tracking for ${names.length} video(s)`);
+    } catch (e) {
+      toast.error(`Rally Tracking start failed: ${errMsg(e)}`);
+    }
+  };
+
   return (
     <div className="mx-auto max-w-screen-2xl space-y-5">
       <PageHeader
@@ -118,6 +136,13 @@ export function ReidPredictPage() {
           </div>
           <Button intent="primary" onClick={run} className="mt-4 w-full">
             Run ReID
+          </Button>
+          <Button
+            onClick={runTracking}
+            className="mt-2 w-full"
+            title="Dense RF-DETR + ByteTrack over every rally span (~80 ms/frame) — the Label page can then propagate one labeled crop along its whole track"
+          >
+            Run Rally Tracking
           </Button>
         </Card>
 
