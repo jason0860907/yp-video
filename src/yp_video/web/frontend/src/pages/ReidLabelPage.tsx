@@ -196,18 +196,26 @@ export function ReidLabelPage() {
   const assignments = useMemo(() => playersQuery.data?.assignments ?? {}, [playersQuery.data]);
   const matches = playersQuery.data?.matches ?? {};
 
-  // Tracklet-linked action events, frame-sorted. The video overlay keeps only
-  // the previous and the next action's tracklets on screen — never more than
-  // two persistent boxes at once.
+  // All action events, frame-sorted, each carrying its tracklet key when one
+  // exists. The video overlay keeps only the previous and the next action's
+  // tracklets on screen — and EVERY action occupies a slot (visible or not),
+  // so an unlinked action means "no box right now" rather than falling
+  // through to the action after it.
   const trackEventTimeline = useMemo(() => {
-    const rows: { frame: number; key: string; label?: string; player?: string }[] = [];
-    for (const [eid, l] of Object.entries(trackLinks)) {
-      const r = recordById.get(eid);
-      if (r) rows.push({ frame: r.frame, key: `${l.rally_id}:${l.track_id}`, label: r.label, player: matches[eid]?.player });
-    }
-    return rows.sort((a, b) => a.frame - b.frame);
+    const source: { id: string; frame: number; label?: string }[] = actionEvents.length ? actionEvents : records;
+    return source
+      .map((e) => {
+        const l = trackLinks[e.id];
+        return {
+          frame: e.frame,
+          key: l ? `${l.rally_id}:${l.track_id}` : null,
+          label: e.label,
+          player: matches[e.id]?.player,
+        };
+      })
+      .sort((a, b) => a.frame - b.frame);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trackLinks, recordById, playersQuery.data]);
+  }, [actionEvents, records, trackLinks, playersQuery.data]);
 
   const board = useGroupBoard({
     picked,

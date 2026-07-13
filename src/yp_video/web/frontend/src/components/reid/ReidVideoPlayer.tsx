@@ -42,9 +42,11 @@ export interface ReidVideoPlayerProps {
   onJumpToCrop: (eventId: string) => void;
   /** frame → ByteTrack boxes, for the tracklet overlay (empty = no tracking). */
   trackBoxes: Map<number, { key: string; trackId: number; box: [number, number, number, number] }[]>;
-  /** Tracklet-linked action events, frame-sorted — the previous/next action's
-   *  tracklets are the only persistently shown boxes. */
-  trackEventTimeline: { frame: number; key: string; label?: string; player?: string }[];
+  /** ALL action events, frame-sorted; ``key`` is the event's tracklet (null =
+   *  not linked). Only the previous and next action's tracklets draw
+   *  persistently — an unlinked slot draws nothing rather than letting a
+   *  later action's tracklet take its place. */
+  trackEventTimeline: { frame: number; key: string | null; label?: string; player?: string }[];
 }
 
 interface ReidEventPanelProps {
@@ -337,8 +339,10 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
                   }
                 }
                 const active = new Map<string, { label?: string; player?: string }>();
-                if (nextEv) active.set(nextEv.key, nextEv);
-                if (prevEv) active.set(prevEv.key, prevEv); // same track twice → the just-done action's color wins
+                // Unlinked slots (key null) still occupy prev/next — they just
+                // contribute no box.
+                if (nextEv?.key) active.set(nextEv.key, nextEv);
+                if (prevEv?.key) active.set(prevEv.key, prevEv); // same track twice → the just-done action's color wins
                 return (trackBoxes.get(frame) ?? trackBoxes.get(frame - 1) ?? trackBoxes.get(frame + 1))?.map((t) => {
                 const ev = active.get(t.key);
                 if (!ev && !showTracks) return null;
