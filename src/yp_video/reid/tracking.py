@@ -14,7 +14,7 @@ The dense pass is throughput-tuned (~9 ms/frame vs ~116 ms naive):
 a producer thread decodes and preprocesses frames while the GPU runs
 fixed-size fp16 batches, so neither side ever waits for the other.
 
-Storage: player-reid/tracks/<stem>_tracks.jsonl, one record per tracklet
+Storage: reid/tracks/<stem>_tracks.jsonl, one record per tracklet
 ({rally_id, track_id, frames, boxes, scores}).
 """
 
@@ -211,7 +211,9 @@ def track_video(video_path: Path, *, stride: int = 1, on_progress: ProgressFn | 
                 for xyxy, score, tid in zip(det.xyxy, det.confidence, det.tracker_id):
                     t = tracks.setdefault(int(tid), {"frames": [], "boxes": [], "scores": []})
                     t["frames"].append(frame_idx)
-                    t["boxes"].append([round(float(v), 1) for v in xyxy])
+                    # Whole pixels: every consumer (overlay, containment) is
+                    # pixel-grained, and the file holds ~100k boxes.
+                    t["boxes"].append([round(float(v)) for v in xyxy])
                     t["scores"].append(round(float(score), 2))
                 detected += 1
                 if on_progress:
@@ -252,6 +254,12 @@ def _containment(track_box: list[float], display_box: list[float]) -> float:
     return inter / area
 
 
+# link_events results, keyed by stem; an entry is valid while both source
+# files' (mtime, size) match. Tiny values (one small dict per video), so no LRU.
+_links_cache: dict[str, tuple[tuple, dict[str, dict]]] = {}
+_links_lock = threading.Lock()
+
+
 def link_events(stem: str) -> dict[str, dict]:
     """event_id → {rally_id, track_id} for events whose actor box lands on a tracklet.
 
@@ -259,6 +267,19 @@ def link_events(stem: str) -> dict[str, dict]:
     the event's exact frame may be undetected — the nearest detected frame
     within the stride wins.
     """
+    stats = tuple((s.st_mtime_ns, s.st_size) for s in (tracks_path(stem).stat(), reid_path(stem).stat()))
+    with _links_lock:
+        hit = _links_cache.get(stem)
+        if hit and hit[0] == stats:
+            return hit[1]
+
+    links = _link_events(stem)
+    with _links_lock:
+        _links_cache[stem] = (stats, links)
+    return links
+
+
+def _link_events(stem: str) -> dict[str, dict]:
     tmeta, tracklets = read_jsonl_cached(tracks_path(stem))  # read-only
     _rmeta, records = read_jsonl_cached(reid_path(stem))  # read-only
     stride = int(tmeta.get("stride") or 1)

@@ -1,8 +1,15 @@
 """Per-video ReID extraction: action events → person crops → embeddings.
 
-Writes, per video:
-  player-reid/embeddings/<stem>_reid.jsonl   header + one record per event
-  player-reid/crops/<stem>/<event_id>.jpg    the associated person crop
+Two stages, coupled only through what extraction leaves on disk:
+
+- ``extract_video``: decode + detect + associate + crop. Writes the record
+  jsonl and the crop jpgs — everything embedding needs, nothing more.
+- ``embed_video``: crops → one npy matrix per embedder (see reid/store.py).
+  Reads the saved jpgs (the embedder input IS the reviewable artifact), so a
+  new embedder backfills old videos without touching the video file, and
+  extraction cost no longer scales with the number of registered models.
+
+extract_video chains embed_video at the end so "Run ReID" stays one job.
 
 Records keep the association outcome (ok / multi / miss) so downstream
 matching and the UI can treat ambiguous events differently.
@@ -29,24 +36,23 @@ from yp_video.reid.detector import (
     DEFAULT_KEYPOINT_SOURCE,
     DETECTOR_NAME,
     KEYPOINT_SOURCES,
-    KeypointSource,
     PersonBox,
     associate,
     build_keypoint_sources,
     iou,
 )
-from yp_video.reid.embedder import EMBEDDER_WEIGHTS, Embedder, build_crop_prompt, build_embedders
+from yp_video.reid.embedder import build_crop_prompt, build_embedders
 from yp_video.reid.store import (
     EMBEDDINGS_DIR,
     SKIP_LABELS,
     action_annotation_path,
     crop_dir,
+    embedded_models,
+    embedding_path,
+    load_embedding_matrix,
     reid_path,
+    save_embedding_matrix,
 )
-
-# One instance per process: the models stay loaded across jobs.
-keypoint_sources: dict[str, KeypointSource] = build_keypoint_sources()
-embedders: dict[str, Embedder] = build_embedders()
 
 ProgressFn = Callable[[int, int, str], None]
 
@@ -167,6 +173,9 @@ def _attach_person(
         ]
     record.update(
         box=[dx0, dy0, dx1, dy1],
+        # The raw detector box (display box is a superset): build_crop_prompt
+        # needs it to exclude the chosen person from KPR's negative prompts.
+        actor_box=[x0, y0, x1, y1],
         score=person.score,
         crop=crop_file.name,
         keypoints=keypoints,
@@ -204,10 +213,8 @@ def extract_video(
     frame_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = float(cap.get(cv2.CAP_PROP_FPS)) or 30.0
 
+    source = build_keypoint_sources()[keypoints]
     records: list[dict] = []
-    crops: list = []
-    crop_owners: list[int] = []  # records index each crop belongs to
-    crop_prompts: list[dict] = []  # keypoint prompts, aligned with crops
     total = len(events)
     try:
         for i, event in enumerate(events):
@@ -227,7 +234,7 @@ def extract_video(
             }
             if ok:
                 x, y = event["xy"][0] * frame_w, event["xy"][1] * frame_h
-                detections = keypoint_sources[keypoints].detect(frame, focus=(x, y))
+                detections = source.detect(frame, focus=(x, y))
                 # ALL person boxes, unfiltered — the UI's actor picker and the
                 # future association training set both need the ones the
                 # heuristic rejected.
@@ -241,9 +248,6 @@ def extract_video(
                         crop = _attach_person(record, frame, auto, x, y, frame_w, frame_h, out_crops)
                         if crop is not None:
                             record["status"] = "ok" if len(candidates) == 1 else "multi"
-                            crops.append(crop)
-                            crop_owners.append(len(records))
-                            crop_prompts.append(build_crop_prompt(record, list(auto.xyxy)))
                 else:
                     # Replay the user's actor fix; keep the auto pick alongside
                     # so the disagreement survives re-extraction.
@@ -257,21 +261,11 @@ def extract_video(
                         crop = _attach_person(record, frame, person, x, y, frame_w, frame_h, out_crops)
                         if crop is not None:
                             record["status"] = "ok"
-                            crops.append(crop)
-                            crop_owners.append(len(records))
-                            crop_prompts.append(build_crop_prompt(record, list(person.xyxy)))
             records.append(record)
             if on_progress:
                 on_progress(i + 1, total, record["status"])
     finally:
         cap.release()
-
-    # Every registered embedder runs on the same crops so models can be
-    # A/B-compared on identical inputs without re-extracting.
-    for name, embedder in embedders.items():
-        matrix = embedder.embed(crops, prompts=crop_prompts)
-        for owner, emb in zip(crop_owners, matrix):
-            records[owner].setdefault("embeddings", {})[name] = [round(float(v), 5) for v in emb]
 
     counts = {
         "events": total,
@@ -281,7 +275,7 @@ def extract_video(
     }
     header = {
         "video": stem,
-        "source": {"detector": DETECTOR_NAME, "keypoints": KEYPOINT_SOURCES[keypoints], "embedders": {k: EMBEDDER_WEIGHTS[k] for k in embedders}},
+        "source": {"detector": DETECTOR_NAME, "keypoints": KEYPOINT_SOURCES[keypoints]},
         "frame_size": [frame_w, frame_h],
         "fps": fps,
         "created_at": time.time(),
@@ -289,7 +283,59 @@ def extract_video(
     }
     EMBEDDINGS_DIR.mkdir(parents=True, exist_ok=True)
     write_jsonl(reid_path(stem), header, records)
+    # Fresh extraction invalidates every model's rows — recompute them all.
+    embed_video(stem, overwrite=True)
     return counts
+
+
+def embed_video(stem: str, *, models: list[str] | None = None, overwrite: bool = False) -> dict:
+    """Crops on disk → one (n_records, dim) npy matrix per embedder.
+
+    Reads the saved crop jpgs, so it needs only an extraction's output, never
+    the video: registering a new embedder later means backfilling with this —
+    not re-extracting. Rows align with the record order in the reid jsonl;
+    records without a crop get NaN rows. ``models=None`` means every
+    registered embedder; without ``overwrite`` existing matrices are kept.
+
+    Every model embeds the same crops + prompts, so models stay A/B-comparable
+    on identical inputs. Returns ``{"models": [...], "crops": N}``.
+    """
+    import cv2
+    import numpy as np
+
+    _meta, records = read_jsonl(reid_path(stem))
+    registry = build_embedders()
+    unknown = set(models or ()) - set(registry)
+    if unknown:
+        raise ValueError(f"Unknown embedders: {', '.join(sorted(unknown))} (have: {', '.join(registry)})")
+    targets = {
+        name: embedder
+        for name, embedder in registry.items()
+        if (models is None or name in models)
+        and (overwrite or not embedding_path(stem, name).exists())
+    }
+    if not targets:
+        return {"models": [], "crops": 0}
+
+    crops, owners, prompts = [], [], []
+    cdir = crop_dir(stem)
+    for i, record in enumerate(records):
+        if not record.get("crop"):
+            continue
+        img = cv2.imread(str(cdir / record["crop"]))
+        if img is None:
+            continue
+        crops.append(img)
+        owners.append(i)
+        prompts.append(build_crop_prompt(record, record.get("actor_box") or record["box"]))
+
+    for name, embedder in targets.items():
+        matrix = embedder.embed(crops, prompts=prompts)
+        full = np.full((len(records), matrix.shape[1]), np.nan, dtype=np.float32)
+        if len(owners):
+            full[owners] = matrix
+        save_embedding_matrix(stem, name, full)
+    return {"models": sorted(targets), "crops": len(crops)}
 
 
 # Serializes apply_actor_fix's read-modify-write of the reid jsonl: two
@@ -319,9 +365,10 @@ def _apply_actor_fix(video_path: Path, event_id: str, box: list[float] | None, *
     stem = video_path.stem
     path = reid_path(stem)
     meta, records = read_jsonl(path)
-    record = next((r for r in records if r["id"] == event_id), None)
-    if record is None:
+    row = next((i for i, r in enumerate(records) if r["id"] == event_id), None)
+    if row is None:
         raise KeyError(f"No ReID record for event {event_id}")
+    record = records[row]
 
     frame_w, frame_h = meta.get("frame_size") or [0, 0]
     x, y = record["xy"][0] * frame_w, record["xy"][1] * frame_h
@@ -337,8 +384,7 @@ def _apply_actor_fix(video_path: Path, event_id: str, box: list[float] | None, *
         record["box_source"] = "manual"
 
     # Clear the previous pick; each branch below re-fills what applies.
-    record.update(status="miss", box=None, score=None, crop=None, keypoints=None)
-    record.pop("embeddings", None)
+    record.update(status="miss", box=None, actor_box=None, score=None, crop=None, keypoints=None)
 
     person = None
     n_candidates = record.get("candidates", 0)
@@ -350,6 +396,7 @@ def _apply_actor_fix(video_path: Path, event_id: str, box: list[float] | None, *
     elif box is not None:
         person = _snap_to_detection(detections, box) or PersonBox(xyxy=tuple(box), score=0.0)
 
+    crop = None
     if person is not None:
         cap = cv2.VideoCapture(str(video_path))
         try:
@@ -368,12 +415,28 @@ def _apply_actor_fix(video_path: Path, event_id: str, box: list[float] | None, *
             record["status"] = "ok" if n_candidates == 1 else "multi"
         else:
             record["status"] = "ok"
-        prompt = build_crop_prompt(record, list(person.xyxy))
-        for name, embedder in embedders.items():
-            emb = embedder.embed([crop], prompts=[prompt])[0]
-            record.setdefault("embeddings", {})[name] = [round(float(v), 5) for v in emb]
 
     write_jsonl(path, meta, records)
-    out = dict(record)
-    out.pop("embeddings", None)
-    return out
+    _patch_embedding_row(stem, record, row, crop)
+    return dict(record)
+
+
+def _patch_embedding_row(stem: str, record: dict, row: int, crop) -> None:
+    """Refresh one record's row in every embedding matrix on disk.
+
+    ``crop=None`` (nobody is the actor) blanks the row to NaN; so does a
+    matrix whose model is no longer registered — a stale embedding presented
+    as current would silently corrupt that model's clusters.
+    """
+    import numpy as np
+
+    registry = build_embedders()
+    for name in embedded_models(stem):
+        matrix = load_embedding_matrix(stem, name)
+        embedder = registry.get(name)
+        if crop is not None and embedder is not None:
+            prompt = build_crop_prompt(record, record.get("actor_box") or record["box"])
+            matrix[row] = embedder.embed([crop], prompts=[prompt])[0]
+        else:
+            matrix[row] = np.nan
+        save_embedding_matrix(stem, name, matrix)

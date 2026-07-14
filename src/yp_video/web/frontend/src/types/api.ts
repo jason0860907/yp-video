@@ -233,7 +233,7 @@ export interface SpotInfo {
   error?: string;
 }
 
-/** Video record from the player-reid listing. */
+/** Video record from the reid listing. */
 export interface ReidVideo {
   name: string;
   kind: CutKind;

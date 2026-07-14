@@ -75,6 +75,24 @@ export function ReidPredictPage() {
     }
   };
 
+  const runEmbed = async () => {
+    const names = [...selected];
+    if (!names.length) {
+      toast.warning('Select at least one video');
+      return;
+    }
+    try {
+      const job = await apiFetch<Job>(API.reid.embed, {
+        method: 'POST',
+        body: { videos: names, overwrite, stop_vllm: stopVllm },
+      });
+      upsertJob(job);
+      toast.success(`Started embedding backfill for ${names.length} video(s)`);
+    } catch (e) {
+      toast.error(`Embedding backfill start failed: ${errMsg(e)}`);
+    }
+  };
+
   return (
     <div className="mx-auto max-w-screen-2xl space-y-5">
       <PageHeader
@@ -144,6 +162,13 @@ export function ReidPredictPage() {
             title="Dense RF-DETR + ByteTrack over every rally span (~80 ms/frame) — the Label page can then propagate one labeled crop along its whole track"
           >
             Run Rally Tracking
+          </Button>
+          <Button
+            onClick={runEmbed}
+            className="mt-2 w-full"
+            title="Compute missing embedding matrices from the saved crops — covers newly added embedders on already-extracted videos without re-running extraction (with Overwrite: recompute all models)"
+          >
+            Backfill Embeddings
           </Button>
         </Card>
 

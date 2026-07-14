@@ -9,7 +9,7 @@ Two consumers, one data source (the per-video reid jsonl):
   matched to its nearest centroid with a cosine similarity score. The UI
   decides how to render low-similarity matches.
 
-Assignments persist in player-reid/players/<stem>_players.json as a flat
+Assignments persist in reid/annotations/<stem>_players.json as a flat
 ``{event_id: player_name}`` map — the smallest thing that can express both
 cluster-level and single-event corrections.
 
@@ -31,7 +31,7 @@ import numpy as np
 
 from yp_video.core.jsonl import atomic_write, read_jsonl_cached
 from yp_video.reid.embedder import DEFAULT_EMBEDDER
-from yp_video.reid.store import SKIP_LABELS, players_path, reid_path
+from yp_video.reid.store import SKIP_LABELS, load_embedding_matrix, players_path, reid_path
 
 # Serializes read-modify-write of the players file: the UI auto-saves
 # assignments while actor fixes land, and interleaving would drop one edit.
@@ -44,21 +44,28 @@ DEFAULT_CLUSTER_THRESHOLD = 0.15
 
 
 def load_embeddings(stem: str, model: str = DEFAULT_EMBEDDER) -> tuple[list[dict], np.ndarray]:
-    """Records carrying the chosen model's embedding, plus their (N, 512) matrix."""
+    """Records with an embedding under ``model``, plus their (N, dim) matrix.
+
+    Records come from the reid jsonl, vectors from the model's npy sidecar
+    (row i ↔ record i, NaN row = not embedded — see reid/store.py).
+    """
     path = reid_path(stem)
     if not path.exists():
         raise FileNotFoundError(f"No ReID results for {stem}")
     _meta, records = read_jsonl_cached(path)  # read-only from here on
+    matrix = load_embedding_matrix(stem, model)
+    if len(matrix) != len(records):
+        raise ValueError(
+            f"{model} embeddings for {stem} have {len(matrix)} rows for {len(records)} records — re-run embedding"
+        )
 
-    def vec(r: dict) -> list[float] | None:
-        return (r.get("embeddings") or {}).get(model)
-
+    embedded = [bool(v) for v in np.asarray(np.isfinite(matrix).all(axis=1))]
     # SKIP_LABELS guards extractions that predate the skip rule.
-    with_emb = [r for r in records if vec(r) and r.get("label") not in SKIP_LABELS]
-    matrix = np.array([vec(r) for r in with_emb], dtype=np.float32)
-    if len(with_emb):
+    keep = [i for i, r in enumerate(records) if embedded[i] and r.get("label") not in SKIP_LABELS]
+    matrix = matrix[keep]
+    if len(keep):
         matrix /= np.linalg.norm(matrix, axis=1, keepdims=True) + 1e-12
-    return with_emb, matrix
+    return [records[i] for i in keep], matrix
 
 
 def cluster(matrix: np.ndarray, threshold: float = DEFAULT_CLUSTER_THRESHOLD) -> np.ndarray:

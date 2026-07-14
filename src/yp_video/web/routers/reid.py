@@ -2,7 +2,7 @@
 
 Runs the tracking-free ReID extraction (RF-DETR person detection → contact
 point association → OSNet embedding) over the annotated action events of
-selected cut videos. Results land in player-reid/ as per-video jsonl +
+selected cut videos. Results land in reid/ as per-video jsonl +
 crop images; identity matching consumes them later.
 """
 
@@ -19,7 +19,8 @@ from pydantic import BaseModel, Field
 from yp_video.config import cut_kind_of, find_cut, iter_all_cuts
 from yp_video.core.jsonl import read_jsonl, read_jsonl_cached
 from yp_video.reid import identity, pipeline, store, tracking
-from yp_video.reid.embedder import DEFAULT_EMBEDDER, EMBEDDER_WEIGHTS, threshold_calibration
+from yp_video.reid.detector import build_keypoint_sources
+from yp_video.reid.embedder import DEFAULT_EMBEDDER, EMBEDDER_WEIGHTS, build_embedders, threshold_calibration
 from yp_video.web.job_helpers import init_batch_items, spawn_batch_video_job
 from yp_video.web.jobs import job_manager
 
@@ -68,6 +69,7 @@ def list_videos() -> list[dict]:
             "reid_counts": (
                 {k: header.get(k, 0) for k in ("ok", "multi", "miss")} if header else None
             ),
+            "embedded_models": store.embedded_models(f.stem),
             "player_count": len(set(identity.load_assignments(f.stem).values())),
         })
     return results
@@ -79,17 +81,18 @@ def options() -> dict:
     pages. Each embedder ships its cluster-threshold slider calibration, so
     adding a model server-side never needs a frontend edit."""
     return {
-        "keypoint_sources": list(pipeline.keypoint_sources),
-        "embedders": [{"name": n, "threshold": threshold_calibration(n)} for n in pipeline.embedders],
+        "keypoint_sources": list(build_keypoint_sources()),
+        "embedders": [{"name": n, "threshold": threshold_calibration(n)} for n in build_embedders()],
     }
 
 
 @router.post("/start")
 async def start(req: ReidStartRequest) -> dict:
-    if req.keypoints not in pipeline.keypoint_sources:
+    keypoint_sources = build_keypoint_sources()
+    if req.keypoints not in keypoint_sources:
         raise HTTPException(
             400,
-            f"Unknown keypoint source: {req.keypoints} (available: {', '.join(pipeline.keypoint_sources)} — "
+            f"Unknown keypoint source: {req.keypoints} (available: {', '.join(keypoint_sources)} — "
             "sam-3d-body needs its gated HF checkpoint downloaded first)",
         )
     video_paths: list[Path] = []
@@ -177,11 +180,58 @@ async def track(req: TrackStartRequest) -> dict:
     return job.to_dict()
 
 
+class EmbedStartRequest(BaseModel):
+    videos: list[str] = Field(min_length=1)
+    # None = every registered embedder; missing matrices only unless overwrite.
+    models: list[str] | None = None
+    overwrite: bool = False
+    stop_vllm: bool = False
+
+
+@router.post("/embed")
+async def embed(req: EmbedStartRequest) -> dict:
+    """Backfill embedding matrices from the saved crops (see pipeline.embed_video).
+
+    This is how a newly registered embedder covers already-extracted videos —
+    no re-extraction, the video file is never opened.
+    """
+    registry = build_embedders()
+    unknown = set(req.models or ()) - set(registry)
+    if unknown:
+        raise HTTPException(400, f"Unknown embedders: {', '.join(sorted(unknown))} (have: {', '.join(registry)})")
+    video_paths: list[Path] = []
+    for name in req.videos:
+        path = find_cut(name)
+        if path is None:
+            raise HTTPException(404, f"Video not found: {name}")
+        if not store.reid_path(path.stem).exists():
+            raise HTTPException(400, f"No ReID results for {name} — run extraction first")
+        video_paths.append(path)
+
+    job = job_manager.create_job(
+        "player_embed",
+        {"videos": [p.name for p in video_paths], "items": init_batch_items([p.name for p in video_paths])},
+        name=f"Embeddings ({len(video_paths)} videos)",
+    )
+    spawn_batch_video_job(
+        job,
+        video_paths,
+        stop_vllm=req.stop_vllm,
+        work=lambda p, cb: pipeline.embed_video(p.stem, models=req.models, overwrite=req.overwrite),
+        done_message=lambda c: (
+            f"{', '.join(c['models'])} over {c['crops']} crops" if c["models"] else "already embedded"
+        ),
+        progress_noun="crop",
+        start_message="embedding crops...",
+    )
+    return job.to_dict()
+
+
 @router.get("/tracks/{name}")
 def tracks(name: str) -> dict:
     """Tracklets (for the video overlay) + event→tracklet links (for crop
-    badges and propagation). Boxes are truncated to whole pixels — the
-    overlay doesn't need tenths and the payload holds ~100k boxes."""
+    badges and propagation). Scores stay server-side — the overlay only
+    draws boxes, and the payload holds ~100k of them."""
     stem = Path(unquote(name)).stem
     if not store.tracks_path(stem).exists():
         raise HTTPException(404, f"No tracking for {stem} — run tracking on the ReID Predict page first")
@@ -189,12 +239,7 @@ def tracks(name: str) -> dict:
         raise HTTPException(404, f"No ReID results for {stem}")
     _meta, tracklets = read_jsonl_cached(store.tracks_path(stem))  # read-only — copy, never mutate
     slim = [
-        {
-            "rally_id": t["rally_id"],
-            "track_id": t["track_id"],
-            "frames": t["frames"],
-            "boxes": [[int(v) for v in b] for b in t["boxes"]],
-        }
+        {k: t[k] for k in ("rally_id", "track_id", "frames", "boxes")}
         for t in tracklets
     ]
     return {"tracklets": slim, "links": tracking.link_events(stem)}
@@ -202,12 +247,12 @@ def tracks(name: str) -> dict:
 
 @router.get("/results/{name}")
 def results(name: str) -> dict:
-    """One video's extraction records, embeddings stripped (UI payload)."""
+    """One video's extraction records (UI payload)."""
     stem = Path(unquote(name)).stem
     path = store.reid_path(stem)
     if not path.exists():
         raise HTTPException(404, f"No ReID results for {stem}")
-    # Cached parse shares objects across requests — strip into copies, never
+    # Cached parse shares objects across requests — filter into copies, never
     # mutate what read_jsonl_cached hands out.
     meta, records = read_jsonl_cached(path)
     meta = dict(meta)
@@ -225,7 +270,7 @@ def results(name: str) -> dict:
     for r in records:
         if r.get("label") in store.SKIP_LABELS:
             continue
-        r = {k: v for k, v in r.items() if k != "embeddings"}
+        r = dict(r)
         # The actor picker only needs boxes + scores; skeletons stay server-side.
         if r.get("detections"):
             r["detections"] = [{k: v for k, v in d.items() if k != "keypoints"} for d in r["detections"]]
