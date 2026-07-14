@@ -57,11 +57,11 @@ def read_jsonl(path: Path) -> tuple[dict, list[dict]]:
     return meta, records
 
 
-# Parsed-file cache for the large, frequently re-read jsonls (a 10 MB ReID
-# file costs ~0.6 s per parse and every clusters/players request needs it).
-# Keyed by (mtime, size), so the atomic rewrites in write_jsonl invalidate
-# entries naturally.
-_READ_CACHE_SIZE = 4
+# Parsed-file cache for the frequently re-read jsonls. Keyed by (mtime, size),
+# so the atomic rewrites in write_jsonl invalidate entries naturally. Sized to
+# hold every cut's annotation file at once — /reid/videos touches ALL of them
+# per page load, and an LRU smaller than the library thrashes on every request.
+_READ_CACHE_SIZE = 64
 _read_cache: OrderedDict[Path, tuple[tuple[int, int], dict, list[dict]]] = OrderedDict()
 _read_cache_lock = threading.Lock()
 
