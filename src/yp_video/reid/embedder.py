@@ -12,6 +12,7 @@ it sidesteps onnxruntime-gpu / CUDA wheel matching entirely.
 from __future__ import annotations
 
 import tempfile
+from collections.abc import Callable
 from typing import Protocol
 
 import numpy as np
@@ -242,14 +243,26 @@ def threshold_calibration(name: str) -> dict:
     return EMBEDDER_THRESHOLDS.get(name, FALLBACK_THRESHOLD)
 
 
+# Constructed embedders, by name. Construction is cheap (models load lazily on
+# first embed) but instances must persist across calls so loaded weights stay
+# resident for the whole process.
+_instances: dict[str, Embedder] = {}
+
+
 def build_embedders() -> dict[str, Embedder]:
-    """Every available embedder; optional ones join when their checkout + weights exist."""
+    """Every available embedder; optional ones join when their checkout + weights exist.
+
+    Availability is re-checked on every call (a stat per optional model), so
+    weights downloaded while the server runs appear without a restart.
+    """
     from yp_video.config import KPR_DIR
     from yp_video.reid.clip_reident import ClipReidentEmbedder, clip_reident_available
 
-    out: dict[str, Embedder] = {"clip-reid": ClipReidEmbedder()}
+    available: dict[str, Callable[[], Embedder]] = {"clip-reid": ClipReidEmbedder}
     if (KPR_DIR / "pretrained_models" / KPR_WEIGHTS).exists():
-        out["kpr"] = KprEmbedder()
+        available["kpr"] = KprEmbedder
     if clip_reident_available():
-        out["clip-reident"] = ClipReidentEmbedder()
-    return out
+        available["clip-reident"] = ClipReidentEmbedder
+    for name, make in available.items():
+        _instances.setdefault(name, make())
+    return {name: _instances[name] for name in available}

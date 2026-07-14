@@ -166,15 +166,28 @@ def associate(boxes: list[PersonBox], x: float, y: float) -> list[PersonBox]:
     return [box for _, box in sorted(scored, key=lambda t: t[0])]
 
 
+# Constructed sources — instances persist so loaded models stay resident;
+# availability is re-checked on every build_keypoint_sources call.
+_rf: PersonDetector | None = None
+_sam3d: KeypointSource | None = None
+
+
 def build_keypoint_sources() -> dict[str, KeypointSource]:
     """Every available keypoint source; SAM 3D Body joins when its weights
-    exist. Both entries share ONE RF-DETR instance — "sam-3d-body" wraps it
-    for boxes and replaces only the keypoints (see reid/sam3d.py).
+    exist (re-checked per call, so a download while the server runs appears
+    without a restart). Both entries share ONE RF-DETR instance —
+    "sam-3d-body" wraps it for boxes and replaces only the keypoints
+    (see reid/sam3d.py).
     """
+    global _rf, _sam3d
+
     from yp_video.reid.sam3d import Sam3dBodyDetector, sam3d_available
 
-    rf = PersonDetector()
-    out: dict[str, KeypointSource] = {"rf-detr": rf}
+    if _rf is None:
+        _rf = PersonDetector()
+    out: dict[str, KeypointSource] = {"rf-detr": _rf}
     if sam3d_available():
-        out["sam-3d-body"] = Sam3dBodyDetector(rf)
+        if _sam3d is None:
+            _sam3d = Sam3dBodyDetector(_rf)
+        out["sam-3d-body"] = _sam3d
     return out
