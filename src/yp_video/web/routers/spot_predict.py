@@ -20,8 +20,8 @@ from pydantic import BaseModel, Field
 
 from yp_video import rally_spot
 from yp_video.config import (
-    ANNOTATIONS_DIR,
-    PRE_ANNOTATIONS_DIR,
+    RALLY_ANNOTATIONS_DIR,
+    RALLY_PRE_ANNOTATIONS_DIR,
     RALLY_SPOT_CHECKPOINTS_DIR,
     RALLY_SPOT_PRE_ANNOTATIONS_DIR,
     SPOT_DIR,
@@ -85,10 +85,10 @@ def list_videos() -> list[dict]:
         results.append({
             "name": f.name,
             "kind": cut_kind_of(f),
-            "has_annotation": (ANNOTATIONS_DIR / f"{f.stem}_annotations.jsonl").exists(),
+            "has_annotation": (RALLY_ANNOTATIONS_DIR / f"{f.stem}_annotations.jsonl").exists(),
             "has_pre_annotation": _pre_annotation_path(f.stem).exists(),
             "has_vlm_pre_annotation": (
-                PRE_ANNOTATIONS_DIR / f"{f.stem}_annotations.jsonl"
+                RALLY_PRE_ANNOTATIONS_DIR / f"{f.stem}_annotations.jsonl"
             ).exists(),
         })
     return results
@@ -305,7 +305,7 @@ async def start(req: RallyPredictRequest) -> dict:
                         # inside a worker thread (fire-and-forget needs a loop).
                         sync_to_r2(
                             _pre_annotation_path(video_path.stem),
-                            "rally-spot-pre-annotations",
+                            "rally-spot/pre-annotations",
                         )
                         await update_batch_item(
                             job.id, items, i, status="completed", progress=1.0,

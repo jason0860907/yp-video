@@ -17,9 +17,9 @@ from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
 from yp_video.config import (
-    ANNOTATIONS_DIR,
+    RALLY_ANNOTATIONS_DIR,
     CUT_R2_CATEGORIES,
-    PRE_ANNOTATIONS_DIR,
+    RALLY_PRE_ANNOTATIONS_DIR,
     RALLY_SPOT_PRE_ANNOTATIONS_DIR,
     RAW_VIDEOS_DIR,
     VIDEOS_DIR,
@@ -45,9 +45,9 @@ class _Source(NamedTuple):
 # truth first, then the newest ML pass (SPOT), then the VLM pass. The Load UI
 # can force one via the ``source`` query param (by tag).
 _SOURCES = (
-    _Source("annotation", ANNOTATIONS_DIR, "rally-annotations"),
-    _Source("spot-pre-annotation", RALLY_SPOT_PRE_ANNOTATIONS_DIR, "rally-spot-pre-annotations"),
-    _Source("pre-annotation", PRE_ANNOTATIONS_DIR, "rally-pre-annotations"),
+    _Source("annotation", RALLY_ANNOTATIONS_DIR, "rally-spot/annotations"),
+    _Source("spot-pre-annotation", RALLY_SPOT_PRE_ANNOTATIONS_DIR, "rally-spot/pre-annotations"),
+    _Source("pre-annotation", RALLY_PRE_ANNOTATIONS_DIR, "rally/pre-annotations"),
 )
 _SOURCE_BY_TAG = {s.tag: s for s in _SOURCES}
 
@@ -206,11 +206,11 @@ def _write_annotations_atomic(output_path: Path, video: str, duration: float, an
 
 @router.post("/annotations")
 async def save_annotations(req: SaveAnnotationsRequest) -> dict:
-    ANNOTATIONS_DIR.mkdir(parents=True, exist_ok=True)
+    RALLY_ANNOTATIONS_DIR.mkdir(parents=True, exist_ok=True)
 
     video_path = Path(req.video)
     output_name = f"{video_path.stem}_annotations.jsonl"
-    output_path = ANNOTATIONS_DIR / output_name
+    output_path = RALLY_ANNOTATIONS_DIR / output_name
 
     # Run file I/O in a thread so we don't block the event loop
     # (fsync can be slow under concurrent load).
@@ -223,7 +223,7 @@ async def save_annotations(req: SaveAnnotationsRequest) -> dict:
     )
 
     # Auto-sync to R2 (fire-and-forget; safe to call from async context)
-    sync_to_r2(output_path, "rally-annotations")
+    sync_to_r2(output_path, "rally-spot/annotations")
 
     return {"saved": str(output_path), "count": len(req.annotations)}
 

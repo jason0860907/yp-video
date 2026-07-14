@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from yp_video.config import (
     SEG_ANNOTATIONS_DIR,
-    PRE_ANNOTATIONS_DIR,
+    RALLY_PRE_ANNOTATIONS_DIR,
     find_cut,
 )
 from yp_video.web.jobs import job_manager
@@ -122,7 +122,7 @@ async def start_detection(req: DetectRequest):
                         ),
                     )
 
-                    sync_to_r2(Path(output_file), "seg-annotations")
+                    sync_to_r2(Path(output_file), "rally/seg-annotations")
 
                     # Auto convert-to-rally for this one video
                     from yp_video.core.vlm_to_rally import convert_vlm_to_rally
@@ -130,7 +130,7 @@ async def start_detection(req: DetectRequest):
                         job.id, items, i, message="converting to rally...",
                         overall_message=batch_message(i, total, video_name, "converting to rally..."),
                     )
-                    rally_path = PRE_ANNOTATIONS_DIR / f"{Path(video_name).stem}_annotations.jsonl"
+                    rally_path = RALLY_PRE_ANNOTATIONS_DIR / f"{Path(video_name).stem}_annotations.jsonl"
                     n_rallies = await loop.run_in_executor(
                         None,
                         lambda inp=Path(output_file), out=rally_path,
@@ -138,7 +138,7 @@ async def start_detection(req: DetectRequest):
                             inp, out, md, ms,
                         ),
                     )
-                    sync_to_r2(rally_path, "rally-pre-annotations")
+                    sync_to_r2(rally_path, "rally/pre-annotations")
                     await update_batch_item(
                         job.id, items, i, status="completed", progress=1.0,
                         message=f"{n_rallies} rallies",
@@ -175,15 +175,15 @@ async def convert_to_rally(req: ConvertRequest):
     await loop.run_in_executor(
         None,
         lambda: convert_directory(
-            SEG_ANNOTATIONS_DIR, PRE_ANNOTATIONS_DIR,
+            SEG_ANNOTATIONS_DIR, RALLY_PRE_ANNOTATIONS_DIR,
             req.min_duration, req.min_score,
         ),
     )
 
     # Auto-sync to R2
-    sync_directory_to_r2(PRE_ANNOTATIONS_DIR, "rally-pre-annotations")
+    sync_directory_to_r2(RALLY_PRE_ANNOTATIONS_DIR, "rally/pre-annotations")
 
     # Count output files
-    count = len(list(PRE_ANNOTATIONS_DIR.glob("*.jsonl"))) if PRE_ANNOTATIONS_DIR.exists() else 0
+    count = len(list(RALLY_PRE_ANNOTATIONS_DIR.glob("*.jsonl"))) if RALLY_PRE_ANNOTATIONS_DIR.exists() else 0
     return {"ok": True, "count": count}
 

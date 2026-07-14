@@ -31,7 +31,7 @@ from yp_video.app_library import (
     resolve_config,
     save_id_cache,
 )
-from yp_video.config import ANNOTATIONS_DIR, find_cut
+from yp_video.config import RALLY_ANNOTATIONS_DIR, find_cut
 
 
 AppExportError = AppLibraryExportError
@@ -45,7 +45,7 @@ def export_one_match(basename: str) -> dict:
     """
     config = resolve_config(include_tokens_env=True, required=True)
 
-    ann_path = ANNOTATIONS_DIR / f"{basename}_annotations.jsonl"
+    ann_path = RALLY_ANNOTATIONS_DIR / f"{basename}_annotations.jsonl"
     if not ann_path.exists():
         raise AppExportError(
             f"No saved rally annotations for {basename} — save first."

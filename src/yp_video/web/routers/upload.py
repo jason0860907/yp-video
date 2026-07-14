@@ -41,9 +41,6 @@ class DeleteR2Request(BaseModel):
     category: str
     files: list[str]  # paths relative to the category prefix
 
-# Categories that skip R2 upload (local-only)
-LOCAL_ONLY_CATEGORIES = {"videos"}
-
 # terminal.log is intentionally excluded: it's a bulky training-process record,
 # kept locally in the package dir but neither listed nor uploaded to R2.
 CHECKPOINT_PACKAGE_FILES = {
@@ -56,10 +53,13 @@ CHECKPOINT_PACKAGE_FILES = {
 }
 
 # Nested checkpoint-package categories: {run}/<package file> plus the training
-# label snapshot under {run}/labels/<subdir>/*.jsonl.
+# label snapshot under {run}/labels/<subdir>/*.jsonl. The subdir names are
+# baked into existing checkpoint packages (local and on R2) — they are package
+# structure, not category names, and deliberately did not follow the category
+# rename to family paths.
 CHECKPOINT_CATEGORIES = {
-    "action-checkpoints": "action-annotations",
-    "rally-spot-checkpoints": "rally-annotations",
+    "action/checkpoints": "action-annotations",
+    "rally-spot/checkpoints": "rally-annotations",
 }
 
 
@@ -84,6 +84,16 @@ def get_status():
     }
 
 
+@router.get("/categories")
+def list_categories() -> list[dict]:
+    """The Storage page's category tabs, rendered from config.R2_CATEGORIES
+    verbatim (order included) — adding a category never touches the frontend."""
+    return [
+        {"key": key, "label": spec.label, "local_only": spec.local_only}
+        for key, spec in R2_CATEGORIES.items()
+    ]
+
+
 @router.get("/files")
 def list_local_files(category: str = "cuts-broadcast") -> list[dict]:
     """List local files with R2 sync status."""
@@ -93,7 +103,7 @@ def list_local_files(category: str = "cuts-broadcast") -> list[dict]:
 
     # Build set of existing R2 keys for fast lookup (skip for local-only categories)
     r2_keys: set[str] = set()
-    is_local_only = category in LOCAL_ONLY_CATEGORIES
+    is_local_only = R2_CATEGORIES[category].local_only
     if not is_local_only and r2_client.configured:
         try:
             for obj in r2_client.list_objects(prefix=f"{category}/"):
@@ -374,7 +384,7 @@ def delete_local_files(req: DeleteLocalRequest):
     For local-only categories (e.g. videos), always allows deletion.
     """
     base_dir = _get_base_dir(req.category)
-    is_local_only = req.category in LOCAL_ONLY_CATEGORIES
+    is_local_only = R2_CATEGORIES[req.category].local_only
 
     deleted = []
     skipped = []
@@ -419,7 +429,7 @@ def delete_r2_files(req: DeleteR2Request):
         raise HTTPException(400, "R2 not configured")
     if req.category not in R2_CATEGORIES:
         raise HTTPException(400, f"Unknown category: {req.category}")
-    if req.category in LOCAL_ONLY_CATEGORIES:
+    if R2_CATEGORIES[req.category].local_only:
         raise HTTPException(400, f"Category {req.category} has no R2 prefix")
     if not req.files:
         return {"deleted": 0}

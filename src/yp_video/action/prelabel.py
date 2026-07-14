@@ -96,15 +96,17 @@ def resolve_checkpoint_path(
 ) -> Path:
     """Resolve a possibly-relative checkpoint path to an absolute one.
 
-    Absolute paths pass through unchanged. A relative path whose first segment
-    is the checkpoint dir name is taken relative to ``VIDEOS_DIR``; any other
-    relative path is taken relative to ``root``. Performs no
-    existence/containment checks — callers validate.
+    Absolute paths pass through unchanged. A relative path that starts with
+    ``root``'s own path relative to ``VIDEOS_DIR`` (the ``checkpoint_ref``
+    format, e.g. ``rally-spot/checkpoints/<run>/...``) is taken relative to
+    ``VIDEOS_DIR``; any other relative path is taken relative to ``root``.
+    Performs no existence/containment checks — callers validate.
     """
     path = Path(str(value)).expanduser()
     if path.is_absolute():
         return path
-    if path.parts and path.parts[0] == root.name:
+    root_rel = root.relative_to(VIDEOS_DIR).parts
+    if path.parts[: len(root_rel)] == root_rel:
         return VIDEOS_DIR / path
     return root / path
 
@@ -121,7 +123,7 @@ def checkpoint_ref(path: Path) -> str:
     """Display ref for a checkpoint: path relative to ``VIDEOS_DIR`` if possible.
 
     All action checkpoints live under ``ACTION_CHECKPOINTS_DIR`` (itself under
-    ``VIDEOS_DIR``), so this normally yields ``action-checkpoints/<run>/...``.
+    ``VIDEOS_DIR``), so this normally yields ``action/checkpoints/<run>/...``.
     """
     resolved = path.resolve()
     try:

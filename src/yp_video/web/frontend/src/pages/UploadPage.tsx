@@ -16,21 +16,13 @@ import { toast } from '@/components/feedback/toast';
 import { confirm } from '@/components/feedback/confirm';
 import type { Job } from '@/types/api';
 
+// Categories come from GET /upload/categories (config.R2_CATEGORIES) —
+// key, label and order are server-defined; the page only renders them.
 interface Category {
   key: string;
   label: string;
+  local_only: boolean;
 }
-const CATEGORIES: Category[] = [
-  { key: 'cuts-broadcast', label: 'Cuts (Broadcast)' },
-  { key: 'cuts-sideline', label: 'Cuts (Sideline)' },
-  { key: 'rally-pre-annotations', label: 'Rally Predictions (VLM)' },
-  { key: 'rally-spot-pre-annotations', label: 'Rally Predictions (SPOT)' },
-  { key: 'rally-annotations', label: 'Annotations' },
-  { key: 'rally-spot-checkpoints', label: 'Rally Checkpoints' },
-  { key: 'action-pre-annotations', label: 'Action Pre-Annotations' },
-  { key: 'action-annotations', label: 'Action Annotations' },
-  { key: 'action-checkpoints', label: 'Action Checkpoints' },
-];
 
 interface FileRow {
   name: string;
@@ -69,7 +61,16 @@ export function UploadPage() {
   });
   const configured = statusQuery.data?.configured ?? false;
 
-  const cat = CATEGORIES.find((c) => c.key === category)!;
+  const categoriesQuery = useQuery({
+    queryKey: ['upload-categories'],
+    queryFn: () => apiFetch<Category[]>(API.upload.categories),
+  });
+  // Local-only categories (raw videos) never sync — pointless on this page.
+  const categories = useMemo(
+    () => (categoriesQuery.data ?? []).filter((c) => !c.local_only),
+    [categoriesQuery.data],
+  );
+  const cat = categories.find((c) => c.key === category);
   const isUpload = mode === 'upload';
 
   const loadFiles = async () => {
@@ -207,7 +208,7 @@ export function UploadPage() {
       {/* Category + mode controls */}
       <Card>
         <div className="mb-3 flex flex-wrap items-center gap-2">
-          {CATEGORIES.map((c) => (
+          {categories.map((c) => (
             <button
               key={c.key}
               type="button"
@@ -239,7 +240,7 @@ export function UploadPage() {
       <Card>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <SectionLabel className="mb-0">
-            {cat.label} · {files.length} files
+            {cat?.label ?? category} · {files.length} files
           </SectionLabel>
           <div className="flex items-center gap-2">
             <Button size="sm" onClick={() => setSelection(() => true)}>

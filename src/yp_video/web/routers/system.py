@@ -6,10 +6,10 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from yp_video.config import (
-    ANNOTATIONS_DIR,
+    RALLY_ANNOTATIONS_DIR,
     ACTION_ANNOTATIONS_DIR,
     ACTION_PRE_ANNOTATIONS_DIR,
-    PRE_ANNOTATIONS_DIR,
+    RALLY_PRE_ANNOTATIONS_DIR,
     SEG_ANNOTATIONS_DIR,
     RAW_VIDEOS_DIR,
     count_files,
@@ -89,9 +89,9 @@ def list_videos() -> list[dict]:
             # is only written after detection + convert-to-rally completes.
             # seg-annotations is written incrementally, so a partial/aborted
             # run would leave a file there and falsely look done.
-            "has_detection": (PRE_ANNOTATIONS_DIR / f"{stem}_annotations.jsonl").exists(),
-            "has_pre_annotation": (PRE_ANNOTATIONS_DIR / f"{stem}_annotations.jsonl").exists(),
-            "has_annotation": (ANNOTATIONS_DIR / f"{stem}_annotations.jsonl").exists(),
+            "has_detection": (RALLY_PRE_ANNOTATIONS_DIR / f"{stem}_annotations.jsonl").exists(),
+            "has_pre_annotation": (RALLY_PRE_ANNOTATIONS_DIR / f"{stem}_annotations.jsonl").exists(),
+            "has_annotation": (RALLY_ANNOTATIONS_DIR / f"{stem}_annotations.jsonl").exists(),
         })
     return results
 
@@ -103,8 +103,8 @@ def get_stats():
         "videos": count_files(RAW_VIDEOS_DIR, "*.mp4"),
         "cuts": sum(1 for _ in iter_all_cuts()),
         "detections": count_files(SEG_ANNOTATIONS_DIR, "*.jsonl"),
-        "pre_annotations": count_files(PRE_ANNOTATIONS_DIR, "*.jsonl"),
-        "annotations": count_files(ANNOTATIONS_DIR, "*.jsonl"),
+        "pre_annotations": count_files(RALLY_PRE_ANNOTATIONS_DIR, "*.jsonl"),
+        "annotations": count_files(RALLY_ANNOTATIONS_DIR, "*.jsonl"),
         "action_pre_annotations": count_files(ACTION_PRE_ANNOTATIONS_DIR, "*.jsonl"),
         "actions": count_files(ACTION_ANNOTATIONS_DIR, "*.jsonl"),
         "active_jobs": job_manager.active_count(),

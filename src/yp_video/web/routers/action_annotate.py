@@ -21,10 +21,10 @@ from pydantic import BaseModel, Field, field_validator
 from yp_video.config import (
     ACTION_ANNOTATIONS_DIR,
     ACTION_PRE_ANNOTATIONS_DIR,
-    ANNOTATIONS_DIR,
+    RALLY_ANNOTATIONS_DIR,
     ACTION_WAVEFORMS_DIR,
     CUT_R2_CATEGORIES,
-    PRE_ANNOTATIONS_DIR,
+    RALLY_PRE_ANNOTATIONS_DIR,
     SPOT_DIR,
     cut_kind_of,
     find_cut,
@@ -156,7 +156,7 @@ def _active_annotation_path(video_name: str) -> Path:
 def _rally_annotation_path(video_name: str) -> Path | None:
     # Priority: manual rally annotations, then rally pre-annotations.
     filename = f"{Path(video_name).stem}_annotations.jsonl"
-    for directory in (ANNOTATIONS_DIR, PRE_ANNOTATIONS_DIR):
+    for directory in (RALLY_ANNOTATIONS_DIR, RALLY_PRE_ANNOTATIONS_DIR):
         path = directory / filename
         if path.exists():
             return path
@@ -166,9 +166,9 @@ def _rally_annotation_path(video_name: str) -> Path | None:
 def _rally_sources(video_name: str) -> list[str]:
     filename = f"{Path(video_name).stem}_annotations.jsonl"
     sources = []
-    if (ANNOTATIONS_DIR / filename).exists():
+    if (RALLY_ANNOTATIONS_DIR / filename).exists():
         sources.append("annotation")
-    if (PRE_ANNOTATIONS_DIR / filename).exists():
+    if (RALLY_PRE_ANNOTATIONS_DIR / filename).exists():
         sources.append("pre-annotation")
     return sources
 
@@ -550,7 +550,7 @@ async def _save_spot_action_annotation(
         final_path = _annotation_path(video.name)
         if final_path != ann_path:
             final_path.unlink(missing_ok=True)
-    sync_to_r2(ann_path, "action-pre-annotations")
+    sync_to_r2(ann_path, "action/pre-annotations")
     return data
 
 
@@ -694,7 +694,7 @@ def list_videos() -> list[dict]:
             "has_action_pre_annotation": has_active and not reviewed,
             "has_action_final_annotation": has_active and reviewed,
             "has_action_training_annotation": has_training_annotation,
-            "action_annotation_source": "action-annotations" if ann_path == final_path and has_active else ("action-pre-annotations" if has_active else ""),
+            "action_annotation_source": "action/annotations" if ann_path == final_path and has_active else ("action/pre-annotations" if has_active else ""),
             "action_reviewed": reviewed,
             "event_count": event_count,
             "training_event_count": training_event_count,
@@ -778,7 +778,7 @@ async def save_annotations(req: SaveActionAnnotationsRequest) -> dict:
     }
     output_path = _annotation_path(video.name)
     await asyncio.to_thread(_write_annotation_atomic, output_path, data)
-    sync_to_r2(output_path, "action-annotations")
+    sync_to_r2(output_path, "action/annotations")
     return {"saved": str(output_path), "count": len(events)}
 
 

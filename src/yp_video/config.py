@@ -43,7 +43,9 @@ SPOT_AUDIO_PRECOMPUTE_MODULE = "yp_spot.audio.precompute"
 PROMPTS_DIR = PROJECT_ROOT / "prompts"
 VLLM_ENV_PATH = PROJECT_ROOT / "vllm.env"
 R2_ENV_PATH = PROJECT_ROOT / "r2.env"
-TOKENS_ENV_PATH = PROJECT_ROOT / "tokens.env"
+# Shared across the volleyiq projects, so it lives at the workspace root
+# (PROJECT_ROOT.parent), not inside yp-video.
+TOKENS_ENV_PATH = PROJECT_ROOT.parent / "tokens.env"
 VENV_PYTHON = PROJECT_ROOT / ".venv" / "bin" / "python"
 LOGS_DIR = PROJECT_ROOT / "logs"
 APP_LOG_PATH = LOGS_DIR / "yp-app.log"
@@ -57,34 +59,45 @@ RAW_VIDEOS_DIR = VIDEOS_DIR / "raw-videos"
 CUTS_BROADCAST_DIR = VIDEOS_DIR / "cuts-broadcast"
 CUTS_SIDELINE_DIR = VIDEOS_DIR / "cuts-sideline"
 CUTS_DIRS = (CUTS_BROADCAST_DIR, CUTS_SIDELINE_DIR)
-SEG_ANNOTATIONS_DIR = VIDEOS_DIR / "seg-annotations"
-PRE_ANNOTATIONS_DIR = VIDEOS_DIR / "rally-pre-annotations"
-ANNOTATIONS_DIR = VIDEOS_DIR / "rally-annotations"
-ACTION_ANNOTATIONS_DIR = VIDEOS_DIR / "action-annotations"
-ACTION_PRE_ANNOTATIONS_DIR = VIDEOS_DIR / "action-pre-annotations"
-ACTION_FRAMES_DIR = VIDEOS_DIR / "action-frames"
+# Layout rule: everything belonging to a model family — human annotations
+# and machine-generated data alike — lives under that family's dir (action/,
+# rally/, rally-spot/, reid/). Only sources (cuts) and the hand-edited
+# val-set stay at the top level. The annotations/ subdir of each family is
+# the hand-made, irreplaceable part; rally spans land under rally-spot/
+# because they are its training labels. R2 category names mirror this layout
+# 1:1 (the category IS the bucket key prefix AND the dir relative to videos/).
+#
+# seg-annotations: the VLM detect flow's raw per-clip verdicts (in_rally /
+# shot_type), which vlm_to_rally consolidates into rally/pre-annotations.
+SEG_ANNOTATIONS_DIR = VIDEOS_DIR / "rally" / "seg-annotations"
+RALLY_PRE_ANNOTATIONS_DIR = VIDEOS_DIR / "rally" / "pre-annotations"
+RALLY_ANNOTATIONS_DIR = VIDEOS_DIR / "rally-spot" / "annotations"
+ACTION_ANNOTATIONS_DIR = VIDEOS_DIR / "action" / "annotations"
+ACTION_PRE_ANNOTATIONS_DIR = VIDEOS_DIR / "action" / "pre-annotations"
+ACTION_FRAMES_DIR = VIDEOS_DIR / "action" / "frames"
 # Precomputed per-frame audio features for SPOT late-fusion training, keyed by
-# backend name (e.g. action-audio/logmel/<video>.npy). Visual-only training
+# backend name (e.g. action/audio/logmel/<video>.npy). Visual-only training
 # ("none" backend) needs nothing here.
-ACTION_AUDIO_DIR = VIDEOS_DIR / "action-audio"
-ACTION_WAVEFORMS_DIR = VIDEOS_DIR / "action-waveforms"
-ACTION_CHECKPOINTS_DIR = VIDEOS_DIR / "action-checkpoints"
+ACTION_AUDIO_DIR = VIDEOS_DIR / "action" / "audio"
+ACTION_WAVEFORMS_DIR = VIDEOS_DIR / "action" / "waveforms"
+ACTION_CHECKPOINTS_DIR = VIDEOS_DIR / "action" / "checkpoints"
 # Validation set for "holdout" Action Train mode: one video filename per line
 # (stem, <stem>.mp4, or <stem>_actions.jsonl all accepted; blank lines and lines
 # starting with "#" are ignored). Edit this file to pick the val videos by hand.
 ACTION_VAL_SET_FILE = VIDEOS_DIR / "action-val-set.txt"
 # SPOT rally (segment) training. Frame caches are extracted at a reduced fps —
 # native-fps caches for 800+ full matches would need ~1 TB — and keyed per rate:
-# rally-spot-frames/fps2/<stem>/000000.jpg. Labels are written in the same
+# rally-spot/frames/fps2/<stem>/000000.jpg. Labels are written in the same
 # reduced-fps frame space, so yp-spot trains on them unchanged.
-RALLY_SPOT_FRAMES_DIR = VIDEOS_DIR / "rally-spot-frames"
-RALLY_SPOT_CHECKPOINTS_DIR = VIDEOS_DIR / "rally-spot-checkpoints"
-# SPOT rally predictions live beside (not inside) the VLM pre-annotations so
-# the two model families never overwrite each other; Rally Label can load either.
-RALLY_SPOT_PRE_ANNOTATIONS_DIR = VIDEOS_DIR / "rally-spot-pre-annotations"
-# Player ReID: per-action-event person crops + appearance embeddings.
-# player-reid/embeddings/<stem>_reid.jsonl, player-reid/crops/<stem>/<event_id>.jpg
-PLAYER_REID_DIR = VIDEOS_DIR / "player-reid"
+RALLY_SPOT_FRAMES_DIR = VIDEOS_DIR / "rally-spot" / "frames"
+RALLY_SPOT_CHECKPOINTS_DIR = VIDEOS_DIR / "rally-spot" / "checkpoints"
+# SPOT rally predictions live apart from the VLM pre-annotations so the two
+# model families never overwrite each other; Rally Label can load either.
+RALLY_SPOT_PRE_ANNOTATIONS_DIR = VIDEOS_DIR / "rally-spot" / "pre-annotations"
+# Player ReID. reid/annotations holds the human labels (player assignments +
+# actor fixes); everything else under reid/ is recomputable derived data.
+REID_DIR = VIDEOS_DIR / "reid"
+REID_ANNOTATIONS_DIR = REID_DIR / "annotations"
 
 # KPR (Keypoint Promptable ReID, ECCV'24) — optional second embedder. Lives in
 # its own checkout; imported lazily via sys.path (deps are installed in our
@@ -109,23 +122,29 @@ CLIP_REIDENT_DIR = Path(
     or Path(__file__).resolve().parents[2].parent / "third_party" / "clip_reident"
 )
 
-# R2 category → local directory + glob pattern mapping
+# R2 category → local directory + glob pattern + display label. The category
+# key doubles as the bucket key prefix and matches the local dir relative to
+# VIDEOS_DIR; the Storage page renders this table verbatim (order included),
+# so a new category never needs a frontend edit.
 class R2Category(NamedTuple):
     local_dir: Path
     glob_pattern: str
+    label: str
+    local_only: bool = False  # listed locally, never synced to R2
 
 R2_CATEGORIES: dict[str, R2Category] = {
-    "videos": R2Category(RAW_VIDEOS_DIR, "*.mp4"),
-    "cuts-broadcast": R2Category(CUTS_BROADCAST_DIR, "*.mp4"),
-    "cuts-sideline": R2Category(CUTS_SIDELINE_DIR, "*.mp4"),
-    "seg-annotations": R2Category(SEG_ANNOTATIONS_DIR, "*.jsonl"),
-    "rally-pre-annotations": R2Category(PRE_ANNOTATIONS_DIR, "*.jsonl"),
-    "rally-spot-pre-annotations": R2Category(RALLY_SPOT_PRE_ANNOTATIONS_DIR, "*.jsonl"),
-    "rally-annotations": R2Category(ANNOTATIONS_DIR, "*.jsonl"),
-    "action-pre-annotations": R2Category(ACTION_PRE_ANNOTATIONS_DIR, "*.jsonl"),
-    "action-annotations": R2Category(ACTION_ANNOTATIONS_DIR, "*.jsonl"),
-    "action-checkpoints": R2Category(ACTION_CHECKPOINTS_DIR, "**/*"),
-    "rally-spot-checkpoints": R2Category(RALLY_SPOT_CHECKPOINTS_DIR, "**/*"),
+    "videos": R2Category(RAW_VIDEOS_DIR, "*.mp4", "Raw Videos", local_only=True),
+    "cuts-broadcast": R2Category(CUTS_BROADCAST_DIR, "*.mp4", "Cuts (Broadcast)"),
+    "cuts-sideline": R2Category(CUTS_SIDELINE_DIR, "*.mp4", "Cuts (Sideline)"),
+    "rally/seg-annotations": R2Category(SEG_ANNOTATIONS_DIR, "*.jsonl", "Rally Clip Verdicts (VLM)"),
+    "rally/pre-annotations": R2Category(RALLY_PRE_ANNOTATIONS_DIR, "*.jsonl", "Rally Predictions (VLM)"),
+    "rally-spot/annotations": R2Category(RALLY_ANNOTATIONS_DIR, "*.jsonl", "Rally Annotations"),
+    "rally-spot/pre-annotations": R2Category(RALLY_SPOT_PRE_ANNOTATIONS_DIR, "*.jsonl", "Rally Predictions (SPOT)"),
+    "rally-spot/checkpoints": R2Category(RALLY_SPOT_CHECKPOINTS_DIR, "**/*", "Rally Checkpoints"),
+    "action/annotations": R2Category(ACTION_ANNOTATIONS_DIR, "*.jsonl", "Action Annotations"),
+    "action/pre-annotations": R2Category(ACTION_PRE_ANNOTATIONS_DIR, "*.jsonl", "Action Pre-Annotations"),
+    "action/checkpoints": R2Category(ACTION_CHECKPOINTS_DIR, "**/*", "Action Checkpoints"),
+    "reid/annotations": R2Category(REID_ANNOTATIONS_DIR, "*.json", "ReID Annotations"),
 }
 
 # Registry: kind → (local cuts dir, R2 category name). Single source of truth

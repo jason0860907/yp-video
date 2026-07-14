@@ -84,6 +84,7 @@ export const API = {
   upload: {
     start: '/upload/start',
     status: '/upload/status',
+    categories: '/upload/categories',
     download: '/upload/download',
     deleteLocal: '/upload/delete-local',
     deleteR2: '/upload/delete-r2',
@@ -153,5 +154,6 @@ export const API = {
     seedCluster: (name: string) => `/reid/seed-cluster/${encodeURIComponent(name)}`,
     track: '/reid/track',
     tracks: (name: string) => `/reid/tracks/${encodeURIComponent(name)}`,
+    embed: '/reid/embed',
   },
 } as const;

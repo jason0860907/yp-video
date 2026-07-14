@@ -22,7 +22,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from yp_video.config import (
-    ANNOTATIONS_DIR,
+    RALLY_ANNOTATIONS_DIR,
     RALLY_SPOT_CHECKPOINTS_DIR,
     RALLY_SPOT_FRAMES_DIR,
     cut_kind_of,
@@ -49,7 +49,7 @@ def frame_cache_root(extract_fps: float) -> Path:
 
 
 def annotation_files() -> list[Path]:
-    return sorted(ANNOTATIONS_DIR.glob("*_annotations.jsonl"))
+    return sorted(RALLY_ANNOTATIONS_DIR.glob("*_annotations.jsonl"))
 
 
 def rally_stats() -> dict:
@@ -74,7 +74,7 @@ def rally_stats() -> dict:
                 rallies += 1
                 rally_seconds += span
     return {
-        "label_dir": str(ANNOTATIONS_DIR),
+        "label_dir": str(RALLY_ANNOTATIONS_DIR),
         "videos": videos,
         "rallies": rallies,
         "rally_hours": rally_seconds / 3600,
@@ -178,11 +178,11 @@ def write_training_labels(
         total_frames += num_frames
 
     if videos == 0:
-        raise RuntimeError(f"No rally annotations produced any labels in {ANNOTATIONS_DIR}")
+        raise RuntimeError(f"No rally annotations produced any labels in {RALLY_ANNOTATIONS_DIR}")
 
     return {
         "label_dir": str(label_dir),
-        "source_label_dir": str(ANNOTATIONS_DIR),
+        "source_label_dir": str(RALLY_ANNOTATIONS_DIR),
         "extract_fps": extract_fps,
         "videos": videos,
         "rallies": rallies,
