@@ -240,8 +240,20 @@ export interface ReidVideo {
   event_count: number;
   has_reid: boolean;
   reid_counts?: { ok: number; multi: number; miss: number } | null;
+  /** Embedders whose matrix exists for this video (backfill fills gaps). */
+  embedded_models: string[];
   /** Distinct saved identities (0 = extracted but not labeled yet). */
   player_count?: number;
+}
+
+/** GET /reid/options — the server-side model registry. */
+export interface ReidOptions {
+  keypoint_sources: string[];
+  default_embedder: string;
+  embedders: {
+    name: string;
+    threshold: { min: number; max: number; default: number; step: number };
+  }[];
 }
 
 /** One action event's extraction outcome (embedding stripped server-side). */

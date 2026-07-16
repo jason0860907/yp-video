@@ -171,10 +171,12 @@ export function useGroupBoard({ picked, embedder, threshold, records, recordById
   // Save called while a PUT is in flight → run once more when it settles,
   // through the latest closure (the stale one would save stale groups).
   const queuedRef = useRef(false);
-  const save = async (auto = false) => {
+  /** Resolves true when THIS call persisted the board (false = failed or
+   *  deferred behind an in-flight save) — "Save & Next" gates on it. */
+  const save = async (auto = false): Promise<boolean> => {
     if (savingRef.current) {
       queuedRef.current = true;
-      return;
+      return false;
     }
     savingRef.current = true;
     const seq = editSeq.current;
@@ -216,8 +218,10 @@ export function useGroupBoard({ picked, embedder, threshold, records, recordById
       if (editSeq.current === seq) setDirty(false);
       await qc.invalidateQueries({ queryKey: ['reid-players', picked] });
       if (!auto) toast.success(`Saved ${new Set(Object.values(next)).size} player(s), ${Object.keys(next).length} events`);
+      return true;
     } catch (e) {
       toast.error(`Save failed: ${errMsg(e)}`);
+      return false;
     } finally {
       savingRef.current = false;
       if (queuedRef.current) {

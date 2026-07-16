@@ -25,16 +25,13 @@ import { GroupBoard, type BoardHandle } from '@/components/reid/GroupBoard';
 import { ReidVideoPlayer, type PlayerHandle } from '@/components/reid/ReidVideoPlayer';
 import { useGroupBoard } from '@/components/reid/useGroupBoard';
 import { errMsg, type ActorFix, type Rally, type SidebarAction, type TrackData } from '@/components/reid/shared';
-import type { ActionAnnotationData, ReidCluster, ReidPlayers, ReidRecord, ReidVideo } from '@/types/api';
+import { LiveJob } from '@/components/job/LiveJob';
+import type { ActionAnnotationData, Job, ReidCluster, ReidOptions, ReidPlayers, ReidRecord, ReidVideo } from '@/types/api';
 
 // Embedders and their threshold-slider calibration both come from
-// /reid/options — cosine-distance scales differ wildly per model and the
-// backend registry is the single source of truth. Fallback covers only the
-// pre-fetch instant.
-interface EmbedderOption {
-  name: string;
-  threshold: { min: number; max: number; default: number; step: number };
-}
+// /reid/options (types/api.ts ReidOptions) — cosine-distance scales differ
+// wildly per model and the backend registry is the single source of truth.
+// Fallback covers only the pre-fetch instant.
 const FALLBACK_THRESHOLD = { min: 0.05, max: 0.95, default: 0.3, step: 0.01 };
 // Show enough decimals to tell adjacent slider stops apart.
 const fmtThreshold = (v: number, step: number) => v.toFixed(step < 0.01 ? 3 : 2);
@@ -88,7 +85,7 @@ export function ReidLabelPage() {
   // registry — a model only shows up when its weights actually exist there.
   const optionsQuery = useQuery({
     queryKey: ['reid-options'],
-    queryFn: () => apiFetch<{ keypoint_sources: string[]; default_embedder: string; embedders: EmbedderOption[] }>(API.reid.options),
+    queryFn: () => apiFetch<ReidOptions>(API.reid.options),
     staleTime: Infinity, // static per server run
   });
   const embedderOptions = useMemo(() => optionsQuery.data?.embedders ?? [], [optionsQuery.data]);
@@ -198,6 +195,29 @@ export function ReidLabelPage() {
   const assignments = useMemo(() => playersQuery.data?.assignments ?? {}, [playersQuery.data]);
   const matches = playersQuery.data?.matches ?? {};
 
+  // A clusters 404 for a model the video list confirms is missing means "the
+  // matrix was never computed" — recoverable right here with a backfill job,
+  // no trip to the ReID Predict page. Any other error renders as-is.
+  const pickedVideo = extracted.find((v) => v.name === picked);
+  const matrixMissing =
+    clustersQuery.error instanceof ApiError &&
+    clustersQuery.error.status === 404 &&
+    !!pickedVideo &&
+    !pickedVideo.embedded_models.includes(embedder);
+  const [backfillJob, setBackfillJob] = useState<Job | null>(null);
+  useEffect(() => setBackfillJob(null), [picked, embedder]);
+  const startBackfill = async () => {
+    try {
+      const job = await apiFetch<Job>(API.reid.embed, {
+        method: 'POST',
+        body: { videos: [picked], models: [embedder] },
+      });
+      setBackfillJob(job);
+    } catch (e) {
+      toast.error(`Backfill start failed: ${errMsg(e)}`);
+    }
+  };
+
   // All action events, frame-sorted, each carrying its tracklet key when one
   // exists. The video overlay keeps only the previous and the next action's
   // tracklets on screen — and EVERY action occupies a slot (visible or not),
@@ -238,7 +258,12 @@ export function ReidLabelPage() {
 
   // Actor fix: persists into the players file server-side, re-crops and
   // re-embeds the event, then refreshes everything derived from embeddings.
+  // The re-embed takes seconds — fixingEvent gates the picker so a double
+  // click can't fire two overlapping fixes.
+  const [fixingEvent, setFixingEvent] = useState<string | null>(null);
   const fixActor = async (eventId: string, fix: ActorFix) => {
+    if (fixingEvent) return;
+    setFixingEvent(eventId);
     try {
       await apiFetch(API.reid.actorFix(picked), { method: 'POST', body: { event_id: eventId, ...fix } });
       toast.success(fix.none ? 'Marked as no actor' : fix.box ? 'Actor updated' : 'Reverted to the auto pick');
@@ -252,6 +277,8 @@ export function ReidLabelPage() {
       ]);
     } catch (e) {
       toast.error(`Actor fix failed: ${errMsg(e)}`);
+    } finally {
+      setFixingEvent(null);
     }
   };
 
@@ -268,6 +295,22 @@ export function ReidLabelPage() {
     board.clearBoard();
     setSelectedRally('all');
     setPicked(name);
+  };
+
+  // Save, then jump to the next unlabeled video under the current picker
+  // filters (wrapping around). A clean save leaves dirty=false, so pickVideo
+  // never re-prompts.
+  const saveAndNext = async () => {
+    if (!(await board.save())) return;
+    const start = pickable.findIndex((v) => v.name === picked);
+    const rotated = [...pickable.slice(start + 1), ...pickable.slice(0, Math.max(start, 0))];
+    const next = rotated.find((v) => v.name !== picked && (v.player_count ?? 0) === 0);
+    void qc.invalidateQueries({ queryKey: ['reid-videos'] });
+    if (!next) {
+      toast.info('No unlabeled videos left in the current filter');
+      return;
+    }
+    void pickVideo(next.name);
   };
 
   // Actions somebody actually performs on camera: score marks where the ball
@@ -332,6 +375,7 @@ export function ReidLabelPage() {
           selectedRally={selectedRally}
           onSelectRally={setSelectedRally}
           onFixActor={fixActor}
+          fixing={Boolean(fixingEvent)}
           onJumpToCrop={(id) => boardRef.current?.jumpToCrop(id)}
           trackBoxes={trackBoxesByFrame}
           trackEventTimeline={trackEventTimeline}
@@ -457,6 +501,14 @@ export function ReidLabelPage() {
             <Button size="sm" intent="primary" onClick={() => void board.save()} disabled={!picked}>
               {board.dirty ? 'Save •' : 'Save'}
             </Button>
+            <Button
+              size="sm"
+              onClick={() => void saveAndNext()}
+              disabled={!picked}
+              title="Save, then jump to the next unlabeled video under the current filters"
+            >
+              Save & Next
+            </Button>
           </div>
         </div>
 
@@ -470,9 +522,43 @@ export function ReidLabelPage() {
             title="Pick an extracted video"
             subtitle="Drag crops between players to fix identities"
           />
+        ) : clustersQuery.isError ? (
+          <div className="flex flex-col items-center justify-center gap-3 py-12 text-center">
+            {matrixMissing ? (
+              <>
+                <p className="text-sm font-medium text-text-secondary">
+                  No {embedder} embeddings for this video
+                </p>
+                <p className="max-w-sm text-xs text-text-muted">
+                  This video was extracted before {embedder} was registered. Backfill computes its
+                  embeddings from the saved crops — no re-extraction needed.
+                </p>
+                {backfillJob ? (
+                  <div className="w-full max-w-md text-left">
+                    <LiveJob job={backfillJob} onUpdate={setBackfillJob} />
+                  </div>
+                ) : (
+                  <Button size="sm" intent="primary" onClick={() => void startBackfill()}>
+                    Backfill Embeddings
+                  </Button>
+                )}
+              </>
+            ) : (
+              <>
+                <p className="text-sm font-medium text-red-400">Clustering unavailable</p>
+                <p className="max-w-sm text-xs text-text-muted">{errMsg(clustersQuery.error)}</p>
+              </>
+            )}
+          </div>
         ) : clustersQuery.isPending || resultsQuery.isPending ? (
           <div className="py-8 text-center text-xs text-text-muted">Clustering…</div>
         ) : (
+          <>
+          {playersQuery.isError && (
+            <p className="mb-2 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-400">
+              Player matches unavailable: {errMsg(playersQuery.error)}
+            </p>
+          )}
           <GroupBoard
             ref={boardRef}
             picked={picked}
@@ -485,6 +571,7 @@ export function ReidLabelPage() {
             trackLinks={trackLinks}
             onSeekToEvent={seekToEvent}
           />
+          </>
         )}
         {/* Association stats */}
         {picked && records.length > 0 && (

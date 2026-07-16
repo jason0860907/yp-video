@@ -39,6 +39,9 @@ export interface ReidVideoPlayerProps {
   selectedRally: number | 'all';
   onSelectRally: (rally: number | 'all') => void;
   onFixActor: (eventId: string, fix: ActorFix) => void;
+  /** An actor fix is in flight (re-crop + re-embed server-side) — the picker
+   *  dims and ignores clicks so it can't fire twice. */
+  fixing?: boolean;
   onJumpToCrop: (eventId: string) => void;
   /** frame → ByteTrack boxes, for the tracklet overlay (empty = no tracking). */
   trackBoxes: Map<number, { key: string; trackId: number; box: [number, number, number, number] }[]>;
@@ -122,7 +125,7 @@ function ReidEventPanel({ entries, empty, matches, selectedEventId, fps, playhea
 }
 
 export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(function ReidVideoPlayer(
-  { src, fps, frameSize, records, actionEvents, matches, rallies, selectedRally, onSelectRally, onFixActor, onJumpToCrop, trackBoxes, trackEventTimeline },
+  { src, fps, frameSize, records, actionEvents, matches, rallies, selectedRally, onSelectRally, onFixActor, fixing = false, onJumpToCrop, trackBoxes, trackEventTimeline },
   ref,
 ) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -429,7 +432,7 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
                       strokeWidth={1.5}
                       strokeDasharray={d.score >= AUTO_PICK_MIN_SCORE ? undefined : '3 5'}
                       vectorEffect="non-scaling-stroke"
-                      className="pointer-events-auto cursor-pointer hover:fill-white/20"
+                      className={fixing ? 'pointer-events-none opacity-40' : 'pointer-events-auto cursor-pointer hover:fill-white/20'}
                       onClick={(e) => {
                         e.stopPropagation();
                         onFixActor(pickTarget.id, { box: d.box });
@@ -523,9 +526,11 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
                   <span className="h-2 w-2 flex-shrink-0 rounded-full animate-pulse-dot" style={{ background: actionColor(pickTarget.label) }} />
                   <span className="text-primary-light">
                     Picking actor for <strong>{pickTarget.label}</strong> f{pickTarget.frame}
-                    {pickTarget.detections?.length
-                      ? ' — click the correct person in the video'
-                      : ' — no stored detections (re-run extraction for this video)'}
+                    {fixing
+                      ? ' — applying…'
+                      : pickTarget.detections?.length
+                        ? ' — click the correct person in the video'
+                        : ' — no stored detections (re-run extraction for this video)'}
                   </span>
                   <span className="ml-auto flex items-center gap-3">
                     <label className="flex items-center gap-1.5 text-[11px] text-text-secondary" title="Hide detections below this score — drag left to reveal weaker boxes (extraction keeps everything ≥ 0.1)">
@@ -546,11 +551,11 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
                         {(pickTarget.detections ?? []).filter((d) => d.score >= minDetScore).length}/{(pickTarget.detections ?? []).length}
                       </span>
                     </label>
-                    <Button size="sm" onClick={() => onFixActor(pickTarget.id, { none: true })} title="Nobody in frame is the actor — clears this event's crop">
+                    <Button size="sm" disabled={fixing} onClick={() => onFixActor(pickTarget.id, { none: true })} title="Nobody in frame is the actor — clears this event's crop">
                       No actor
                     </Button>
                     {pickTarget.box_source === 'manual' && (
-                      <Button size="sm" onClick={() => onFixActor(pickTarget.id, {})} title="Discard the manual fix and re-run the automatic pick">
+                      <Button size="sm" disabled={fixing} onClick={() => onFixActor(pickTarget.id, {})} title="Discard the manual fix and re-run the automatic pick">
                         Revert to auto
                       </Button>
                     )}
