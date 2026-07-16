@@ -421,13 +421,14 @@ async def stop_vllm_for_job(job_id: str, *, when: bool):
 
 
 def spawn_batch_video_job(
-    job, video_paths: list[Path], *, stop_vllm: bool, work, done_message, progress_noun: str, start_message: str
+    job, video_paths: list[Path], *, stop_vllm: bool, work, done_message, start_message: str
 ) -> None:
     """Run ``work(video_path, on_progress)`` per video inside the standard
     batch-job scaffolding: inference lock, throttled per-item progress,
     cancellation, and the final ok/failed roll-up. ``work`` is synchronous
     and GPU-bound — it runs in an executor thread; ``on_progress`` receives
-    ``(done, total, status)`` and may be called from that thread.
+    ``(done, total, message)`` and may be called from that thread — the
+    worker owns the wording (falls back to ``done/total``).
     """
     total = len(video_paths)
 
@@ -450,15 +451,17 @@ def spawn_batch_video_job(
 
                         last_push = {"t": 0.0}
 
-                        def on_progress(done, total_units, _status, *, index=i, name=video_path.name):
+                        def on_progress(done, total_units, msg, *, index=i, name=video_path.name):
                             # Executor thread → schedule onto the loop; throttle
-                            # to ~1/s except the final unit.
+                            # to ~1/s. done=0 (phase start — often followed by a
+                            # long silent model load) and the final unit always
+                            # go through.
                             now = time.monotonic()
-                            if done != total_units and now - last_push["t"] < 1.0:
+                            if done not in (0, total_units) and now - last_push["t"] < 1.0:
                                 return
                             last_push["t"] = now
                             frac = done / total_units if total_units else 0.0
-                            detail = f"{progress_noun} {done}/{total_units}"
+                            detail = msg or f"{done}/{total_units}"
                             loop.call_soon_threadsafe(
                                 asyncio.ensure_future,
                                 update_batch_item(

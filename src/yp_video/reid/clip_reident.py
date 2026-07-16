@@ -41,6 +41,10 @@ class ClipReidentEmbedder:
     def __init__(self):
         self._model = None
 
+    @property
+    def loaded(self) -> bool:
+        return self._model is not None
+
     def _ensure(self):
         if self._model is not None:
             return

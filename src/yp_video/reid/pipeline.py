@@ -216,6 +216,9 @@ def extract_video(
     source = build_keypoint_sources()[keypoints]
     records: list[dict] = []
     total = len(events)
+    if on_progress:
+        # The first detect() loads the detector — announce the stall.
+        on_progress(0, total, f"loading detector ({keypoints})...")
     try:
         for i, event in enumerate(events):
             cap.set(cv2.CAP_PROP_POS_FRAMES, event["frame"])
@@ -263,7 +266,7 @@ def extract_video(
                             record["status"] = "ok"
             records.append(record)
             if on_progress:
-                on_progress(i + 1, total, record["status"])
+                on_progress(i + 1, total, f"event {i + 1}/{total}")
     finally:
         cap.release()
 
@@ -283,12 +286,20 @@ def extract_video(
     }
     EMBEDDINGS_DIR.mkdir(parents=True, exist_ok=True)
     write_jsonl(reid_path(stem), header, records)
-    # Fresh extraction invalidates every model's rows — recompute them all.
-    embed_video(stem, overwrite=True)
+    # Fresh extraction invalidates every model's rows — recompute them all,
+    # continuing the same progress channel (the item bar restarts per phase).
+    embed_video(stem, overwrite=True, on_progress=on_progress)
     return counts
 
 
-def embed_video(stem: str, *, models: list[str] | None = None, overwrite: bool = False) -> dict:
+# Crops per embed() call — small enough that progress moves visibly, large
+# enough that per-call overhead (GPU launch, prompt stacking) stays amortized.
+_EMBED_CHUNK = 32
+
+
+def embed_video(
+    stem: str, *, models: list[str] | None = None, overwrite: bool = False, on_progress: ProgressFn | None = None
+) -> dict:
     """Crops on disk → one (n_records, dim) npy matrix per embedder.
 
     Reads the saved crop jpgs, so it needs only an extraction's output, never
@@ -298,7 +309,9 @@ def embed_video(stem: str, *, models: list[str] | None = None, overwrite: bool =
     registered embedder; without ``overwrite`` existing matrices are kept.
 
     Every model embeds the same crops + prompts, so models stay A/B-comparable
-    on identical inputs. Returns ``{"models": [...], "crops": N}``.
+    on identical inputs. Progress is per model (``done=0`` announces the
+    model, including a first-use weight load). Returns
+    ``{"models": [...], "crops": N}``.
     """
     import cv2
     import numpy as np
@@ -330,7 +343,15 @@ def embed_video(stem: str, *, models: list[str] | None = None, overwrite: bool =
         prompts.append(build_crop_prompt(record, record.get("actor_box") or record["box"]))
 
     for name, embedder in targets.items():
-        matrix = embedder.embed(crops, prompts=prompts)
+        if on_progress:
+            on_progress(0, len(crops), f"loading {name} weights..." if not embedder.loaded else f"embedding ({name})...")
+        parts = []
+        for start in range(0, len(crops), _EMBED_CHUNK):
+            end = min(start + _EMBED_CHUNK, len(crops))
+            parts.append(embedder.embed(crops[start:end], prompts=prompts[start:end]))
+            if on_progress:
+                on_progress(end, len(crops), f"{name} · crop {end}/{len(crops)}")
+        matrix = np.concatenate(parts) if parts else embedder.embed([], prompts=[])
         full = np.full((len(records), matrix.shape[1]), np.nan, dtype=np.float32)
         if len(owners):
             full[owners] = matrix

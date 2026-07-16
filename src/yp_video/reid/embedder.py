@@ -34,6 +34,12 @@ class Embedder(Protocol):
 
     def embed(self, crops_bgr: list[np.ndarray], prompts: list[dict] | None = None, batch_size: int = 32) -> np.ndarray: ...
 
+    @property
+    def loaded(self) -> bool:
+        """Whether the weights are resident — first embed() otherwise stalls
+        on model load, and progress reporting wants to say so."""
+        ...
+
 
 def build_crop_prompt(record: dict, person_box: list[float]) -> dict:
     """Keypoint prompts for promptable embedders (KPR) from one extraction
@@ -87,6 +93,10 @@ class ClipReidEmbedder:
 
     def __init__(self):
         self._session = None
+
+    @property
+    def loaded(self) -> bool:
+        return self._session is not None
 
     def _ensure_session(self):
         if self._session is not None:
@@ -146,6 +156,10 @@ class KprEmbedder:
 
     def __init__(self):
         self._extractor = None
+
+    @property
+    def loaded(self) -> bool:
+        return self._extractor is not None
 
     def _ensure(self):
         if self._extractor is not None:

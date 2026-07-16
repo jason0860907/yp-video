@@ -41,15 +41,7 @@ def _read_header(stem: str) -> dict | None:
     path = store.reid_path(stem)
     if not path.exists():
         return None
-    import json
-
-    with open(path, encoding="utf-8") as f:
-        line = f.readline().strip()
-    if not line:
-        return None
-    header = json.loads(line)
-    header.pop("_meta", None)
-    return header
+    return read_jsonl_cached(path)[0] or None  # read-only — shared cached object
 
 
 @router.get("/videos")
@@ -128,7 +120,6 @@ async def start(req: ReidStartRequest) -> dict:
         stop_vllm=req.stop_vllm,
         work=lambda p, cb: pipeline.extract_video(p, keypoints=req.keypoints, on_progress=cb),
         done_message=lambda c: f"{c['ok']} ok · {c['multi']} multi · {c['miss']} miss",
-        progress_noun="event",
         start_message="detecting players...",
     )
     return job.to_dict()
@@ -176,7 +167,6 @@ async def track(req: TrackStartRequest) -> dict:
         stop_vllm=req.stop_vllm,
         work=lambda p, cb: tracking.track_video(p, stride=req.stride, on_progress=cb),
         done_message=lambda c: f"{c['tracklets']} tracklets over {c['frames']} frames",
-        progress_noun="frame",
         start_message="tracking rallies...",
     )
     return job.to_dict()
@@ -219,11 +209,10 @@ async def embed(req: EmbedStartRequest) -> dict:
         job,
         video_paths,
         stop_vllm=req.stop_vllm,
-        work=lambda p, cb: pipeline.embed_video(p.stem, models=req.models, overwrite=req.overwrite),
+        work=lambda p, cb: pipeline.embed_video(p.stem, models=req.models, overwrite=req.overwrite, on_progress=cb),
         done_message=lambda c: (
             f"{', '.join(c['models'])} over {c['crops']} crops" if c["models"] else "already embedded"
         ),
-        progress_noun="crop",
         start_message="embedding crops...",
     )
     return job.to_dict()
@@ -295,6 +284,17 @@ def _validated_model(model: str) -> str:
     return model
 
 
+def _load_or_http(loader):
+    """Run a reid data loader with its failures mapped to actionable HTTP
+    errors: matrix file missing → 404, matrix/record row mismatch → 409."""
+    try:
+        return loader()
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
 @router.get("/clusters/{name}")
 def clusters(
     name: str,
@@ -303,11 +303,7 @@ def clusters(
 ) -> dict:
     """Unsupervised grouping of one video's embeddings (event ids per cluster)."""
     stem = Path(unquote(name)).stem
-    try:
-        records, matrix = identity.load_embeddings(stem, model=_validated_model(model))
-    except FileNotFoundError as exc:
-        raise HTTPException(404, str(exc)) from exc
-    labels = identity.cluster(matrix, threshold=threshold)
+    records, labels = _load_or_http(lambda: identity.cluster_video(stem, _validated_model(model), threshold))
     grouped: dict[int, list[str]] = {}
     for record, label in zip(records, labels):
         grouped.setdefault(int(label), []).append(record["id"])
@@ -332,11 +328,8 @@ def get_players(name: str, model: str = DEFAULT_EMBEDDER) -> dict:
     assignments = identity.load_assignments(stem)
     matches: dict[str, dict] = {}
     if assignments:
-        try:
-            records, matrix = identity.load_embeddings(stem, model=_validated_model(model))
-            matches = identity.match(records, matrix, assignments)
-        except FileNotFoundError:
-            pass
+        records, matrix = _load_or_http(lambda: identity.load_embeddings(stem, model=_validated_model(model)))
+        matches = identity.match(records, matrix, assignments)
     return {
         "assignments": assignments,
         "players": sorted(set(assignments.values())),
@@ -345,12 +338,17 @@ def get_players(name: str, model: str = DEFAULT_EMBEDDER) -> dict:
 
 
 @router.put("/players/{name}")
-def put_players(name: str, req: SaveAssignmentsRequest, model: str = DEFAULT_EMBEDDER) -> dict:
+def put_players(name: str, req: SaveAssignmentsRequest) -> dict:
+    """Persist assignments. Returns them without matches — a save must
+    succeed even when the current model's matrix is missing."""
     stem = Path(unquote(name)).stem
     if not store.reid_path(stem).exists():
         raise HTTPException(404, f"No ReID results for {stem}")
     identity.save_assignments(stem, req.assignments)
-    return get_players(name, model=model)
+    return {
+        "assignments": req.assignments,
+        "players": sorted(set(req.assignments.values())),
+    }
 
 
 class SeedClusterRequest(BaseModel):
@@ -369,10 +367,7 @@ def seed_cluster(name: str, req: SeedClusterRequest) -> dict:
     show them as leftover pools for further seeding.
     """
     stem = Path(unquote(name)).stem
-    try:
-        records, matrix = identity.load_embeddings(stem, model=_validated_model(req.model))
-    except FileNotFoundError as exc:
-        raise HTTPException(404, str(exc)) from exc
+    records, matrix = _load_or_http(lambda: identity.load_embeddings(stem, model=_validated_model(req.model)))
     groups, leftover_ids = identity.seeded_groups(records, matrix, req.seeds, req.threshold)
     leftover_clusters: list[list[str]] = []
     if leftover_ids:
