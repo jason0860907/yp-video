@@ -29,9 +29,10 @@ import threading
 
 import numpy as np
 
+from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import atomic_write, read_jsonl_cached
 from yp_video.reid.embedder import DEFAULT_EMBEDDER
-from yp_video.reid.store import SKIP_LABELS, load_embedding_matrix, players_path, reid_path
+from yp_video.reid.store import SKIP_LABELS, load_embedding_matrix, players_path, reid_path, require_embedding_path
 
 # Serializes read-modify-write of the players file: the UI auto-saves
 # assignments while actor fixes land, and interleaving would drop one edit.
@@ -42,9 +43,17 @@ _players_lock = threading.Lock()
 # cutoffs are far smaller than typical CNN-feature values. The UI exposes it.
 DEFAULT_CLUSTER_THRESHOLD = 0.15
 
+# The threshold slider's hot path, keyed (stem, model) on the two source
+# files. Values are shared — read-only, like everything read_jsonl_cached
+# hands out. The linkage tree is threshold-independent, so a slider drag
+# re-runs only fcluster (see cluster_video).
+_emb_cache: StatCache = StatCache()
+_linkage_cache: StatCache = StatCache()
+
 
 def load_embeddings(stem: str, model: str = DEFAULT_EMBEDDER) -> tuple[list[dict], np.ndarray]:
-    """Records with an embedding under ``model``, plus their (N, dim) matrix.
+    """Records with an embedding under ``model``, plus their (N, dim)
+    L2-normalized matrix. Cached on the source files — SHARED, read-only.
 
     Records come from the reid jsonl, vectors from the model's npy sidecar
     (row i ↔ record i, NaN row = not embedded — see reid/store.py).
@@ -52,6 +61,12 @@ def load_embeddings(stem: str, model: str = DEFAULT_EMBEDDER) -> tuple[list[dict
     path = reid_path(stem)
     if not path.exists():
         raise FileNotFoundError(f"No ReID results for {stem}")
+    return _emb_cache.get(
+        (stem, model), [path, require_embedding_path(stem, model)], lambda: _load_embeddings(stem, model, path)
+    )
+
+
+def _load_embeddings(stem: str, model: str, path) -> tuple[list[dict], np.ndarray]:
     _meta, records = read_jsonl_cached(path)  # read-only from here on
     matrix = load_embedding_matrix(stem, model)
     if len(matrix) != len(records):
@@ -74,25 +89,57 @@ def cluster(matrix: np.ndarray, threshold: float = DEFAULT_CLUSTER_THRESHOLD) ->
     Returns int labels aligned with the matrix rows; clusters are renumbered
     by descending size so cluster 0 is always the biggest.
     """
-    from scipy.cluster.hierarchy import fcluster, linkage
+    return _cut(_linkage(matrix), matrix, threshold)
+
+
+def cluster_video(stem: str, model: str, threshold: float) -> tuple[list[dict], np.ndarray]:
+    """One video's records + cluster labels, linkage cached on the source
+    files — a threshold change (the UI slider) re-runs only the O(n) cut,
+    not the O(n²) linkage."""
+    records, matrix = load_embeddings(stem, model=model)
+    links = _linkage_cache.get(
+        (stem, model), [reid_path(stem), require_embedding_path(stem, model)], lambda: _linkage(matrix)
+    )
+    return records, _cut(links, matrix, threshold)
+
+
+def _linkage(matrix: np.ndarray):
+    from scipy.cluster.hierarchy import linkage
+
+    return linkage(matrix, method="average", metric="cosine") if len(matrix) > 1 else None
+
+
+def _cut(links, matrix: np.ndarray, threshold: float) -> np.ndarray:
+    from scipy.cluster.hierarchy import fcluster
 
     n = len(matrix)
     if n == 0:
         return np.empty(0, dtype=int)
     if n == 1:
         return np.zeros(1, dtype=int)
-    links = linkage(matrix, method="average", metric="cosine")
     raw = fcluster(links, t=threshold, criterion="distance")
     order = sorted(set(raw), key=lambda c: -(raw == c).sum())
     remap = {c: i for i, c in enumerate(order)}
     return np.array([remap[c] for c in raw], dtype=int)
 
 
-def _load_players_file(stem: str) -> dict:
+# Readers go through the cache; writers (under _players_lock) read fresh via
+# _read_players_file — they mutate the loaded dict before saving.
+_players_cache: StatCache = StatCache()
+
+
+def _read_players_file(stem: str) -> dict:
     path = players_path(stem)
     if not path.exists():
         return {}
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _load_players_file(stem: str) -> dict:
+    path = players_path(stem)
+    if not path.exists():
+        return {}
+    return _players_cache.get(stem, [path], lambda: _read_players_file(stem))
 
 
 def _save_players_file(stem: str, data: dict) -> None:
@@ -150,7 +197,7 @@ def load_assignments(stem: str) -> dict[str, str]:
 
 def save_assignments(stem: str, assignments: dict[str, str]) -> None:
     with _players_lock:
-        data = _load_players_file(stem)
+        data = _read_players_file(stem)
         data["assignments"] = {k: v.strip() for k, v in assignments.items() if v and v.strip()}
         _save_players_file(stem, data)
 
@@ -163,7 +210,7 @@ def load_actor_fixes(stem: str) -> dict[str, dict]:
 def save_actor_fix(stem: str, event_id: str, box: list[float] | None) -> None:
     """Record a manual actor pick; ``box=None`` means "nobody is the actor"."""
     with _players_lock:
-        data = _load_players_file(stem)
+        data = _read_players_file(stem)
         fixes = data.setdefault("actor_fixes", {})
         fixes[event_id] = {"none": True} if box is None else {"box": [round(float(v), 1) for v in box]}
         _save_players_file(stem, data)
@@ -172,7 +219,7 @@ def save_actor_fix(stem: str, event_id: str, box: list[float] | None) -> None:
 def remove_actor_fix(stem: str, event_id: str) -> None:
     """Revert an event to the automatic pick."""
     with _players_lock:
-        data = _load_players_file(stem)
+        data = _read_players_file(stem)
         if data.get("actor_fixes", {}).pop(event_id, None) is not None:
             _save_players_file(stem, data)
 

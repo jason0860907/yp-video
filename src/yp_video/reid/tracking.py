@@ -28,6 +28,7 @@ from pathlib import Path
 
 import numpy as np
 
+from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import read_jsonl, read_jsonl_cached, write_jsonl
 from yp_video.reid.detector import DETECTOR_NAME, PERSON_SCORE_THRESHOLD
 from yp_video.reid.store import action_annotation_path, reid_path, tracks_path
@@ -114,15 +115,18 @@ def track_video(video_path: Path, *, stride: int = 1, on_progress: ProgressFn | 
     frame_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-    _detector.ensure()
-    res = _detector.resolution
-    box_scale = np.array([frame_w / res, frame_h / res, frame_w / res, frame_h / res])
-
     spans = [
         (r["rally_id"], int(round(r["start"] * fps)), int(round(r["end"] * fps)))
         for r in rallies
     ]
     total = sum((f1 - f0) // stride + 1 for _, f0, f1 in spans)
+
+    if on_progress:
+        # ensure() below loads + fp16-compiles the model on first use.
+        on_progress(0, total, "loading detector weights...")
+    _detector.ensure()
+    res = _detector.resolution
+    box_scale = np.array([frame_w / res, frame_h / res, frame_w / res, frame_h / res])
 
     # Producer: decode + resize + tensorize on a thread so the GPU never
     # waits on ffmpeg or cv2. INTER_AREA tracks torchvision's antialiased
@@ -217,7 +221,7 @@ def track_video(video_path: Path, *, stride: int = 1, on_progress: ProgressFn | 
                     t["scores"].append(round(float(score), 2))
                 detected += 1
                 if on_progress:
-                    on_progress(detected, total, f"rally {rally_id}")
+                    on_progress(detected, total, f"frame {detected}/{total} · rally {rally_id}")
             pending = []
         flush_rally()
         if producer_error:
@@ -254,10 +258,9 @@ def _containment(track_box: list[float], display_box: list[float]) -> float:
     return inter / area
 
 
-# link_events results, keyed by stem; an entry is valid while both source
-# files' (mtime, size) match. Tiny values (one small dict per video), so no LRU.
-_links_cache: dict[str, tuple[tuple, dict[str, dict]]] = {}
-_links_lock = threading.Lock()
+# link_events results, keyed by stem on both source files. Tiny values
+# (one small dict per video), so unbounded is fine.
+_links_cache: StatCache = StatCache()
 
 
 def link_events(stem: str) -> dict[str, dict]:
@@ -267,16 +270,7 @@ def link_events(stem: str) -> dict[str, dict]:
     the event's exact frame may be undetected — the nearest detected frame
     within the stride wins.
     """
-    stats = tuple((s.st_mtime_ns, s.st_size) for s in (tracks_path(stem).stat(), reid_path(stem).stat()))
-    with _links_lock:
-        hit = _links_cache.get(stem)
-        if hit and hit[0] == stats:
-            return hit[1]
-
-    links = _link_events(stem)
-    with _links_lock:
-        _links_cache[stem] = (stats, links)
-    return links
+    return _links_cache.get(stem, [tracks_path(stem), reid_path(stem)], lambda: _link_events(stem))
 
 
 def _link_events(stem: str) -> dict[str, dict]:

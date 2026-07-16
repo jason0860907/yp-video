@@ -59,9 +59,10 @@ def read_jsonl(path: Path) -> tuple[dict, list[dict]]:
 
 # Parsed-file cache for the frequently re-read jsonls. Keyed by (mtime, size),
 # so the atomic rewrites in write_jsonl invalidate entries naturally. Sized to
-# hold every cut's annotation file at once — /reid/videos touches ALL of them
-# per page load, and an LRU smaller than the library thrashes on every request.
-_READ_CACHE_SIZE = 64
+# hold every cut's annotation file AND reid/tracks jsonl at once —
+# /reid/videos touches ALL of them per page load, and an LRU smaller than the
+# working set thrashes on every request.
+_READ_CACHE_SIZE = 256
 _read_cache: OrderedDict[Path, tuple[tuple[int, int], dict, list[dict]]] = OrderedDict()
 _read_cache_lock = threading.Lock()
 

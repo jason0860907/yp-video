@@ -33,6 +33,7 @@ from yp_video.config import (
     REID_ANNOTATIONS_DIR,
     REID_DIR,
 )
+from yp_video.core.cache import StatCache
 
 EMBEDDINGS_DIR = REID_DIR / "embeddings"
 CROPS_DIR = REID_DIR / "crops"
@@ -52,19 +53,44 @@ def embedding_path(stem: str, model: str) -> Path:
     return EMBEDDINGS_DIR / f"{stem}.{model}.npy"
 
 
+# One dir scan serves every embedded_models call (the video list asks per
+# cut); any matrix create/delete churns the directory entry via temp+rename,
+# so the dir's own stat is a correct invalidation key.
+_models_cache: StatCache = StatCache()
+
+
 def embedded_models(stem: str) -> list[str]:
     """Models that have an embedding matrix for this video."""
-    return sorted(p.suffixes[-2].lstrip(".") for p in EMBEDDINGS_DIR.glob(f"{stem}.*.npy"))
+    if not EMBEDDINGS_DIR.exists():
+        return []
+    return _models_map().get(stem, [])
 
 
-def load_embedding_matrix(stem: str, model: str) -> np.ndarray:
-    """The (n_records, dim) matrix for one model; NaN rows = no embedding."""
+def _models_map() -> dict[str, list[str]]:
+    def scan() -> dict[str, list[str]]:
+        out: dict[str, list[str]] = {}
+        for p in EMBEDDINGS_DIR.glob("*.npy"):
+            stem, _, model = p.name[: -len(".npy")].rpartition(".")
+            if stem:
+                out.setdefault(stem, []).append(model)
+        return {stem: sorted(models) for stem, models in out.items()}
+
+    return _models_cache.get("map", [EMBEDDINGS_DIR], scan)
+
+
+def require_embedding_path(stem: str, model: str) -> Path:
+    """The matrix path, or an actionable FileNotFoundError when it's absent."""
     path = embedding_path(stem, model)
     if not path.exists():
         raise FileNotFoundError(
             f"No {model} embeddings for {stem} — run extraction or backfill embeddings"
         )
-    return np.load(path)
+    return path
+
+
+def load_embedding_matrix(stem: str, model: str) -> np.ndarray:
+    """The (n_records, dim) matrix for one model; NaN rows = no embedding."""
+    return np.load(require_embedding_path(stem, model))
 
 
 def save_embedding_matrix(stem: str, model: str, matrix: np.ndarray) -> None:
