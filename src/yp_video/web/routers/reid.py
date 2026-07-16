@@ -80,9 +80,11 @@ def options() -> dict:
     """Available keypoint-source / embedder choices for the Predict / Label
     pages. Each embedder ships its cluster-threshold slider calibration, so
     adding a model server-side never needs a frontend edit."""
+    registry = build_embedders()
     return {
         "keypoint_sources": list(build_keypoint_sources()),
-        "embedders": [{"name": n, "threshold": threshold_calibration(n)} for n in build_embedders()],
+        "default_embedder": DEFAULT_EMBEDDER if DEFAULT_EMBEDDER in registry else next(iter(registry)),
+        "embedders": [{"name": n, "threshold": threshold_calibration(n)} for n in registry],
     }
 
 

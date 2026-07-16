@@ -62,13 +62,14 @@ export function ReidLabelPage() {
   // Where locked groups live on the groups board: pinned on top as full rows,
   // or docked in a sticky right rail showing just 3 crops per group.
   const [lockedDock, setLockedDock] = useState<'top' | 'right'>('right');
-  const [embedder, setEmbedder] = useState('clip-reid');
+  // Embedder + threshold snap to the server's default the moment
+  // /reid/options lands (see effect below); queries are gated on `picked`,
+  // so nothing fires against the empty pre-fetch value.
+  const [embedder, setEmbedder] = useState('');
   // Draft follows the slider live; the applied value (= clusters query key)
   // trails it by a debounce so dragging doesn't fire a re-cluster per pixel.
-  // Seeded with clip-reid's known default; snaps to the server calibration
-  // the moment /reid/options lands (see effect below).
-  const [thresholdDraft, setThresholdDraft] = useState<number>(0.15);
-  const [threshold, setThreshold] = useState<number>(0.15);
+  const [thresholdDraft, setThresholdDraft] = useState<number>(FALLBACK_THRESHOLD.default);
+  const [threshold, setThreshold] = useState<number>(FALLBACK_THRESHOLD.default);
   useEffect(() => {
     const t = setTimeout(() => setThreshold(thresholdDraft), 350);
     return () => clearTimeout(t);
@@ -87,18 +88,19 @@ export function ReidLabelPage() {
   // registry — a model only shows up when its weights actually exist there.
   const optionsQuery = useQuery({
     queryKey: ['reid-options'],
-    queryFn: () => apiFetch<{ keypoint_sources: string[]; embedders: EmbedderOption[] }>(API.reid.options),
+    queryFn: () => apiFetch<{ keypoint_sources: string[]; default_embedder: string; embedders: EmbedderOption[] }>(API.reid.options),
     staleTime: Infinity, // static per server run
   });
   const embedderOptions = useMemo(() => optionsQuery.data?.embedders ?? [], [optionsQuery.data]);
   const thresholdsFor = (m: string) => embedderOptions.find((e) => e.name === m)?.threshold ?? FALLBACK_THRESHOLD;
-  // Snap the slider to the current model's calibrated default once the
-  // calibration arrives (exactly once — staleTime is Infinity).
+  // Snap to the server's default embedder and its calibrated threshold once
+  // the registry arrives (exactly once — staleTime is Infinity).
   useEffect(() => {
     if (!optionsQuery.data) return;
-    const def = thresholdsFor(embedder).default;
-    setThresholdDraft(def);
-    setThreshold(def);
+    const model = optionsQuery.data.default_embedder;
+    setEmbedder(model);
+    setThresholdDraft(thresholdsFor(model).default);
+    setThreshold(thresholdsFor(model).default);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [optionsQuery.data]);
   const extracted = (videosQuery.data ?? []).filter((v) => v.has_reid);

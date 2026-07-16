@@ -223,7 +223,9 @@ EMBEDDER_WEIGHTS = {
     "kpr": KPR_WEIGHTS,
     "clip-reident": "ViT-L-14_openai/all_data_seed_1/weights_e4.pth",
 }
-DEFAULT_EMBEDDER = "clip-reid"
+# The optional models may be unregistered (weights not downloaded);
+# /reid/options falls back to the first registered embedder then.
+DEFAULT_EMBEDDER = "clip-reident"
 
 # Cluster-threshold slider calibration per embedder, served to the UI via
 # /reid/options. Cosine-distance scales differ wildly per model: CLIP-ReID's
