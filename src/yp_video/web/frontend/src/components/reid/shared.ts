@@ -19,13 +19,23 @@ export interface SidebarAction {
   visible: boolean;
 }
 
-/** {box} = manual pick, {none} = nobody is the actor, {} = revert to auto. */
-export type ActorFix = { box?: [number, number, number, number]; none?: boolean };
+/** {box} = manual pick, {none} = nobody is the actor, {} = revert to auto.
+ *  ``frame`` marks a cross-frame pick: the box (and the crop the backend
+ *  cuts) lives on that frame — the actor went undetected on the event's. */
+export type ActorFix = { box?: [number, number, number, number]; none?: boolean; frame?: number };
 
 /** ByteTrack tracklets + which tracklet each event's actor sits on. */
 export interface TrackData {
   tracklets: { rally_id: number; track_id: number; frames: number[]; boxes: [number, number, number, number][] }[];
   links: Record<string, { rally_id: number; track_id: number }>;
+}
+
+/** GET /reid/track-masks — one rally's masks, whole tracklets at once.
+ *  Values are base64 packed bits (box-crop space, ``mask_hw`` grid), row i
+ *  aligned with the tracklet's i-th frame from /reid/tracks. */
+export interface TrackMasks {
+  mask_hw: [number, number];
+  tracks: Record<string, string>;
 }
 
 /** The tracklet an event's actor sits on, as a stable "rally:track" key. */

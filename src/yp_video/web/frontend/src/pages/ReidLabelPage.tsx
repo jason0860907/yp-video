@@ -377,6 +377,8 @@ export function ReidLabelPage() {
           rallies={meta.rallies ?? []}
           selectedRally={selectedRally}
           onSelectRally={setSelectedRally}
+          videoName={picked}
+          tracklets={tracksQuery.data?.tracklets ?? []}
           onFixActor={fixActor}
           fixing={Boolean(fixingEvent)}
           onJumpToCrop={(id) => boardRef.current?.jumpToCrop(id)}

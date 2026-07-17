@@ -264,7 +264,13 @@ export interface ReidRecord {
   frame: number;
   time?: number | null;
   label?: string;
-  xy: [number, number];
+  /** Contact point (normalized); null for invisible / point-less events —
+   *  those never auto-associate and are assigned via (cross-frame) picks. */
+  xy: [number, number] | null;
+  /** false = the action isn't visible on its frame. */
+  visible?: boolean;
+  /** Set when the crop was cut from another frame (cross-frame pick). */
+  crop_frame?: number;
   /** ok = unique person box, multi = ranked pick among overlaps, miss = none. */
   status: 'ok' | 'multi' | 'miss';
   box?: [number, number, number, number] | null;
