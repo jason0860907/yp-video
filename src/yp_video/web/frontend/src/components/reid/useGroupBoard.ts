@@ -112,6 +112,31 @@ export function useGroupBoard({ picked, embedder, threshold, records, recordById
     markDirty();
   };
 
+  // Unlocked holding pen for a just-re-picked event: pulled out of its old
+  // player row (its crop is a different person now) but kept ON the board
+  // and clickable until the refetch + rebuild re-homes it into its new
+  // cluster. Unlocked, so the rebuild discards it and auto-save ignores it.
+  const REPICK_POOL = 'repick-pool';
+
+  /** Pull one event out of every row — a re-picked actor is a different
+   *  person, so the old player row no longer applies — and park it in the
+   *  unassigned pool. Locked rows included: that is the point. */
+  const removeEvent = (eventId: string) => {
+    setGroups((prev) => {
+      const stripped = prev
+        .map((g) => (g.key === REPICK_POOL ? g : { ...g, eventIds: g.eventIds.filter((i) => i !== eventId) }))
+        // An emptied auto-cluster group is noise; an emptied named player stays.
+        .filter((g) => g.eventIds.length > 0 || g.name.trim() || g.key === REPICK_POOL);
+      const pool = stripped.find((g) => g.key === REPICK_POOL);
+      if (pool) {
+        pool.eventIds = [...pool.eventIds.filter((i) => i !== eventId), eventId];
+        return [...stripped];
+      }
+      return [...stripped, { key: REPICK_POOL, name: '', eventIds: [eventId], locked: false }];
+    });
+    markDirty();
+  };
+
   /** Merge every event of one row into another; the target's name wins,
    *  falling back to the source's if the target is unnamed. */
   const mergeGroups = (fromKey: string, toKey: string) => {
@@ -357,6 +382,7 @@ export function useGroupBoard({ picked, embedder, threshold, records, recordById
     groups,
     dirty,
     moveEvents,
+    removeEvent,
     mergeGroups,
     newGroupBelow,
     toggleLock,

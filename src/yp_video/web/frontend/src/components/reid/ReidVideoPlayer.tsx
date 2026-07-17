@@ -84,6 +84,7 @@ function ReidEventPanel({ entries, empty, matches, selectedEventId, fps, playhea
         return (
           <div
             key={a.id}
+            data-action-id={a.id}
             onClick={() => onJump(a)}
             title="Click to jump the video to this action"
             className={cn(
@@ -143,14 +144,26 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
   // interaction as the Action Label rally list.
   const [expanded, setExpanded] = useState<string | null>(null);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
+  // The event whose box stays drawn off its own frame (a reference while you
+  // scrub earlier frames to pick its actor). Set when you pick an action from
+  // the sidebar, cleared the moment you make a pick — its job is done — or
+  // when you select another action. Kept apart from selectedEventId so the
+  // sidebar highlight persists independently.
+  const [stickyBoxId, setStickyBoxId] = useState<string | null>(null);
   // Actor-picker mode: park on an event's frame, then click the right person.
   const [pickMode, setPickMode] = useState(false);
+  // Every actor pick clears the sticky reference box (this action is done).
+  const doFixActor = (id: string, fix: ActorFix) => {
+    setStickyBoxId(null);
+    onFixActor(id, fix);
+  };
   // Picker display floor: extraction stores every detection ≥ 0.1, this
   // slider decides how deep into the low-confidence pile to show.
   const [minDetScore, setMinDetScore] = useState(0.25);
   useEffect(() => {
     setExpanded(null);
     setSelectedEventId(null);
+    setStickyBoxId(null);
     setPickMode(false);
   }, [src]);
   // Read inside the frame-clock callback without re-arming it.
@@ -246,9 +259,17 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
   }, [fps]);
 
   const [w, h] = frameSize;
-  // The event box (person ∪ keypoints ∪ ball, +4% margin) belongs to ONE
-  // frame — the action frame — so it only draws when the playhead is on it.
-  const visible = records.filter((r) => r.box && r.frame === frame);
+  // The event box (person ∪ keypoints ∪ ball, +4% margin) belongs to its
+  // action frame. Boxes on THIS frame always draw; the event picked from the
+  // sidebar also stays drawn wherever the playhead goes — so it stays a
+  // reference while you scrub earlier frames to pick its actor — until you
+  // select another action. (Its label carries · f#### so the frame is clear.)
+  const visible = useMemo(() => {
+    const onFrame = records.filter((r) => r.box && r.frame === frame);
+    if (!stickyBoxId || onFrame.some((r) => r.id === stickyBoxId)) return onFrame;
+    const sel = records.find((r) => r.id === stickyBoxId && r.box);
+    return sel ? [...onFrame, sel] : onFrame;
+  }, [records, frame, stickyBoxId]);
   const time = frame / fps;
   // The event whose actor is being picked: always the record NEAREST the
   // playhead (actions split the timeline at their midpoints), on every
@@ -271,13 +292,12 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
   }, [rallies, frame, fps]);
 
   // Playback follows along in the sidebar: entering a rally expands its
-  // action list (whose rows already light up within ±½ s of the playhead)
-  // and pins it to the top. Fires only on rally CHANGE while playing, so a
-  // manual collapse mid-rally sticks.
+  // action list (whose rows light up within ±½ s of the playhead). Fires
+  // only on rally CHANGE while playing, so a manual collapse mid-rally
+  // sticks; the action-scroll effect below then tracks the playhead within.
   useEffect(() => {
     if (!playing || currentRallyId == null) return;
     setExpanded(String(currentRallyId));
-    scrollRallyTop(currentRallyId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playing, currentRallyId]);
 
@@ -330,6 +350,16 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
     return active;
   }, [trackEventTimeline, frame]);
 
+  /** One tracklet's packed mask row at one exact frame (crop space). */
+  const maskRowBits = (key: string, f: number): Uint8Array | null => {
+    if (!maskData) return null;
+    const row = frameRows.get(key)?.get(f);
+    const all = maskData.byKey.get(key);
+    if (row === undefined || !all) return null;
+    const rowBytes = (maskData.mh * maskData.mw) >> 3;
+    return all.subarray(row * rowBytes, (row + 1) * rowBytes);
+  };
+
   // Every silhouette on the current frame: bits for hit testing + a tinted
   // data-URL — the action's color for the prev/next action's tracklets,
   // plain white for everyone else. Regenerated per presented frame — a
@@ -338,15 +368,11 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
     if (!maskData) return [];
     const list = trackBoxes.get(frame) ?? trackBoxes.get(frame - 1) ?? trackBoxes.get(frame + 1);
     if (!list) return [];
-    const { mh, mw, byKey } = maskData;
-    const rowBytes = (mh * mw) >> 3;
+    const { mh, mw } = maskData;
     const out = [];
     for (const t of list) {
-      const rows = frameRows.get(t.key);
-      const row = rows?.get(frame) ?? rows?.get(frame - 1) ?? rows?.get(frame + 1);
-      const all = byKey.get(t.key);
-      if (row === undefined || !all) continue;
-      const bits = all.subarray(row * rowBytes, (row + 1) * rowBytes);
+      const bits = maskRowBits(t.key, frame) ?? maskRowBits(t.key, frame - 1) ?? maskRowBits(t.key, frame + 1);
+      if (!bits) continue;
       const alpha = document.createElement('canvas');
       alpha.width = mw;
       alpha.height = mh;
@@ -389,25 +415,78 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
   const pickFromTrack = (key: string, clickedBox: [number, number, number, number]) => {
     const target = pickTarget;
     if (!target) return;
+    // The clicked tracklet's box AND mask at (or next to) the event frame —
+    // the mask's pixels belong to the clicked player even under heavy
+    // overlap, so it arbitrates which stored detection is that player.
     let boxAtEvent: [number, number, number, number] | null = null;
+    let bitsAtEvent: Uint8Array | null = null;
     for (let d = 0; d <= 3 && !boxAtEvent; d++) {
-      const hit = (trackBoxes.get(target.frame - d) ?? []).concat(trackBoxes.get(target.frame + d) ?? []).find((t) => t.key === key);
-      if (hit) boxAtEvent = hit.box;
+      for (const f of d === 0 ? [target.frame] : [target.frame - d, target.frame + d]) {
+        const hit = trackBoxes.get(f)?.find((t) => t.key === key);
+        if (hit) {
+          boxAtEvent = hit.box;
+          bitsAtEvent = maskRowBits(key, f);
+          break;
+        }
+      }
     }
     if (!boxAtEvent) {
-      onFixActor(target.id, { box: clickedBox, frame });
+      doFixActor(target.id, { box: clickedBox, frame });
       return;
     }
+    const dets = target.detections ?? [];
+    const mask =
+      bitsAtEvent && maskData
+        ? { box: boxAtEvent, bits: bitsAtEvent, mw: maskData.mw, mh: maskData.mh }
+        : null;
+    if (mask) {
+      // "Which detection contains most of this silhouette, tightest box
+      // first" cannot pick an occluder the way box IoU can (a partial hull
+      // of an occluded player always loses an IoU contest). Nobody reaching
+      // coverage means NO stored detection is this player — the track box
+      // goes through with the backend's snap vetoed, so it can't re-attach
+      // the occluder either.
+      const covered = dets
+        .map((d) => ({ box: d.box, cov: maskCoverage(mask, d.box) }))
+        .filter((c) => c.cov >= 0.6)
+        .sort((a, b) => (a.box[2] - a.box[0]) * (a.box[3] - a.box[1]) - (b.box[2] - b.box[0]) * (b.box[3] - b.box[1]));
+      doFixActor(target.id, covered.length ? { box: covered[0]!.box } : { box: boxAtEvent, snap: false });
+      return;
+    }
+    // No masks stored for this video — box IoU is the best available.
     let box = boxAtEvent;
     let best = 0.3;
-    for (const d of target.detections ?? []) {
+    for (const d of dets) {
       const overlap = boxIou(d.box, boxAtEvent);
       if (overlap >= best) {
         best = overlap;
         box = d.box;
       }
     }
-    onFixActor(target.id, { box });
+    doFixActor(target.id, { box });
+  };
+
+  /** Fraction of a silhouette's on-pixels that fall inside a detection box. */
+  const maskCoverage = (
+    s: { box: [number, number, number, number]; bits: Uint8Array; mw: number; mh: number },
+    detBox: [number, number, number, number],
+  ): number => {
+    const [x0, y0, x1, y1] = s.box;
+    const cw = (x1 - x0) / s.mw;
+    const ch = (y1 - y0) / s.mh;
+    let on = 0;
+    let inside = 0;
+    for (let gy = 0; gy < s.mh; gy++) {
+      for (let gx = 0; gx < s.mw; gx++) {
+        const i = gy * s.mw + gx;
+        if (!((s.bits[i >> 3]! >> (7 - (i & 7))) & 1)) continue;
+        on++;
+        const cx = x0 + (gx + 0.5) * cw;
+        const cy = y0 + (gy + 0.5) * ch;
+        if (cx >= detBox[0] && cx < detBox[2] && cy >= detBox[1] && cy < detBox[3]) inside++;
+      }
+    }
+    return on ? inside / on : 0;
   };
 
   // Every tracked player at the playhead is a pick target on EVERY frame in
@@ -467,6 +546,22 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
     return [...rows].sort((a, b) => a.frame - b.frame);
   }, [actionEvents, records]);
 
+  // The action under the playhead (nearest by frame) — drives the sidebar
+  // auto-scroll during playback.
+  const currentActionId = useMemo(() => {
+    if (!sidebarActions.length) return null;
+    return sidebarActions.reduce((a, b) => (Math.abs(a.frame - frame) <= Math.abs(b.frame - frame) ? a : b)).id;
+  }, [sidebarActions, frame]);
+
+  // Playback scrolls the sidebar to keep the current action in view (its
+  // rally is already expanded). Only while playing, so manual scrolling and
+  // clicks aren't yanked around.
+  useEffect(() => {
+    if (!playing || !currentActionId) return;
+    scrollActionIntoView(currentActionId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playing, currentActionId]);
+
   // Actions grouped per rally, plus the ones outside any rally — mirrors the
   // Action Label sidebar.
   const { byRally, outside } = useMemo(() => {
@@ -503,9 +598,28 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
       });
     });
   };
+  /** Scroll an action row into the list's view, centering it, but only when
+   *  it's actually off-screen — avoids constant re-centering jitter as the
+   *  playhead crosses each action during playback. */
+  const scrollActionIntoView = (id: string) => {
+    requestAnimationFrame(() => {
+      const list = listRef.current;
+      const row = list?.querySelector<HTMLElement>(`[data-action-id="${CSS.escape(id)}"]`);
+      if (!list || !row) return;
+      const lr = list.getBoundingClientRect();
+      const rr = row.getBoundingClientRect();
+      if (rr.top < lr.top || rr.bottom > lr.bottom) {
+        list.scrollTo({
+          top: rr.top - lr.top + list.scrollTop - lr.height / 2 + rr.height / 2,
+          behavior: 'smooth',
+        });
+      }
+    });
+  };
 
   const seekEvent = (a: { id: string; frame: number; time: number | null }) => {
     setSelectedEventId(a.id);
+    setStickyBoxId(a.id);
     // Keep the rally selection in sync with the jump (Action Label contract) —
     // a stale selection would strand the playhead outside the "selected" rally.
     const t = a.time != null ? a.time : a.frame / fps;
@@ -699,7 +813,7 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
                       className={fixing ? 'pointer-events-none opacity-40' : 'pointer-events-auto cursor-pointer hover:fill-white/20'}
                       onClick={(e) => {
                         e.stopPropagation();
-                        onFixActor(pickTarget.id, { box: d.box });
+                        doFixActor(pickTarget.id, { box: d.box });
                       }}
                     >
                       <title>{`person · score ${d.score.toFixed(2)} — click to set as the actor`}</title>
@@ -826,11 +940,11 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
                         </span>
                       </label>
                     )}
-                    <Button size="sm" disabled={fixing} onClick={() => onFixActor(pickTarget.id, { none: true })} title="Nobody in frame is the actor — clears this event's crop">
+                    <Button size="sm" disabled={fixing} onClick={() => doFixActor(pickTarget.id, { none: true })} title="Nobody in frame is the actor — clears this event's crop">
                       No actor
                     </Button>
                     {pickTarget.box_source === 'manual' && (
-                      <Button size="sm" disabled={fixing} onClick={() => onFixActor(pickTarget.id, {})} title="Discard the manual fix and re-run the automatic pick">
+                      <Button size="sm" disabled={fixing} onClick={() => doFixActor(pickTarget.id, {})} title="Discard the manual fix and re-run the automatic pick">
                         Revert to auto
                       </Button>
                     )}

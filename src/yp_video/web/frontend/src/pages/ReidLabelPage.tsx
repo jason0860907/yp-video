@@ -58,7 +58,7 @@ export function ReidLabelPage() {
   const [selectedRally, setSelectedRally] = useState<number | 'all'>('all');
   // Where locked groups live on the groups board: pinned on top as full rows,
   // or docked in a sticky right rail showing just 3 crops per group.
-  const [lockedDock, setLockedDock] = useState<'top' | 'right'>('right');
+  const [lockedDock, setLockedDock] = useState<'top' | 'right'>('top');
   // Embedder + threshold snap to the server's default the moment
   // /reid/options lands (see effect below); queries are gated on `picked`,
   // so nothing fires against the empty pre-fetch value.
@@ -269,6 +269,10 @@ export function ReidLabelPage() {
     setFixingEvent(eventId);
     try {
       await apiFetch(API.reid.actorFix(picked), { method: 'POST', body: { event_id: eventId, ...fix } });
+      // The crop is a different person now — the server dropped the event's
+      // assignment; mirror it locally so a locked row's auto-save can't
+      // resurrect the stale identity.
+      board.removeEvent(eventId);
       toast.success(fix.none ? 'Marked as no actor' : fix.box ? 'Actor updated' : 'Reverted to the auto pick');
       await Promise.all([
         qc.invalidateQueries({ queryKey: ['reid-results', picked] }),
