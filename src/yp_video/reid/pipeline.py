@@ -59,7 +59,12 @@ ProgressFn = Callable[[int, int, str], None]
 
 
 def load_events(stem: str) -> list[dict]:
-    """Visible action events with a location, sorted by frame.
+    """Action events with a frame, sorted by frame.
+
+    Invisible events (and ones without a contact point) are INCLUDED: they
+    can't auto-associate, but they become miss records the user assigns by
+    hand — usually with a cross-frame pick on a frame where the actor shows.
+    Only SKIP_LABELS (nobody to identify) stay out.
 
     Cached parse (list_videos calls this for EVERY cut on every page load);
     events are read-only downstream — extract_video builds fresh records.
@@ -70,9 +75,7 @@ def load_events(stem: str) -> list[dict]:
     _meta, rows = read_jsonl_cached(path)
     events = [
         r for r in rows
-        if r.get("visible", True)
-        and r.get("xy")
-        and r.get("frame") is not None
+        if r.get("frame") is not None
         and r.get("label") not in SKIP_LABELS
     ]
     events.sort(key=lambda e: e["frame"])
@@ -251,6 +254,20 @@ def extract_video(
 
     producer = threading.Thread(target=decode, name=f"reid-decode-{stem}", daemon=True)
     producer.start()
+
+    # Cross-frame actor fixes crop from a different frame than the event's —
+    # a lazy second capture serves those rare seeks without disturbing the
+    # decoder thread.
+    fix_cap = None
+
+    def fix_frame_img(f: int):
+        nonlocal fix_cap
+        if fix_cap is None:
+            fix_cap = cv2.VideoCapture(str(video_path))
+        fix_cap.set(cv2.CAP_PROP_POS_FRAMES, f)
+        ok, img = fix_cap.read()
+        return img if ok else None
+
     try:
         for i, event in enumerate(events):
             while True:
@@ -260,32 +277,39 @@ def extract_video(
                 except queue.Empty:
                     if decode_error:
                         raise decode_error[0]
+            xy = event.get("xy")
+            event_visible = event.get("visible", True)
             record = {
                 "id": event.get("id") or f"f{event['frame']}",
                 "frame": event["frame"],
                 "time": event.get("time"),
                 "label": event.get("label"),
-                "xy": event["xy"],
+                "xy": xy,
                 "status": "miss",
                 "box": None,
                 "score": None,
                 "candidates": 0,
                 "crop": None,
             }
+            if not event_visible:
+                record["visible"] = False
             if ok:
-                x, y = event["xy"][0] * frame_w, event["xy"][1] * frame_h
-                detections = source.detect(frame, focus=(x, y))
+                pt = (xy[0] * frame_w, xy[1] * frame_h) if xy else None
+                detections = source.detect(frame, focus=pt)
                 # ALL person boxes, unfiltered — the UI's actor picker and the
                 # future association training set both need the ones the
                 # heuristic rejected.
                 record["detections"] = _serialize_detections(detections, frame_w, frame_h)
-                candidates = associate(detections, x, y)
+                # Auto-association needs a contact point AND a visible actor —
+                # an invisible event's point (if any) sits next to somebody
+                # who did NOT perform it. Those stay miss until picked by hand.
+                candidates = associate(detections, *pt) if pt and event_visible else []
                 record["candidates"] = len(candidates)
                 auto = candidates[0] if candidates else None
                 fix = fixes.get(record["id"])
                 if fix is None:
                     if auto is not None:
-                        crop = _attach_person(record, frame, auto, x, y, frame_w, frame_h, out_crops)
+                        crop = _attach_person(record, frame, auto, *pt, frame_w, frame_h, out_crops)
                         if crop is not None:
                             record["status"] = "ok" if len(candidates) == 1 else "multi"
                 else:
@@ -293,20 +317,37 @@ def extract_video(
                     # so the disagreement survives re-extraction.
                     record["box_source"] = "manual"
                     if auto is not None:
-                        record["auto_box"] = list(_display_box(auto, x, y, frame_w, frame_h))
+                        record["auto_box"] = list(_display_box(auto, *pt, frame_w, frame_h))
                     if fix.get("box"):
-                        person = _snap_to_detection(record["detections"], fix["box"]) or PersonBox(
-                            xyxy=tuple(fix["box"]), score=0.0
-                        )
-                        crop = _attach_person(record, frame, person, x, y, frame_w, frame_h, out_crops)
-                        if crop is not None:
-                            record["status"] = "ok"
+                        src = fix.get("frame")
+                        if src is not None and src != record["frame"]:
+                            # Cross-frame fix: the actor was undetected here —
+                            # crop from the frame the user actually clicked,
+                            # anchored on the box (the contact point belongs
+                            # to the event frame, where the player isn't).
+                            img = fix_frame_img(src)
+                            person = PersonBox(xyxy=tuple(fix["box"]), score=0.0)
+                            ax, ay = (person.xyxy[0] + person.xyxy[2]) / 2, (person.xyxy[1] + person.xyxy[3]) / 2
+                            crop = _attach_person(record, img, person, ax, ay, frame_w, frame_h, out_crops) if img is not None else None
+                            if crop is not None:
+                                record["crop_frame"] = src
+                                record["status"] = "ok"
+                        else:
+                            person = _snap_to_detection(record["detections"], fix["box"]) or PersonBox(
+                                xyxy=tuple(fix["box"]), score=0.0
+                            )
+                            ax, ay = pt if pt else ((person.xyxy[0] + person.xyxy[2]) / 2, (person.xyxy[1] + person.xyxy[3]) / 2)
+                            crop = _attach_person(record, frame, person, ax, ay, frame_w, frame_h, out_crops)
+                            if crop is not None:
+                                record["status"] = "ok"
             records.append(record)
             if on_progress:
                 on_progress(i + 1, total, f"event {i + 1}/{total}")
     finally:
         stop.set()
         producer.join(timeout=5)
+        if fix_cap is not None:
+            fix_cap.release()
 
     counts = {
         "events": total,
@@ -439,7 +480,9 @@ def _mask_crops(stem: str, crops: list, owners: list[int], records: list[dict], 
 _actor_fix_lock = threading.Lock()
 
 
-def apply_actor_fix(video_path: Path, event_id: str, box: list[float] | None, *, none: bool = False) -> dict:
+def apply_actor_fix(
+    video_path: Path, event_id: str, box: list[float] | None, *, none: bool = False, frame: int | None = None
+) -> dict:
     """Re-point one extracted event at a user-chosen person, in place.
 
     Three modes: ``box`` given = manual pick (snapped by IoU onto a stored
@@ -449,13 +492,20 @@ def apply_actor_fix(video_path: Path, event_id: str, box: list[float] | None, *,
     from the stored detections. Persisting the fix into the players file is
     the caller's job — this only patches the derived jsonl.
 
+    ``frame`` marks a CROSS-FRAME pick: the actor went undetected on the
+    event frame, so the user clicked them on a nearby frame — the crop is
+    cut from THAT frame (the pixels actually contain the actor) and no
+    detection snap applies (stored detections belong to the event frame).
+
     Returns the updated record without embeddings (the UI payload).
     """
     with _actor_fix_lock:
-        return _apply_actor_fix(video_path, event_id, box, none=none)
+        return _apply_actor_fix(video_path, event_id, box, none=none, frame=frame)
 
 
-def _apply_actor_fix(video_path: Path, event_id: str, box: list[float] | None, *, none: bool = False) -> dict:
+def _apply_actor_fix(
+    video_path: Path, event_id: str, box: list[float] | None, *, none: bool = False, frame: int | None = None
+) -> dict:
     import cv2
 
     stem = video_path.stem
@@ -467,7 +517,8 @@ def _apply_actor_fix(video_path: Path, event_id: str, box: list[float] | None, *
     record = records[row]
 
     frame_w, frame_h = meta.get("frame_size") or [0, 0]
-    x, y = record["xy"][0] * frame_w, record["xy"][1] * frame_h
+    xy = record.get("xy")  # None for invisible / point-less events
+    x, y = (xy[0] * frame_w, xy[1] * frame_h) if xy else (0.0, 0.0)
     detections = record.get("detections") or []
 
     revert = box is None and not none
@@ -481,32 +532,47 @@ def _apply_actor_fix(video_path: Path, event_id: str, box: list[float] | None, *
 
     # Clear the previous pick; each branch below re-fills what applies.
     record.update(status="miss", box=None, actor_box=None, score=None, crop=None, keypoints=None)
+    record.pop("crop_frame", None)
 
+    src_frame = frame if frame is not None else record["frame"]
+    cross_frame = src_frame != record["frame"]
     person = None
     n_candidates = record.get("candidates", 0)
     if revert:
-        candidates = associate([_person_from_detection(d) for d in detections], x, y)
+        # No contact point (invisible event) → there IS no automatic pick;
+        # revert just clears back to miss.
+        candidates = associate([_person_from_detection(d) for d in detections], x, y) if xy else []
         n_candidates = len(candidates)
         record["candidates"] = n_candidates
         person = candidates[0] if candidates else None
     elif box is not None:
-        person = _snap_to_detection(detections, box) or PersonBox(xyxy=tuple(box), score=0.0)
+        # Stored detections belong to the event frame — a cross-frame box
+        # must never snap onto them.
+        person = (None if cross_frame else _snap_to_detection(detections, box)) or PersonBox(
+            xyxy=tuple(box), score=0.0
+        )
 
     crop = None
     if person is not None:
         cap = cv2.VideoCapture(str(video_path))
         try:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, record["frame"])
-            ok, frame = cap.read()
+            cap.set(cv2.CAP_PROP_POS_FRAMES, src_frame)
+            ok, frame_img = cap.read()
         finally:
             cap.release()
         if not ok:
-            raise ValueError(f"Could not decode frame {record['frame']} of {video_path.name}")
+            raise ValueError(f"Could not decode frame {src_frame} of {video_path.name}")
         bx0, by0 = int(person.xyxy[0]), int(person.xyxy[1])
-        suffix = "" if revert else f"_fix_{bx0}_{by0}"  # per-box name busts browser cache
-        crop = _attach_person(record, frame, person, x, y, frame_w, frame_h, crop_dir(stem), suffix=suffix)
+        suffix = "" if revert else f"_fix_{src_frame}_{bx0}_{by0}"  # per-pick name busts browser cache
+        # The display box unions the contact point — meaningless on another
+        # frame (the player has moved) or when the event has none; anchor
+        # those crops on the box itself.
+        ax, ay = (x, y) if xy and not cross_frame else ((person.xyxy[0] + person.xyxy[2]) / 2, (person.xyxy[1] + person.xyxy[3]) / 2)
+        crop = _attach_person(record, frame_img, person, ax, ay, frame_w, frame_h, crop_dir(stem), suffix=suffix)
         if crop is None:
             raise ValueError("Degenerate person box")
+        if cross_frame:
+            record["crop_frame"] = src_frame
         if revert:
             record["status"] = "ok" if n_candidates == 1 else "multi"
         else:

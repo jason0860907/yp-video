@@ -207,12 +207,21 @@ def load_actor_fixes(stem: str) -> dict[str, dict]:
     return {str(k): v for k, v in data.get("actor_fixes", {}).items() if isinstance(v, dict)}
 
 
-def save_actor_fix(stem: str, event_id: str, box: list[float] | None) -> None:
-    """Record a manual actor pick; ``box=None`` means "nobody is the actor"."""
+def save_actor_fix(stem: str, event_id: str, box: list[float] | None, frame: int | None = None) -> None:
+    """Record a manual actor pick; ``box=None`` means "nobody is the actor".
+
+    ``frame`` marks a cross-frame pick (the box lives on that frame, not the
+    event's) — replayed as such on re-extraction.
+    """
     with _players_lock:
         data = _read_players_file(stem)
         fixes = data.setdefault("actor_fixes", {})
-        fixes[event_id] = {"none": True} if box is None else {"box": [round(float(v), 1) for v in box]}
+        if box is None:
+            fixes[event_id] = {"none": True}
+        else:
+            fixes[event_id] = {"box": [round(float(v), 1) for v in box]}
+            if frame is not None:
+                fixes[event_id]["frame"] = int(frame)
         _save_players_file(stem, data)
 
 
