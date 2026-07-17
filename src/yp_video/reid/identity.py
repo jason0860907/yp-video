@@ -207,11 +207,14 @@ def load_actor_fixes(stem: str) -> dict[str, dict]:
     return {str(k): v for k, v in data.get("actor_fixes", {}).items() if isinstance(v, dict)}
 
 
-def save_actor_fix(stem: str, event_id: str, box: list[float] | None, frame: int | None = None) -> None:
+def save_actor_fix(
+    stem: str, event_id: str, box: list[float] | None, frame: int | None = None, snap: bool = True
+) -> None:
     """Record a manual actor pick; ``box=None`` means "nobody is the actor".
 
     ``frame`` marks a cross-frame pick (the box lives on that frame, not the
-    event's) — replayed as such on re-extraction.
+    event's); ``snap=False`` forbids the IoU snap onto a stored detection.
+    Both replay identically on re-extraction.
     """
     with _players_lock:
         data = _read_players_file(stem)
@@ -222,7 +225,18 @@ def save_actor_fix(stem: str, event_id: str, box: list[float] | None, frame: int
             fixes[event_id] = {"box": [round(float(v), 1) for v in box]}
             if frame is not None:
                 fixes[event_id]["frame"] = int(frame)
+            if not snap:
+                fixes[event_id]["snap"] = False
         _save_players_file(stem, data)
+
+
+def remove_assignment(stem: str, event_id: str) -> None:
+    """Drop one event's player assignment — a re-picked actor is a different
+    person, so whatever identity the event carried no longer applies."""
+    with _players_lock:
+        data = _read_players_file(stem)
+        if data.get("assignments", {}).pop(event_id, None) is not None:
+            _save_players_file(stem, data)
 
 
 def remove_actor_fix(stem: str, event_id: str) -> None:

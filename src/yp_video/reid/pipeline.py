@@ -333,9 +333,11 @@ def extract_video(
                                 record["crop_frame"] = src
                                 record["status"] = "ok"
                         else:
-                            person = _snap_to_detection(record["detections"], fix["box"]) or PersonBox(
-                                xyxy=tuple(fix["box"]), score=0.0
-                            )
+                            person = (
+                                _snap_to_detection(record["detections"], fix["box"])
+                                if fix.get("snap", True)
+                                else None
+                            ) or PersonBox(xyxy=tuple(fix["box"]), score=0.0)
                             ax, ay = pt if pt else ((person.xyxy[0] + person.xyxy[2]) / 2, (person.xyxy[1] + person.xyxy[3]) / 2)
                             crop = _attach_person(record, frame, person, ax, ay, frame_w, frame_h, out_crops)
                             if crop is not None:
@@ -481,7 +483,13 @@ _actor_fix_lock = threading.Lock()
 
 
 def apply_actor_fix(
-    video_path: Path, event_id: str, box: list[float] | None, *, none: bool = False, frame: int | None = None
+    video_path: Path,
+    event_id: str,
+    box: list[float] | None,
+    *,
+    none: bool = False,
+    frame: int | None = None,
+    snap: bool = True,
 ) -> dict:
     """Re-point one extracted event at a user-chosen person, in place.
 
@@ -497,14 +505,24 @@ def apply_actor_fix(
     cut from THAT frame (the pixels actually contain the actor) and no
     detection snap applies (stored detections belong to the event frame).
 
+    ``snap=False`` embeds the box exactly as drawn — the client's mask
+    arbitration ruled that no stored detection is this player, so an IoU
+    snap could only attach an occluder.
+
     Returns the updated record without embeddings (the UI payload).
     """
     with _actor_fix_lock:
-        return _apply_actor_fix(video_path, event_id, box, none=none, frame=frame)
+        return _apply_actor_fix(video_path, event_id, box, none=none, frame=frame, snap=snap)
 
 
 def _apply_actor_fix(
-    video_path: Path, event_id: str, box: list[float] | None, *, none: bool = False, frame: int | None = None
+    video_path: Path,
+    event_id: str,
+    box: list[float] | None,
+    *,
+    none: bool = False,
+    frame: int | None = None,
+    snap: bool = True,
 ) -> dict:
     import cv2
 
@@ -546,11 +564,11 @@ def _apply_actor_fix(
         record["candidates"] = n_candidates
         person = candidates[0] if candidates else None
     elif box is not None:
-        # Stored detections belong to the event frame — a cross-frame box
-        # must never snap onto them.
-        person = (None if cross_frame else _snap_to_detection(detections, box)) or PersonBox(
-            xyxy=tuple(box), score=0.0
-        )
+        # No snapping for a cross-frame box (stored detections belong to the
+        # event frame) or when the client's mask arbitration vetoed it.
+        person = (
+            _snap_to_detection(detections, box) if snap and not cross_frame else None
+        ) or PersonBox(xyxy=tuple(box), score=0.0)
 
     crop = None
     if person is not None:

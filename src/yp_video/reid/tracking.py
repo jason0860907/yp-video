@@ -35,9 +35,15 @@ import numpy as np
 
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import read_jsonl, read_jsonl_cached, write_jsonl
-from yp_video.reid.detector import PERSON_SCORE_THRESHOLD
+from yp_video.reid.detector import iou
 from yp_video.reid.seg import PERSON_CLASS_ID, SEG_WEIGHTS
 from yp_video.reid.store import action_annotation_path, reid_path, save_track_masks, tracks_path
+
+# Detection floor for the dense pass — even lower than extraction's 0.1:
+# ByteTrack's second association stage recovers these low-score detections
+# along confident tracks, and heavily occluded players (the ones remote
+# picking exists for) live down here.
+TRACK_SCORE_THRESHOLD = 0.05
 
 # Tracklets shorter than this many detections are detector flicker, not a player.
 MIN_TRACK_FRAMES = 5
@@ -107,9 +113,7 @@ class _BatchDetector:
         (callers scale back to frame pixels)."""
         n = len(tensors)
         padded = tensors + [tensors[-1]] * (BATCH_SIZE - n)
-        # Full 0.1 floor: ByteTrack's second association stage exists exactly
-        # to recover low-score detections along confident tracks.
-        out = self._model.predict(padded, threshold=PERSON_SCORE_THRESHOLD, include_source_image=False)
+        out = self._model.predict(padded, threshold=TRACK_SCORE_THRESHOLD, include_source_image=False)
         return [det[det.class_id == PERSON_CLASS_ID] for det in out[:n]]
 
 
@@ -326,13 +330,23 @@ def _link_events(stem: str) -> dict[str, dict]:
         box = r.get("box")
         if not box:
             continue
+        # A cross-frame pick's boxes live on crop_frame, not the event frame
+        # (the actor wasn't trackable there) — look the tracklet up THERE.
+        # That resolves to exactly the track the user clicked, re-derived
+        # geometrically so a re-run of tracking can never leave it stale.
+        at = r.get("crop_frame") or r["frame"]
         candidates = next(
-            (c for off in sorted(range(-stride + 1, stride), key=abs) if (c := by_frame.get(r["frame"] + off))),
+            (c for off in sorted(range(-stride + 1, stride), key=abs) if (c := by_frame.get(at + off))),
             None,
         )
         if not candidates:
             continue
-        rally_id, track_id, tbox = max(candidates, key=lambda c: _containment(c[2], box))
+        # Rank by IoU against the RAW actor box: the padded display box can
+        # fully contain two overlapping players' track boxes, and containment
+        # against it picks whoever is bigger — the tight box discriminates.
+        # The link GATE keeps the display-box containment semantics.
+        anchor = r.get("actor_box") or box
+        rally_id, track_id, tbox = max(candidates, key=lambda c: iou(c[2], anchor))
         if _containment(tbox, box) >= LINK_MIN_CONTAINMENT:
             links[r["id"]] = {"rally_id": rally_id, "track_id": track_id}
     return links

@@ -439,6 +439,9 @@ class ActorFixRequest(BaseModel):
     # Cross-frame pick: the box lives on this frame, not the event's — the
     # crop is cut from here (actor undetected on the event frame).
     frame: int | None = None
+    # False = the client's mask arbitration ruled that NO stored detection is
+    # this player — embed the box as drawn, never IoU-snap onto an occluder.
+    snap: bool = True
 
 
 @router.post("/actor-fix/{name}")
@@ -457,12 +460,15 @@ def actor_fix(name: str, req: ActorFixRequest) -> dict:
         raise HTTPException(404, f"No ReID results for {stem}")
     try:
         if req.box is not None:
-            identity.save_actor_fix(stem, req.event_id, req.box, frame=req.frame)
+            identity.save_actor_fix(stem, req.event_id, req.box, frame=req.frame, snap=req.snap)
         elif req.none:
             identity.save_actor_fix(stem, req.event_id, None)
         else:
             identity.remove_actor_fix(stem, req.event_id)
-        record = pipeline.apply_actor_fix(video_path, req.event_id, req.box, none=req.none, frame=req.frame)
+        # Any re-pick invalidates the event's player assignment: the crop is a
+        # different person now, so it returns to the unassigned pool.
+        identity.remove_assignment(stem, req.event_id)
+        record = pipeline.apply_actor_fix(video_path, req.event_id, req.box, none=req.none, frame=req.frame, snap=req.snap)
     except KeyError as e:
         raise HTTPException(404, str(e)) from e
     except ValueError as e:
