@@ -231,11 +231,36 @@ class KprEmbedder:
         return matrix
 
 
+class MaskedEmbedder:
+    """A registered embedder re-run on background-suppressed crops.
+
+    Same weights as ``base`` (delegation keeps ONE loaded copy for both
+    variants); the difference is the input — embed_video sees
+    ``masked_input`` and feeds crops with non-actor pixels greyed out
+    (reid/seg.py), so appearance features can't latch onto teammates in
+    pile-up crops. A/B against the base variant on identical extractions.
+    """
+
+    masked_input = True
+
+    def __init__(self, base: Embedder):
+        self._base = base
+
+    @property
+    def loaded(self) -> bool:
+        return self._base.loaded
+
+    def embed(self, crops_bgr: list[np.ndarray], prompts: list[dict] | None = None, batch_size: int = 32) -> np.ndarray:
+        return self._base.embed(crops_bgr, prompts, batch_size)
+
+
 # name → weights identifier, recorded in each extraction's header.
 EMBEDDER_WEIGHTS = {
     "clip-reid": CLIP_REID_ONNX,
+    "clip-reid-masked": f"{CLIP_REID_ONNX} + rf-detr-seg-medium",
     "kpr": KPR_WEIGHTS,
     "clip-reident": "ViT-L-14_openai/all_data_seed_1/weights_e4.pth",
+    "clip-reident-masked": "ViT-L-14_openai/all_data_seed_1/weights_e4.pth + rf-detr-seg-medium",
 }
 # The optional models may be unregistered (weights not downloaded);
 # /reid/options falls back to the first registered embedder then.
@@ -251,6 +276,10 @@ EMBEDDER_THRESHOLDS = {
     "clip-reid": {"min": 0.08, "max": 0.3, "default": 0.15, "step": 0.01},
     "kpr": {"min": 0.3, "max": 0.8, "default": 0.55, "step": 0.01},
     "clip-reident": {"min": 0.008, "max": 0.06, "default": 0.022, "step": 0.002},
+    # Masked variants start from their base model's scale; not yet tuned on
+    # masked crops (they measure larger distances — expect the optimum higher).
+    "clip-reid-masked": {"min": 0.08, "max": 0.3, "default": 0.15, "step": 0.01},
+    "clip-reident-masked": {"min": 0.008, "max": 0.06, "default": 0.022, "step": 0.002},
 }
 FALLBACK_THRESHOLD = {"min": 0.05, "max": 0.95, "default": 0.3, "step": 0.01}
 
@@ -279,6 +308,13 @@ def build_embedders() -> dict[str, Embedder]:
         available["kpr"] = KprEmbedder
     if clip_reident_available():
         available["clip-reident"] = ClipReidentEmbedder
+    # Masked variants wrap the base instances — dict order guarantees a base
+    # is constructed by the time its factory runs. No kpr-masked: KPR's
+    # keypoint prompts already lock onto the actor; masking on top is
+    # redundant and confuses its negative prompts.
+    available["clip-reid-masked"] = lambda: MaskedEmbedder(_instances["clip-reid"])
+    if "clip-reident" in available:
+        available["clip-reident-masked"] = lambda: MaskedEmbedder(_instances["clip-reident"])
     for name, make in available.items():
         _instances.setdefault(name, make())
     return {name: _instances[name] for name in available}

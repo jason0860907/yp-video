@@ -342,21 +342,58 @@ def embed_video(
         owners.append(i)
         prompts.append(build_crop_prompt(record, record.get("actor_box") or record["box"]))
 
+    masked: list | None = None  # built once, shared by every masked variant
     for name, embedder in targets.items():
+        inputs = crops
+        if getattr(embedder, "masked_input", False):
+            if masked is None:
+                masked = _mask_crops(stem, crops, owners, records, on_progress)
+            inputs = masked
         if on_progress:
-            on_progress(0, len(crops), f"loading {name} weights..." if not embedder.loaded else f"embedding ({name})...")
+            on_progress(0, len(inputs), f"loading {name} weights..." if not embedder.loaded else f"embedding ({name})...")
         parts = []
-        for start in range(0, len(crops), _EMBED_CHUNK):
-            end = min(start + _EMBED_CHUNK, len(crops))
-            parts.append(embedder.embed(crops[start:end], prompts=prompts[start:end]))
+        for start in range(0, len(inputs), _EMBED_CHUNK):
+            end = min(start + _EMBED_CHUNK, len(inputs))
+            parts.append(embedder.embed(inputs[start:end], prompts=prompts[start:end]))
             if on_progress:
-                on_progress(end, len(crops), f"{name} · crop {end}/{len(crops)}")
+                on_progress(end, len(inputs), f"{name} · crop {end}/{len(inputs)}")
         matrix = np.concatenate(parts) if parts else embedder.embed([], prompts=[])
         full = np.full((len(records), matrix.shape[1]), np.nan, dtype=np.float32)
         if len(owners):
             full[owners] = matrix
         save_embedding_matrix(stem, name, full)
     return {"models": sorted(targets), "crops": len(crops)}
+
+
+def _masked_record_crop(stem: str, record: dict, crop):
+    """The crop with non-actor pixels greyed out (see reid/seg.py), persisted
+    under crops-masked/ so the UI can show what the embedder saw. The actor's
+    box comes back to crop coordinates via the display-box origin."""
+    import cv2
+
+    from yp_video.reid.seg import crop_masker
+    from yp_video.reid.store import masked_crop_dir
+
+    dx0, dy0 = record["box"][:2]
+    bx = record.get("actor_box") or record["box"]
+    masked = crop_masker().mask_crop(crop, [bx[0] - dx0, bx[1] - dy0, bx[2] - dx0, bx[3] - dy0])
+    out_dir = masked_crop_dir(stem)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(out_dir / record["crop"]), masked)
+    return masked
+
+
+def _mask_crops(stem: str, crops: list, owners: list[int], records: list[dict], on_progress: ProgressFn | None) -> list:
+    from yp_video.reid.seg import crop_masker
+
+    if on_progress:
+        on_progress(0, len(crops), "loading rf-detr-seg-medium weights..." if not crop_masker().loaded else "masking crops...")
+    out = []
+    for i, (img, owner) in enumerate(zip(crops, owners)):
+        out.append(_masked_record_crop(stem, records[owner], img))
+        if on_progress:
+            on_progress(i + 1, len(crops), f"masking · crop {i + 1}/{len(crops)}")
+    return out
 
 
 # Serializes apply_actor_fix's read-modify-write of the reid jsonl: two
@@ -456,8 +493,9 @@ def _patch_embedding_row(stem: str, record: dict, row: int, crop) -> None:
         matrix = load_embedding_matrix(stem, name)
         embedder = registry.get(name)
         if crop is not None and embedder is not None:
+            inp = _masked_record_crop(stem, record, crop) if getattr(embedder, "masked_input", False) else crop
             prompt = build_crop_prompt(record, record.get("actor_box") or record["box"])
-            matrix[row] = embedder.embed([crop], prompts=[prompt])[0]
+            matrix[row] = embedder.embed([inp], prompts=[prompt])[0]
         else:
             matrix[row] = np.nan
         save_embedding_matrix(stem, name, matrix)

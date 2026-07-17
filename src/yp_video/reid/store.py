@@ -37,6 +37,10 @@ from yp_video.core.cache import StatCache
 
 EMBEDDINGS_DIR = REID_DIR / "embeddings"
 CROPS_DIR = REID_DIR / "crops"
+# What the masked embedders actually saw (background-suppressed variants of
+# crops/, same filenames) — persisted so the UI can show them. Regenerated on
+# every masked embed run; recomputable like everything outside annotations/.
+MASKED_CROPS_DIR = REID_DIR / "crops-masked"
 TRACKS_DIR = REID_DIR / "tracks"
 
 # Action labels with nobody to re-identify: "score" marks where the ball
@@ -108,6 +112,10 @@ def save_embedding_matrix(stem: str, model: str, matrix: np.ndarray) -> None:
 
 def crop_dir(stem: str) -> Path:
     return CROPS_DIR / stem
+
+
+def masked_crop_dir(stem: str) -> Path:
+    return MASKED_CROPS_DIR / stem
 
 
 def players_path(stem: str) -> Path:
