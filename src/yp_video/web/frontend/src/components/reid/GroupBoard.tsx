@@ -46,6 +46,8 @@ export interface GroupBoardProps {
   lockedDock: 'top' | 'right';
   statusFilter: 'all' | ReidRecord['status'];
   showSkeleton: boolean;
+  /** Show the background-suppressed crops the masked embedders saw. */
+  showMasked: boolean;
   trackLinks: TrackData['links'];
   onSeekToEvent: (r: ReidRecord) => void;
 }
@@ -76,7 +78,7 @@ function NameInput({ value, onCommit, placeholder, className }: { value: string;
 }
 
 export const GroupBoard = forwardRef<BoardHandle, GroupBoardProps>(function GroupBoard(
-  { picked, records, recordById, board, lockedDock, statusFilter, showSkeleton, trackLinks, onSeekToEvent },
+  { picked, records, recordById, board, lockedDock, statusFilter, showSkeleton, showMasked, trackLinks, onSeekToEvent },
   ref,
 ) {
   const { groups } = board;
@@ -321,7 +323,7 @@ export const GroupBoard = forwardRef<BoardHandle, GroupBoardProps>(function Grou
     return (
       <CropImage
         key={id}
-        src={apiUrl(API.reid.crop(picked, r.crop))}
+        src={apiUrl(API.reid.crop(picked, r.crop, showMasked))}
         keypoints={r.keypoints}
         skeleton={showSkeleton}
         alt={id}

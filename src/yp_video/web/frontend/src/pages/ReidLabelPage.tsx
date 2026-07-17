@@ -72,6 +72,7 @@ export function ReidLabelPage() {
     return () => clearTimeout(t);
   }, [thresholdDraft]);
   const [showSkeleton, setShowSkeleton] = useState(false);
+  const [showMasked, setShowMasked] = useState(false);
   const [showVideo, setShowVideo] = useState(true);
   const [statusFilter, setStatusFilter] = useState<'all' | ReidRecord['status']>('all');
   const playerRef = useRef<PlayerHandle>(null);
@@ -90,6 +91,7 @@ export function ReidLabelPage() {
   });
   const embedderOptions = useMemo(() => optionsQuery.data?.embedders ?? [], [optionsQuery.data]);
   const thresholdsFor = (m: string) => embedderOptions.find((e) => e.name === m)?.threshold ?? FALLBACK_THRESHOLD;
+  const isMasked = (m: string) => embedderOptions.find((e) => e.name === m)?.masked ?? false;
   // Snap to the server's default embedder and its calibrated threshold once
   // the registry arrives (exactly once — staleTime is Infinity).
   useEffect(() => {
@@ -98,6 +100,7 @@ export function ReidLabelPage() {
     setEmbedder(model);
     setThresholdDraft(thresholdsFor(model).default);
     setThreshold(thresholdsFor(model).default);
+    setShowMasked(optionsQuery.data.embedders.find((e) => e.name === model)?.masked ?? false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [optionsQuery.data]);
   const extracted = (videosQuery.data ?? []).filter((v) => v.has_reid);
@@ -437,6 +440,18 @@ export function ReidLabelPage() {
               />
               Skeleton
             </label>
+            <label
+              className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-text-secondary"
+              title="Show the background-suppressed crops the masked embedders embed (original shown where a video's masked embed hasn't run yet)"
+            >
+              <input
+                type="checkbox"
+                checked={showMasked}
+                onChange={(e) => setShowMasked(e.target.checked)}
+                className="h-3.5 w-3.5 accent-primary"
+              />
+              Masked crops
+            </label>
             <select
               value={embedder}
               onChange={(e) => {
@@ -445,6 +460,8 @@ export function ReidLabelPage() {
                 // Distance scales differ per model — jump to its default.
                 setThresholdDraft(thresholdsFor(m).default);
                 setThreshold(thresholdsFor(m).default);
+                // Show what the selected model actually embeds; still a free toggle.
+                setShowMasked(isMasked(m));
               }}
               className={selectCls}
               title="Appearance embedding model — compare how each one groups the players"
@@ -568,6 +585,7 @@ export function ReidLabelPage() {
             lockedDock={lockedDock}
             statusFilter={statusFilter}
             showSkeleton={showSkeleton}
+            showMasked={showMasked}
             trackLinks={trackLinks}
             onSeekToEvent={seekToEvent}
           />

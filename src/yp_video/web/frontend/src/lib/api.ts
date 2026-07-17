@@ -146,7 +146,8 @@ export const API = {
     videos: '/reid/videos',
     start: '/reid/start',
     results: (name: string) => `/reid/results/${encodeURIComponent(name)}`,
-    crop: (name: string, cropFile: string) => `/reid/crop/${encodeURIComponent(name)}/${encodeURIComponent(cropFile)}`,
+    crop: (name: string, cropFile: string, masked = false) =>
+      `/reid/crop/${encodeURIComponent(name)}/${encodeURIComponent(cropFile)}${masked ? '?masked=1' : ''}`,
     clusters: (name: string, threshold: number, model = 'clip-reid') => `/reid/clusters/${encodeURIComponent(name)}?threshold=${threshold}&model=${encodeURIComponent(model)}`,
     players: (name: string, model = 'clip-reid') => `/reid/players/${encodeURIComponent(name)}?model=${encodeURIComponent(model)}`,
     actorFix: (name: string) => `/reid/actor-fix/${encodeURIComponent(name)}`,

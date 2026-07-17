@@ -253,6 +253,8 @@ export interface ReidOptions {
   embedders: {
     name: string;
     threshold: { min: number; max: number; default: number; step: number };
+    /** Embeds background-suppressed crops — the viewer should show those. */
+    masked: boolean;
   }[];
 }
 

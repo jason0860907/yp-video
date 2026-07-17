@@ -76,7 +76,11 @@ def options() -> dict:
     return {
         "keypoint_sources": list(build_keypoint_sources()),
         "default_embedder": DEFAULT_EMBEDDER if DEFAULT_EMBEDDER in registry else next(iter(registry)),
-        "embedders": [{"name": n, "threshold": threshold_calibration(n)} for n in registry],
+        "embedders": [
+            # masked → the crop viewer should show the crops-masked variant.
+            {"name": n, "threshold": threshold_calibration(n), "masked": getattr(e, "masked_input", False)}
+            for n, e in registry.items()
+        ],
     }
 
 
@@ -270,9 +274,15 @@ def results(name: str) -> dict:
 
 
 @router.get("/crop/{name}/{crop_file}")
-def crop(name: str, crop_file: str) -> FileResponse:
+def crop(name: str, crop_file: str, masked: bool = False) -> FileResponse:
+    """One crop jpg. ``masked=True`` serves the background-suppressed variant
+    the masked embedders saw, falling back to the original while that video's
+    masked embed hasn't run yet."""
     stem = Path(unquote(name)).stem
-    path = store.crop_dir(stem) / Path(unquote(crop_file)).name
+    fname = Path(unquote(crop_file)).name
+    path = store.masked_crop_dir(stem) / fname if masked else store.crop_dir(stem) / fname
+    if masked and not path.exists():
+        path = store.crop_dir(stem) / fname
     if not path.exists():
         raise HTTPException(404, "Crop not found")
     return FileResponse(path, media_type="image/jpeg")
