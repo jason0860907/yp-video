@@ -1,10 +1,14 @@
-"""Per-rally ByteTrack tracklets over dense RF-DETR detections.
+"""Per-rally ByteTrack tracklets over dense RF-DETR Seg detections.
 
 The extraction pipeline is tracking-free on purpose — one frame per event.
 This module adds the dense complement: within each annotated rally span,
 every frame is detected and linked into tracklets (supervision's ByteTrack,
 motion-only), so events whose actor boxes land on the same tracklet are the
 same player and an identity labeled once propagates along the track.
+
+The seg model gives every tracked detection an instance mask for free; the
+masks persist beside the tracklets (box-crop space, packed bits — see
+store.save_track_masks), rows aligned with each tracklet's frames.
 
 One tracker per rally: between rallies players reshuffle and broadcasts cut
 away, so cross-rally tracks would be fiction. Only rally spans are scanned —
@@ -15,7 +19,8 @@ a producer thread decodes and preprocesses frames while the GPU runs
 fixed-size fp16 batches, so neither side ever waits for the other.
 
 Storage: reid/tracks/<stem>_tracks.jsonl, one record per tracklet
-({rally_id, track_id, frames, boxes, scores}).
+({rally_id, track_id, frames, boxes, scores}), plus <stem>_masks.npz with
+the packed per-frame masks keyed "rally:track".
 """
 
 from __future__ import annotations
@@ -30,8 +35,9 @@ import numpy as np
 
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import read_jsonl, read_jsonl_cached, write_jsonl
-from yp_video.reid.detector import DETECTOR_NAME, PERSON_SCORE_THRESHOLD
-from yp_video.reid.store import action_annotation_path, reid_path, tracks_path
+from yp_video.reid.detector import PERSON_SCORE_THRESHOLD
+from yp_video.reid.seg import PERSON_CLASS_ID, SEG_WEIGHTS
+from yp_video.reid.store import action_annotation_path, reid_path, save_track_masks, tracks_path
 
 # Tracklets shorter than this many detections are detector flicker, not a player.
 MIN_TRACK_FRAMES = 5
@@ -47,15 +53,37 @@ BATCH_SIZE = 16
 # jitter between decode and inference, not hold a rally.
 _QUEUE_FRAMES = 4 * BATCH_SIZE
 
+# Stored mask resolution (box-crop space, tall like people). Sized for the
+# Pick Actor silhouettes — 48×96 upscales to a clean outline on 1080p while
+# packing to 576 bytes per detection; ~100k boxes/video stays trivial after
+# the npz deflate.
+MASK_W, MASK_H = 48, 96
+
+
+def _pack_mask(mask: np.ndarray, box) -> np.ndarray:
+    """One res-space instance mask → its box crop as packed MASK_H×MASK_W
+    bits; degenerate boxes pack to all-zero."""
+    import cv2
+
+    h, w = mask.shape
+    x0, y0 = max(int(box[0]), 0), max(int(box[1]), 0)
+    x1, y1 = min(int(round(box[2])), w), min(int(round(box[3])), h)
+    if x1 <= x0 or y1 <= y0:
+        return np.zeros(MASK_H * MASK_W // 8, dtype=np.uint8)
+    crop = cv2.resize(mask[y0:y1, x0:x1].astype(np.uint8), (MASK_W, MASK_H), interpolation=cv2.INTER_NEAREST)
+    return np.packbits(crop.astype(bool))
+
 ProgressFn = Callable[[int, int, str], None]
 
 
 class _BatchDetector:
-    """fp16 batch-compiled RF-DETR for the dense pass — boxes + scores only.
+    """fp16 batch-compiled RF-DETR Seg for the dense pass — person boxes,
+    scores and instance masks in one forward (3.7 ms/frame at res 432,
+    faster than the keypoint model this replaced).
 
     Separate from PersonDetector on purpose: optimize_for_inference() halves
-    latency and drops the keypoint wrapper from predict()'s output, and the
-    compiled graph only accepts exactly BATCH_SIZE pre-resized tensors.
+    latency, and the compiled graph only accepts exactly BATCH_SIZE
+    pre-resized tensors.
     """
 
     def __init__(self):
@@ -66,22 +94,23 @@ class _BatchDetector:
         if self._model is not None:
             return
         import torch
-        from rfdetr import RFDETRKeypointPreview
+        from rfdetr import RFDETRSegMedium
 
-        model = RFDETRKeypointPreview()
+        model = RFDETRSegMedium()
         self.resolution = model.model_config.resolution
         model.optimize_for_inference(dtype=torch.float16, batch_size=BATCH_SIZE)
         self._model = model
 
     def predict_batch(self, tensors: list) -> list:
-        """≤BATCH_SIZE preprocessed (C, res, res) tensors → sv.Detections each,
-        boxes in resolution-pixel space (callers scale back to frame pixels)."""
+        """≤BATCH_SIZE preprocessed (C, res, res) tensors → sv.Detections each
+        (person class only, masks included), boxes in resolution-pixel space
+        (callers scale back to frame pixels)."""
         n = len(tensors)
         padded = tensors + [tensors[-1]] * (BATCH_SIZE - n)
         # Full 0.1 floor: ByteTrack's second association stage exists exactly
         # to recover low-score detections along confident tracks.
         out = self._model.predict(padded, threshold=PERSON_SCORE_THRESHOLD, include_source_image=False)
-        return out[:n]
+        return [det[det.class_id == PERSON_CLASS_ID] for det in out[:n]]
 
 
 _detector = _BatchDetector()
@@ -173,6 +202,7 @@ def track_video(video_path: Path, *, stride: int = 1, on_progress: ProgressFn | 
     producer.start()
 
     records: list[dict] = []
+    masks_store: dict[str, np.ndarray] = {}
     detected = 0
     current_rally: int | None = None
     tracker = None
@@ -181,8 +211,10 @@ def track_video(video_path: Path, *, stride: int = 1, on_progress: ProgressFn | 
     def flush_rally() -> None:
         for tid in sorted(tracks):
             t = tracks[tid]
+            masks = t.pop("masks")
             if len(t["frames"]) >= MIN_TRACK_FRAMES:
                 records.append({"rally_id": current_rally, "track_id": tid, **t})
+                masks_store[f"{current_rally}:{tid}"] = np.stack(masks)
         tracks.clear()
 
     try:
@@ -211,14 +243,16 @@ def track_video(video_path: Path, *, stride: int = 1, on_progress: ProgressFn | 
                         minimum_consecutive_frames=2,
                     )
                 det.xyxy = det.xyxy * box_scale
-                det = tracker.update_with_detections(det)
-                for xyxy, score, tid in zip(det.xyxy, det.confidence, det.tracker_id):
-                    t = tracks.setdefault(int(tid), {"frames": [], "boxes": [], "scores": []})
+                det = tracker.update_with_detections(det)  # masks ride along, aligned
+                for i, (xyxy, score, tid) in enumerate(zip(det.xyxy, det.confidence, det.tracker_id)):
+                    t = tracks.setdefault(int(tid), {"frames": [], "boxes": [], "scores": [], "masks": []})
                     t["frames"].append(frame_idx)
                     # Whole pixels: every consumer (overlay, containment) is
                     # pixel-grained, and the file holds ~100k boxes.
                     t["boxes"].append([round(float(v)) for v in xyxy])
                     t["scores"].append(round(float(score), 2))
+                    # Crop the res-space mask by the res-space box.
+                    t["masks"].append(_pack_mask(det.mask[i], xyxy / box_scale))
                 detected += 1
                 if on_progress:
                     on_progress(detected, total, f"frame {detected}/{total} · rally {rally_id}")
@@ -238,13 +272,17 @@ def track_video(video_path: Path, *, stride: int = 1, on_progress: ProgressFn | 
     }
     header = {
         "video": stem,
-        "source": {"detector": f"{DETECTOR_NAME} (fp16 batch)", "tracker": f"supervision.ByteTrack {sv.__version__}"},
+        "source": {"detector": f"{SEG_WEIGHTS} (fp16 batch)", "tracker": f"supervision.ByteTrack {sv.__version__}"},
         "fps": fps,
         "frame_size": [frame_w, frame_h],
         "stride": stride,
+        "mask_res": [MASK_H, MASK_W],
         "created_at": time.time(),
         "counts": counts,
     }
+    # Masks land first: the jsonl's mtime is what downstream caches key on,
+    # so a reader never sees new tracks with the old masks.
+    save_track_masks(stem, (MASK_H, MASK_W), masks_store)
     write_jsonl(tracks_path(stem), header, records)
     return counts
 

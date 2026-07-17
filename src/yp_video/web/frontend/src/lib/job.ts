@@ -74,7 +74,7 @@ const STALE_QUERIES: Record<string, string[][]> = {
   spot_prelabel: [['action-videos']],
   spot_prelabel_batch: [['action-videos']],
   player_reid: [['reid-videos'], ['reid-results'], ['reid-clusters'], ['reid-players'], ['reid-tracks']],
-  player_tracking: [['reid-videos'], ['reid-tracks']],
+  player_tracking: [['reid-videos'], ['reid-tracks'], ['reid-track-masks']],
   player_embed: [['reid-videos'], ['reid-clusters'], ['reid-players']],
   rally_spot_train: [['spot-train-status'], ['spot-predict-info']],
   action_train: [['action-train-status'], ['spot-info']],

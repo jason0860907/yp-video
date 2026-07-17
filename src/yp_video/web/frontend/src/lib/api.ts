@@ -155,6 +155,7 @@ export const API = {
     seedCluster: (name: string) => `/reid/seed-cluster/${encodeURIComponent(name)}`,
     track: '/reid/track',
     tracks: (name: string) => `/reid/tracks/${encodeURIComponent(name)}`,
+    trackMasks: (name: string, rally: number) => `/reid/track-masks/${encodeURIComponent(name)}?rally=${rally}`,
     embed: '/reid/embed',
   },
 } as const;

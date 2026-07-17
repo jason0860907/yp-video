@@ -250,6 +250,31 @@ def tracks(name: str) -> dict:
     }
 
 
+@router.get("/track-masks/{name}")
+def track_masks(name: str, rally: int) -> dict:
+    """One rally's instance masks, whole tracklets at once — the overlay
+    silhouettes. Each entry is the tracklet's packed mask rows (base64,
+    box-crop space, see store.save_track_masks), row i ↔ the tracklet's
+    i-th frame in the tracks jsonl the client already holds."""
+    import base64
+
+    import numpy as np
+
+    stem = Path(unquote(name)).stem
+    masks_path = store.tracks_masks_path(stem)
+    if not masks_path.exists():
+        raise HTTPException(404, f"No track masks for {stem} — re-run tracking")
+    _meta, tracklets = read_jsonl_cached(store.tracks_path(stem))  # read-only
+    tracks: dict[str, str] = {}
+    with np.load(masks_path) as z:
+        h, w = (int(v) for v in z["_shape"])
+        for t in tracklets:
+            key = f"{t['rally_id']}:{t['track_id']}"
+            if t["rally_id"] == rally and key in z:
+                tracks[key] = base64.b64encode(z[key].tobytes()).decode()
+    return {"mask_hw": [h, w], "tracks": tracks}
+
+
 @router.get("/results/{name}")
 def results(name: str) -> dict:
     """One video's extraction records (UI payload)."""
@@ -411,6 +436,9 @@ class ActorFixRequest(BaseModel):
     # box = manual pick; none = nobody is the actor; neither = revert to auto.
     box: list[float] | None = Field(default=None, min_length=4, max_length=4)
     none: bool = False
+    # Cross-frame pick: the box lives on this frame, not the event's — the
+    # crop is cut from here (actor undetected on the event frame).
+    frame: int | None = None
 
 
 @router.post("/actor-fix/{name}")
@@ -429,12 +457,12 @@ def actor_fix(name: str, req: ActorFixRequest) -> dict:
         raise HTTPException(404, f"No ReID results for {stem}")
     try:
         if req.box is not None:
-            identity.save_actor_fix(stem, req.event_id, req.box)
+            identity.save_actor_fix(stem, req.event_id, req.box, frame=req.frame)
         elif req.none:
             identity.save_actor_fix(stem, req.event_id, None)
         else:
             identity.remove_actor_fix(stem, req.event_id)
-        record = pipeline.apply_actor_fix(video_path, req.event_id, req.box, none=req.none)
+        record = pipeline.apply_actor_fix(video_path, req.event_id, req.box, none=req.none, frame=req.frame)
     except KeyError as e:
         raise HTTPException(404, str(e)) from e
     except ValueError as e:

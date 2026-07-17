@@ -12,6 +12,8 @@ recomputable derived data:
                                      matrix, row i ↔ record i, NaN = none
     crops/<stem>/<event>.jpg         actor crops (display box)
     tracks/<stem>_tracks.jsonl       per-rally ByteTrack tracklets
+    tracks/<stem>_masks.npz          packed per-frame instance masks, one
+                                     entry per tracklet ("rally:track")
 
 Embeddings are a pure numeric matrix, so they live as npy sidecars, not JSON:
 records stay small enough to serve raw, matrices load in milliseconds, and a
@@ -120,6 +122,39 @@ def masked_crop_dir(stem: str) -> Path:
 
 def players_path(stem: str) -> Path:
     return REID_ANNOTATIONS_DIR / f"{stem}_players.json"
+
+
+def tracks_masks_path(stem: str) -> Path:
+    return TRACKS_DIR / f"{stem}_masks.npz"
+
+
+def save_track_masks(stem: str, mask_hw: tuple[int, int], masks: dict[str, np.ndarray]) -> None:
+    """Per-tracklet packed instance masks, atomically replaced.
+
+    ``masks`` maps ``"{rally_id}:{track_id}"`` to a (n_frames, H*W/8) uint8
+    packbits array, rows aligned with the tracklet's frames in the tracks
+    jsonl; ``mask_hw`` rides along as ``_shape`` so readers can unpack.
+    """
+    path = tracks_masks_path(stem)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with NamedTemporaryFile(dir=path.parent, prefix=f"{path.name}.", suffix=".tmp", delete=False) as f:
+        try:
+            np.savez_compressed(f, _shape=np.array(mask_hw), **masks)
+        except BaseException:
+            os.unlink(f.name)
+            raise
+    os.replace(f.name, path)
+
+
+def load_track_masks(stem: str, rally_id: int, track_id: int) -> np.ndarray:
+    """One tracklet's masks as (n_frames, H, W) bool, aligned with its frames."""
+    path = tracks_masks_path(stem)
+    if not path.exists():
+        raise FileNotFoundError(f"No track masks for {stem} — re-run tracking")
+    with np.load(path) as z:
+        h, w = (int(v) for v in z["_shape"])
+        packed = z[f"{rally_id}:{track_id}"]
+    return np.unpackbits(packed, axis=1)[:, : h * w].reshape(-1, h, w).astype(bool)
 
 
 def tracks_path(stem: str) -> Path:
