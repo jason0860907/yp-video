@@ -64,6 +64,7 @@ dependencies = [
     "roma>=1.5",
     "termcolor>=2",
     "braceexpand>=0.1",
+    "orjson>=3.11.9",
 ]
 
 

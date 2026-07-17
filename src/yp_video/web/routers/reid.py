@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from yp_video.config import cut_kind_of, find_cut, iter_all_cuts
+from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import read_jsonl, read_jsonl_cached
 from yp_video.reid import identity, pipeline, store, tracking
 from yp_video.reid.detector import build_keypoint_sources
@@ -222,6 +223,12 @@ async def embed(req: EmbedStartRequest) -> dict:
     return job.to_dict()
 
 
+# Slimmed UI payloads, rebuilt only when their source files change. Values
+# are shared across requests — read-only, like everything cached.
+_slim_tracks_cache: StatCache = StatCache()
+_slim_records_cache: StatCache = StatCache()
+
+
 @router.get("/tracks/{name}")
 def tracks(name: str) -> dict:
     """Tracklets (for the video overlay) + event→tracklet links (for crop
@@ -232,12 +239,15 @@ def tracks(name: str) -> dict:
         raise HTTPException(404, f"No tracking for {stem} — run tracking on the ReID Predict page first")
     if not store.reid_path(stem).exists():
         raise HTTPException(404, f"No ReID results for {stem}")
-    _meta, tracklets = read_jsonl_cached(store.tracks_path(stem))  # read-only — copy, never mutate
-    slim = [
-        {k: t[k] for k in ("rally_id", "track_id", "frames", "boxes")}
-        for t in tracklets
-    ]
-    return {"tracklets": slim, "links": tracking.link_events(stem)}
+
+    def slim() -> list[dict]:
+        _meta, tracklets = read_jsonl_cached(store.tracks_path(stem))  # read-only — copy, never mutate
+        return [{k: t[k] for k in ("rally_id", "track_id", "frames", "boxes")} for t in tracklets]
+
+    return {
+        "tracklets": _slim_tracks_cache.get(stem, [store.tracks_path(stem)], slim),
+        "links": tracking.link_events(stem),
+    }
 
 
 @router.get("/results/{name}")
@@ -249,7 +259,7 @@ def results(name: str) -> dict:
         raise HTTPException(404, f"No ReID results for {stem}")
     # Cached parse shares objects across requests — filter into copies, never
     # mutate what read_jsonl_cached hands out.
-    meta, records = read_jsonl_cached(path)
+    meta, _records = read_jsonl_cached(path)
     meta = dict(meta)
     # The video-sync overlay needs fps (frame ↔ time) and the rally spans for
     # its rally navigator — both live in the annotation header, not the
@@ -260,6 +270,11 @@ def results(name: str) -> dict:
         if not meta.get("fps") and ann_meta.get("fps"):
             meta["fps"] = ann_meta["fps"]
         meta["rallies"] = ann_meta.get("rallies") or []
+    return {"meta": meta, "records": _slim_records_cache.get(stem, [path], lambda: _slim_records(path))}
+
+
+def _slim_records(path: Path) -> list[dict]:
+    _meta, records = read_jsonl_cached(path)
     out = []
     # Drop score events from old extractions too (see store.SKIP_LABELS).
     for r in records:
@@ -270,7 +285,7 @@ def results(name: str) -> dict:
         if r.get("detections"):
             r["detections"] = [{k: v for k, v in d.items() if k != "keypoints"} for d in r["detections"]]
         out.append(r)
-    return {"meta": meta, "records": out}
+    return out
 
 
 @router.get("/crop/{name}/{crop_file}")

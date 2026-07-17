@@ -7,7 +7,7 @@ from logging.handlers import RotatingFileHandler
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, ORJSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from yp_video.config import APP_LOG_PATH, FRONTEND_DIST_DIR, LOGS_DIR
@@ -92,11 +92,15 @@ async def lifespan(app: FastAPI):
     print("Shutting down...")
 
 
-app = FastAPI(title="YP Video Analysis", lifespan=lifespan)
+# orjson serializes the big numeric payloads (reid tracks ships ~100k boxes)
+# 5-10x faster than stdlib json; every dict-returning route benefits.
+app = FastAPI(title="YP Video Analysis", lifespan=lifespan, default_response_class=ORJSONResponse)
 
 # Numeric JSON payloads (reid tracks ships ~100k boxes) compress 4-5x;
 # small responses and streams (SSE, video ranges) pass through untouched.
-app.add_middleware(GZipMiddleware, minimum_size=1024)
+# Level 4, not the default 9: on the 3.6 MB tracks payload that's 27 ms vs
+# 197 ms for a 10% larger body — the right trade for a LAN tool.
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=4)
 
 # Mount API routers
 app.include_router(download.router, prefix="/api/download", tags=["download"])
