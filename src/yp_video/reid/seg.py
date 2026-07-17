@@ -46,9 +46,14 @@ class CropMasker:
     def _ensure(self):
         if self._model is not None:
             return
+        import torch
         from rfdetr import RFDETRSegMedium
 
-        self._model = RFDETRSegMedium()
+        model = RFDETRSegMedium()
+        # Crops go through predict() one at a time; the fp16-compiled graph
+        # (batch 1) halves per-crop latency and keeps masks in the output.
+        model.optimize_for_inference(dtype=torch.float16, batch_size=1)
+        self._model = model
 
     def mask_crop(self, crop_bgr: np.ndarray, target_xyxy: list[float]) -> np.ndarray:
         """The crop with everything outside the target person's mask greyed.

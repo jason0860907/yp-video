@@ -26,6 +26,7 @@ data.
 from __future__ import annotations
 
 import json
+import queue
 import threading
 import time
 from collections.abc import Callable
@@ -212,6 +213,7 @@ def extract_video(
     frame_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fps = float(cap.get(cv2.CAP_PROP_FPS)) or 30.0
+    cap.release()
 
     source = build_keypoint_sources()[keypoints]
     records: list[dict] = []
@@ -219,10 +221,45 @@ def extract_video(
     if on_progress:
         # The first detect() loads the detector — announce the stall.
         on_progress(0, total, f"loading detector ({keypoints})...")
+
+    # A random seek costs more than detection (~55 vs ~27 ms/event), so a
+    # decoder thread stays a few events ahead and the GPU never waits on
+    # ffmpeg — the same producer/consumer split as tracking's dense pass.
+    frame_q: queue.Queue = queue.Queue(maxsize=4)
+    stop = threading.Event()
+    decode_error: list[BaseException] = []
+
+    def decode():
+        cap = cv2.VideoCapture(str(video_path))
+        try:
+            for event in events:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, event["frame"])
+                item = cap.read()  # (ok, frame)
+                while not stop.is_set():
+                    try:
+                        frame_q.put(item, timeout=0.5)
+                        break
+                    except queue.Full:
+                        continue
+                if stop.is_set():
+                    return
+        except BaseException as exc:  # noqa: BLE001 — re-raised by the consumer
+            decode_error.append(exc)
+            stop.set()
+        finally:
+            cap.release()
+
+    producer = threading.Thread(target=decode, name=f"reid-decode-{stem}", daemon=True)
+    producer.start()
     try:
         for i, event in enumerate(events):
-            cap.set(cv2.CAP_PROP_POS_FRAMES, event["frame"])
-            ok, frame = cap.read()
+            while True:
+                try:
+                    ok, frame = frame_q.get(timeout=0.5)
+                    break
+                except queue.Empty:
+                    if decode_error:
+                        raise decode_error[0]
             record = {
                 "id": event.get("id") or f"f{event['frame']}",
                 "frame": event["frame"],
@@ -268,7 +305,8 @@ def extract_video(
             if on_progress:
                 on_progress(i + 1, total, f"event {i + 1}/{total}")
     finally:
-        cap.release()
+        stop.set()
+        producer.join(timeout=5)
 
     counts = {
         "events": total,

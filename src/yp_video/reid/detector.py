@@ -110,17 +110,31 @@ class PersonDetector:
         kp = self._model.predict(img, threshold=self.score_threshold)
         if kp.xy is None or not len(kp.xy):
             return []
-        det = kp.as_detections()
-        confs = det.confidence if det.confidence is not None else np.ones(len(det.xyxy))
+        # Keypoint-hull boxes computed here instead of kp.as_detections():
+        # that helper drags kp.data through fancy indexing, and its
+        # source_image entry carries a full frame PER detection — ~300 ms of
+        # pure memcpy per call. Same boxes, same [0,0]=missing convention.
+        xy = np.asarray(kp.xy)  # (N, 17, 2)
+        valid = ~np.all(xy == 0, axis=2)
+        x_min = np.where(valid, xy[..., 0], np.inf).min(axis=1)
+        y_min = np.where(valid, xy[..., 1], np.inf).min(axis=1)
+        x_max = np.where(valid, xy[..., 0], -np.inf).max(axis=1)
+        y_max = np.where(valid, xy[..., 1], -np.inf).max(axis=1)
+        keep = valid.any(axis=1) & (x_max > x_min) & (y_max > y_min)
+        confs = (
+            kp.detection_confidence
+            if kp.detection_confidence is not None
+            else np.ones(len(xy))
+        )
         kp_conf = np.asarray(kp.keypoint_confidence)
         return [
             PersonBox(
-                tuple(float(v) for v in xyxy),
-                float(score),
-                keypoints=np.asarray(points, dtype=np.float32),
+                (float(x_min[i]), float(y_min[i]), float(x_max[i]), float(y_max[i])),
+                float(confs[i]),
+                keypoints=xy[i].astype(np.float32),
                 keypoint_conf=kp_conf[i].astype(np.float32),
             )
-            for i, (xyxy, score, points) in enumerate(zip(det.xyxy, confs, kp.xy))
+            for i in np.flatnonzero(keep)
         ]
 
 
