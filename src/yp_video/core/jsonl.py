@@ -58,22 +58,33 @@ def read_jsonl(path: Path) -> tuple[dict, list[dict]]:
 
 
 # Parsed-file cache for the frequently re-read jsonls. Keyed by (mtime, size),
-# so the atomic rewrites in write_jsonl invalidate entries naturally. Sized to
-# hold every cut's annotation file AND reid/tracks jsonl at once —
-# /reid/videos touches ALL of them per page load, and an LRU smaller than the
-# working set thrashes on every request.
-_READ_CACHE_SIZE = 256
+# so the atomic rewrites in write_jsonl invalidate entries naturally.
+#
+# Budgeted in SOURCE bytes, not entries. The working set is wildly uneven: a
+# few hundred action annotations of ~60 KB each (/reid/videos parses EVERY cut
+# per page load) alongside a handful of reid/tracks jsonls at ~10 MB. An
+# entry-count limit could not serve both — 592 annotation files into 256 slots
+# meant /reid/videos re-parsed most of them on every load (measured 386 ms of
+# pure re-parsing per request), and it evicted the open video's tracks file
+# too, which /reid/track-masks re-reads on every rally change.
+#
+# 64 MB of source comfortably holds all annotations (~20 MB) plus the open
+# video's tracks. Parsed objects run ~9x their source bytes, so the ceiling is
+# high in a pathological all-tracks run; in practice annotations dominate.
+_READ_CACHE_BYTES = 64 * 1024 * 1024
 _read_cache: OrderedDict[Path, tuple[tuple[int, int], dict, list[dict]]] = OrderedDict()
+_read_cache_bytes = 0
 _read_cache_lock = threading.Lock()
 
 
 def read_jsonl_cached(path: Path) -> tuple[dict, list[dict]]:
-    """``read_jsonl`` behind a small mtime-keyed LRU.
+    """``read_jsonl`` behind an mtime-keyed, byte-budgeted LRU.
 
     Every caller receives the SAME meta/record objects — treat them as
     read-only. Callers that mutate (or feed a read-modify-write) must use
     ``read_jsonl`` directly.
     """
+    global _read_cache_bytes
     stat = path.stat()
     key = (stat.st_mtime_ns, stat.st_size)
     with _read_cache_lock:
@@ -83,10 +94,16 @@ def read_jsonl_cached(path: Path) -> tuple[dict, list[dict]]:
             return hit[1], hit[2]
     meta, records = read_jsonl(path)
     with _read_cache_lock:
+        stale = _read_cache.pop(path, None)  # a rewritten file replaces its entry
+        if stale is not None:
+            _read_cache_bytes -= stale[0][1]
         _read_cache[path] = (key, meta, records)
-        _read_cache.move_to_end(path)
-        while len(_read_cache) > _READ_CACHE_SIZE:
-            _read_cache.popitem(last=False)
+        _read_cache_bytes += stat.st_size
+        # Keep the just-added entry even when it alone exceeds the budget —
+        # evicting it would guarantee a re-parse on the very next call.
+        while _read_cache_bytes > _READ_CACHE_BYTES and len(_read_cache) > 1:
+            _, evicted = _read_cache.popitem(last=False)
+            _read_cache_bytes -= evicted[0][1]
     return meta, records
 
 
