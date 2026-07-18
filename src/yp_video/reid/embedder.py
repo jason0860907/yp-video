@@ -117,20 +117,32 @@ EMBEDDER_WEIGHTS = {
 # The optional models may be unregistered (weights not downloaded);
 # /reid/options falls back to the first registered embedder then. The masked
 # variants are always registered — their base (clip-reid) ships with the repo.
-DEFAULT_EMBEDDER = "clip-reid-masked"
+#
+# clip-reident-masked measured best on the labeled crops: mAP 0.715 / Rank-1
+# 0.931 against clip-reid-masked's 0.636 / 0.874 (see the ReID Train page).
+# Background suppression is what unlocks it — unmasked, CLIP-ReIdent is the
+# WORST of the four on mAP (0.559), so the basketball-domain advantage only
+# materializes once teammates are masked out of the crop.
+DEFAULT_EMBEDDER = "clip-reident-masked"
 
 # Cluster-threshold slider calibration per embedder, served to the UI via
 # /reid/options. Cosine-distance scales differ wildly per model: CLIP-ReID's
-# ViT features sit in a tight cone, CLIP-ReIdent's fine-tuned ViT-L is extremely tight (labeled-pair optimum
-# ~0.02). Calibrated on real match footage (~12 people on court); models
-# without an entry get the wide neutral fallback.
+# ViT features sit in a tight cone, CLIP-ReIdent's fine-tuned ViT-L is tighter
+# still. Models without an entry get the wide neutral fallback.
+#
+# Calibrated by the ReID Train page (reid/evaluate.py) against 547 labeled
+# crops over 24 identities: it sweeps the cutoff, clusters at each stop, and
+# takes the peak adjusted Rand index against the human labels. `default` is
+# that peak, `min`/`max` bound the band that still clusters usefully. Note the
+# peak sits on the OVER-SPLIT side by design — merging two groups of one
+# player is a drag, a group holding two players has to be spotted first.
+#
+# Re-run the page after labeling more videos; these are a two-session fit.
 EMBEDDER_THRESHOLDS = {
-    "clip-reid": {"min": 0.08, "max": 0.3, "default": 0.15, "step": 0.01},
-    "clip-reident": {"min": 0.008, "max": 0.06, "default": 0.022, "step": 0.002},
-    # Masked variants start from their base model's scale; not yet tuned on
-    # masked crops (they measure larger distances — expect the optimum higher).
-    "clip-reid-masked": {"min": 0.08, "max": 0.3, "default": 0.15, "step": 0.01},
-    "clip-reident-masked": {"min": 0.008, "max": 0.06, "default": 0.022, "step": 0.002},
+    "clip-reid": {"min": 0.081, "max": 0.23, "default": 0.15, "step": 0.005},
+    "clip-reident": {"min": 0.016, "max": 0.039, "default": 0.026, "step": 0.001},
+    "clip-reid-masked": {"min": 0.083, "max": 0.23, "default": 0.16, "step": 0.005},
+    "clip-reident-masked": {"min": 0.019, "max": 0.043, "default": 0.034, "step": 0.001},
 }
 FALLBACK_THRESHOLD = {"min": 0.05, "max": 0.95, "default": 0.3, "step": 0.01}
 
