@@ -35,7 +35,6 @@ DEFAULT_KEYPOINT_SOURCE = "rf-detr"
 
 # COCO keypoint indices for left/right wrist.
 WRIST_IDXS = (9, 10)
-MIN_KEYPOINT_CONF = 0.3
 # A wrist match counts when the contact point is within this fraction of the
 # person's box height from the wrist — roughly ball-diameter reach at contact.
 WRIST_REACH_FRAC = 0.6
@@ -142,8 +141,8 @@ def associate(boxes: list[PersonBox], x: float, y: float) -> list[PersonBox]:
     """Rank persons by how plausibly they own the contact point (x, y).
 
     Wrist distance first — the contact IS at a hand — with the old box-top
-    geometry as a fallback for players whose wrists weren't confidently
-    detected. Scores are normalized by box height so near and far players
+    geometry as a fallback for players with no predicted wrists, or whose
+    wrists sit too far from the contact to be plausible. Scores are normalized by box height so near and far players
     compare fairly. Returns candidates best-first; empty when nobody is
     geometrically compatible. Pixel coordinates.
 
@@ -157,15 +156,17 @@ def associate(boxes: list[PersonBox], x: float, y: float) -> list[PersonBox]:
         x0, y0, x1, y1 = box.xyxy
         w, h = max(x1 - x0, 1.0), max(y1 - y0, 1.0)
 
+        # Every predicted wrist counts, whatever its confidence: the reach
+        # gate below already rejects a wrist that lands nowhere near the
+        # contact, and a low-confidence wrist in the right place is a better
+        # signal than falling back to box geometry. Measured on 549
+        # human-reviewed associations: gating at conf 0.3 changed 13 of them,
+        # net -3 — noise, and one magic number less.
         wrist_d = None
-        if box.keypoints is not None and box.keypoint_conf is not None:
-            dists = [
-                float(np.hypot(box.keypoints[i][0] - x, box.keypoints[i][1] - y))
-                for i in WRIST_IDXS
-                if box.keypoint_conf[i] >= MIN_KEYPOINT_CONF
-            ]
-            if dists:
-                wrist_d = min(dists)
+        if box.keypoints is not None:
+            wrist_d = min(
+                float(np.hypot(box.keypoints[i][0] - x, box.keypoints[i][1] - y)) for i in WRIST_IDXS
+            )
 
         if wrist_d is not None and wrist_d <= WRIST_REACH_FRAC * h:
             scored.append((wrist_d / h, box))

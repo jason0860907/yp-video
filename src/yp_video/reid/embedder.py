@@ -117,7 +117,7 @@ EMBEDDER_WEIGHTS = {
 # The optional models may be unregistered (weights not downloaded);
 # /reid/options falls back to the first registered embedder then. The masked
 # variants are always registered — their base (clip-reid) ships with the repo.
-DEFAULT_EMBEDDER = "clip-reident"
+DEFAULT_EMBEDDER = "clip-reid-masked"
 
 # Cluster-threshold slider calibration per embedder, served to the UI via
 # /reid/options. Cosine-distance scales differ wildly per model: CLIP-ReID's
