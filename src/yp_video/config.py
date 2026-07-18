@@ -99,16 +99,7 @@ RALLY_SPOT_PRE_ANNOTATIONS_DIR = VIDEOS_DIR / "rally-spot" / "pre-annotations"
 REID_DIR = VIDEOS_DIR / "reid"
 REID_ANNOTATIONS_DIR = REID_DIR / "annotations"
 
-# KPR (Keypoint Promptable ReID, ECCV'24) — optional second embedder. Lives in
-# its own checkout; imported lazily via sys.path (deps are installed in our
-# venv, the repo itself is not pip-installed because of its Cython build).
-KPR_DIR = Path(
-    os.environ.get("KPR_DIR")
-    or Path(__file__).resolve().parents[2].parent / "third_party" / "kpr"
-)
-
-# SAM 3D Body (Meta) — optional keypoint upgrade for the ReID detector.
-# Same third_party pattern as KPR; weights are gated on Hugging Face.
+# third_party checkout; weights are gated on Hugging Face.
 SAM3D_DIR = Path(
     os.environ.get("SAM3D_DIR")
     or Path(__file__).resolve().parents[2].parent / "third_party" / "sam-3d-body"

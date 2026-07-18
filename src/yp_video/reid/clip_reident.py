@@ -75,12 +75,8 @@ class ClipReidentEmbedder:
             std=(0.26862954, 0.26130258, 0.27577711),
         )
 
-    def embed(self, crops_bgr: list[np.ndarray], prompts: list[dict] | None = None, batch_size: int = 32) -> np.ndarray:
-        """Embed BGR person crops → (N, 1024) float32, L2-normalized.
-
-        ``prompts`` is part of the shared embedder interface; CLIP-ReIdent
-        is not promptable and ignores it.
-        """
+    def embed(self, crops_bgr: list[np.ndarray], batch_size: int = 32) -> np.ndarray:
+        """Embed BGR person crops → (N, 1024) float32, L2-normalized."""
         if not len(crops_bgr):
             return np.empty((0, EMBEDDING_DIM), dtype=np.float32)
         self._ensure()

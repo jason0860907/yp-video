@@ -5,7 +5,7 @@ it wants person boxes as prompts. So this "detector" composes the two:
 RF-DETR finds the people (boxes + scores, fast), 3DB re-estimates each
 person's pose through the full MHR rig, and the 70 projected 2D keypoints
 are mapped down to the COCO-17 schema the rest of the pipeline speaks
-(association, display box, skeleton overlay, KPR prompts).
+(association, display box, skeleton overlay).
 
 Lives in its own checkout (see config.SAM3D_DIR), imported lazily via
 sys.path; the weights are gated on Hugging Face, so everything degrades

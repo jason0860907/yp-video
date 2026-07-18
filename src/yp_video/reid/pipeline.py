@@ -42,7 +42,7 @@ from yp_video.reid.detector import (
     build_keypoint_sources,
     iou,
 )
-from yp_video.reid.embedder import build_crop_prompt, build_embedders
+from yp_video.reid.embedder import build_embedders
 from yp_video.reid.store import (
     EMBEDDINGS_DIR,
     SKIP_LABELS,
@@ -89,9 +89,16 @@ def _clamp_box(box: tuple[float, float, float, float], w: int, h: int) -> tuple[
     return x0, y0, x1, y1
 
 
+# Breathing room around the display box, so the crop isn't flush against the
+# player: a fraction of each side, plus a floor that keeps far (small) boxes
+# from getting a margin of a pixel or two.
+DISPLAY_MARGIN_FRAC = 0.04
+DISPLAY_MARGIN_MIN_PX = 4
+
+
 def _display_box(person: PersonBox, x: float, y: float, w: int, h: int) -> tuple[int, int, int, int]:
     """The union of the person box, ALL predicted keypoints (regardless of
-    confidence), and the contact point (the ball), plus 4% margin.
+    confidence), and the contact point (the ball), plus a margin.
 
     Keypoints join the union so a fully extended limb (spike, jump serve) is
     never cropped off; the detector box stays in it because keypoints mark
@@ -104,7 +111,8 @@ def _display_box(person: PersonBox, x: float, y: float, w: int, h: int) -> tuple
         for px, py in person.keypoints:
             ux0, uy0 = min(ux0, float(px)), min(uy0, float(py))
             ux1, uy1 = max(ux1, float(px)), max(uy1, float(py))
-    mx, my = 0.04 * (ux1 - ux0) + 4, 0.04 * (uy1 - uy0) + 4
+    mx = DISPLAY_MARGIN_FRAC * (ux1 - ux0) + DISPLAY_MARGIN_MIN_PX
+    my = DISPLAY_MARGIN_FRAC * (uy1 - uy0) + DISPLAY_MARGIN_MIN_PX
     return _clamp_box((ux0 - mx, uy0 - my, ux1 + mx, uy1 + my), w, h)
 
 
@@ -177,8 +185,8 @@ def _attach_person(
         ]
     record.update(
         box=[dx0, dy0, dx1, dy1],
-        # The raw detector box (display box is a superset): build_crop_prompt
-        # needs it to exclude the chosen person from KPR's negative prompts.
+        # The raw detector box (the display box is a padded superset): the
+        # seg masker and the event->tracklet link both need the tight box.
         actor_box=[x0, y0, x1, y1],
         score=person.score,
         crop=crop_file.name,
@@ -374,7 +382,7 @@ def extract_video(
 
 
 # Crops per embed() call — small enough that progress moves visibly, large
-# enough that per-call overhead (GPU launch, prompt stacking) stays amortized.
+# enough that per-call overhead (GPU launch, batching) stays amortized.
 _EMBED_CHUNK = 32
 
 
@@ -389,7 +397,7 @@ def embed_video(
     records without a crop get NaN rows. ``models=None`` means every
     registered embedder; without ``overwrite`` existing matrices are kept.
 
-    Every model embeds the same crops + prompts, so models stay A/B-comparable
+    Every model embeds the same crops, so models stay A/B-comparable
     on identical inputs. Progress is per model (``done=0`` announces the
     model, including a first-use weight load). Returns
     ``{"models": [...], "crops": N}``.
@@ -411,7 +419,7 @@ def embed_video(
     if not targets:
         return {"models": [], "crops": 0}
 
-    crops, owners, prompts = [], [], []
+    crops, owners = [], []
     cdir = crop_dir(stem)
     for i, record in enumerate(records):
         if not record.get("crop"):
@@ -421,7 +429,6 @@ def embed_video(
             continue
         crops.append(img)
         owners.append(i)
-        prompts.append(build_crop_prompt(record, record.get("actor_box") or record["box"]))
 
     masked: list | None = None  # built once, shared by every masked variant
     for name, embedder in targets.items():
@@ -435,10 +442,10 @@ def embed_video(
         parts = []
         for start in range(0, len(inputs), _EMBED_CHUNK):
             end = min(start + _EMBED_CHUNK, len(inputs))
-            parts.append(embedder.embed(inputs[start:end], prompts=prompts[start:end]))
+            parts.append(embedder.embed(inputs[start:end]))
             if on_progress:
                 on_progress(end, len(inputs), f"{name} · crop {end}/{len(inputs)}")
-        matrix = np.concatenate(parts) if parts else embedder.embed([], prompts=[])
+        matrix = np.concatenate(parts) if parts else embedder.embed([])
         full = np.full((len(records), matrix.shape[1]), np.nan, dtype=np.float32)
         if len(owners):
             full[owners] = matrix
@@ -616,8 +623,7 @@ def _patch_embedding_row(stem: str, record: dict, row: int, crop) -> None:
         embedder = registry.get(name)
         if crop is not None and embedder is not None:
             inp = _masked_record_crop(stem, record, crop) if getattr(embedder, "masked_input", False) else crop
-            prompt = build_crop_prompt(record, record.get("actor_box") or record["box"])
-            matrix[row] = embedder.embed([inp], prompts=[prompt])[0]
+            matrix[row] = embedder.embed([inp])[0]
         else:
             matrix[row] = np.nan
         save_embedding_matrix(stem, name, matrix)

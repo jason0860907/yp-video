@@ -116,7 +116,7 @@ export function ReidPredictPage() {
           <SectionLabel>Config</SectionLabel>
           <p className="mb-3 text-xs leading-relaxed text-text-muted">
             For every annotated action event: detect players on that frame (RF-DETR), pick the box the
-            contact point belongs to, crop it and compute appearance embeddings (CLIP-ReID + KPR).
+            contact point belongs to, crop it and compute appearance embeddings (CLIP-ReID).
             Keypoints decides who estimates the skeletons on those boxes — sam-3d-body is slower but
             far more accurate. Review and name the players on the ReID Label page afterwards.
           </p>

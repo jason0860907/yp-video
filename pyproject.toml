@@ -34,31 +34,22 @@ dependencies = [
     # Optional third_party embedders/keypoints (see docs/third_party.md) run
     # inside THIS venv — the checkouts bring code only, their Python deps are
     # declared here so a fresh `uv sync` can serve them.
-    # KPR: torchreid checkout needs timm / albumentations / yacs.
+    # CLIP-ReIdent needs timm / albumentations / pandas / scikit-learn;
+    # SAM 3D Body needs timm / yacs / wandb / omegaconf.
     # albumentations 2.x removed always_apply, which the checkouts' custom
     # transforms still pass — stay on 1.x until upstream moves.
     "timm>=1.0",
-    "albumentations>=1.3.1,<1.4",  # KPR pins 1.3.1; 2.x removes always_apply
-    "matplotlib<3.9",  # KPR's torchreid calls cm.get_cmap at import; removed in 3.9
+    "albumentations>=1.3.1,<1.4",
     "yacs>=0.1.8",
+    "pandas>=2",
+    "scikit-learn>=1.4",
+    "wandb>=0.17",
+    "omegaconf>=2.3",
     # CLIP-ReIdent: OpenCLIP backbone (+ ftfy, its tokenizer dep); gdown
     # fetches the Google Drive checkpoint in the setup instructions.
     "open-clip-torch>=3.3",
     "ftfy>=6.3",
     "gdown>=5.0",
-    # KPR's torchreid imports its whole training stack at module import —
-    # this is the measured runtime import closure, not our choice of tools.
-    "monai>=1.5",
-    "pandas>=2",
-    "scikit-image>=0.24",
-    "scikit-learn>=1.4",
-    "tensorboard>=2.16",
-    "torchmetrics>=1.3",
-    "wandb>=0.17",
-    "deepdiff>=7",
-    "omegaconf>=2.3",
-    "segment-anything @ git+https://github.com/facebookresearch/segment-anything.git",
-    "cosine-annealing-warmup @ git+https://github.com/katsura-jp/pytorch-cosine-annealing-with-warmup",
     # SAM 3D Body (body-only inference path).
     "pytorch-lightning>=2.4",
     "roma>=1.5",
@@ -79,10 +70,6 @@ yp-vlm-to-rally = "yp_video.core.vlm_to_rally:main"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
-
-[tool.hatch.metadata]
-# segment-anything / cosine-annealing-warmup ship from git only (KPR deps).
-allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/yp_video"]
