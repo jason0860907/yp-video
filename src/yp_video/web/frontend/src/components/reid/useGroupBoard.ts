@@ -203,35 +203,38 @@ export function useGroupBoard({ picked, embedder, threshold, records, recordById
       queuedRef.current = true;
       return false;
     }
+    // Everything from here runs inside the try: anything that escaped before
+    // it would leave savingRef stuck true and silently wedge every future
+    // save (the board would look dirty forever, only a reload clearing it).
     savingRef.current = true;
-    const seq = editSeq.current;
-    // Locked-but-unnamed rows are curated work — persist them under a
-    // placeholder identity (P1, P2, …) the user can rename any time.
-    // Untouched auto-clusters stay ephemeral by design.
-    const used = new Set(groups.map((g) => g.name.trim()).filter(Boolean));
-    let n = 1;
-    const nextPlaceholder = () => {
-      while (used.has(`P${n}`)) n += 1;
-      const name = `P${n}`;
-      used.add(name);
-      return name;
-    };
-    // key → freshly minted placeholder name.
-    const minted = new Map<string, string>();
-    const named = groups.map((g) => {
-      if (!g.locked || g.name.trim()) return g;
-      const name = nextPlaceholder();
-      minted.set(g.key, name);
-      return { ...g, name };
-    });
-
-    const next: Record<string, string> = {};
-    for (const g of named) {
-      const name = g.name.trim();
-      if (!name) continue;
-      for (const id of g.eventIds) next[id] = name;
-    }
     try {
+      const seq = editSeq.current;
+      // Locked-but-unnamed rows are curated work — persist them under a
+      // placeholder identity (P1, P2, …) the user can rename any time.
+      // Untouched auto-clusters stay ephemeral by design.
+      const used = new Set(groups.map((g) => g.name.trim()).filter(Boolean));
+      let n = 1;
+      const nextPlaceholder = () => {
+        while (used.has(`P${n}`)) n += 1;
+        const name = `P${n}`;
+        used.add(name);
+        return name;
+      };
+      // key → freshly minted placeholder name.
+      const minted = new Map<string, string>();
+      const named = groups.map((g) => {
+        if (!g.locked || g.name.trim()) return g;
+        const name = nextPlaceholder();
+        minted.set(g.key, name);
+        return { ...g, name };
+      });
+
+      const next: Record<string, string> = {};
+      for (const g of named) {
+        const name = g.name.trim();
+        if (!name) continue;
+        for (const id of g.eventIds) next[id] = name;
+      }
       await apiFetch(API.reid.players(picked, embedder), { method: 'PUT', body: { assignments: next } });
       // Patch the minted placeholders into whatever the board looks like NOW —
       // never replace the array wholesale, edits may have landed mid-PUT and a

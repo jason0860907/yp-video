@@ -166,6 +166,10 @@ export const GroupBoard = forwardRef<BoardHandle, GroupBoardProps>(function Grou
   // the drag stays correct.
   const boardRef = useRef<HTMLDivElement>(null);
   const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  // Unmounting mid-drag (video switch, filter change) would otherwise leave
+  // the document listeners attached to a dead component.
+  const marqueeAbort = useRef<AbortController | null>(null);
+  useEffect(() => () => marqueeAbort.current?.abort(), []);
   const startMarquee = (e: ReactPointerEvent) => {
     if (e.button !== 0) return;
     const target = e.target as HTMLElement;
@@ -176,6 +180,7 @@ export const GroupBoard = forwardRef<BoardHandle, GroupBoardProps>(function Grou
     const base = e.ctrlKey || e.metaKey || e.shiftKey ? new Set(selectedCrops) : new Set<string>();
     let active = false;
     const ac = new AbortController();
+    marqueeAbort.current = ac;
     const onMove = (ev: PointerEvent) => {
       if (!active && Math.hypot(ev.clientX - sx, ev.clientY - sy) < 5) return;
       active = true;
@@ -197,6 +202,7 @@ export const GroupBoard = forwardRef<BoardHandle, GroupBoardProps>(function Grou
     };
     const onUp = () => {
       ac.abort();
+      marqueeAbort.current = null;
       setMarquee(null);
       if (!active) setSelectedCrops(base); // plain background click clears (or keeps ctrl-base)
     };
