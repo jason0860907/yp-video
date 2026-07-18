@@ -158,4 +158,12 @@ export const API = {
     trackMasks: (name: string, rally: number) => `/reid/track-masks/${encodeURIComponent(name)}?rally=${rally}`,
     embed: '/reid/embed',
   },
+  reidTrain: {
+    status: '/reid-train/status',
+    start: '/reid-train/start',
+    performance: (model?: string) =>
+      `/reid-train/performance${model ? `?model=${encodeURIComponent(model)}` : ''}`,
+    exportPlan: (p: { split_mode: string; test_ratio: number; seed: number; masked: boolean }) =>
+      `/reid-train/export?split_mode=${p.split_mode}&test_ratio=${p.test_ratio}&seed=${p.seed}&masked=${p.masked}`,
+  },
 } as const;

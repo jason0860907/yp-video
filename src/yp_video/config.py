@@ -98,6 +98,10 @@ RALLY_SPOT_PRE_ANNOTATIONS_DIR = VIDEOS_DIR / "rally-spot" / "pre-annotations"
 # actor fixes); everything else under reid/ is recomputable derived data.
 REID_DIR = VIDEOS_DIR / "reid"
 REID_ANNOTATIONS_DIR = REID_DIR / "annotations"
+# Exported training datasets (CLIP-ReIdent layout). Derived data: the image
+# folders are symlinks into crops/, so this is rebuildable from annotations/
+# + crops/ and deliberately absent from R2_CATEGORIES.
+REID_DATASETS_DIR = REID_DIR / "datasets"
 
 # third_party checkout; weights are gated on Hugging Face.
 SAM3D_DIR = Path(

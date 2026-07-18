@@ -312,3 +312,105 @@ export interface SystemStats {
 export interface ActiveCount {
   count: number;
 }
+
+// ── ReID Train ──
+/** One recording session: the videos sharing a player name-space
+ *  (reid/sessions.py infers this from shared assigned names). */
+export interface ReidSession {
+  id: string;
+  stems: string[];
+  players: string[];
+  counts: Record<string, number>;
+  /** Merge evidence: player name -> the stems carrying it. */
+  shared: Record<string, string[]>;
+  n_assigned: number;
+  /** No name links this video to any other — usually inconsistent labeling. */
+  is_isolated: boolean;
+  models: Record<string, string[]>;
+}
+
+export interface ReidSlider {
+  min: number;
+  max: number;
+  default: number;
+  step: number;
+}
+
+/** A calibrated clustering cutoff, in cosine distance — tuned against the
+ *  quality of the groups it produces, not against pairwise separability. */
+export interface ReidThresholdSuggestion {
+  suggested: number;
+  /** Adjusted Rand index at `suggested` (1.0 = groups match the labels). */
+  ari: number;
+  /** Groups produced, against the true player count. More is expected. */
+  n_clusters: number;
+  n_ids: number;
+  /** The whole sweep, for the chart. */
+  curve: Array<{ t: number; ari: number; n: number }>;
+  /** Pairwise separability, independent of any cutoff. Chance = 0.5. */
+  auc: number;
+  same_p50: number;
+  same_p95: number;
+  diff_p05: number;
+  diff_p50: number;
+  n_pos: number;
+  n_neg: number;
+  slider: ReidSlider;
+}
+
+export interface ReidScores {
+  m_ap: number;
+  rank1: number;
+  rank5: number;
+  n_query: number;
+}
+
+export interface ReidGroupEval {
+  group_id: string;
+  stems: string[];
+  model: string;
+  n_ids: number;
+  n_crops: number;
+  n_assigned: number;
+  coverage: number;
+  dropped_singletons: number;
+  dropped_unembedded: number;
+  scores: ReidScores;
+  /** Query = first video, gallery = the rest. null for single-video sessions. */
+  cross_video: ReidScores | null;
+  threshold: ReidThresholdSuggestion;
+}
+
+export interface ReidModelEval {
+  model: string;
+  crop_weighted?: ReidScores;
+  macro?: ReidScores;
+  totals?: { n_groups: number; n_ids: number; n_crops: number; coverage: number };
+  threshold?: ReidThresholdSuggestion;
+  current_threshold: ReidSlider;
+  /** Session ids this model has no embeddings for. */
+  skipped: string[];
+  groups: ReidGroupEval[];
+}
+
+export interface ReidPerfData {
+  models: ReidModelEval[];
+  evaluated_at: number;
+}
+
+export interface ReidDatasetInfo {
+  name: string;
+  created_at: number;
+  counts: Record<string, number>;
+  config: Record<string, unknown>;
+}
+
+export interface ReidTrainStatus {
+  sessions: ReidSession[];
+  models: Array<{ name: string; labeled_videos: number; threshold: ReidSlider }>;
+  totals: { labeled_videos: number; assigned_events: number; identities: number; sessions: number };
+  datasets: ReidDatasetInfo[];
+  split_modes: string[];
+  clip_reident_available: boolean;
+  active_job: Job | null;
+}

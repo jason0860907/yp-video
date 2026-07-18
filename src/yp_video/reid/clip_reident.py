@@ -35,6 +35,20 @@ def clip_reident_available() -> bool:
     return CHECKPOINT.exists()
 
 
+def ensure_clip_reident_path() -> None:
+    """Put the checkout on sys.path so ``clipreid.*`` imports resolve.
+
+    The checkout ROOT goes on the path, not the package dir. Only the
+    ``clipreid`` package is safe to import — the top-level scripts
+    (train.py, evaluate.py, predict.py, preprocess_data.py) reassign
+    sys.stdout, mkdir, and run training at import time.
+    """
+    import sys
+
+    if str(CLIP_REIDENT_DIR) not in sys.path:
+        sys.path.insert(0, str(CLIP_REIDENT_DIR))
+
+
 class ClipReidentEmbedder:
     """Same embed() contract as the other embedders; GPU when available."""
 
@@ -48,12 +62,9 @@ class ClipReidentEmbedder:
     def _ensure(self):
         if self._model is not None:
             return
-        import sys
-
         import torch
 
-        if str(CLIP_REIDENT_DIR) not in sys.path:
-            sys.path.insert(0, str(CLIP_REIDENT_DIR))
+        ensure_clip_reident_path()
         from clipreid.model import OpenClipModel
         from clipreid.transforms import get_transforms
 

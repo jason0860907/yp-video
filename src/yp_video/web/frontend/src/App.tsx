@@ -16,6 +16,7 @@ import { CutPage } from '@/pages/CutPage';
 import { AnnotatePage } from '@/pages/AnnotatePage';
 import { ReidPredictPage } from '@/pages/ReidPredictPage';
 import { ReidLabelPage } from '@/pages/ReidLabelPage';
+import { ReidTrainPage } from '@/pages/ReidTrainPage';
 
 /** Migrated pages, by route. Paths absent here fall back to a Placeholder. */
 const PAGES: Record<string, ReactElement> = {
@@ -30,6 +31,7 @@ const PAGES: Record<string, ReactElement> = {
   '/action-annotate': <ActionAnnotatePage />,
   '/reid-predict': <ReidPredictPage />,
   '/reid-label': <ReidLabelPage />,
+  '/reid-train': <ReidTrainPage />,
   '/upload': <UploadPage />,
   '/jobs': <JobsPage />,
 };

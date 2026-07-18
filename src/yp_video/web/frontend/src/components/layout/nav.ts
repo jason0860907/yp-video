@@ -68,6 +68,7 @@ export const NAV: NavSection[] = [
     items: [
       { path: '/reid-predict', label: 'ReID Predict', icon: ICON.predict },
       { path: '/reid-label', label: 'ReID Label', icon: ICON.players },
+      { path: '/reid-train', label: 'ReID Train', icon: ICON.train },
     ],
   },
   {
@@ -102,6 +103,7 @@ export const PAGE_TITLES: Record<string, string> = {
   '/action-annotate': 'Action Label',
   '/reid-predict': 'ReID Predict',
   '/reid-label': 'ReID Label',
+  '/reid-train': 'ReID Train',
   '/upload': 'Cloud Storage',
   '/jobs': 'Jobs & System',
 };

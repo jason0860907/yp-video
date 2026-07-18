@@ -92,6 +92,17 @@ def cluster(matrix: np.ndarray, threshold: float = DEFAULT_CLUSTER_THRESHOLD) ->
     return _cut(_linkage(matrix), matrix, threshold)
 
 
+def cluster_sweep(matrix: np.ndarray, thresholds) -> list[np.ndarray]:
+    """Cluster labels at each threshold, sharing ONE linkage.
+
+    The tree is threshold-independent, so a sweep costs a single O(n²) build
+    plus an O(n) cut per threshold — calling cluster() in a loop would rebuild
+    it every time. Used by the threshold calibration (see reid/evaluate.py).
+    """
+    links = _linkage(matrix)
+    return [_cut(links, matrix, t) for t in thresholds]
+
+
 def cluster_video(stem: str, model: str, threshold: float) -> tuple[list[dict], np.ndarray]:
     """One video's records + cluster labels, linkage cached on the source
     files — a threshold change (the UI slider) re-runs only the O(n) cut,
