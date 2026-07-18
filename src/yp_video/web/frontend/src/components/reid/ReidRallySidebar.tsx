@@ -77,7 +77,11 @@ function ReidEventPanel({ entries, empty, matches, selectedEventId, fps, activeA
                   e.stopPropagation();
                   onJumpToCrop(a.id);
                 }}
-                title="Jump to this event's crop in the identities board below"
+                title={
+                  m.assigned
+                    ? "Jump to this event's crop in the identities board below"
+                    : `Not assigned — nearest match is ${m.player}. Click to jump to the crop.`
+                }
                 className={cn(
                   'max-w-full justify-self-end truncate rounded-full px-2 py-0.5 text-[11px] ring-1 transition-colors',
                   m.assigned
@@ -85,7 +89,7 @@ function ReidEventPanel({ entries, empty, matches, selectedEventId, fps, activeA
                     : 'bg-surface-200/40 text-text-muted ring-border hover:bg-surface-200/80 hover:text-text-secondary',
                 )}
               >
-                {m.player}
+                {m.assigned ? m.player : `~${m.player}`}
               </button>
             ) : (
               <span />

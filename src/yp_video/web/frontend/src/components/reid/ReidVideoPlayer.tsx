@@ -266,7 +266,8 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
         frame: a.frame,
         key: trackKeyOf(trackLinks, a.id),
         label: a.label,
-        player: matches[a.id]?.player,
+        // Assigned only — see the event-box label below.
+        player: matches[a.id]?.assigned ? matches[a.id]?.player : undefined,
       })),
     [sidebarActions, trackLinks, matches],
   );
@@ -607,7 +608,12 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
                 const m = matches[r.id];
                 // Same hue per action as the Action Label editor.
                 const color = actionColor(r.label);
-                const label = m ? m.player : r.label ?? '';
+                // Only an ASSIGNED match is this event's identity. match()
+                // also hands every unassigned event its nearest centroid —
+                // a suggestion, and drawing it on the box reads as fact.
+                // After a re-pick the assignment is gone, so the box must
+                // go back to naming the action, not a player.
+                const label = m?.assigned ? m.player : r.label ?? '';
                 return (
                   <g key={r.id}>
                     <rect

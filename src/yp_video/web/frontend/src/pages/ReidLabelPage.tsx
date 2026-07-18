@@ -568,7 +568,7 @@ export function ReidLabelPage() {
             <Badge tone="danger">miss {records.filter((r) => r.status === 'miss').length}</Badge>
             {(playersQuery.data?.players ?? []).map((p) => (
               <Badge key={p} tone="brand">
-                {p} {Object.values(matches).filter((m) => m.player === p).length}
+                {p} {Object.values(matches).filter((m) => m.assigned && m.player === p).length}
               </Badge>
             ))}
           </div>
