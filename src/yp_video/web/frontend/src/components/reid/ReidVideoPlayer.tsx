@@ -3,24 +3,36 @@
  *  and pick mode turns every stored detection into a clickable actor choice.
  *  Ships with the rally sidebar (same interaction as the Action Label list). */
 
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { API, apiFetch } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { actionColor } from '@/lib/actionColors';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
-import { SectionLabel } from '@/components/ui/SectionLabel';
 import { RallyTimeline } from '@/components/editor/RallyTimeline';
 import type { EditorAnnotation } from '@/components/editor/AnnotationEditor';
 import type { ReidPlayers, ReidRecord } from '@/types/api';
-import { fmtTime, trackColor, type ActorFix, type Rally, type SidebarAction, type TrackData, type TrackMasks } from './shared';
+import { OUTSIDE, ReidRallySidebar } from './ReidRallySidebar';
+import { fmtTime, trackColor, trackKeyOf, type ActorFix, type Rally, type SidebarAction, type TrackData, type TrackMasks } from './shared';
+import {
+  buildFrameRows,
+  buildFrameSilhouettes,
+  buildTrackBoxes,
+  maskRowNear,
+  nearestFrame,
+  pickableAt as resolvePickable,
+  resolveActorFix,
+  SilhouetteRenderer,
+  trackBoxNearEvent,
+  decodeMaskData,
+  type Box,
+  type Silhouette,
+} from './masks';
 
 // Detections below this score never win automatic association — they exist
 // only as manual-picker choices (mirrors reid/detector.AUTO_PICK_MIN_SCORE).
 const AUTO_PICK_MIN_SCORE = 0.5;
-
-const OUTSIDE = '__outside__';
 
 export interface PlayerHandle {
   /** Park the video on an event's frame, select + expand its rally, and pin
@@ -49,90 +61,12 @@ export interface ReidVideoPlayerProps {
    *  dims and ignores clicks so it can't fire twice. */
   fixing?: boolean;
   onJumpToCrop: (eventId: string) => void;
-  /** frame → ByteTrack boxes, for the tracklet overlay (empty = no tracking). */
-  trackBoxes: Map<number, { key: string; trackId: number; box: [number, number, number, number] }[]>;
-  /** ALL action events, frame-sorted; ``key`` is the event's tracklet (null =
-   *  not linked). Only the previous and next action's tracklets draw
-   *  persistently — an unlinked slot draws nothing rather than letting a
-   *  later action's tracklet take its place. */
-  trackEventTimeline: { frame: number; key: string | null; label?: string; player?: string }[];
-}
-
-interface ReidEventPanelProps {
-  entries: SidebarAction[];
-  empty: string;
-  matches: ReidPlayers['matches'];
-  selectedEventId: string | null;
-  fps: number;
-  /** Current playhead frame — rows within ±½ s light up (Rally Label rule). */
-  playheadFrame: number;
-  onJump: (a: SidebarAction) => void;
-  onJumpToCrop: (eventId: string) => void;
-}
-
-/** Read-only twin of the Action Label event panel: action dot + label,
- *  matched player, frame and time — click a row to park the video there. */
-function ReidEventPanel({ entries, empty, matches, selectedEventId, fps, playheadFrame, onJump, onJumpToCrop }: ReidEventPanelProps) {
-  if (!entries.length) return <div className="ml-6 rounded-xl border border-border bg-surface-100 px-3 py-2 text-xs text-text-muted">{empty}</div>;
-  const windowFrames = Math.max(1, Math.round(fps / 2));
-  return (
-    <div className="ml-6 space-y-1.5 rounded-xl border border-border bg-surface-100 p-2">
-      {entries.map((a, row) => {
-        const m = matches[a.id];
-        const color = actionColor(a.label);
-        const active = Math.abs(a.frame - playheadFrame) <= windowFrames;
-        return (
-          <div
-            key={a.id}
-            data-action-id={a.id}
-            onClick={() => onJump(a)}
-            title="Click to jump the video to this action"
-            className={cn(
-              'grid cursor-pointer grid-cols-[1rem_minmax(4.5rem,1fr)_minmax(3rem,6.5rem)_3.6rem_2.6rem] items-center gap-1.5 rounded-lg border px-2 py-1.5 transition-colors',
-              a.id === selectedEventId ? 'border-primary/35 bg-primary/10' : 'border-border bg-surface-50 hover:bg-surface-200/40',
-              active && 'ring-1 ring-accent/50',
-            )}
-          >
-            <span className="text-right font-heading text-[10px] text-text-muted/70">{row + 1}</span>
-            <span className="flex min-w-0 items-center gap-1.5">
-              <span
-                className={cn('h-2.5 w-2.5 flex-shrink-0 rounded-full', !a.visible && 'border')}
-                style={a.visible ? { background: color } : { borderColor: color }}
-                title={a.visible ? undefined : 'Non-visible action'}
-              />
-              <span className="truncate text-xs text-text-primary">{a.label ?? '—'}</span>
-            </span>
-            {m?.player ? (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onJumpToCrop(a.id);
-                }}
-                title="Jump to this event's crop in the identities board below"
-                className={cn(
-                  'max-w-full justify-self-end truncate rounded-full px-2 py-0.5 text-[11px] ring-1 transition-colors',
-                  m.assigned
-                    ? 'bg-primary/15 text-primary-light ring-primary/30 hover:bg-primary/30'
-                    : 'bg-surface-200/40 text-text-muted ring-border hover:bg-surface-200/80 hover:text-text-secondary',
-                )}
-              >
-                {m.player}
-              </button>
-            ) : (
-              <span />
-            )}
-            <span className="text-center font-heading text-[11px] tabular-nums text-text-primary">f{a.frame}</span>
-            <span className="text-center font-heading text-[10px] tabular-nums text-text-muted">{fmtTime(a.time != null ? a.time : a.frame / (fps || 30))}</span>
-          </div>
-        );
-      })}
-    </div>
-  );
+  /** Which tracklet each event's actor sits on (empty = no tracking run). */
+  trackLinks: TrackData['links'];
 }
 
 export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(function ReidVideoPlayer(
-  { src, videoName, tracklets, fps, frameSize, records, actionEvents, matches, rallies, selectedRally, onSelectRally, onFixActor, fixing = false, onJumpToCrop, trackBoxes, trackEventTimeline },
+  { src, videoName, tracklets, fps, frameSize, records, actionEvents, matches, rallies, selectedRally, onSelectRally, onFixActor, fixing = false, onJumpToCrop, trackLinks },
   ref,
 ) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -144,26 +78,14 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
   // interaction as the Action Label rally list.
   const [expanded, setExpanded] = useState<string | null>(null);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
-  // The event whose box stays drawn off its own frame (a reference while you
-  // scrub earlier frames to pick its actor). Set when you pick an action from
-  // the sidebar, cleared the moment you make a pick — its job is done — or
-  // when you select another action. Kept apart from selectedEventId so the
-  // sidebar highlight persists independently.
-  const [stickyBoxId, setStickyBoxId] = useState<string | null>(null);
   // Actor-picker mode: park on an event's frame, then click the right person.
   const [pickMode, setPickMode] = useState(false);
-  // Every actor pick clears the sticky reference box (this action is done).
-  const doFixActor = (id: string, fix: ActorFix) => {
-    setStickyBoxId(null);
-    onFixActor(id, fix);
-  };
   // Picker display floor: extraction stores every detection ≥ 0.1, this
   // slider decides how deep into the low-confidence pile to show.
   const [minDetScore, setMinDetScore] = useState(0.25);
   useEffect(() => {
     setExpanded(null);
     setSelectedEventId(null);
-    setStickyBoxId(null);
     setPickMode(false);
   }, [src]);
   // Read inside the frame-clock callback without re-arming it.
@@ -258,18 +180,18 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
     return () => document.removeEventListener('keydown', onKey);
   }, [fps]);
 
+  // frame → ByteTrack boxes for the overlay and the picker (measured ~286k
+  // boxes on a real cut, ~30 ms to build — rebuilt only per tracking run).
+  const trackBoxes = useMemo(() => buildTrackBoxes(tracklets), [tracklets]);
+
   const [w, h] = frameSize;
   // The event box (person ∪ keypoints ∪ ball, +4% margin) belongs to its
-  // action frame. Boxes on THIS frame always draw; the event picked from the
-  // sidebar also stays drawn wherever the playhead goes — so it stays a
-  // reference while you scrub earlier frames to pick its actor — until you
-  // select another action. (Its label carries · f#### so the frame is clear.)
-  const visible = useMemo(() => {
-    const onFrame = records.filter((r) => r.box && r.frame === frame);
-    if (!stickyBoxId || onFrame.some((r) => r.id === stickyBoxId)) return onFrame;
-    const sel = records.find((r) => r.id === stickyBoxId && r.box);
-    return sel ? [...onFrame, sel] : onFrame;
-  }, [records, frame, stickyBoxId]);
+  // action frame, and draws only there — an event's box on any other frame
+  // is a stale rectangle over unrelated footage.
+  const visible = useMemo(
+    () => records.filter((r) => r.box && r.frame === frame),
+    [records, frame],
+  );
   const time = frame / fps;
   // The event whose actor is being picked: always the record NEAREST the
   // playhead (actions split the timeline at their midpoints), on every
@@ -306,29 +228,48 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
     queryFn: () => apiFetch<TrackMasks>(API.reid.trackMasks(videoName, currentRallyId!)),
     enabled: currentRallyId != null && trackBoxes.size > 0,
     staleTime: Infinity, // immutable per tracking run; jobs invalidate the key
+    // A rally's masks are ~4 MB of base64. Never re-fetched while mounted
+    // (staleTime), but retiring them promptly once the playhead has moved on
+    // keeps a scrub across many rallies from stacking tens of MB in the query
+    // cache — re-fetching one is cheap next to holding all of them.
+    gcTime: 60_000,
     retry: false, // 404 = video tracked before masks existed → box fallback
   });
 
-  // key → concatenated packed rows; row i ↔ the tracklet's i-th frame.
+  // Tinted silhouettes are cached across frames; a new payload retires them
+  // (the URLs were tinted for the previous rally's tracklets).
+  const renderer = useRef(new SilhouetteRenderer()).current;
   const maskData = useMemo(() => {
-    const d = masksQuery.data;
-    if (!d) return null;
-    const byKey = new Map<string, Uint8Array>();
-    for (const [key, b64] of Object.entries(d.tracks)) {
-      byKey.set(key, Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)));
-    }
-    return { mh: d.mask_hw[0], mw: d.mask_hw[1], byKey };
-  }, [masksQuery.data]);
+    renderer.clear();
+    return decodeMaskData(masksQuery.data);
+  }, [masksQuery.data, renderer]);
 
-  const frameRows = useMemo(() => {
-    const m = new Map<string, Map<number, number>>();
-    for (const t of tracklets) {
-      const rows = new Map<number, number>();
-      t.frames.forEach((f, i) => rows.set(f, i));
-      m.set(`${t.rally_id}:${t.track_id}`, rows);
-    }
-    return m;
-  }, [tracklets]);
+  const frameRows = useMemo(() => buildFrameRows(tracklets), [tracklets]);
+
+  // Sidebar rows come from the full action annotation, so score / non-visible
+  // events keep their time even though extraction skipped them (no box to
+  // draw, nothing to re-identify). Falls back to the extraction records when
+  // no annotation is loaded (yet).
+  const sidebarActions = useMemo<SidebarAction[]>(() => {
+    const rows: SidebarAction[] = actionEvents.length
+      ? actionEvents
+      : records.map((r) => ({ id: r.id, frame: r.frame, time: r.time ?? null, label: r.label, visible: true }));
+    return [...rows].sort((a, b) => a.frame - b.frame);
+  }, [actionEvents, records]);
+
+  // The same actions carrying their tracklet (null = not linked). EVERY
+  // action occupies a slot, so an unlinked one means "no box right now"
+  // rather than letting a later action's tracklet take its place.
+  const trackEventTimeline = useMemo(
+    () =>
+      sidebarActions.map((a) => ({
+        frame: a.frame,
+        key: trackKeyOf(trackLinks, a.id),
+        label: a.label,
+        player: matches[a.id]?.player,
+      })),
+    [sidebarActions, trackLinks, matches],
+  );
 
   // The previous and next action's tracklets — the boxes AND silhouettes
   // both color by the action; everything else stays neutral.
@@ -350,143 +291,43 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
     return active;
   }, [trackEventTimeline, frame]);
 
-  /** One tracklet's packed mask row at one exact frame (crop space). */
-  const maskRowBits = (key: string, f: number): Uint8Array | null => {
-    if (!maskData) return null;
-    const row = frameRows.get(key)?.get(f);
-    const all = maskData.byKey.get(key);
-    if (row === undefined || !all) return null;
-    const rowBytes = (maskData.mh * maskData.mw) >> 3;
-    return all.subarray(row * rowBytes, (row + 1) * rowBytes);
-  };
-
   // Every silhouette on the current frame: bits for hit testing + a tinted
   // data-URL — the action's color for the prev/next action's tracklets,
-  // plain white for everyone else. Regenerated per presented frame — a
-  // handful of 48×96 canvases, well under a millisecond.
-  const frameSilhouettes = useMemo(() => {
-    if (!maskData) return [];
-    const list = trackBoxes.get(frame) ?? trackBoxes.get(frame - 1) ?? trackBoxes.get(frame + 1);
-    if (!list) return [];
-    const { mh, mw } = maskData;
-    const out = [];
-    for (const t of list) {
-      const bits = maskRowBits(t.key, frame) ?? maskRowBits(t.key, frame - 1) ?? maskRowBits(t.key, frame + 1);
-      if (!bits) continue;
-      const alpha = document.createElement('canvas');
-      alpha.width = mw;
-      alpha.height = mh;
-      const alphaCtx = alpha.getContext('2d')!;
-      const img = alphaCtx.createImageData(mw, mh);
-      for (let i = 0; i < mw * mh; i++) {
-        if ((bits[i >> 3]! >> (7 - (i & 7))) & 1) img.data[i * 4 + 3] = 255;
-      }
-      alphaCtx.putImageData(img, 0, 0);
-      const tinted = document.createElement('canvas');
-      tinted.width = mw;
-      tinted.height = mh;
-      const ctx = tinted.getContext('2d')!;
-      const ev = activeTracks.get(t.key);
-      ctx.fillStyle = ev ? actionColor(ev.label) : '#ffffff';
-      ctx.fillRect(0, 0, mw, mh);
-      ctx.globalCompositeOperation = 'destination-in';
-      ctx.drawImage(alpha, 0, 0);
-      out.push({ key: t.key, box: t.box, bits, mw, mh, url: tinted.toDataURL() });
-    }
-    return out;
-  }, [maskData, trackBoxes, frame, frameRows, activeTracks]);
+  // plain white for everyone else. The URLs come from the renderer's cache,
+  // so a presented frame re-encodes only silhouettes it hasn't seen before.
+  const frameSilhouettes = useMemo(
+    () =>
+      buildFrameSilhouettes(maskData, frameRows, trackBoxes, frame, (key) => {
+        const ev = activeTracks.get(key);
+        return ev ? actionColor(ev.label) : '#ffffff';
+      }, renderer),
+    [maskData, frameRows, trackBoxes, frame, activeTracks, renderer],
+  );
 
-  const boxIou = (a: [number, number, number, number], b: [number, number, number, number]) => {
-    const ix = Math.max(0, Math.min(a[2], b[2]) - Math.max(a[0], b[0]));
-    const iy = Math.max(0, Math.min(a[3], b[3]) - Math.max(a[1], b[1]));
-    const inter = ix * iy;
-    const union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter;
-    return union > 0 ? inter / union : 0;
-  };
-
-  /** Resolve a clicked player into an actor fix for the pinned event.
-   *
-   *  Track reaches the event frame (±3) → the fix uses the box THERE,
-   *  snapped onto the best-matching stored detection so keypoints carry
-   *  over. Track doesn't reach it (the actor went undetected around the
-   *  action) → cross-frame fix: the clicked frame's box goes through with
-   *  its frame number, and the backend crops the pixels that actually
-   *  contain the player. */
-  const pickFromTrack = (key: string, clickedBox: [number, number, number, number]) => {
+  /** Resolve a clicked player into an actor fix for the pinned event, then
+   *  apply it (see masks.resolveActorFix for the arbitration). */
+  const pickFromTrack = (key: string, clickedBox: Box) => {
     const target = pickTarget;
     if (!target) return;
     // The clicked tracklet's box AND mask at (or next to) the event frame —
     // the mask's pixels belong to the clicked player even under heavy
     // overlap, so it arbitrates which stored detection is that player.
-    let boxAtEvent: [number, number, number, number] | null = null;
-    let bitsAtEvent: Uint8Array | null = null;
-    for (let d = 0; d <= 3 && !boxAtEvent; d++) {
-      for (const f of d === 0 ? [target.frame] : [target.frame - d, target.frame + d]) {
-        const hit = trackBoxes.get(f)?.find((t) => t.key === key);
-        if (hit) {
-          boxAtEvent = hit.box;
-          bitsAtEvent = maskRowBits(key, f);
-          break;
-        }
-      }
-    }
-    if (!boxAtEvent) {
-      doFixActor(target.id, { box: clickedBox, frame });
-      return;
-    }
-    const dets = target.detections ?? [];
-    const mask =
-      bitsAtEvent && maskData
-        ? { box: boxAtEvent, bits: bitsAtEvent, mw: maskData.mw, mh: maskData.mh }
+    const at = trackBoxNearEvent(trackBoxes, key, target.frame);
+    const row = at && maskData ? maskRowNear(maskData, frameRows, key, at.frame) : null;
+    const silhouette: Silhouette | null =
+      at && row && maskData
+        ? { key, box: at.box, bits: row.bits, mw: maskData.mw, mh: maskData.mh, row: row.row }
         : null;
-    if (mask) {
-      // "Which detection contains most of this silhouette, tightest box
-      // first" cannot pick an occluder the way box IoU can (a partial hull
-      // of an occluded player always loses an IoU contest). Nobody reaching
-      // coverage means NO stored detection is this player — the track box
-      // goes through with the backend's snap vetoed, so it can't re-attach
-      // the occluder either.
-      const covered = dets
-        .map((d) => ({ box: d.box, cov: maskCoverage(mask, d.box) }))
-        .filter((c) => c.cov >= 0.6)
-        .sort((a, b) => (a.box[2] - a.box[0]) * (a.box[3] - a.box[1]) - (b.box[2] - b.box[0]) * (b.box[3] - b.box[1]));
-      doFixActor(target.id, covered.length ? { box: covered[0]!.box } : { box: boxAtEvent, snap: false });
-      return;
-    }
-    // No masks stored for this video — box IoU is the best available.
-    let box = boxAtEvent;
-    let best = 0.3;
-    for (const d of dets) {
-      const overlap = boxIou(d.box, boxAtEvent);
-      if (overlap >= best) {
-        best = overlap;
-        box = d.box;
-      }
-    }
-    doFixActor(target.id, { box });
-  };
-
-  /** Fraction of a silhouette's on-pixels that fall inside a detection box. */
-  const maskCoverage = (
-    s: { box: [number, number, number, number]; bits: Uint8Array; mw: number; mh: number },
-    detBox: [number, number, number, number],
-  ): number => {
-    const [x0, y0, x1, y1] = s.box;
-    const cw = (x1 - x0) / s.mw;
-    const ch = (y1 - y0) / s.mh;
-    let on = 0;
-    let inside = 0;
-    for (let gy = 0; gy < s.mh; gy++) {
-      for (let gx = 0; gx < s.mw; gx++) {
-        const i = gy * s.mw + gx;
-        if (!((s.bits[i >> 3]! >> (7 - (i & 7))) & 1)) continue;
-        on++;
-        const cx = x0 + (gx + 0.5) * cw;
-        const cy = y0 + (gy + 0.5) * ch;
-        if (cx >= detBox[0] && cx < detBox[2] && cy >= detBox[1] && cy < detBox[3]) inside++;
-      }
-    }
-    return on ? inside / on : 0;
+    onFixActor(
+      target.id,
+      resolveActorFix({
+        detections: target.detections ?? [],
+        trackBox: at?.box ?? null,
+        silhouette,
+        clickedBox,
+        clickedFrame: frame,
+      }),
+    );
   };
 
   // Every tracked player at the playhead is a pick target on EVERY frame in
@@ -494,20 +335,19 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
   // overlaps), so a click near a player always does something.
   const pickables = useMemo(() => {
     if (!pickMode) return [];
-    const list = trackBoxes.get(frame) ?? trackBoxes.get(frame - 1) ?? trackBoxes.get(frame + 1) ?? [];
+    const list = nearestFrame(trackBoxes, frame) ?? [];
     return list.map((t) => ({ ...t, sil: frameSilhouettes.find((s) => s.key === t.key) ?? null }));
   }, [pickMode, trackBoxes, frame, frameSilhouettes]);
 
-  const inMaskBits = (s: (typeof frameSilhouettes)[number], px: number, py: number): boolean => {
-    const [x0, y0, x1, y1] = s.box;
-    const gx = Math.floor(((px - x0) / (x1 - x0)) * s.mw);
-    const gy = Math.floor(((py - y0) / (y1 - y0)) * s.mh);
-    const i = gy * s.mw + gx;
-    return Boolean((s.bits[i >> 3]! >> (7 - (i & 7))) & 1);
-  };
+  // Pick targets are the segmentation boxes, one per player. Stored
+  // detections stand in ONLY where this frame has no segmentation box at all
+  // (outside a rally, or a tracklet too short to survive ByteTrack — measured
+  // 3.3% of events, up to 10% on some videos). Showing both would put two
+  // near-identical white rectangles on every player: the seg box runs ~1.4x
+  // wider than the detector's, so they never line up.
+  const detectionFallback = pickMode && !pickables.length;
 
-  /** Who owns a pointer position: boxes containing it, silhouette hits
-   *  first (they resolve overlaps), smallest box wins ties. */
+  /** Who a pointer event would pick, in frame coordinates. */
   const pickableAt = (e: ReactMouseEvent<SVGElement>): string | null => {
     const svg = e.currentTarget.ownerSVGElement;
     if (!svg) return null;
@@ -515,14 +355,7 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
     pt.x = e.clientX;
     pt.y = e.clientY;
     const p = pt.matrixTransform(svg.getScreenCTM()!.inverse());
-    const inBox = pickables.filter((t) => p.x >= t.box[0] && p.x < t.box[2] && p.y >= t.box[1] && p.y < t.box[3]);
-    if (!inBox.length) return null;
-    const inMask = inBox.filter((t) => t.sil && inMaskBits(t.sil, p.x, p.y));
-    const pool = inMask.length ? inMask : inBox;
-    pool.sort(
-      (a, b) => (a.box[2] - a.box[0]) * (a.box[3] - a.box[1]) - (b.box[2] - b.box[0]) * (b.box[3] - b.box[1]),
-    );
-    return pool[0]!.key;
+    return resolvePickable(pickables, p.x, p.y);
   };
 
   // The player under the cursor — highlighted so it's obvious who a click
@@ -535,23 +368,29 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
     const t = pickables.find((x) => x.key === key);
     if (t) pickFromTrack(key, t.box);
   };
-  // Sidebar rows come from the full action annotation, so score / non-visible
-  // events keep their time even though extraction skipped them (no box to
-  // draw, nothing to re-identify). Falls back to the extraction records when
-  // no annotation is loaded (yet).
-  const sidebarActions = useMemo<SidebarAction[]>(() => {
-    const rows: SidebarAction[] = actionEvents.length
-      ? actionEvents
-      : records.map((r) => ({ id: r.id, frame: r.frame, time: r.time ?? null, label: r.label, visible: true }));
-    return [...rows].sort((a, b) => a.frame - b.frame);
-  }, [actionEvents, records]);
-
   // The action under the playhead (nearest by frame) — drives the sidebar
   // auto-scroll during playback.
   const currentActionId = useMemo(() => {
     if (!sidebarActions.length) return null;
     return sidebarActions.reduce((a, b) => (Math.abs(a.frame - frame) <= Math.abs(b.frame - frame) ? a : b)).id;
   }, [sidebarActions, frame]);
+
+  // Actions within ±½ s of the playhead (the Rally Label highlight rule),
+  // reduced to a Set whose IDENTITY only moves when the membership does.
+  // The sidebar memo hangs off this: recomputing the ids every frame is
+  // O(actions) and trivial, but handing the list a fresh Set 60 times a
+  // second would re-render several hundred rows for nothing.
+  const activeIdsRef = useRef<Set<string>>(new Set());
+  const activeActionIds = useMemo(() => {
+    const window = Math.max(1, Math.round(fps / 2));
+    const ids = sidebarActions.filter((a) => Math.abs(a.frame - frame) <= window).map((a) => a.id);
+    const prev = activeIdsRef.current;
+    // Same membership as last frame -> hand back the SAME Set so the memo
+    // downstream holds. (Comparing ids beats joining them into a key: an
+    // action id may contain any character, a separator may not.)
+    if (ids.length === prev.size && ids.every((id) => prev.has(id))) return prev;
+    return (activeIdsRef.current = new Set(ids));
+  }, [sidebarActions, frame, fps]);
 
   // Playback scrolls the sidebar to keep the current action in view (its
   // rally is already expanded). Only while playing, so manual scrolling and
@@ -576,12 +415,18 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
     return { byRally: map, outside: out };
   }, [rallies, sidebarActions, fps]);
 
-  const jumpToRally = (rally: Rally) => {
-    onSelectRally(rally.rally_id);
-    setExpanded(String(rally.rally_id));
-    const el = videoRef.current;
-    if (el) el.currentTime = rally.start + 0.5 / fps;
-  };
+  // The sidebar is memoized against the frame clock, so its handlers must
+  // keep a stable identity or the memo never holds.
+  const jumpToRally = useCallback(
+    (rally: Rally) => {
+      onSelectRally(rally.rally_id);
+      setExpanded(String(rally.rally_id));
+      const el = videoRef.current;
+      if (el) el.currentTime = rally.start + 0.5 / fps;
+    },
+    [onSelectRally, fps],
+  );
+  const selectAllRallies = useCallback(() => onSelectRally('all'), [onSelectRally]);
 
   const listRef = useRef<HTMLDivElement>(null);
   /** Pin a rally row (or the outside header) to the top of the sidebar list.
@@ -617,22 +462,24 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
     });
   };
 
-  const seekEvent = (a: { id: string; frame: number; time: number | null }) => {
-    setSelectedEventId(a.id);
-    setStickyBoxId(a.id);
-    // Keep the rally selection in sync with the jump (Action Label contract) —
-    // a stale selection would strand the playhead outside the "selected" rally.
-    const t = a.time != null ? a.time : a.frame / fps;
-    const rally = rallies.find((x) => t >= x.start && t <= x.end);
-    onSelectRally(rally ? rally.rally_id : 'all');
-    setExpanded(rally ? String(rally.rally_id) : OUTSIDE);
-    const el = videoRef.current;
-    if (el) {
-      el.pause();
-      el.currentTime = (a.frame + 0.5) / fps;
-    }
-    return rally;
-  };
+  const seekEvent = useCallback(
+    (a: { id: string; frame: number; time: number | null }) => {
+      setSelectedEventId(a.id);
+      // Keep the rally selection in sync with the jump (Action Label contract) —
+      // a stale selection would strand the playhead outside the "selected" rally.
+      const t = a.time != null ? a.time : a.frame / fps;
+      const rally = rallies.find((x) => t >= x.start && t <= x.end);
+      onSelectRally(rally ? rally.rally_id : 'all');
+      setExpanded(rally ? String(rally.rally_id) : OUTSIDE);
+      const el = videoRef.current;
+      if (el) {
+        el.pause();
+        el.currentTime = (a.frame + 0.5) / fps;
+      }
+      return rally;
+    },
+    [rallies, fps, onSelectRally],
+  );
 
   const timelineAnnotations = useMemo<EditorAnnotation[]>(
     () => rallies.map((r) => ({ rally_id: r.rally_id, start: r.start, end: r.end, label: 'rally' })),
@@ -664,8 +511,7 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
                   PREVIOUS and NEXT action's tracklets show persistently (solid,
                   the action's color) — at most two boxes at a time; the rest
                   (dashed, hashed hue) hide behind the Tracks toggle. */}
-              {(() => {
-                return (trackBoxes.get(frame) ?? trackBoxes.get(frame - 1) ?? trackBoxes.get(frame + 1))?.map((t) => {
+              {nearestFrame(trackBoxes, frame)?.map((t) => {
                 const ev = activeTracks.get(t.key);
                 if (!ev && !showTracks) return null;
                 const color = ev ? actionColor(ev.label) : trackColor(t.key);
@@ -713,8 +559,7 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
                     </text>
                   </g>
                 );
-                });
-              })()}
+              })}
               {/* Pick surface — identical on every frame: each tracked
                   player's whole box is clickable, silhouettes render on top
                   when stored, hover brightens the resolved player. The pick
@@ -791,10 +636,10 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
                   </g>
                 );
               })}
-              {/* Actor picker: near the action frame, every stored detection
-                  above the score slider is ALSO clickable (covers people
-                  without a tracklet). */}
-              {nearEvent &&
+              {/* Fallback picker: this frame has no segmentation box, so the
+                  extraction's stored detections are the only way to point at
+                  anybody. Score slider decides how deep to show. */}
+              {detectionFallback && nearEvent &&
                 pickTarget?.detections?.filter((d) => d.score >= minDetScore).map((d, i) => {
                   const [x0, y0, x1, y1] = d.box;
                   return (
@@ -813,7 +658,7 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
                       className={fixing ? 'pointer-events-none opacity-40' : 'pointer-events-auto cursor-pointer hover:fill-white/20'}
                       onClick={(e) => {
                         e.stopPropagation();
-                        doFixActor(pickTarget.id, { box: d.box });
+                        onFixActor(pickTarget.id, { box: d.box });
                       }}
                     >
                       <title>{`person · score ${d.score.toFixed(2)} — click to set as the actor`}</title>
@@ -915,12 +760,12 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
                     Picking actor for <strong>{pickTarget.label}</strong> f{pickTarget.frame}
                     {fixing
                       ? ' — applying…'
-                      : nearEvent
-                        ? ' — click the right player (tracked boxes anywhere, stored detections on this frame)'
+                      : detectionFallback
+                        ? ' — no tracking on this frame; click one of the stored detections'
                         : ' — click the right player; the pick follows their track back to the action'}
                   </span>
                   <span className="ml-auto flex items-center gap-3">
-                    {nearEvent && (
+                    {detectionFallback && nearEvent && (
                       <label className="flex items-center gap-1.5 text-[11px] text-text-secondary" title="Hide detections below this score — drag left to reveal weaker boxes (extraction keeps everything ≥ 0.1)">
                         <span className="whitespace-nowrap">
                           score ≥ <span className="font-mono tabular-nums">{minDetScore.toFixed(2)}</span>
@@ -940,11 +785,11 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
                         </span>
                       </label>
                     )}
-                    <Button size="sm" disabled={fixing} onClick={() => doFixActor(pickTarget.id, { none: true })} title="Nobody in frame is the actor — clears this event's crop">
+                    <Button size="sm" disabled={fixing} onClick={() => onFixActor(pickTarget.id, { none: true })} title="Nobody in frame is the actor — clears this event's crop">
                       No actor
                     </Button>
                     {pickTarget.box_source === 'manual' && (
-                      <Button size="sm" disabled={fixing} onClick={() => doFixActor(pickTarget.id, {})} title="Discard the manual fix and re-run the automatic pick">
+                      <Button size="sm" disabled={fixing} onClick={() => onFixActor(pickTarget.id, {})} title="Discard the manual fix and re-run the automatic pick">
                         Revert to auto
                       </Button>
                     )}
@@ -958,96 +803,29 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
         </Card>
       </div>
 
-      {/* Rally list — same sidebar as the Rally Label / Action Label editors */}
+      {/* Rally list — same sidebar as the Rally Label / Action Label editors.
+          Memoized against the frame clock: it takes the playhead pre-reduced
+          to activeRallyId / activeActionIds, not the raw frame. */}
       {rallies.length > 0 && (
-        <div className="min-w-0 lg:w-[420px] lg:flex-shrink-0">
-          <Card>
-            <SectionLabel>
-              Rallies ({rallies.length} rally · {sidebarActions.length} action)
-            </SectionLabel>
-            <div ref={listRef} className="vq-list max-h-[calc(45vh+2.25rem)] space-y-1.5 overflow-y-auto pr-1">
-              <div
-                onClick={() => onSelectRally('all')}
-                className={cn(
-                  'ae-row flex cursor-pointer items-center gap-1.5 rounded-xl border px-3 py-2.5 transition-colors',
-                  selectedRally === 'all'
-                    ? 'border-primary/45 bg-primary/[0.12]'
-                    : 'border-primary/20 bg-primary/[0.05] hover:bg-primary/[0.10]',
-                )}
-              >
-                <span className="text-xs font-medium text-text-primary">All rallies</span>
-                <span className="ml-auto font-mono text-[10px] tabular-nums text-text-muted">{sidebarActions.length} action</span>
-              </div>
-              {rallies.map((rally, i) => {
-                const entries = byRally.get(rally.rally_id) ?? [];
-                const isOpen = expanded === String(rally.rally_id);
-                const active = time >= rally.start && time <= rally.end;
-                const selected = selectedRally === rally.rally_id;
-                return (
-                  <div key={rally.rally_id} className="space-y-1.5">
-                    <div
-                      data-rally-row={rally.rally_id}
-                      onClick={() => jumpToRally(rally)}
-                      className={cn(
-                        'ae-row flex cursor-pointer items-center gap-2.5 rounded-xl border px-3 py-2.5 transition-colors',
-                        selected ? 'border-primary/45 bg-primary/[0.12]' : 'border-primary/20 bg-primary/[0.05] hover:bg-primary/[0.10]',
-                        active && 'ring-1 ring-accent/50',
-                      )}
-                    >
-                      <span className="w-4 select-none text-right font-heading text-[10px] text-text-muted/60">{i + 1}</span>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          // Collapse if open; otherwise select + expand + seek to the rally start.
-                          if (isOpen) setExpanded(null);
-                          else jumpToRally(rally);
-                        }}
-                        className="flex items-center gap-1 rounded-full bg-primary/20 px-2 py-0.5 text-[11px] font-medium text-primary-text ring-1 ring-primary/25"
-                      >
-                        <span className={cn('transition-transform', isOpen && 'rotate-90')}>▸</span> actions <span className="opacity-70">{entries.length}</span>
-                      </button>
-                      <span className="ml-auto font-mono text-[11px] tabular-nums text-text-muted">
-                        {fmtTime(rally.start)} → {fmtTime(rally.end)}
-                      </span>
-                      <span className="rounded bg-surface-200/40 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-text-muted">
-                        {Math.max(0, rally.end - rally.start).toFixed(1)}s
-                      </span>
-                    </div>
-                    {isOpen && (
-                      <ReidEventPanel entries={entries} empty="No actions in this rally" matches={matches} selectedEventId={selectedEventId} fps={fps} playheadFrame={frame} onJump={seekEvent} onJumpToCrop={onJumpToCrop} />
-                    )}
-                  </div>
-                );
-              })}
-              {outside.length > 0 && (
-                <div className="space-y-1.5">
-                  <div
-                    data-rally-row={OUTSIDE}
-                    onClick={() => setExpanded(OUTSIDE)}
-                    className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-amber-500/20 bg-amber-500/[0.04] px-3 py-2.5 hover:bg-amber-500/[0.08]"
-                  >
-                    <span className="w-4 select-none text-right font-heading text-[10px] text-text-muted/60">out</span>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setExpanded(expanded === OUTSIDE ? null : OUTSIDE);
-                      }}
-                      className="flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-300 ring-1 ring-amber-500/25"
-                    >
-                      <span className={cn('transition-transform', expanded === OUTSIDE && 'rotate-90')}>▸</span> outside <span className="opacity-70">{outside.length}</span>
-                    </button>
-                    <span className="ml-auto font-heading text-[11px] text-text-muted">outside rally</span>
-                  </div>
-                  {expanded === OUTSIDE && (
-                    <ReidEventPanel entries={outside} empty="No outside actions" matches={matches} selectedEventId={selectedEventId} fps={fps} playheadFrame={frame} onJump={seekEvent} onJumpToCrop={onJumpToCrop} />
-                  )}
-                </div>
-              )}
-            </div>
-          </Card>
-        </div>
+        <ReidRallySidebar
+          rallies={rallies}
+          byRally={byRally}
+          outside={outside}
+          totalActions={sidebarActions.length}
+          fps={fps}
+          matches={matches}
+          activeRallyId={currentRallyId}
+          activeActionIds={activeActionIds}
+          expanded={expanded}
+          selectedRally={selectedRally}
+          selectedEventId={selectedEventId}
+          listRef={listRef}
+          onSelectAll={selectAllRallies}
+          onJumpRally={jumpToRally}
+          onSetExpanded={setExpanded}
+          onJumpEvent={seekEvent}
+          onJumpToCrop={onJumpToCrop}
+        />
       )}
     </div>
   );

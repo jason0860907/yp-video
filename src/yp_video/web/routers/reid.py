@@ -233,7 +233,8 @@ _slim_records_cache: StatCache = StatCache()
 def tracks(name: str) -> dict:
     """Tracklets (for the video overlay) + event→tracklet links (for crop
     badges and propagation). Scores stay server-side — the overlay only
-    draws boxes, and the payload holds ~100k of them."""
+    draws boxes, and the payload holds ~286k of them (8.5 MB of JSON, but
+    ~1.5 MB over the wire once GZipMiddleware has had it)."""
     stem = Path(unquote(name)).stem
     if not store.tracks_path(stem).exists():
         raise HTTPException(404, f"No tracking for {stem} — run tracking on the ReID Predict page first")

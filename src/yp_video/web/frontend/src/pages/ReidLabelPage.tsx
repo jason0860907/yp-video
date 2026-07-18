@@ -140,21 +140,6 @@ export function ReidLabelPage() {
     staleTime: 60_000,
   });
   const trackLinks = useMemo(() => tracksQuery.data?.links ?? {}, [tracksQuery.data]);
-  // frame → track boxes, for the video overlay (~100k boxes, built once).
-  const trackBoxesByFrame = useMemo(() => {
-    const map = new Map<number, { key: string; trackId: number; box: [number, number, number, number] }[]>();
-    for (const t of tracksQuery.data?.tracklets ?? []) {
-      const key = `${t.rally_id}:${t.track_id}`;
-      t.frames.forEach((f, i) => {
-        const box = t.boxes[i];
-        if (!box) return;
-        let arr = map.get(f);
-        if (!arr) map.set(f, (arr = []));
-        arr.push({ key, trackId: t.track_id, box });
-      });
-    }
-    return map;
-  }, [tracksQuery.data]);
 
   // Full action annotation — the sidebar lists every action's time, including
   // score / non-visible events the ReID extraction skipped.
@@ -220,27 +205,6 @@ export function ReidLabelPage() {
       toast.error(`Backfill start failed: ${errMsg(e)}`);
     }
   };
-
-  // All action events, frame-sorted, each carrying its tracklet key when one
-  // exists. The video overlay keeps only the previous and the next action's
-  // tracklets on screen — and EVERY action occupies a slot (visible or not),
-  // so an unlinked action means "no box right now" rather than falling
-  // through to the action after it.
-  const trackEventTimeline = useMemo(() => {
-    const source: { id: string; frame: number; label?: string }[] = actionEvents.length ? actionEvents : records;
-    return source
-      .map((e) => {
-        const l = trackLinks[e.id];
-        return {
-          frame: e.frame,
-          key: l ? `${l.rally_id}:${l.track_id}` : null,
-          label: e.label,
-          player: matches[e.id]?.player,
-        };
-      })
-      .sort((a, b) => a.frame - b.frame);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [actionEvents, records, trackLinks, playersQuery.data]);
 
   const board = useGroupBoard({
     picked,
@@ -386,8 +350,7 @@ export function ReidLabelPage() {
           onFixActor={fixActor}
           fixing={Boolean(fixingEvent)}
           onJumpToCrop={(id) => boardRef.current?.jumpToCrop(id)}
-          trackBoxes={trackBoxesByFrame}
-          trackEventTimeline={trackEventTimeline}
+          trackLinks={trackLinks}
         />
       )}
 
