@@ -1,7 +1,8 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { API, ApiError, apiFetch } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { Field, SelectArch, fieldCls } from '@/components/train/Field';
 import { isTerminal } from '@/lib/job';
 import { useSSE } from '@/lib/useSSE';
 import { Button } from '@/components/ui/Button';
@@ -79,8 +80,6 @@ const NUM_FIELDS: Array<{ key: keyof Form; label: string; min?: number; max?: nu
   { key: 'start_val_epoch', label: 'Start val', min: 0, max: 1000 },
 ];
 
-const fieldCls =
-  'w-full rounded-lg border border-border-light bg-surface-50 px-3 py-2 text-sm text-text-primary focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary/15';
 const errMsg = (e: unknown) => (e instanceof ApiError ? e.body : e instanceof Error ? e.message : String(e));
 
 export function SpotTrainPage() {
@@ -356,26 +355,5 @@ export function SpotTrainPage() {
       {/* Per-epoch curve + per-video mAP for the selected (or latest) run */}
       {perf && perf.entries.length > 0 && <TrainPerfCard data={perf} onSelectRun={setPerfRun} />}
     </div>
-  );
-}
-
-function Field({ label, className, children }: { label: string; className?: string; children: ReactNode }) {
-  return (
-    <label className={cn('block min-w-0 space-y-1', className)}>
-      <span className="block text-[10px] font-semibold uppercase tracking-widest text-text-muted">{label}</span>
-      {children}
-    </label>
-  );
-}
-
-function SelectArch({ value, options, onChange }: { value: string; options: readonly string[]; onChange: (v: string) => void }) {
-  return (
-    <select value={value} onChange={(e) => onChange(e.target.value)} className={cn(fieldCls, 'cursor-pointer appearance-none')}>
-      {options.map((o) => (
-        <option key={o} value={o}>
-          {o}
-        </option>
-      ))}
-    </select>
   );
 }
