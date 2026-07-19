@@ -20,6 +20,15 @@ every excluded player with a reason:
 - a TRAIN player needs >= 2 crops (__getitem__ draws a random *other* crop of
   the same player; np.random.choice on an empty array raises)
 - a TEST player needs >= 1 query and >= 1 gallery row
+
+One more constraint bites at training time rather than load time, so
+meta.json carries it: TrainDataset.shuffle() forbids a player appearing
+twice within a window of ``shuffle_batch_size`` (ClipLoss uses in-batch
+negatives, so a duplicate would be a false negative), and silently drops
+whatever it cannot place. With few identities that is nearly everything —
+measured on 622 crops over 17 players: batch 16 keeps 31 samples, batch 12
+keeps 70, batch 8 keeps all 622. Keep the batch comfortably under the
+identity count.
 """
 
 from __future__ import annotations
@@ -207,6 +216,9 @@ def plan_export(
 
     counts = {
         "n_rows": len(rows),
+        # See the module docstring: CLIP-ReIdent silently discards most of a
+        # small-identity dataset when the batch approaches the player count.
+        "max_shuffle_batch_size": max(2, len(players) // 2),
         "n_players": len(players),
         "n_train": sum(1 for r in rows if r.split == "train"),
         "n_test": sum(1 for r in rows if r.split == "test"),
