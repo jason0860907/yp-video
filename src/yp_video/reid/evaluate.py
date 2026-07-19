@@ -93,9 +93,16 @@ EMPTY_THRESHOLD = ThresholdSuggestion(
 
 
 @dataclass(frozen=True)
-class GroupEval:
-    group_id: str
-    stems: tuple[str, ...]
+class VideoEval:
+    """One video, scored on its own labels.
+
+    The video is the unit because that is how labeling happens — you open one
+    cut and cluster its crops. Merging a session's videos measures something
+    harder (more identities in the gallery) and depends on their names having
+    been kept consistent, which is a separate question answered by CrossEval.
+    """
+
+    stem: str
     model: str
     n_ids: int
     n_crops: int
@@ -104,8 +111,6 @@ class GroupEval:
     dropped_singletons: int
     dropped_unembedded: int
     scores: Scores
-    #: query = first stem, gallery = the rest. None for single-video groups.
-    cross_video: Scores | None
     threshold: ThresholdSuggestion
 
 
@@ -310,8 +315,8 @@ def _nice_step(span: float) -> float:
 # ── evaluation ───────────────────────────────────────────────────────────
 
 
-def gather_group(group: SessionGroup, model: str):
-    """(matrix, pids, names, stem_idx, drops) for one group under one model.
+def gather(stems: Sequence[str], model: str):
+    """(matrix, pids, names, stem_idx, drops) for these videos under one model.
 
     load_embeddings already filters to embedded, non-SKIP records and
     L2-normalizes, so this only has to keep the rows that carry an assignment
@@ -323,7 +328,7 @@ def gather_group(group: SessionGroup, model: str):
     n_assigned = 0
     embedded_ids: set[str] = set()
 
-    for i, stem in enumerate(group.stems):
+    for i, stem in enumerate(stems):
         assignments = load_assignments(stem)
         n_assigned += len(assignments)
         records, matrix = load_embeddings(stem, model=model)
@@ -354,29 +359,20 @@ def gather_group(group: SessionGroup, model: str):
     return matrix, pids, kept_names, np.array([stem_idx[i] for i in keep], dtype=int), drops
 
 
-def evaluate_group(
-    group: SessionGroup, model: str
-) -> tuple[GroupEval, np.ndarray, np.ndarray] | None:
-    """One group's evaluation, plus its (matrix, pids) so a caller pooling
-    across groups doesn't have to gather them a second time."""
-    matrix, pids, _names, stem_idx, drops = gather_group(group, model)
+def evaluate_video(stem: str, model: str) -> tuple[VideoEval, np.ndarray, np.ndarray] | None:
+    """One video's evaluation, plus its (matrix, pids) so a caller pooling
+    across videos doesn't have to gather them a second time."""
+    matrix, pids, _names, _stem_idx, drops = gather([stem], model)
     if len(matrix) < 2:
         return None
     if len(matrix) > MAX_GROUP_CROPS:
         raise ValueError(
-            f"{group.id} has {len(matrix)} crops, over MAX_GROUP_CROPS={MAX_GROUP_CROPS} — "
+            f"{stem} has {len(matrix)} crops, over MAX_GROUP_CROPS={MAX_GROUP_CROPS} — "
             "subsample or raise the cap before evaluating"
         )
-
-    cross = None
-    if len(group.stems) > 1:
-        first = stem_idx == 0
-        cross = split_scores(matrix[first], pids[first], matrix[~first], pids[~first])
-
     n_assigned = drops["n_assigned"]
-    ev = GroupEval(
-        group_id=group.id,
-        stems=group.stems,
+    ev = VideoEval(
+        stem=stem,
         model=model,
         n_ids=int(len(set(pids.tolist()))),
         n_crops=len(matrix),
@@ -385,17 +381,47 @@ def evaluate_group(
         dropped_singletons=drops["singletons"],
         dropped_unembedded=drops["unembedded"],
         scores=loo_scores(matrix, pids),
-        cross_video=cross,
         threshold=suggest_threshold(matrix, pids),
     )
     return ev, matrix, pids
 
 
-def _pooled_threshold(collected: list[tuple[np.ndarray, np.ndarray]]) -> ThresholdSuggestion:
-    """One cutoff for the model, from every group's curve at once.
+def cross_video_eval(group: SessionGroup, model: str) -> dict | None:
+    """Does an identity survive into another recording of the same session?
 
-    Pooling matters: a single group's ARI curve is jagged (agglomerative
-    merges are discrete), so its argmax can land on a spike. Every group is
+    Query is the session's first video, gallery the rest. Only players named
+    in BOTH sides can be scored — clipreid.metrics silently skips a query
+    with no true match in the gallery, so the skipped count is reported
+    rather than hidden: it is the players who simply were not on court for
+    the other clip, which is normal and not a labeling gap.
+    """
+    if len(group.stems) < 2:
+        return None
+    matrix, pids, _names, stem_idx, _drops = gather(group.stems, model)
+    if len(matrix) < 2:
+        return None
+    q = stem_idx == 0
+    qpid, gpid = pids[q], pids[~q]
+    scored = int(np.isin(qpid, gpid).sum())
+    scores = split_scores(matrix[q], qpid, matrix[~q], gpid)
+    if scores is None:
+        return None
+    return {
+        "session_id": group.id,
+        "query_stem": group.stems[0],
+        "gallery_stems": list(group.stems[1:]),
+        "n_ids_shared": int(len(set(qpid.tolist()) & set(gpid.tolist()))),
+        "n_scored": scored,
+        "n_skipped": int(len(qpid) - scored),
+        "scores": asdict(Scores(scores.m_ap, scores.rank1, scores.rank5, scored)),
+    }
+
+
+def _pooled_threshold(collected: list[tuple[np.ndarray, np.ndarray]]) -> ThresholdSuggestion:
+    """One cutoff for the model, from every video's curve at once.
+
+    Pooling matters: a single video's ARI curve is jagged (agglomerative
+    merges are discrete), so its argmax can land on a spike. Every video is
     swept over the same pooled band and the curves are averaged by crop count.
     """
     if not collected:
@@ -416,34 +442,38 @@ def _pooled_threshold(collected: list[tuple[np.ndarray, np.ndarray]]) -> Thresho
 
 
 def evaluate_models(groups: Sequence[SessionGroup], models: Sequence[str]) -> dict:
-    """The /performance payload: per-model aggregates plus per-group rows.
+    """The /performance payload: per-VIDEO scores plus a cross-video section.
 
-    A model is only scored on groups where EVERY member stem has a matrix —
-    otherwise a model could look better simply by being evaluated on an
-    easier subset.
+    The video is the unit because that is the labeling unit. Sessions still
+    matter for two things: a model is only scored on a video whose matrix
+    exists (otherwise it could look better on an easier subset), and the
+    cross-video check needs to know which videos share a name-space.
     """
     from yp_video.reid.embedder import threshold_calibration
     from yp_video.reid.store import embedded_models
 
+    stems = [stem for g in groups for stem in g.stems]
     out = []
     for model in models:
-        evals: list[GroupEval] = []
+        evals: list[VideoEval] = []
         skipped: list[str] = []
         collected: list[tuple[np.ndarray, np.ndarray]] = []
-        for group in groups:
-            if not all(model in embedded_models(s) for s in group.stems):
-                skipped.append(group.id)
+        for stem in stems:
+            if model not in embedded_models(stem):
+                skipped.append(stem)
                 continue
-            result = evaluate_group(group, model)
+            result = evaluate_video(stem, model)
             if result is None:
-                skipped.append(group.id)
+                skipped.append(stem)
                 continue
             ev, matrix, pids = result
             evals.append(ev)
             collected.append((matrix, pids))
 
+        cross = [c for g in groups if (c := cross_video_eval(g, model)) is not None] if evals else []
+
         if not evals:
-            out.append({"model": model, "groups": [], "skipped": skipped,
+            out.append({"model": model, "videos": [], "cross_video": [], "skipped": skipped,
                         "current_threshold": threshold_calibration(model)})
             continue
 
@@ -467,7 +497,7 @@ def evaluate_models(groups: Sequence[SessionGroup], models: Sequence[str]) -> di
             "crop_weighted": asdict(weighted),
             "macro": asdict(macro),
             "totals": {
-                "n_groups": len(evals),
+                "n_videos": len(evals),
                 "n_ids": sum(e.n_ids for e in evals),
                 "n_crops": n_crops,
                 "coverage": (n_crops / n_assigned) if n_assigned else 0.0,
@@ -475,11 +505,8 @@ def evaluate_models(groups: Sequence[SessionGroup], models: Sequence[str]) -> di
             "threshold": asdict(_pooled_threshold(collected)),
             "current_threshold": threshold_calibration(model),
             "skipped": skipped,
-            "groups": [
-                {**asdict(e), "stems": list(e.stems),
-                 "cross_video": asdict(e.cross_video) if e.cross_video else None}
-                for e in evals
-            ],
+            "videos": [asdict(e) for e in evals],
+            "cross_video": cross,
         })
 
     out.sort(key=lambda m: m.get("crop_weighted", {}).get("m_ap", -1.0), reverse=True)

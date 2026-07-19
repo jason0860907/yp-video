@@ -24,7 +24,7 @@ import { JobProgress } from '@/components/job/JobProgress';
 import { toast } from '@/components/feedback/toast';
 import { useSSE } from '@/lib/useSSE';
 import { isTerminal } from '@/lib/job';
-import type { Job, ReidGroupEval, ReidModelEval, ReidPerfData, ReidTrainStatus } from '@/types/api';
+import type { Job, ReidModelEval, ReidPerfData, ReidTrainStatus, ReidVideoEval } from '@/types/api';
 
 const errMsg = (e: unknown) => (e instanceof ApiError ? e.body : e instanceof Error ? e.message : String(e));
 const pct = (v: number) => `${(v * 100).toFixed(1)}%`;
@@ -196,9 +196,9 @@ export function ReidTrainPage() {
         <Card>
           <SectionLabel>Embedder comparison</SectionLabel>
           <p className="mb-3 text-[11px] text-text-muted">
-            Leave-one-out within each session: every labeled crop queries every other. mAP rewards ranking a
-            player's whole set well (what clustering needs); Rank-1 only asks whether the single closest crop is
-            the same player.
+            Leave-one-out within each video — the labeling unit: every labeled crop queries every other crop of
+            the same cut. mAP rewards ranking a player's whole set well (what clustering needs); Rank-1 only asks
+            whether the single closest crop is the same player. Click a row for the per-video breakdown.
           </p>
           {perfQuery.isPending ? (
             <div className="py-8 text-center text-xs text-text-muted">Scoring…</div>
@@ -209,7 +209,7 @@ export function ReidTrainPage() {
               <table className="w-full min-w-[46rem] text-xs">
                 <thead className="text-[10px] uppercase tracking-widest text-text-muted">
                   <tr>
-                    {['model', 'mAP', 'Rank-1', 'Rank-5', 'ids', 'crops', 'coverage', 'AUC'].map((h, i) => (
+                    {['model', 'mAP', 'Rank-1', 'Rank-5', 'videos', 'crops', 'coverage', 'AUC'].map((h, i) => (
                       <th key={h} className={cn('px-2 py-1.5', i ? 'text-right' : 'text-left')}>{h}</th>
                     ))}
                   </tr>
@@ -221,6 +221,8 @@ export function ReidTrainPage() {
             </div>
           )}
         </Card>
+
+        <CrossVideoCard models={models} />
 
         <Card>
           <SectionLabel>Threshold calibration</SectionLabel>
@@ -313,34 +315,76 @@ function ModelRows({ m, open, onToggle }: { m: ReidModelEval; open: boolean; onT
         <td className="px-2 py-1.5 text-right font-mono tabular-nums text-primary-light">{pct(w.m_ap)}</td>
         <td className="px-2 py-1.5 text-right font-mono tabular-nums">{pct(w.rank1)}</td>
         <td className="px-2 py-1.5 text-right font-mono tabular-nums text-text-secondary">{pct(w.rank5)}</td>
-        <td className="px-2 py-1.5 text-right font-mono tabular-nums text-text-muted">{m.totals.n_ids}</td>
+        <td className="px-2 py-1.5 text-right font-mono tabular-nums text-text-muted">{m.totals.n_videos}</td>
         <td className="px-2 py-1.5 text-right font-mono tabular-nums text-text-muted">{m.totals.n_crops}</td>
         <td className="px-2 py-1.5 text-right font-mono tabular-nums text-text-muted">{pct(m.totals.coverage)}</td>
         <td className="px-2 py-1.5 text-right font-mono tabular-nums text-text-muted">{m.threshold?.auc.toFixed(3)}</td>
       </tr>
-      {open && m.groups.map((g) => <GroupRow key={g.group_id} g={g} />)}
+      {open && m.videos.map((v) => <VideoRow key={v.stem} v={v} />)}
     </>
   );
 }
 
-function GroupRow({ g }: { g: ReidGroupEval }) {
+function VideoRow({ v }: { v: ReidVideoEval }) {
   return (
     <tr className="border-t border-border/50 bg-surface-100/40 text-[11px]">
-      <td className="px-2 py-1 pl-7 text-text-muted">
-        <span className="font-mono">{g.group_id}</span> {g.stems.join(', ')}
+      <td className="truncate px-2 py-1 pl-7 font-mono text-text-muted" title={v.stem}>{v.stem}</td>
+      <td className="px-2 py-1 text-right font-mono tabular-nums text-text-secondary">{pct(v.scores.m_ap)}</td>
+      <td className="px-2 py-1 text-right font-mono tabular-nums text-text-secondary">{pct(v.scores.rank1)}</td>
+      <td className="px-2 py-1 text-right font-mono tabular-nums text-text-muted">{pct(v.scores.rank5)}</td>
+      <td className="px-2 py-1 text-right font-mono tabular-nums text-text-muted" title="players scored">{v.n_ids}</td>
+      <td className="px-2 py-1 text-right font-mono tabular-nums text-text-muted">{v.n_crops}</td>
+      <td
+        className={cn('px-2 py-1 text-right font-mono tabular-nums', v.coverage < 0.95 ? 'text-amber-400' : 'text-text-muted')}
+        title={`${v.dropped_unembedded} assigned events have no embedding (no-actor or miss), ${v.dropped_singletons} players had a single crop`}
+      >
+        {pct(v.coverage)}
       </td>
-      <td className="px-2 py-1 text-right font-mono tabular-nums text-text-secondary">{pct(g.scores.m_ap)}</td>
-      <td className="px-2 py-1 text-right font-mono tabular-nums text-text-secondary">{pct(g.scores.rank1)}</td>
-      <td className="px-2 py-1 text-right font-mono tabular-nums text-text-muted">{pct(g.scores.rank5)}</td>
-      <td className="px-2 py-1 text-right font-mono tabular-nums text-text-muted">{g.n_ids}</td>
-      <td className="px-2 py-1 text-right font-mono tabular-nums text-text-muted">{g.n_crops}</td>
-      <td className="px-2 py-1 text-right font-mono tabular-nums text-text-muted" title={`${g.dropped_unembedded} assigned events had no embedding`}>
-        {pct(g.coverage)}
-      </td>
-      <td className="px-2 py-1 text-right text-text-muted" title="Query = first video, gallery = the rest. Needs a session spanning more than one video.">
-        {g.cross_video ? `x-video ${pct(g.cross_video.rank1)}` : '—'}
-      </td>
+      <td className="px-2 py-1 text-right font-mono tabular-nums text-text-muted">{v.threshold.suggested}</td>
     </tr>
+  );
+}
+
+/** Cross-video: the same session's other recordings as the gallery. Separate
+ *  from the main table because it answers a different question — not "can
+ *  this cut be clustered" but "does an identity survive into the next one". */
+function CrossVideoCard({ models }: { models: ReidModelEval[] }) {
+  const rows = models.flatMap((m) => m.cross_video.map((c) => ({ model: m.model, c })));
+  if (!rows.length) return null;
+  const sample = rows[0]!.c;
+  return (
+    <Card>
+      <SectionLabel>Cross-video</SectionLabel>
+      <p className="mb-3 text-[11px] text-text-muted">
+        Query is <span className="font-mono">{sample.query_stem}</span>, gallery the session's other
+        recording(s). Only players named on both sides can be scored — {sample.n_skipped} of{' '}
+        {sample.n_scored + sample.n_skipped} queries were skipped because that player simply was not on court
+        for the other cut, which is normal and not a labeling gap.
+      </p>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[34rem] text-xs">
+          <thead className="text-[10px] uppercase tracking-widest text-text-muted">
+            <tr>
+              {['model', 'mAP', 'Rank-1', 'Rank-5', 'shared ids', 'scored'].map((h, i) => (
+                <th key={h} className={cn('px-2 py-1.5', i ? 'text-right' : 'text-left')}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {[...rows].sort((a, b) => b.c.scores.m_ap - a.c.scores.m_ap).map(({ model, c }) => (
+              <tr key={`${model}-${c.session_id}`} className="border-t border-border">
+                <td className="px-2 py-1.5 font-mono text-text-primary">{model}</td>
+                <td className="px-2 py-1.5 text-right font-mono tabular-nums text-primary-light">{pct(c.scores.m_ap)}</td>
+                <td className="px-2 py-1.5 text-right font-mono tabular-nums">{pct(c.scores.rank1)}</td>
+                <td className="px-2 py-1.5 text-right font-mono tabular-nums text-text-secondary">{pct(c.scores.rank5)}</td>
+                <td className="px-2 py-1.5 text-right font-mono tabular-nums text-text-muted">{c.n_ids_shared}</td>
+                <td className="px-2 py-1.5 text-right font-mono tabular-nums text-text-muted">{c.n_scored}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
   );
 }
 

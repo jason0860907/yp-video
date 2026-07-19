@@ -365,9 +365,9 @@ export interface ReidScores {
   n_query: number;
 }
 
-export interface ReidGroupEval {
-  group_id: string;
-  stems: string[];
+/** One video, scored on its own labels — the labeling unit. */
+export interface ReidVideoEval {
+  stem: string;
   model: string;
   n_ids: number;
   n_crops: number;
@@ -376,21 +376,33 @@ export interface ReidGroupEval {
   dropped_singletons: number;
   dropped_unembedded: number;
   scores: ReidScores;
-  /** Query = first video, gallery = the rest. null for single-video sessions. */
-  cross_video: ReidScores | null;
   threshold: ReidThresholdSuggestion;
+}
+
+/** Does an identity survive into another recording of the same session?
+ *  Only players named on both sides can be scored; `n_skipped` are the ones
+ *  simply not on court for the other clip. */
+export interface ReidCrossEval {
+  session_id: string;
+  query_stem: string;
+  gallery_stems: string[];
+  n_ids_shared: number;
+  n_scored: number;
+  n_skipped: number;
+  scores: ReidScores;
 }
 
 export interface ReidModelEval {
   model: string;
   crop_weighted?: ReidScores;
   macro?: ReidScores;
-  totals?: { n_groups: number; n_ids: number; n_crops: number; coverage: number };
+  totals?: { n_videos: number; n_ids: number; n_crops: number; coverage: number };
   threshold?: ReidThresholdSuggestion;
   current_threshold: ReidSlider;
-  /** Session ids this model has no embeddings for. */
+  /** Videos this model has no embeddings for. */
   skipped: string[];
-  groups: ReidGroupEval[];
+  videos: ReidVideoEval[];
+  cross_video: ReidCrossEval[];
 }
 
 export interface ReidPerfData {
