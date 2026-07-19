@@ -265,12 +265,21 @@ export const GroupBoard = forwardRef<BoardHandle, GroupBoardProps>(function Grou
 
   /** Shared drag/select/jump behavior for a crop tile (image or placeholder). */
   const cropTileProps = (id: string, r: ReidRecord) => ({
-    draggable: true,
+    // A group IS a player identity, and you cannot say who performed an
+    // action you cannot see — so crop-less events (miss / "no actor") never
+    // get dragged into one.
+    draggable: Boolean(r.crop),
     onDragStart: (e: ReactDragEvent<HTMLDivElement>) => {
       // Dragging a selected crop carries the whole selection; an unselected
-      // one moves alone.
+      // one moves alone. The filter matters even though the placeholders are
+      // not draggable themselves: a marquee sweeps them into the selection,
+      // and without it dragging any real crop would carry them along.
       dragKind.current = 'events';
-      const ids = selectedCrops.has(id) ? [...selectedCrops] : [id];
+      const ids = (selectedCrops.has(id) ? [...selectedCrops] : [id]).filter((i) => recordById.get(i)?.crop);
+      if (!ids.length) {
+        e.preventDefault();
+        return;
+      }
       e.dataTransfer.setData('text/plain', `events\n${ids.join(',')}`);
       setMultiDragImage(e, ids);
     },
@@ -311,10 +320,10 @@ export const GroupBoard = forwardRef<BoardHandle, GroupBoardProps>(function Grou
           key={id}
           data-event-id={id}
           {...cropTileProps(id, r)}
-          title={`${r.label} f${r.frame} — no crop (${r.status}): double-click to jump there, then Pick actor to fix`}
+          title={`${r.label} f${r.frame} — no crop (${r.status}), so it cannot be given a player: double-click to jump there and use Pick actor first`}
           className={cn(
             heightCls,
-            'flex aspect-[1/2] cursor-grab flex-col items-center justify-center gap-1 rounded-md border border-dashed bg-surface-100 active:cursor-grabbing',
+            'flex aspect-[1/2] cursor-pointer flex-col items-center justify-center gap-1 rounded-md border border-dashed bg-surface-100',
             tileSelectCls(id),
           )}
         >
