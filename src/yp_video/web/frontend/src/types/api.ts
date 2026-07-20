@@ -417,6 +417,22 @@ export interface ReidDatasetInfo {
   config: Record<string, unknown>;
 }
 
+/** One yp-reid checkpoint package (reid/checkpoints/<run>/). The list is
+ *  best-metric first; the clip-reident embedder binds to the top entry. */
+export interface ReidRun {
+  path: string;
+  run_name: string;
+  source: 'trained' | 'imported' | null;
+  architecture: string | null;
+  embedding_dim: number | null;
+  best_metric: string | null;
+  best_value: number | null;
+  metrics: { m_ap?: number; rank1?: number; rank5?: number; n_query?: number } | null;
+  created_at: string | null;
+  note: string | null;
+  mtime: number;
+}
+
 export interface ReidTrainStatus {
   sessions: ReidSession[];
   models: Array<{ name: string; labeled_videos: number; threshold: ReidSlider }>;
@@ -424,5 +440,6 @@ export interface ReidTrainStatus {
   datasets: ReidDatasetInfo[];
   split_modes: string[];
   reid_engine_available: boolean;
+  runs: ReidRun[];
   active_job: Job | null;
 }

@@ -161,6 +161,8 @@ export const API = {
   reidTrain: {
     status: '/reid-train/status',
     start: '/reid-train/start',
+    train: '/reid-train/train',
+    runs: '/reid-train/runs',
     performance: (model?: string) =>
       `/reid-train/performance${model ? `?model=${encodeURIComponent(model)}` : ''}`,
     exportPlan: (p: { split_mode: string; test_ratio: number; seed: number; masked: boolean }) =>

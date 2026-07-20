@@ -1,11 +1,12 @@
-/** ReID Train: measure the embedders on the labels we have, then export them
- *  as a CLIP-ReIdent dataset.
+/** ReID Train: measure the embedders on the labels we have, export a yp-reid
+ *  dataset, and fine-tune the appearance model on it.
  *
- *  Model training is not here yet, and that ordering is the point — with two
- *  labeled videos there is nothing to train that would generalize, and no way
- *  to tell whether it helped. So this page answers "is fine-tuning worth it?"
- *  first: per-session mAP/Rank-1 for every registered embedder, plus the
- *  clustering threshold those same labeled pairs imply.
+ *  The ordering on the page mirrors the workflow: the embedder comparison is
+ *  the baseline a fine-tune has to beat, the export turns labels into a
+ *  Contract A dataset, and the fine-tune card spawns yp-reid training on one.
+ *  Every new best rewrites a checkpoint package under reid/checkpoints/, and
+ *  the clip-reident embedder binds to the best package automatically — the
+ *  runs table shows which one that is.
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -24,7 +25,7 @@ import { JobProgress } from '@/components/job/JobProgress';
 import { toast } from '@/components/feedback/toast';
 import { useSSE } from '@/lib/useSSE';
 import { isTerminal } from '@/lib/job';
-import type { Job, ReidModelEval, ReidPerfData, ReidTrainStatus, ReidVideoEval } from '@/types/api';
+import type { Job, ReidModelEval, ReidPerfData, ReidRun, ReidTrainStatus, ReidVideoEval } from '@/types/api';
 
 const errMsg = (e: unknown) => (e instanceof ApiError ? e.body : e instanceof Error ? e.message : String(e));
 const pct = (v: number) => `${(v * 100).toFixed(1)}%`;
@@ -34,7 +35,6 @@ interface ExportForm {
   split_mode: string;
   test_ratio: number;
   seed: number;
-  link: boolean;
   masked: boolean;
   overwrite: boolean;
 }
@@ -44,16 +44,38 @@ const BASE_FORM: ExportForm = {
   split_mode: 'auto',
   test_ratio: 0.25,
   seed: 42,
-  link: true,
   masked: false,
+  overwrite: false,
+};
+
+interface TrainForm {
+  dataset: string; // '' = newest export
+  run_name: string;
+  epochs: number;
+  batch_size: number;
+  lr: number;
+  init_checkpoint: string; // package ref; '' = fresh from OpenAI ViT-L/14
+  overwrite: boolean;
+}
+
+const BASE_TRAIN_FORM: TrainForm = {
+  dataset: '',
+  run_name: '',
+  epochs: 4,
+  batch_size: 16,
+  lr: 4e-5,
+  init_checkpoint: '',
   overwrite: false,
 };
 
 export function ReidTrainPage() {
   const [form, setForm] = useState<ExportForm>(BASE_FORM);
+  const [trainForm, setTrainForm] = useState<TrainForm>(BASE_TRAIN_FORM);
   const [job, setJob] = useState<Job | null>(null);
   const [openModel, setOpenModel] = useState<string | null>(null);
   const set = <K extends keyof ExportForm>(key: K, value: ExportForm[K]) => setForm((f) => ({ ...f, [key]: value }));
+  const setTrain = <K extends keyof TrainForm>(key: K, value: TrainForm[K]) =>
+    setTrainForm((f) => ({ ...f, [key]: value }));
 
   const statusQuery = useQuery({
     queryKey: ['reid-train-status'],
@@ -79,8 +101,9 @@ export function ReidTrainPage() {
   useSSE<Job>(job && !isTerminal(job.status) ? API.jobs.eventsSSE(job.id) : null, (data) => {
     setJob(data);
     if (isTerminal(data.status)) {
-      if (data.status === 'completed') toast.success(data.message || 'Dataset built');
-      else if (data.status === 'failed') toast.error(`Export failed: ${data.error ?? 'unknown error'}`);
+      const noun = data.type === 'reid_train' ? 'Training' : 'Export';
+      if (data.status === 'completed') toast.success(data.message || `${noun} finished`);
+      else if (data.status === 'failed') toast.error(`${noun} failed: ${data.error ?? 'unknown error'}`);
       void statusQuery.refetch();
     }
   });
@@ -94,6 +117,39 @@ export function ReidTrainPage() {
       setJob(started);
     } catch (e) {
       toast.error(`Export failed to start: ${errMsg(e)}`);
+    }
+  };
+
+  const startTrain = async () => {
+    const dataset = trainForm.dataset || status?.datasets[0]?.name;
+    if (!dataset) return;
+    try {
+      const started = await apiFetch<Job>(API.reidTrain.train, {
+        method: 'POST',
+        body: {
+          dataset,
+          run_name: trainForm.run_name.trim() || null,
+          epochs: trainForm.epochs,
+          batch_size: trainForm.batch_size,
+          lr: trainForm.lr,
+          init_checkpoint: trainForm.init_checkpoint || null,
+          overwrite: trainForm.overwrite,
+        },
+      });
+      setJob(started);
+      toast.success('ReID training started');
+    } catch (e) {
+      toast.error(`Training failed to start: ${errMsg(e)}`);
+    }
+  };
+
+  const cancelJob = async () => {
+    if (!job?.id) return;
+    try {
+      await apiFetch(API.jobs.cancel(job.id), { method: 'POST' });
+      toast.warning('Job cancelled');
+    } catch (e) {
+      toast.error(`Cancel failed: ${errMsg(e)}`);
     }
   };
 
@@ -254,8 +310,7 @@ export function ReidTrainPage() {
           </div>
           <div className="mt-3 flex flex-wrap gap-4">
             {([
-              ['link', 'Symlink crops', 'Link into reid/crops instead of copying — the export is then not movable without --dereference'],
-              ['masked', 'Masked crops', 'Link the background-suppressed crops the masked embedders saw'],
+              ['masked', 'Masked crops', 'Reference the background-suppressed crops the masked embedders saw'],
               ['overwrite', 'Overwrite', 'Replace an existing dataset of the same name'],
             ] as const).map(([key, label, title]) => (
               <label key={key} className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-text-secondary" title={title}>
@@ -272,7 +327,7 @@ export function ReidTrainPage() {
                   <div key={d.name} className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-50 px-2.5 py-1.5 text-[11px]">
                     <span className="font-mono text-text-primary">{d.name}</span>
                     <span className="text-text-muted">
-                      {d.counts.n_rows} rows · {d.counts.n_players} players · train {d.counts.n_train} / test {d.counts.n_test}
+                      {d.counts.n_samples} crops · {d.counts.n_players} players · train {d.counts.n_train} / test {d.counts.n_test}
                     </span>
                     <span className="ml-auto font-mono text-[10px] text-text-muted">{String(d.config.split_mode ?? '')}</span>
                   </div>
@@ -282,14 +337,141 @@ export function ReidTrainPage() {
           ) : null}
         </Card>
 
+        <Card>
+          <SectionLabel>Fine-tune</SectionLabel>
+          <p className="mb-3 text-[11px] text-text-muted">
+            Spawns yp-reid training on an exported dataset (GPU-locked job). Every new best rewrites the
+            checkpoint package, so even a cancelled run leaves its best-so-far usable — the clip-reident
+            embedder rebinds to whichever package leads the runs table below.
+          </p>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+            <Field label="Dataset">
+              <SelectArch
+                value={trainForm.dataset || status?.datasets[0]?.name || ''}
+                options={(status?.datasets ?? []).map((d) => d.name)}
+                onChange={(v) => setTrain('dataset', v)}
+              />
+            </Field>
+            <Field label="Init checkpoint">
+              <select
+                value={trainForm.init_checkpoint}
+                onChange={(e) => setTrain('init_checkpoint', e.target.value)}
+                className={fieldCls}
+              >
+                <option value="">fresh (OpenAI ViT-L/14)</option>
+                {(status?.runs ?? []).map((r) => (
+                  <option key={r.path} value={r.path}>{r.run_name}</option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Run name (optional)">
+              <input value={trainForm.run_name} onChange={(e) => setTrain('run_name', e.target.value)} placeholder="reid_<timestamp>" className={fieldCls} />
+            </Field>
+            <Field label="Epochs">
+              <input type="number" min={1} value={trainForm.epochs} onChange={(e) => setTrain('epochs', Number(e.target.value))} className={fieldCls} />
+            </Field>
+            <Field label="Batch size (≤ identities)">
+              <input type="number" min={2} value={trainForm.batch_size} onChange={(e) => setTrain('batch_size', Number(e.target.value))} className={fieldCls} />
+            </Field>
+            <Field label="Learning rate">
+              <input type="number" step="any" value={trainForm.lr} onChange={(e) => setTrain('lr', Number(e.target.value))} className={fieldCls} />
+            </Field>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-4">
+            <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-text-secondary" title="Replace an existing checkpoint package of the same run name">
+              <input type="checkbox" checked={trainForm.overwrite} onChange={(e) => setTrain('overwrite', e.target.checked)} className="h-3.5 w-3.5 accent-primary" />
+              Overwrite
+            </label>
+            {!status?.reid_engine_available && (
+              <span className="text-[11px] text-amber-400">
+                clip-reident engine not registered — needs the yp-reid venv and at least one checkpoint package
+              </span>
+            )}
+          </div>
+          <div className="mt-4 flex items-center gap-2">
+            <Button intent="primary" className="flex-1" disabled={busy || !status?.datasets.length} onClick={() => void startTrain()}>
+              {busy && job?.type === 'reid_train' ? 'Training…' : 'Start Training'}
+            </Button>
+            {busy && <Button onClick={() => void cancelJob()}>Cancel</Button>}
+          </div>
+        </Card>
+
+        {status?.runs.length ? <RunsCard runs={status.runs} /> : null}
+
         {job && (
           <Card>
-            <SectionLabel>Export job</SectionLabel>
+            <SectionLabel>{job.type === 'reid_train' ? 'Training job' : 'Export job'}</SectionLabel>
             <JobProgress job={job} showLogs />
+            {job.type === 'reid_train' && <TrainEvalTiles job={job} />}
           </Card>
         )}
       </div>
     </div>
+  );
+}
+
+/** Per-epoch eval snapshots the trainer streams (job.params.last_eval / .best).
+ *  Not the SPOT TrainProgress shape — ReID eval is retrieval, not spotting. */
+function TrainEvalTiles({ job }: { job: Job }) {
+  const evalData = job.params?.last_eval as { epoch?: number; m_ap?: number; rank1?: number; rank5?: number } | undefined;
+  const best = job.params?.best as { epoch?: number; value?: number } | undefined;
+  if (!evalData && !best) return null;
+  const tiles: Array<[string, string]> = [];
+  if (evalData?.m_ap != null) tiles.push([`mAP (epoch ${evalData.epoch})`, pct(evalData.m_ap)]);
+  if (evalData?.rank1 != null) tiles.push(['Rank-1', pct(evalData.rank1)]);
+  if (evalData?.rank5 != null) tiles.push(['Rank-5', pct(evalData.rank5)]);
+  // Without a test split the trainer tracks train loss instead of mAP.
+  if (best?.value != null) tiles.push([`Best (epoch ${best.epoch})`, evalData ? pct(best.value) : best.value.toFixed(4)]);
+  return (
+    <div className="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
+      {tiles.map(([label, value]) => <StatTile key={label} label={label} value={value} />)}
+    </div>
+  );
+}
+
+/** Checkpoint packages, best first — row one is what clip-reident binds to. */
+function RunsCard({ runs }: { runs: ReidRun[] }) {
+  return (
+    <Card>
+      <SectionLabel>Checkpoint runs</SectionLabel>
+      <p className="mb-3 text-[11px] text-text-muted">
+        Every checkpoint package under <span className="font-mono">reid/checkpoints/</span>, best recorded
+        metric first. The clip-reident embedder binds to the top row; re-run Predict/backfill embeddings to
+        see a new package's effect, and recalibrate thresholds after — distance scales move with the weights.
+      </p>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[40rem] text-xs">
+          <thead className="text-[10px] uppercase tracking-widest text-text-muted">
+            <tr>
+              {['run', 'source', 'best', 'Rank-1', 'dim', 'created'].map((h, i) => (
+                <th key={h} className={cn('px-2 py-1.5', i ? 'text-right' : 'text-left')}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {runs.map((r, i) => (
+              <tr key={r.path} className="border-t border-border">
+                <td className="px-2 py-1.5 font-mono text-text-primary" title={r.note ?? r.path}>
+                  {r.run_name}
+                  {i === 0 && <Badge tone="success" className="ml-2">active</Badge>}
+                </td>
+                <td className="px-2 py-1.5 text-right text-text-muted">{r.source ?? '—'}</td>
+                <td className="px-2 py-1.5 text-right font-mono tabular-nums text-primary-light">
+                  {r.best_value == null
+                    ? '—'
+                    : `${r.best_metric} ${r.best_metric === 'train_loss' ? r.best_value.toFixed(4) : pct(r.best_value)}`}
+                </td>
+                <td className="px-2 py-1.5 text-right font-mono tabular-nums text-text-secondary">
+                  {r.metrics?.rank1 != null ? pct(r.metrics.rank1) : '—'}
+                </td>
+                <td className="px-2 py-1.5 text-right font-mono tabular-nums text-text-muted">{r.embedding_dim ?? '—'}</td>
+                <td className="px-2 py-1.5 text-right font-mono tabular-nums text-text-muted">{r.created_at ?? '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
   );
 }
 
