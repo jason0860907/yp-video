@@ -1,48 +1,41 @@
-"""Export labeled crops as a CLIP-ReIdent training dataset.
+"""Export labeled crops as a yp-reid training dataset (Contract A).
 
-Their loaders build image paths as ``"{img_path}/{folder}/{img_id}.jpeg"``
-with the extension hardcoded (clipreid/dataset.py:50), and train.py passes
-``img_path=config.data_dir`` while reading ``"{data_dir}/train_df.csv"`` — so
-the CSV and the image folders are siblings under one root.
+A dataset is two small files under ``reid/datasets/<name>/`` — manifest.json
+and samples.jsonl — referencing crops by path relative to ``crops_root``
+(the reid/ data dir). No symlinks, no copies: the crop store stays the single
+source of image bytes, and stems with spaces or CJK never travel through a
+format string or a shell. See contracts/reid.py for the authoritative schema.
 
-Our crops are ``.jpg``, so the folders are filled with SYMLINKS to the real
-files under reid/crops/. Copying thousands of files would duplicate hundreds
-of MB of recomputable data and go stale the moment a crop is re-extracted.
-
-Folder names are opaque tokens (``v000``) rather than video stems: stems carry
-spaces and CJK ("0104排島臨打 1") and flow through an unquoted str.format
-straight into cv2.imread. The token -> stem mapping lives in meta.json.
-
-The loaders impose invariants that are easy to violate and expensive to
+The trainer imposes invariants that are easy to violate and expensive to
 discover mid-training, so plan_export enforces them up front and reports
 every excluded player with a reason:
 
-- a TRAIN player needs >= 2 crops (__getitem__ draws a random *other* crop of
-  the same player; np.random.choice on an empty array raises)
+- a TRAIN player needs >= MIN_TRAIN_CROPS_PER_PLAYER crops (positive-pair
+  sampling draws a random *other* crop of the same player)
 - a TEST player needs >= 1 query and >= 1 gallery row
-
-One more constraint bites at training time rather than load time, so
-meta.json carries it: TrainDataset.shuffle() forbids a player appearing
-twice within a window of ``shuffle_batch_size`` (ClipLoss uses in-batch
-negatives, so a duplicate would be a false negative), and silently drops
-whatever it cannot place. With few identities that is nearly everything —
-measured on 622 crops over 17 players: batch 16 keeps 31 samples, batch 12
-keeps 70, batch 8 keeps all 622. Keep the batch comfortably under the
-identity count.
 """
 
 from __future__ import annotations
 
-import csv
 import json
 import os
 import shutil
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from yp_video.config import REID_DATASETS_DIR
+from yp_video.config import REID_DATASETS_DIR, REID_DIR
+from yp_video.contracts.reid import (
+    DATASET_MANIFEST_NAME,
+    DATASET_SAMPLES_NAME,
+    MIN_TRAIN_CROPS_PER_PLAYER,
+    ROLE_GALLERY,
+    ROLE_QUERY,
+    SPLIT_TEST,
+    SPLIT_TRAIN,
+    DatasetManifest,
+)
 from yp_video.core.jsonl import read_jsonl_cached
 from yp_video.reid.identity import load_assignments
 from yp_video.reid.sessions import SessionGroup
@@ -50,36 +43,31 @@ from yp_video.reid.store import crop_dir, masked_crop_dir, reid_path
 
 DATASETS_DIR = REID_DATASETS_DIR
 
-#: Bumped when the CSV/meta layout changes in a way a reader must notice.
-CONTRACT_VERSION = 1
-
 SPLIT_MODES = ("auto", "session", "crops", "all_train")
 
 #: A player split across train and test needs >= 2 train crops and >= 1 of
-#: each test type.
+#: each test role.
 MIN_SPLIT_CROPS = 4
 
 
 @dataclass(frozen=True)
-class ExportRow:
-    img_id: str
-    folder: str
-    player: int
-    game: str
+class Sample:
+    """One samples.jsonl line (contracts.reid.DatasetSample)."""
+
+    id: str
+    path: str  # relative to crops_root
+    pid: int
     split: str
-    img_type: str
+    role: str | None
+    group: str
     fold: int
 
 
 @dataclass(frozen=True)
 class ExportPlan:
-    rows: tuple[ExportRow, ...]
+    samples: tuple[Sample, ...]
     #: pid -> {group, name, n_train, n_test}
     players: dict[int, dict]
-    #: "v000" -> stem
-    folders: dict[str, str]
-    #: img_id -> source crop path (absolute), for write_export
-    sources: dict[str, str] = field(default_factory=dict)
     #: reason -> the players or ids it excluded
     dropped: dict[str, list[str]] = field(default_factory=dict)
     counts: dict = field(default_factory=dict)
@@ -90,16 +78,13 @@ class ExportPlan:
 
 
 def _candidates(groups: Sequence[SessionGroup], masked: bool):
-    """(rows-in-waiting, folders, dropped) — one entry per labeled crop."""
-    folders: dict[str, str] = {}
+    """(crops-by-player, dropped) — one entry per labeled crop."""
     by_player: dict[tuple[str, str], list[dict]] = {}
     dropped: dict[str, list[str]] = {}
     seen: set[str] = set()
 
     for group in groups:
         for stem in group.stems:
-            token = f"v{len(folders):03d}"
-            folders[token] = stem
             assignments = load_assignments(stem)
             _meta, records = read_jsonl_cached(reid_path(stem))
             source_dir = masked_crop_dir(stem) if masked else crop_dir(stem)
@@ -118,11 +103,12 @@ def _candidates(groups: Sequence[SessionGroup], masked: bool):
                     dropped.setdefault("duplicate_id", []).append(record["id"])
                     continue
                 seen.add(record["id"])
-                by_player.setdefault((group.id, name), []).append(
-                    {"img_id": record["id"], "folder": token, "src": str(src.resolve()),
-                     "frame": record.get("frame") or 0}
-                )
-    return by_player, folders, dropped
+                by_player.setdefault((group.id, name), []).append({
+                    "id": record["id"],
+                    "path": str(src.relative_to(REID_DIR)),
+                    "frame": record.get("frame") or 0,
+                })
+    return by_player, dropped
 
 
 def plan_export(
@@ -133,7 +119,7 @@ def plan_export(
     seed: int = 42,
     masked: bool = False,
 ) -> ExportPlan:
-    """Decide every CSV row without writing anything.
+    """Decide every sample without writing anything.
 
     ``split_mode``:
       - ``session`` — hold out whole sessions. The textbook ReID protocol
@@ -141,14 +127,13 @@ def plan_export(
       - ``crops`` — per-player stratified split. The only thing that works
         with a single session, but train and test share identities, so its
         numbers flatter the model.
-      - ``all_train`` — everything trains; a minimal mirrored test split is
-        still emitted because train.py evaluates on ``split == "test"``
-        even when train_on_all is set, and an empty one crashes it.
+      - ``all_train`` — everything trains, test stays empty (the trainer
+        skips evaluation and calls the last epoch best).
       - ``auto`` — ``session`` when there are >= 2 groups, else ``crops``.
     """
     if split_mode not in SPLIT_MODES:
         raise ValueError(f"Unknown split_mode {split_mode!r} (have: {', '.join(SPLIT_MODES)})")
-    by_player, folders, dropped = _candidates(groups, masked)
+    by_player, dropped = _candidates(groups, masked)
     resolved = "session" if (split_mode == "auto" and len(groups) >= 2) else (
         "crops" if split_mode == "auto" else split_mode
     )
@@ -173,18 +158,16 @@ def plan_export(
         if not test_groups:
             test_groups.add(min(sizes, key=lambda g: sizes[g]))
 
-    rows: list[ExportRow] = []
+    samples: list[Sample] = []
     players: dict[int, dict] = {}
-    sources: dict[str, str] = {}
     for pid, ((gid, name), crops) in enumerate(sorted(by_player.items())):
-        crops = sorted(crops, key=lambda c: (c["frame"], c["img_id"]))
+        crops = sorted(crops, key=lambda c: (c["frame"], c["id"]))
         fold = group_order.index(gid)
 
         if resolved == "session":
-            split_of = "test" if gid in test_groups else "train"
-            train, test = ([], crops) if split_of == "test" else (crops, [])
+            train, test = ([], crops) if gid in test_groups else (crops, [])
         elif resolved == "all_train":
-            train, test = crops, (crops[:2] if len(crops) >= 2 else [])
+            train, test = crops, []
         else:  # crops
             if len(crops) < MIN_SPLIT_CROPS:
                 train, test = crops, []  # too small to split; still useful to train on
@@ -194,7 +177,7 @@ def plan_export(
                 n_test = max(2, round(len(shuffled) * test_ratio))
                 test, train = shuffled[:n_test], shuffled[n_test:]
 
-        if train and len(train) < 2:
+        if train and len(train) < MIN_TRAIN_CROPS_PER_PLAYER:
             dropped.setdefault("train_singleton", []).append(f"{gid}/{name}")
             train = []
         if test and len(test) < 2:
@@ -205,32 +188,24 @@ def plan_export(
             continue
 
         for c in train:
-            rows.append(ExportRow(c["img_id"], c["folder"], pid, gid, "train", "g", fold))
-            sources[c["img_id"]] = c["src"]
+            samples.append(Sample(c["id"], c["path"], pid, SPLIT_TRAIN, None, gid, fold))
         for i, c in enumerate(test):
-            # First crop per player is the query, the rest gallery — the same
-            # convention preprocess_data.py uses.
-            rows.append(ExportRow(c["img_id"], c["folder"], pid, gid, "test", "q" if i == 0 else "g", fold))
-            sources[c["img_id"]] = c["src"]
+            # First crop per player is the query, the rest gallery.
+            samples.append(Sample(c["id"], c["path"], pid, SPLIT_TEST, ROLE_QUERY if i == 0 else ROLE_GALLERY, gid, fold))
         players[pid] = {"group": gid, "name": name, "n_train": len(train), "n_test": len(test)}
 
     counts = {
-        "n_rows": len(rows),
-        # See the module docstring: CLIP-ReIdent silently discards most of a
-        # small-identity dataset when the batch approaches the player count.
-        "max_shuffle_batch_size": max(2, len(players) // 2),
+        "n_samples": len(samples),
         "n_players": len(players),
-        "n_train": sum(1 for r in rows if r.split == "train"),
-        "n_test": sum(1 for r in rows if r.split == "test"),
-        "n_query": sum(1 for r in rows if r.split == "test" and r.img_type == "q"),
-        "n_gallery": sum(1 for r in rows if r.split == "test" and r.img_type == "g"),
+        "n_train": sum(1 for s in samples if s.split == SPLIT_TRAIN),
+        "n_test": sum(1 for s in samples if s.split == SPLIT_TEST),
+        "n_query": sum(1 for s in samples if s.role == ROLE_QUERY),
+        "n_gallery": sum(1 for s in samples if s.role == ROLE_GALLERY),
         "n_dropped": sum(len(v) for v in dropped.values()),
     }
     return ExportPlan(
-        rows=tuple(rows),
+        samples=tuple(samples),
         players=players,
-        folders=folders,
-        sources=sources,
         dropped={k: sorted(v) for k, v in sorted(dropped.items())},
         counts=counts,
         config={"split_mode": resolved, "requested_mode": split_mode, "test_ratio": test_ratio,
@@ -239,77 +214,38 @@ def plan_export(
     )
 
 
-COLUMNS = ("img_id", "folder", "player", "game", "split", "img_type", "fold")
+def _manifest(plan: ExportPlan, name: str) -> dict:
+    """The manifest.json payload, validated against the contract model."""
+    return DatasetManifest.model_validate({
+        "created_at": time.time(),
+        "name": name,
+        "crops_root": str(REID_DIR),
+        "config": plan.config,
+        "players": {str(k): v for k, v in plan.players.items()},
+        "groups": plan.groups,
+        "counts": plan.counts,
+        "dropped": plan.dropped,
+    }).model_dump()
 
 
-def write_export(
-    plan: ExportPlan,
-    root: Path,
-    *,
-    link: bool = True,
-    on_progress: Callable[[int, int], None] | None = None,
-) -> dict:
-    """Materialise train_df.csv + meta.json + the image folders.
-
-    Symlinks are absolute so the tree survives being referenced from
-    elsewhere; it is NOT movable or tarrable without --dereference, which is
-    the accepted trade for not duplicating the crops. A single OSError flips
-    the whole run to copying rather than leaving a half-linked tree.
-    """
+def write_export(plan: ExportPlan, root: Path) -> dict:
+    """Materialise manifest.json + samples.jsonl, atomically via a staging dir."""
     staging = root.parent / f".{root.name}.tmp"
     if staging.exists():
         shutil.rmtree(staging)
     staging.mkdir(parents=True)
 
-    for token in plan.folders:
-        (staging / token).mkdir(exist_ok=True)
-
-    total = len(plan.rows)
-    # Probe once: a filesystem that refuses one symlink refuses them all, and
-    # deciding up front is what keeps the tree from ending up half-linked.
-    mode = "copy"
-    if link and plan.rows:
-        probe = staging / ".link-probe"
-        try:
-            probe.symlink_to(Path(plan.sources[plan.rows[0].img_id]))
-            probe.unlink()
-            mode = "symlink"
-        except OSError:
-            mode = "copy"
-
-    for i, row in enumerate(plan.rows):
-        src = Path(plan.sources[row.img_id])
-        dst = staging / row.folder / f"{row.img_id}.jpeg"
-        if mode == "symlink":
-            dst.symlink_to(src)
-        else:
-            shutil.copy2(src, dst)
-        if on_progress and (i % 200 == 0 or i + 1 == total):
-            on_progress(i + 1, total)
-
-    with open(staging / "train_df.csv", "w", encoding="utf-8", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(COLUMNS)
-        writer.writerows([getattr(row, c) for c in COLUMNS] for row in plan.rows)
-
-    meta = {
-        "contract_version": CONTRACT_VERSION,
-        "created_at": time.time(),
-        "link_mode": mode,
-        "folders": plan.folders,
-        "players": {str(k): v for k, v in plan.players.items()},
-        "groups": plan.groups,
-        "config": plan.config,
-        "counts": plan.counts,
-        "dropped": plan.dropped,
-    }
-    (staging / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1), encoding="utf-8")
+    lines = [json.dumps(asdict(s), ensure_ascii=False) for s in plan.samples]
+    (staging / DATASET_SAMPLES_NAME).write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (staging / DATASET_MANIFEST_NAME).write_text(
+        json.dumps(_manifest(plan, root.name), ensure_ascii=False, indent=1), encoding="utf-8"
+    )
 
     if root.exists():
         shutil.rmtree(root)
     root.parent.mkdir(parents=True, exist_ok=True)
     os.replace(staging, root)
-    return {"root": str(root), "n_images": total, "link_mode": mode, **plan.counts}
+    return {"root": str(root), **plan.counts}
 
 
 def export_manifest_jsonl(plan: ExportPlan) -> str:
@@ -317,16 +253,15 @@ def export_manifest_jsonl(plan: ExportPlan) -> str:
     head = {
         "_meta": True,
         "type": "reid_dataset_plan",
-        "contract_version": CONTRACT_VERSION,
+        "crops_root": str(REID_DIR),
         "config": plan.config,
         "counts": plan.counts,
-        "folders": plan.folders,
         "groups": plan.groups,
         "players": {str(k): v for k, v in plan.players.items()},
         "dropped": plan.dropped,
     }
     lines = [json.dumps(head, ensure_ascii=False)]
-    lines += [json.dumps(asdict(r), ensure_ascii=False) for r in plan.rows]
+    lines += [json.dumps(asdict(s), ensure_ascii=False) for s in plan.samples]
     return "\n".join(lines) + "\n"
 
 
@@ -336,17 +271,17 @@ def list_datasets() -> list[dict]:
         return []
     out = []
     for d in DATASETS_DIR.iterdir():
-        meta_path = d / "meta.json"
-        if not d.is_dir() or not meta_path.exists():
+        manifest_path = d / DATASET_MANIFEST_NAME
+        if not d.is_dir() or not manifest_path.exists():
             continue
         try:
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
         out.append({
             "name": d.name,
-            "created_at": meta.get("created_at", 0),
-            "counts": meta.get("counts", {}),
-            "config": meta.get("config", {}),
+            "created_at": manifest.get("created_at", 0),
+            "counts": manifest.get("counts", {}),
+            "config": manifest.get("config", {}),
         })
     return sorted(out, key=lambda d: -d["created_at"])
