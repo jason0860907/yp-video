@@ -381,28 +381,23 @@ def extract_video(
     return counts
 
 
-# Crops per embed() call — small enough that progress moves visibly, large
-# enough that per-call overhead (GPU launch, batching) stays amortized.
-_EMBED_CHUNK = 32
-
-
 def embed_video(
     stem: str, *, models: list[str] | None = None, overwrite: bool = False, on_progress: ProgressFn | None = None
 ) -> dict:
     """Crops on disk → one (n_records, dim) npy matrix per embedder.
 
-    Reads the saved crop jpgs, so it needs only an extraction's output, never
-    the video: registering a new embedder later means backfilling with this —
-    not re-extracting. Rows align with the record order in the reid jsonl;
-    records without a crop get NaN rows. ``models=None`` means every
-    registered embedder; without ``overwrite`` existing matrices are kept.
+    Embedders consume the saved crop jpgs by path, so this needs only an
+    extraction's output, never the video: registering a new embedder later
+    means backfilling with this — not re-extracting. Rows align with the
+    record order in the reid jsonl; records without a crop (and unreadable
+    crop files) get NaN rows. ``models=None`` means every registered
+    embedder; without ``overwrite`` existing matrices are kept.
 
     Every model embeds the same crops, so models stay A/B-comparable
     on identical inputs. Progress is per model (``done=0`` announces the
     model, including a first-use weight load). Returns
     ``{"models": [...], "crops": N}``.
     """
-    import cv2
     import numpy as np
 
     _meta, records = read_jsonl(reid_path(stem))
@@ -419,38 +414,31 @@ def embed_video(
     if not targets:
         return {"models": [], "crops": 0}
 
-    crops, owners = [], []
     cdir = crop_dir(stem)
+    paths, owners = [], []
     for i, record in enumerate(records):
-        if not record.get("crop"):
-            continue
-        img = cv2.imread(str(cdir / record["crop"]))
-        if img is None:
-            continue
-        crops.append(img)
-        owners.append(i)
+        if record.get("crop") and (cdir / record["crop"]).exists():
+            paths.append(cdir / record["crop"])
+            owners.append(i)
 
-    masked: list | None = None  # built once, shared by every masked variant
+    masked_paths: list[Path] | None = None  # built once, shared by every masked variant
     for name, embedder in targets.items():
-        inputs = crops
+        inputs = paths
         if getattr(embedder, "masked_input", False):
-            if masked is None:
-                masked = _mask_crops(stem, crops, owners, records, on_progress)
-            inputs = masked
+            if masked_paths is None:
+                masked_paths = _mask_crops(stem, paths, owners, records, on_progress)
+            inputs = masked_paths
         if on_progress:
             on_progress(0, len(inputs), f"loading {name} weights..." if not embedder.loaded else f"embedding ({name})...")
-        parts = []
-        for start in range(0, len(inputs), _EMBED_CHUNK):
-            end = min(start + _EMBED_CHUNK, len(inputs))
-            parts.append(embedder.embed(inputs[start:end]))
-            if on_progress:
-                on_progress(end, len(inputs), f"{name} · crop {end}/{len(inputs)}")
-        matrix = np.concatenate(parts) if parts else embedder.embed([])
+        progress: ProgressFn | None = None
+        if on_progress:
+            progress = lambda done, total, msg, name=name: on_progress(done, total, f"{name} · {msg}")
+        matrix = embedder.embed_paths(inputs, on_progress=progress)
         full = np.full((len(records), matrix.shape[1]), np.nan, dtype=np.float32)
         if len(owners):
             full[owners] = matrix
         save_embedding_matrix(stem, name, full)
-    return {"models": sorted(targets), "crops": len(crops)}
+    return {"models": sorted(targets), "crops": len(paths)}
 
 
 def _masked_record_crop(stem: str, record: dict, crop):
@@ -471,16 +459,30 @@ def _masked_record_crop(stem: str, record: dict, crop):
     return masked
 
 
-def _mask_crops(stem: str, crops: list, owners: list[int], records: list[dict], on_progress: ProgressFn | None) -> list:
+def _mask_crops(
+    stem: str, paths: list[Path], owners: list[int], records: list[dict], on_progress: ProgressFn | None
+) -> list[Path]:
+    """Persist background-suppressed variants of *paths* and return their
+    locations, aligned with the input. An unreadable source crop still yields
+    its expected masked path — the file just won't exist, and the embedder
+    turns that into a NaN row."""
+    import cv2
+
     from yp_video.reid.seg import crop_masker
+    from yp_video.reid.store import masked_crop_dir
 
     if on_progress:
-        on_progress(0, len(crops), "loading rf-detr-seg-medium weights..." if not crop_masker().loaded else "masking crops...")
+        on_progress(0, len(paths), "loading rf-detr-seg-medium weights..." if not crop_masker().loaded else "masking crops...")
+    mdir = masked_crop_dir(stem)
     out = []
-    for i, (img, owner) in enumerate(zip(crops, owners)):
-        out.append(_masked_record_crop(stem, records[owner], img))
+    for i, (path, owner) in enumerate(zip(paths, owners)):
+        record = records[owner]
+        img = cv2.imread(str(path))
+        if img is not None:
+            _masked_record_crop(stem, record, img)
+        out.append(mdir / record["crop"])
         if on_progress:
-            on_progress(i + 1, len(crops), f"masking · crop {i + 1}/{len(crops)}")
+            on_progress(i + 1, len(paths), f"masking · crop {i + 1}/{len(paths)}")
     return out
 
 
@@ -617,13 +619,19 @@ def _patch_embedding_row(stem: str, record: dict, row: int, crop) -> None:
     """
     import numpy as np
 
+    from yp_video.reid.store import masked_crop_dir
+
     registry = build_embedders()
     for name in embedded_models(stem):
         matrix = load_embedding_matrix(stem, name)
         embedder = registry.get(name)
         if crop is not None and embedder is not None:
-            inp = _masked_record_crop(stem, record, crop) if getattr(embedder, "masked_input", False) else crop
-            matrix[row] = embedder.embed([inp])[0]
+            if getattr(embedder, "masked_input", False):
+                _masked_record_crop(stem, record, crop)  # refresh the persisted masked jpg
+                path = masked_crop_dir(stem) / record["crop"]
+            else:
+                path = crop_dir(stem) / record["crop"]
+            matrix[row] = embedder.embed_paths([path])[0]
         else:
             matrix[row] = np.nan
         save_embedding_matrix(stem, name, matrix)

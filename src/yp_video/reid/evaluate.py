@@ -28,7 +28,7 @@ from dataclasses import asdict, dataclass
 
 import numpy as np
 
-from yp_video.reid.clip_reident import ensure_clip_reident_path
+from yp_video.reid.metrics import cmc, mean_ap
 from yp_video.reid.identity import cluster_sweep, load_assignments, load_embeddings
 from yp_video.reid.sessions import SessionGroup
 
@@ -123,14 +123,8 @@ def _distmat(q: np.ndarray, g: np.ndarray) -> np.ndarray:
 
 
 def _scores(distmat, query_ids, gallery_ids, query_cams, gallery_cams, n_query: int) -> Scores:
-    ensure_clip_reident_path()
-    from clipreid.metrics import cmc, mean_ap
-
     topk = max(1, min(100, len(gallery_ids)))
-    curve = cmc(
-        distmat, query_ids, gallery_ids, query_cams, gallery_cams,
-        topk=topk, first_match_break=True,
-    )
+    curve = cmc(distmat, query_ids, gallery_ids, query_cams, gallery_cams, topk=topk)
     return Scores(
         m_ap=float(mean_ap(distmat, query_ids, gallery_ids, query_cams, gallery_cams)),
         rank1=float(curve[0]),
@@ -390,7 +384,7 @@ def cross_video_eval(group: SessionGroup, model: str) -> dict | None:
     """Does an identity survive into another recording of the same session?
 
     Query is the session's first video, gallery the rest. Only players named
-    in BOTH sides can be scored — clipreid.metrics silently skips a query
+    in BOTH sides can be scored — reid.metrics silently skips a query
     with no true match in the gallery, so the skipped count is reported
     rather than hidden: it is the players who simply were not on court for
     the other clip, which is normal and not a labeling gap.

@@ -423,6 +423,6 @@ export interface ReidTrainStatus {
   totals: { labeled_videos: number; assigned_events: number; identities: number; sessions: number };
   datasets: ReidDatasetInfo[];
   split_modes: string[];
-  clip_reident_available: boolean;
+  reid_engine_available: boolean;
   active_job: Job | null;
 }

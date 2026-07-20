@@ -18,7 +18,7 @@ recomputable derived data:
 Embeddings are a pure numeric matrix, so they live as npy sidecars, not JSON:
 records stay small enough to serve raw, matrices load in milliseconds, and a
 one-row update (actor fix) never rewrites the record file. Which weights a
-model name stands for is code, not data — see embedder.EMBEDDER_WEIGHTS.
+model name stands for is answered by embedder.weights_id() at runtime.
 """
 
 from __future__ import annotations

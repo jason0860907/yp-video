@@ -21,7 +21,7 @@ from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import read_jsonl, read_jsonl_cached
 from yp_video.reid import identity, pipeline, store, tracking
 from yp_video.reid.detector import build_keypoint_sources
-from yp_video.reid.embedder import DEFAULT_EMBEDDER, EMBEDDER_WEIGHTS, build_embedders, threshold_calibration
+from yp_video.reid.embedder import DEFAULT_EMBEDDER, EMBEDDER_NAMES, build_embedders, threshold_calibration
 from yp_video.web.job_helpers import init_batch_items, spawn_batch_video_job
 from yp_video.web.jobs import job_manager
 
@@ -330,8 +330,8 @@ def crop(name: str, crop_file: str, masked: bool = False) -> FileResponse:
 
 
 def _validated_model(model: str) -> str:
-    if model not in EMBEDDER_WEIGHTS:
-        raise HTTPException(400, f"Unknown embedder: {model} (have: {', '.join(EMBEDDER_WEIGHTS)})")
+    if model not in EMBEDDER_NAMES:
+        raise HTTPException(400, f"Unknown embedder: {model} (have: {', '.join(EMBEDDER_NAMES)})")
     return model
 
 

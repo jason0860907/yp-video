@@ -40,6 +40,12 @@ SPOT_PACKAGE_DIR = SPOT_DIR / "yp_spot"
 SPOT_INFERENCE_MODULE = "yp_spot.inference"
 SPOT_TRAIN_MODULE = "yp_spot.train"
 SPOT_AUDIO_PRECOMPUTE_MODULE = "yp_spot.audio.precompute"
+# yp-reid: same pattern as yp-spot — sibling repo + venv, subprocess boundary,
+# contract handshake (yp_video/contracts/reid.py ⇄ yp_reid/contract.py).
+REID_PKG_DIR = _env_path("YP_REID_DIR", PROJECT_ROOT.parent / "yp-reid")
+REID_PYTHON = _env_path("YP_REID_PYTHON", REID_PKG_DIR / ".venv" / "bin" / "python")
+REID_EMBED_MODULE = "yp_reid.embed"
+REID_TRAIN_MODULE = "yp_reid.train"
 PROMPTS_DIR = PROJECT_ROOT / "prompts"
 VLLM_ENV_PATH = PROJECT_ROOT / "vllm.env"
 R2_ENV_PATH = PROJECT_ROOT / "r2.env"
@@ -98,23 +104,19 @@ RALLY_SPOT_PRE_ANNOTATIONS_DIR = VIDEOS_DIR / "rally-spot" / "pre-annotations"
 # actor fixes); everything else under reid/ is recomputable derived data.
 REID_DIR = VIDEOS_DIR / "reid"
 REID_ANNOTATIONS_DIR = REID_DIR / "annotations"
-# Exported training datasets (CLIP-ReIdent layout). Derived data: the image
-# folders are symlinks into crops/, so this is rebuildable from annotations/
-# + crops/ and deliberately absent from R2_CATEGORIES.
+# Exported training datasets (yp-reid Contract A: manifest.json +
+# samples.jsonl referencing crops/ by relative path). Derived data:
+# rebuildable from annotations/ + crops/, deliberately absent from
+# R2_CATEGORIES.
 REID_DATASETS_DIR = REID_DIR / "datasets"
+# yp-reid checkpoint packages (Contract B: manifest.json + state dict +
+# metrics), written by yp-reid training / import_weights.
+REID_CHECKPOINTS_DIR = REID_DIR / "checkpoints"
 
 # third_party checkout; weights are gated on Hugging Face.
 SAM3D_DIR = Path(
     os.environ.get("SAM3D_DIR")
     or Path(__file__).resolve().parents[2].parent / "third_party" / "sam-3d-body"
-)
-
-# CLIP-ReIdent (MMSports'22) — optional third embedder, trained on basketball
-# broadcast footage. Same third_party pattern; weights via the repo's Google
-# Drive release (see reid/clip_reident.py).
-CLIP_REIDENT_DIR = Path(
-    os.environ.get("CLIP_REIDENT_DIR")
-    or Path(__file__).resolve().parents[2].parent / "third_party" / "clip_reident"
 )
 
 # R2 category → local directory + glob pattern + display label. The category
@@ -140,6 +142,7 @@ R2_CATEGORIES: dict[str, R2Category] = {
     "action/pre-annotations": R2Category(ACTION_PRE_ANNOTATIONS_DIR, "*.jsonl", "Action Pre-Annotations"),
     "action/checkpoints": R2Category(ACTION_CHECKPOINTS_DIR, "**/*", "Action Checkpoints"),
     "reid/annotations": R2Category(REID_ANNOTATIONS_DIR, "*.json", "ReID Annotations"),
+    "reid/checkpoints": R2Category(REID_CHECKPOINTS_DIR, "**/*", "ReID Checkpoints"),
 }
 
 # Registry: kind → (local cuts dir, R2 category name). Single source of truth
