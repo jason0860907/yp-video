@@ -24,7 +24,7 @@ uv sync
 
 需要系統安裝 `ffmpeg` 和 `ffprobe`。
 
-ReID 的可選外部模型(KPR / SAM 3D Body / CLIP-ReIdent)住在 repo 外的 `../third_party/`,重建步驟見 [docs/third_party.md](docs/third_party.md) —— 缺權重時對應功能自動退場,不影響其他部分。
+ReID 的可選外部模型:SAM 3D Body 住在 repo 外的 `../third_party/`,CLIP-ReIdent 系譜的訓練/推論住在 sibling package `../yp-reid/`(獨立 venv,subprocess 邊界,比照 yp-spot)。重建步驟見 [docs/third_party.md](docs/third_party.md) —— 缺權重時對應功能自動退場,不影響其他部分。
 
 ## 使用方式
 
