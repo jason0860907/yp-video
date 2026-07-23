@@ -244,6 +244,8 @@ export interface ReidVideo {
   embedded_models: string[];
   /** Distinct saved identities (0 = extracted but not labeled yet). */
   player_count?: number;
+  /** Labeling marked finished by the user (the Label page's Done button). */
+  done?: boolean;
 }
 
 /** GET /reid/options — the server-side model registry. */

@@ -64,6 +64,7 @@ def list_videos() -> list[dict]:
             ),
             "embedded_models": store.embedded_models(f.stem),
             "player_count": len(set(identity.load_assignments(f.stem).values())),
+            "done": identity.load_done(f.stem),
         })
     return results
 
@@ -386,6 +387,21 @@ def get_players(name: str, model: str = DEFAULT_EMBEDDER) -> dict:
         "players": sorted(set(assignments.values())),
         "matches": matches,
     }
+
+
+class DoneRequest(BaseModel):
+    done: bool = True
+
+
+@router.put("/done/{name}")
+def put_done(name: str, req: DoneRequest) -> dict:
+    """Mark (or unmark) a video's labeling as finished — the Label page's
+    Done button. A human verdict, stored alongside the assignments."""
+    stem = Path(unquote(name)).stem
+    if not store.reid_path(stem).exists():
+        raise HTTPException(404, f"No ReID results for {stem}")
+    identity.save_done(stem, req.done)
+    return {"done": req.done}
 
 
 @router.put("/players/{name}")

@@ -20,6 +20,9 @@ durable human record — extraction replays them (matching boxes by IoU against
 fresh detections), so re-extraction never loses correction work. They are
 also the training set for a learned actor-association model later: each fix
 is a labeled (frame, action point, candidate boxes) → correct-box example.
+
+A ``done: true`` flag marks a video's labeling as finished (the Label page's
+Done button) — a human verdict the counts can't derive.
 """
 
 from __future__ import annotations
@@ -210,6 +213,27 @@ def save_assignments(stem: str, assignments: dict[str, str]) -> None:
     with _players_lock:
         data = _read_players_file(stem)
         data["assignments"] = {k: v.strip() for k, v in assignments.items() if v and v.strip()}
+        _save_players_file(stem, data)
+
+
+def load_done(stem: str) -> bool:
+    """Whether the user marked this video's labeling as finished."""
+    return bool(_load_players_file(stem).get("done"))
+
+
+def save_done(stem: str, done: bool) -> None:
+    """Persist the human "labeling finished" verdict.
+
+    A judgment call, not derived state: assigned/actionable counts can't tell
+    "done" from "gave up halfway", so the mark means what the user says it
+    means. Absent rather than false when unset — the file predates the field.
+    """
+    with _players_lock:
+        data = _read_players_file(stem)
+        if done:
+            data["done"] = True
+        else:
+            data.pop("done", None)
         _save_players_file(stem, data)
 
 

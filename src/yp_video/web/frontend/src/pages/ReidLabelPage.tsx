@@ -54,7 +54,7 @@ export function ReidLabelPage() {
   const qc = useQueryClient();
   const [picked, setPicked] = useState('');
   const [kindFilter, setKindFilter] = useState<'all' | 'broadcast' | 'sideline'>('all');
-  const [pickStatus, setPickStatus] = useState<'all' | 'unlabeled' | 'labeled'>('all');
+  const [pickStatus, setPickStatus] = useState<'all' | 'unlabeled' | 'labeled' | 'done'>('all');
   const [selectedRally, setSelectedRally] = useState<number | 'all'>('all');
   // Where locked groups live on the groups board: pinned on top as full rows,
   // or docked in a sticky right rail showing just 3 crops per group.
@@ -108,7 +108,8 @@ export function ReidLabelPage() {
   const pickable = extracted.filter((v) => {
     if (kindFilter !== 'all' && v.kind !== kindFilter) return false;
     if (pickStatus === 'unlabeled' && (v.player_count ?? 0) > 0) return false;
-    if (pickStatus === 'labeled' && (v.player_count ?? 0) === 0) return false;
+    if (pickStatus === 'labeled' && ((v.player_count ?? 0) === 0 || v.done)) return false;
+    if (pickStatus === 'done' && !v.done) return false;
     return true;
   });
 
@@ -237,7 +238,7 @@ export function ReidLabelPage() {
       // assignment; mirror it locally so a locked row's auto-save can't
       // resurrect the stale identity.
       board.removeEvent(eventId);
-      toast.success(fix.none ? 'Marked as no actor' : fix.box ? 'Actor updated' : 'Reverted to the auto pick');
+      toast.success(fix.none ? 'Marked as occluded' : fix.box ? 'Player updated' : 'Reverted to the auto pick');
       await Promise.all([
         qc.invalidateQueries({ queryKey: ['reid-results', picked] }),
         qc.invalidateQueries({ queryKey: ['reid-clusters', picked] }),
@@ -268,32 +269,45 @@ export function ReidLabelPage() {
     setPicked(name);
   };
 
-  // Save, then jump to the next unlabeled video under the current picker
-  // filters (wrapping around). A clean save leaves dirty=false, so pickVideo
-  // never re-prompts.
-  const saveAndNext = async () => {
-    if (!(await board.save())) return;
-    const start = pickable.findIndex((v) => v.name === picked);
-    const rotated = [...pickable.slice(start + 1), ...pickable.slice(0, Math.max(start, 0))];
-    const next = rotated.find((v) => v.name !== picked && (v.player_count ?? 0) === 0);
-    void qc.invalidateQueries({ queryKey: ['reid-videos'] });
-    if (!next) {
-      toast.info('No unlabeled videos left in the current filter');
-      return;
-    }
-    void pickVideo(next.name);
-  };
-
-  // Actions somebody actually performs on camera: score marks where the ball
-  // lands and non-visible events happen off-frame — neither has anyone to
-  // identify. Falls back to the extraction records (which already skip both)
-  // when no annotation is loaded.
+  // The denominator is deliberately simple: every action except score (the
+  // ball-landing marker — nobody performs it). Off-frame and occluded events
+  // stay in the count, so the ratio understates rather than surprises; the
+  // Done confirm is a confirm, not a gate.
   const actionableCount = actionEvents.length
-    ? actionEvents.filter((a) => a.visible && a.label !== 'score').length
+    ? actionEvents.filter((a) => a.label !== 'score').length
     : records.length;
   // Events that already carry an identity: member of a named group on the
   // live board (unsaved edits count — the board is the source of truth).
   const assignedCount = new Set(board.groups.filter((g) => g.name.trim()).flatMap((g) => g.eventIds)).size;
+  // Occluded verdicts count as handled — the user looked and decided. They
+  // are crop-less, so they never overlap the assigned (crop-bearing) set.
+  const occludedCount = records.filter((r) => r.box_source === 'manual' && !r.crop).length;
+  const resolvedCount = assignedCount + occludedCount;
+
+  const isDone = Boolean(extracted.find((v) => v.name === picked)?.done);
+
+  // Save, then persist the human "this video is finished" verdict (toggles
+  // off when pressed on an already-done video). Warns when actions are still
+  // unassigned — done should mean done, but partial is the user's call.
+  const markDone = async () => {
+    if (!picked) return;
+    if (!isDone && resolvedCount < actionableCount) {
+      const ok = await confirm({
+        title: 'Mark as done?',
+        body: `${actionableCount - resolvedCount} of ${actionableCount} actions have no player assigned (or occluded verdict) yet.`,
+        confirmText: 'Mark done',
+      });
+      if (!ok) return;
+    }
+    if (board.dirty && !(await board.save())) return;
+    try {
+      await apiFetch(API.reid.done(picked), { method: 'PUT', body: { done: !isDone } });
+      toast.success(isDone ? 'Done mark removed' : 'Marked done');
+      void qc.invalidateQueries({ queryKey: ['reid-videos'] });
+    } catch (e) {
+      toast.error(`Done failed: ${errMsg(e)}`);
+    }
+  };
 
   return (
     <div className="mx-auto max-w-screen-2xl space-y-5">
@@ -311,7 +325,8 @@ export function ReidLabelPage() {
             <select value={pickStatus} onChange={(e) => setPickStatus(e.target.value as typeof pickStatus)} className={cn(fieldCls, 'h-9 w-full py-0')}>
               <option value="all">All</option>
               <option value="unlabeled">Unlabeled</option>
-              <option value="labeled">Labeled</option>
+              <option value="labeled">In progress</option>
+              <option value="done">Done</option>
             </select>
           </FieldLabel>
           <FieldLabel label="Video">
@@ -326,6 +341,7 @@ export function ReidLabelPage() {
                   <span className="min-w-0 flex-1 break-all font-mono">{v.name}</span>
                   <span className="shrink-0 font-mono text-[10px] tabular-nums text-text-muted">{v.event_count}ev</span>
                   {(v.player_count ?? 0) > 0 && <Badge tone="brand">{v.player_count}P</Badge>}
+                  {v.done && <Badge tone="success">✓</Badge>}
                 </>
               )}
             />
@@ -361,9 +377,9 @@ export function ReidLabelPage() {
             {picked && (
               <span
                 className="font-mono text-[11px] leading-none tabular-nums text-text-muted"
-                title="Assigned to a player / actions with someone to identify (score and non-visible events excluded)"
+                title="Assigned to a player or marked occluded / all actions except score (off-frame events included, so 100% is not always reachable)"
               >
-                <span className={assignedCount >= actionableCount ? 'text-primary-light' : undefined}>{assignedCount}</span>/{actionableCount} actions
+                <span className={resolvedCount >= actionableCount ? 'text-primary-light' : undefined}>{resolvedCount}</span>/{actionableCount} actions
               </span>
             )}
             <div
@@ -489,11 +505,12 @@ export function ReidLabelPage() {
             </Button>
             <Button
               size="sm"
-              onClick={() => void saveAndNext()}
+              intent={isDone ? 'default' : 'primary'}
+              onClick={() => void markDone()}
               disabled={!picked}
-              title="Save, then jump to the next unlabeled video under the current filters"
+              title={isDone ? 'Labeling marked finished — click to unmark' : 'Save, then mark this video’s labeling as finished'}
             >
-              Save & Next
+              {isDone ? 'Done ✓' : 'Done'}
             </Button>
           </div>
         </div>

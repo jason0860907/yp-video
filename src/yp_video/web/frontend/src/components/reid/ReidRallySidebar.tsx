@@ -31,6 +31,8 @@ interface ReidEventPanelProps {
   entries: SidebarAction[];
   empty: string;
   matches: ReidPlayers['matches'];
+  /** Events marked occluded (no player to identify) — shown as a verdict pill. */
+  occludedIds: Set<string>;
   selectedEventId: string | null;
   fps: number;
   /** Actions within ±½ s of the playhead — those rows light up. */
@@ -41,7 +43,7 @@ interface ReidEventPanelProps {
 
 /** Read-only twin of the Action Label event panel: action dot + label,
  *  matched player, frame and time — click a row to park the video there. */
-function ReidEventPanel({ entries, empty, matches, selectedEventId, fps, activeActionIds, onJump, onJumpToCrop }: ReidEventPanelProps) {
+function ReidEventPanel({ entries, empty, matches, occludedIds, selectedEventId, fps, activeActionIds, onJump, onJumpToCrop }: ReidEventPanelProps) {
   if (!entries.length) return <div className="ml-6 rounded-xl border border-border bg-surface-100 px-3 py-2 text-xs text-text-muted">{empty}</div>;
   return (
     <div className="ml-6 space-y-1.5 rounded-xl border border-border bg-surface-100 p-2">
@@ -91,6 +93,13 @@ function ReidEventPanel({ entries, empty, matches, selectedEventId, fps, activeA
               >
                 {m.assigned ? m.player : `~${m.player}`}
               </button>
+            ) : occludedIds.has(a.id) ? (
+              <span
+                className="max-w-full justify-self-end truncate rounded-full bg-surface-200/40 px-2 py-0.5 text-[11px] italic text-text-muted ring-1 ring-border"
+                title="Marked occluded — no player to identify"
+              >
+                Occluded
+              </span>
             ) : (
               <span />
             )}
@@ -110,6 +119,7 @@ export interface ReidRallySidebarProps {
   totalActions: number;
   fps: number;
   matches: ReidPlayers['matches'];
+  occludedIds: Set<string>;
   /** The rally under the playhead — the list's only frame-derived scalar. */
   activeRallyId: number | null;
   /** Actions within ±½ s of the playhead; identity-stable between changes. */
@@ -127,7 +137,7 @@ export interface ReidRallySidebarProps {
 }
 
 export const ReidRallySidebar = memo(function ReidRallySidebar({
-  rallies, byRally, outside, totalActions, fps, matches,
+  rallies, byRally, outside, totalActions, fps, matches, occludedIds,
   activeRallyId, activeActionIds, expanded, selectedRally, selectedEventId,
   listRef, onSelectAll, onJumpRally, onSetExpanded, onJumpEvent, onJumpToCrop,
 }: ReidRallySidebarProps) {
@@ -191,6 +201,7 @@ export const ReidRallySidebar = memo(function ReidRallySidebar({
                     entries={entries}
                     empty="No actions in this rally"
                     matches={matches}
+                    occludedIds={occludedIds}
                     selectedEventId={selectedEventId}
                     fps={fps}
                     activeActionIds={activeActionIds}
@@ -226,6 +237,7 @@ export const ReidRallySidebar = memo(function ReidRallySidebar({
                   entries={outside}
                   empty="No outside actions"
                   matches={matches}
+                  occludedIds={occludedIds}
                   selectedEventId={selectedEventId}
                   fps={fps}
                   activeActionIds={activeActionIds}

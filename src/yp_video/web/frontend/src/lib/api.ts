@@ -151,6 +151,7 @@ export const API = {
     clusters: (name: string, threshold: number, model = 'clip-reid') => `/reid/clusters/${encodeURIComponent(name)}?threshold=${threshold}&model=${encodeURIComponent(model)}`,
     players: (name: string, model = 'clip-reid') => `/reid/players/${encodeURIComponent(name)}?model=${encodeURIComponent(model)}`,
     actorFix: (name: string) => `/reid/actor-fix/${encodeURIComponent(name)}`,
+    done: (name: string) => `/reid/done/${encodeURIComponent(name)}`,
     options: '/reid/options',
     seedCluster: (name: string) => `/reid/seed-cluster/${encodeURIComponent(name)}`,
     track: '/reid/track',

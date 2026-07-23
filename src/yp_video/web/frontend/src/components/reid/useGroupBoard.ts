@@ -197,7 +197,7 @@ export function useGroupBoard({ picked, embedder, threshold, records, recordById
   // through the latest closure (the stale one would save stale groups).
   const queuedRef = useRef(false);
   /** Resolves true when THIS call persisted the board (false = failed or
-   *  deferred behind an in-flight save) — "Save & Next" gates on it. */
+   *  deferred behind an in-flight save) — the Done button gates on it. */
   const save = async (auto = false): Promise<boolean> => {
     if (savingRef.current) {
       queuedRef.current = true;

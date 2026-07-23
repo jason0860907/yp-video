@@ -257,6 +257,14 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
     return [...rows].sort((a, b) => a.frame - b.frame);
   }, [actionEvents, records]);
 
+  // Events the user marked occluded (manual verdict, no crop) — the sidebar
+  // shows the verdict where a player name would sit, so the column reads as
+  // "resolved" rather than "forgotten".
+  const occludedIds = useMemo(
+    () => new Set(records.filter((r) => r.box_source === 'manual' && !r.crop).map((r) => r.id)),
+    [records],
+  );
+
   // The same actions carrying their tracklet (null = not linked). EVERY
   // action occupies a slot, so an unlinked one means "no box right now"
   // rather than letting a later action's tracklet take its place.
@@ -752,9 +760,9 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
               size="sm"
               intent={pickMode ? 'primary' : 'default'}
               onClick={() => setPickMode((m) => !m)}
-              title="Pick actor: park on an action's frame, then click the person who performed it"
+              title="Pick Player: park on an action's frame, then click the person who performed it"
             >
-              Pick actor
+              Pick Player
             </Button>
           </div>
           {pickMode && (
@@ -763,7 +771,7 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
                 <>
                   <span className="h-2 w-2 flex-shrink-0 rounded-full animate-pulse-dot" style={{ background: actionColor(pickTarget.label) }} />
                   <span className="text-primary-light">
-                    Picking actor for <strong>{pickTarget.label}</strong> f{pickTarget.frame}
+                    Picking player for <strong>{pickTarget.label}</strong> f{pickTarget.frame}
                     {fixing
                       ? ' — applying…'
                       : detectionFallback
@@ -791,8 +799,8 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
                         </span>
                       </label>
                     )}
-                    <Button size="sm" disabled={fixing} onClick={() => onFixActor(pickTarget.id, { none: true })} title="Nobody in frame is the actor — clears this event's crop">
-                      No actor
+                    <Button size="sm" disabled={fixing} onClick={() => onFixActor(pickTarget.id, { none: true })} title="The player is occluded or otherwise unidentifiable — clears this event's crop and drops it from the labeling count">
+                      Occluded
                     </Button>
                     {pickTarget.box_source === 'manual' && (
                       <Button size="sm" disabled={fixing} onClick={() => onFixActor(pickTarget.id, {})} title="Discard the manual fix and re-run the automatic pick">
@@ -820,6 +828,7 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
           totalActions={sidebarActions.length}
           fps={fps}
           matches={matches}
+          occludedIds={occludedIds}
           activeRallyId={currentRallyId}
           activeActionIds={activeActionIds}
           expanded={expanded}

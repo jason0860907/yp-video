@@ -320,7 +320,7 @@ export const GroupBoard = forwardRef<BoardHandle, GroupBoardProps>(function Grou
           key={id}
           data-event-id={id}
           {...cropTileProps(id, r)}
-          title={`${r.label} f${r.frame} — no crop (${r.status}), so it cannot be given a player: double-click to jump there and use Pick actor first`}
+          title={`${r.label} f${r.frame} — no crop (${r.status}), so it cannot be given a player: double-click to jump there and use Pick Player first`}
           className={cn(
             heightCls,
             'flex aspect-[1/2] cursor-pointer flex-col items-center justify-center gap-1 rounded-md border border-dashed bg-surface-100',
@@ -538,9 +538,9 @@ export const GroupBoard = forwardRef<BoardHandle, GroupBoardProps>(function Grou
             <div className="mb-2 flex items-center gap-3">
               <span
                 className="text-xs font-medium text-red-300/90"
-                title="Events with no actor picked — no crop, no embedding, so clustering never sees them. Double-click one to jump there, then use Pick actor."
+                title="Events with no player picked — no crop, no embedding, so clustering never sees them. Double-click one to jump there, then use Pick Player (or mark it Occluded)."
               >
-                Miss — no actor
+                Miss — no player
               </span>
               <span className="font-mono text-[11px] tabular-nums text-text-muted">{missIds.length} events</span>
             </div>
