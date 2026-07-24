@@ -107,7 +107,7 @@ export function ReidLabelPage() {
   // Picker filters, mirroring the Action Label / Rally Label pickers.
   const pickable = extracted.filter((v) => {
     if (kindFilter !== 'all' && v.kind !== kindFilter) return false;
-    if (pickStatus === 'unlabeled' && (v.player_count ?? 0) > 0) return false;
+    if (pickStatus === 'unlabeled' && ((v.player_count ?? 0) > 0 || v.done)) return false;
     if (pickStatus === 'labeled' && ((v.player_count ?? 0) === 0 || v.done)) return false;
     if (pickStatus === 'done' && !v.done) return false;
     return true;
@@ -238,7 +238,7 @@ export function ReidLabelPage() {
       // assignment; mirror it locally so a locked row's auto-save can't
       // resurrect the stale identity.
       board.removeEvent(eventId);
-      toast.success(fix.none ? 'Marked as occluded' : fix.box ? 'Player updated' : 'Reverted to the auto pick');
+      toast.success(fix.mode === 'occluded' ? 'Marked as occluded' : fix.mode === 'pick' ? 'Player updated' : 'Reverted to the auto pick');
       await Promise.all([
         qc.invalidateQueries({ queryKey: ['reid-results', picked] }),
         qc.invalidateQueries({ queryKey: ['reid-clusters', picked] }),
@@ -281,7 +281,7 @@ export function ReidLabelPage() {
   const assignedCount = new Set(board.groups.filter((g) => g.name.trim()).flatMap((g) => g.eventIds)).size;
   // Occluded verdicts count as handled — the user looked and decided. They
   // are crop-less, so they never overlap the assigned (crop-bearing) set.
-  const occludedCount = records.filter((r) => r.box_source === 'manual' && !r.crop).length;
+  const occludedCount = records.filter((r) => r.resolution === 'occluded').length;
   const resolvedCount = assignedCount + occludedCount;
 
   const isDone = Boolean(extracted.find((v) => v.name === picked)?.done);

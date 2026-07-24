@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type SyntheticEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type SyntheticEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { API, ApiError, apiFetch, apiUrl } from '@/lib/api';
 import { cn } from '@/lib/cn';
@@ -10,137 +10,45 @@ import { SectionLabel } from '@/components/ui/SectionLabel';
 import { toast } from '@/components/feedback/toast';
 import { confirm } from '@/components/feedback/confirm';
 import { ActionTimeline } from '@/components/editor/ActionTimeline';
+import { ActionEventPanel } from '@/components/action/ActionEventPanel';
 import { KindBadge } from '@/components/video/KindBadge';
 import { VideoCombobox } from '@/components/video/VideoCombobox';
 import { useVideoRecovery } from '@/lib/useVideoRecovery';
+import { useSerializedSave } from '@/lib/useSerializedSave';
+import {
+  ACTION_AUTOSAVE_MS,
+  ACTION_DRAFT_DEBOUNCE_MS,
+  clearActionDraft,
+  readActionDraft,
+  writeActionDraft,
+} from '@/lib/actionDrafts';
+import {
+  DEFAULT_ACTION_LABELS,
+  EMPTY_ACTION_EDITOR,
+  OUTSIDE_RALLY_KEY,
+  clamp,
+  formatActionTime,
+  hasActiveActionAnnotation,
+  isActionReviewed,
+  makeActionId,
+  normalizeActionEditor,
+  round4,
+  sortActionEvents,
+  withActionRally,
+  type ActionEditor,
+} from '@/lib/actionEditorModel';
+import { useActionWaveform } from '@/lib/useActionWaveform';
 import { ACTION_COLORS, actionColor } from '@/lib/actionColors';
-import type { ActionAnnotationData, ActionEvent, ActionRally, ActionVideo, WaveformData } from '@/types/api';
+import type { ActionAnnotationData, ActionEvent, ActionVideo } from '@/types/api';
 
-const DEFAULT_LABELS = ['serve', 'receive', 'set', 'spike', 'block', 'score'];
-const OUTSIDE = '__outside__';
-
-const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
-const round4 = (v: number) => Math.round(v * 1e4) / 1e4;
 const errMsg = (e: unknown) => (e instanceof ApiError ? e.body : e instanceof Error ? e.message : String(e));
-const fmt = (s: number) => {
-  if (!Number.isFinite(s)) return '00:00';
-  const m = Math.floor(s / 60);
-  return `${String(m).padStart(2, '0')}:${String(Math.floor(s - m * 60)).padStart(2, '0')}`;
-};
-const makeId = () => `act_${(crypto.randomUUID?.() ?? `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`).replace(/-/g, '').slice(0, 16)}`;
-const normRallyId = (v: unknown): number | null => {
-  const n = Number(v);
-  return Number.isInteger(n) && n > 0 ? n : null;
-};
-
-interface Editor {
-  video: string;
-  duration: number;
-  fps: number;
-  numFrames: number;
-  rallies: ActionRally[];
-  events: ActionEvent[];
-  dirty: boolean;
-}
-const EMPTY: Editor = { video: '', duration: 0, fps: 30, numFrames: 0, rallies: [], events: [], dirty: false };
-
-// ── Local draft persistence ──
-// The network is not trustworthy (flaky tunnel, dropped connections), so
-// unsaved work is mirrored to localStorage on every edit. A draft exists
-// *only* while there is unsaved work: it is cleared on a successful save or
-// an explicit discard. On load, a leftover draft means the page died before
-// saving — restore the user's events over the server snapshot.
-const AUTOSAVE_MS = 2000;
-const DRAFT_DEBOUNCE_MS = 300; // coalesce rapid edits (e.g. point dragging)
-const ACTION_DRAFT_PREFIX = 'vq:action-draft';
-const actionDraftKey = (video: string) => `${ACTION_DRAFT_PREFIX}:${video}`;
-
-const readActionDraft = (video: string): Editor | null => {
-  try {
-    const raw = localStorage.getItem(actionDraftKey(video));
-    if (!raw) return null;
-    const d = JSON.parse(raw) as Editor;
-    return Array.isArray(d.events) ? d : null;
-  } catch {
-    return null; // corrupt JSON / privacy mode — drafts are best-effort
-  }
-};
-
-const writeActionDraft = (ed: Editor): void => {
-  try {
-    localStorage.setItem(actionDraftKey(ed.video), JSON.stringify(ed));
-  } catch {
-    /* quota exceeded / privacy mode — nothing we can do, skip */
-  }
-};
-
-const clearActionDraft = (video: string): void => {
-  try {
-    localStorage.removeItem(actionDraftKey(video));
-  } catch {
-    /* ignore */
-  }
-};
-
-// Waveform request density (points scale with duration), ported from the legacy UI.
-const WAVEFORM_POINTS_PER_SECOND = 120;
-const WAVEFORM_MIN_POINTS = 2400;
-const WAVEFORM_MAX_POINTS = 96000;
-const EMPTY_WAVE: WaveformData = { video: '', loading: false, error: '', hasAudio: false, duration: 0, peaks: [], rms: [] };
-const waveformPointCount = (durationSeconds: number) =>
-  clamp(Math.ceil(Math.max(0, durationSeconds) * WAVEFORM_POINTS_PER_SECOND) || WAVEFORM_MIN_POINTS, WAVEFORM_MIN_POINTS, WAVEFORM_MAX_POINTS);
-
-const findRally = (frame: number, ed: Editor): ActionRally | null => {
-  const t = frame / (ed.fps || 30);
-  return ed.rallies.find((r) => t >= r.start && t < r.end) ?? null;
-};
-const withRally = (e: ActionEvent, ed: Editor): ActionEvent => {
-  const frame = Math.max(0, Math.round(e.frame || 0));
-  const t = frame / (ed.fps || 30);
-  const rally = findRally(frame, ed);
-  return { ...e, frame, time: round4(t), rally_id: rally?.rally_id ?? null, relative_frame: rally ? Math.max(0, Math.round((t - rally.start) * (ed.fps || 30))) : null };
-};
-const sortEvents = (evs: ActionEvent[]) => [...evs].sort((a, b) => a.frame - b.frame || a.label.localeCompare(b.label) || a.id.localeCompare(b.id));
-
-function normalize(data: ActionAnnotationData, labels: string[]): Editor {
-  const fps = Number(data.fps) || 30;
-  const rallies: ActionRally[] = (data.rallies ?? [])
-    .map((r, i) => ({ rally_id: normRallyId(r.rally_id) ?? i + 1, start: Number(r.start) || 0, end: Number(r.end) || 0, label: r.label || 'rally' }))
-    .sort((a, b) => a.start - b.start || a.end - b.end || a.rally_id - b.rally_id);
-  const ed: Editor = { video: data.source_video || data.video || '', duration: Number(data.duration) || 0, fps, numFrames: Number(data.num_frames) || 0, rallies, events: [], dirty: false };
-  ed.events = sortEvents(
-    (data.events ?? []).map((e) => {
-      const x = e as Record<string, unknown>;
-      const xy = (x.xy as number[] | undefined) ?? [Number(x.x ?? 0.5), Number(x.y ?? 0.5)];
-      return withRally(
-        {
-          id: (x.id as string) || makeId(),
-          rally_id: null,
-          frame: Math.max(0, Math.round(Number(x.frame) || 0)),
-          time: Number(x.time) || null,
-          relative_frame: Number.isInteger(x.relative_frame) ? (x.relative_frame as number) : null,
-          label: labels.includes(x.label as string) ? (x.label as string) : labels[0]!,
-          xy: [clamp(Number(xy[0] ?? 0.5), 0, 1), clamp(Number(xy[1] ?? 0.5), 0, 1)],
-          visible: x.visible !== false,
-        },
-        ed,
-      );
-    }),
-  );
-  return ed;
-}
-
-const hasActive = (v: ActionVideo) => Boolean(v.has_action_annotation || v.has_action_final_annotation || v.has_action_pre_annotation);
-const isReviewed = (v: ActionVideo) => Boolean(v.action_reviewed);
-
 
 export function ActionAnnotatePage() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const [pointMode, setPointMode] = useState(false);
   const [aspect, setAspect] = useState(16 / 9);
-  const [waveform, setWaveform] = useState<WaveformData>(EMPTY_WAVE);
-  const waveformReq = useRef(0);
+  const { waveform, loadWaveform } = useActionWaveform();
   const drag = useRef<{ id: string; moved: boolean } | null>(null);
   const suppressClick = useRef(false);
   const [selectedLabel, setSelectedLabel] = useState('serve');
@@ -149,7 +57,10 @@ export function ActionAnnotatePage() {
   const [picked, setPicked] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const [ed, setEd] = useState<Editor>(EMPTY);
+  const [ed, setEd] = useState<ActionEditor>(EMPTY_ACTION_EDITOR);
+  // Every persisted editor mutation advances this counter. Saves capture it
+  // before sending so an older response can never mark newer work clean.
+  const editRevision = useRef(0);
   const [selectedIdx, setSelectedIdx] = useState(-1);
   const [selectedRallyId, setSelectedRallyId] = useState<number | 'all'>('all');
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -169,7 +80,7 @@ export function ActionAnnotatePage() {
   const videosQuery = useQuery({ queryKey: ['action-videos'], queryFn: () => apiFetch<ActionVideo[]>(API.actionAnnotate.videos) });
   const labelsQuery = useQuery({ queryKey: ['action-labels'], queryFn: () => apiFetch<{ labels?: string[] }>(API.actionAnnotate.labels) });
   const videos = videosQuery.data ?? [];
-  const labels = labelsQuery.data?.labels ?? DEFAULT_LABELS;
+  const labels = labelsQuery.data?.labels ?? DEFAULT_ACTION_LABELS;
 
   // ── Frame clock ──
   const computeFrame = () => {
@@ -332,11 +243,21 @@ export function ActionAnnotatePage() {
         // silently move the event there).
         drag.current.moved = true;
         const f = computeFrame();
-        mutate((prev) => ({ ...prev, events: prev.events.map((x) => (x.id === drag.current!.id ? withRally({ ...x, frame: f }, prev) : x)) }));
+        mutate((prev) => ({ ...prev, events: prev.events.map((x) => (x.id === drag.current!.id ? withActionRally({ ...x, frame: f }, prev) : x)) }));
       }
       const p = clientToPoint(ev.clientX, ev.clientY);
       if (!p) return;
-      setEd((prev) => ({ ...prev, dirty: true, events: prev.events.map((x) => (x.id === drag.current!.id ? { ...x, xy: p } : x)) }));
+      editRevision.current += 1;
+      const current = edRef.current;
+      const next = {
+        ...current,
+        dirty: true,
+        events: current.events.map((x) =>
+          x.id === drag.current!.id ? { ...x, xy: p } : x,
+        ),
+      };
+      edRef.current = next;
+      setEd(next);
     };
     // pointercancel (touch gesture, browser takeover) must run the same
     // cleanup as pointerup, or the document-level move listener leaks and
@@ -351,7 +272,10 @@ export function ActionAnnotatePage() {
         }, 0);
       }
       drag.current = null;
-      setEd((prev) => ({ ...prev, events: sortEvents(prev.events) }));
+      const current = edRef.current;
+      const next = { ...current, events: sortActionEvents(current.events) };
+      edRef.current = next;
+      setEd(next);
     };
     document.addEventListener('pointermove', onMove, { signal: ac.signal });
     document.addEventListener('pointerup', onUp, { signal: ac.signal });
@@ -363,29 +287,13 @@ export function ActionAnnotatePage() {
     () =>
       videos.filter((v) => {
         if (kindFilter !== 'all' && v.kind !== kindFilter) return false;
-        if (progressFilter === 'unlabeled' && hasActive(v)) return false;
-        if (progressFilter === 'pre-labeled' && !(hasActive(v) && !isReviewed(v))) return false;
-        if (progressFilter === 'labeled' && !isReviewed(v)) return false;
+        if (progressFilter === 'unlabeled' && hasActiveActionAnnotation(v)) return false;
+        if (progressFilter === 'pre-labeled' && !(hasActiveActionAnnotation(v) && !isActionReviewed(v))) return false;
+        if (progressFilter === 'labeled' && !isActionReviewed(v)) return false;
         return true;
       }),
     [videos, kindFilter, progressFilter],
   );
-
-  const loadWaveform = useCallback(async (name: string, duration: number) => {
-    const reqId = ++waveformReq.current;
-    setWaveform({ ...EMPTY_WAVE, video: name, loading: true });
-    try {
-      const pts = waveformPointCount(duration);
-      const data = await apiFetch<{ has_audio?: boolean; duration?: number; peaks?: number[]; rms?: number[] }>(`${API.actionAnnotate.waveform(name)}?points=${pts}`);
-      if (reqId !== waveformReq.current) return;
-      const peaks = Array.isArray(data.peaks) ? data.peaks.map((v) => clamp(Number(v) || 0, 0, 1)) : [];
-      const rms = Array.isArray(data.rms) && data.rms.length === peaks.length ? data.rms.map((v) => clamp(Number(v) || 0, 0, 1)) : peaks;
-      setWaveform({ video: name, loading: false, error: '', hasAudio: Boolean(data.has_audio), duration: Number(data.duration) || duration || 0, peaks, rms });
-    } catch (e) {
-      if (reqId !== waveformReq.current) return;
-      setWaveform({ ...EMPTY_WAVE, video: name, error: errMsg(e) });
-    }
-  }, []);
 
   const load = async (name: string) => {
     if (!name) return;
@@ -398,13 +306,16 @@ export function ActionAnnotatePage() {
     setLoading(true);
     try {
       const data = await apiFetch<ActionAnnotationData>(API.actionAnnotate.annotation(name));
-      let next = normalize(data, labels);
+      let next = normalizeActionEditor(data, labels);
       // A leftover draft is unsaved work from a previous session: restore the
       // user's events (server stays authoritative for rally/fps structure).
       const draft = readActionDraft(next.video);
       if (draft) {
-        next = { ...next, events: sortEvents(draft.events.map((e) => withRally(e, next))), dirty: true };
+        next = { ...next, events: sortActionEvents(draft.events.map((e) => withActionRally(e, next))), dirty: true };
       }
+      // Never reuse a revision: a response from the previous video must not
+      // be able to compare equal and mark this editor clean.
+      editRevision.current += 1;
       setEd(next);
       edRef.current = next;
       setSelectedIdx(-1);
@@ -430,69 +341,91 @@ export function ActionAnnotatePage() {
     }
   };
 
-  const mutate = (fn: (ed: Editor) => Editor) => setEd((prev) => ({ ...fn(prev), dirty: true }));
+  const mutate = (fn: (ed: ActionEditor) => ActionEditor) => {
+    editRevision.current += 1;
+    const next = { ...fn(edRef.current), dirty: true };
+    edRef.current = next;
+    setEd(next);
+  };
 
   const addEvent = (x = 0.5, y = 0.5, visible = true) => {
     if (!ed.video) return toast.warning('Load a video first');
     const f = clampToRally(computeFrame(), ed, selectedRallyId);
     if (f !== computeFrame()) seekFrame(f);
     mutate((prev) => {
-      const evt = withRally({ id: makeId(), rally_id: null, frame: f, time: null, relative_frame: null, label: selectedLabel, xy: [round4(x), round4(y)], visible }, prev);
-      const events = sortEvents([...prev.events, evt]);
+      const evt = withActionRally({ id: makeActionId(), rally_id: null, frame: f, time: null, relative_frame: null, label: selectedLabel, xy: [round4(x), round4(y)], visible }, prev);
+      const events = sortActionEvents([...prev.events, evt]);
       setSelectedIdx(events.indexOf(evt));
       if (evt.rally_id) {
         setSelectedRallyId(evt.rally_id);
         setExpanded(String(evt.rally_id));
-      } else setExpanded(OUTSIDE);
+      } else setExpanded(OUTSIDE_RALLY_KEY);
       return { ...prev, events };
     });
   };
 
   const editEvent = (idx: number, patch: Partial<ActionEvent>) =>
     mutate((prev) => {
-      const events = prev.events.map((e, i) => (i === idx ? withRally({ ...e, ...patch }, prev) : e));
-      return { ...prev, events: patch.frame !== undefined ? sortEvents(events) : events };
+      const events = prev.events.map((e, i) => (i === idx ? withActionRally({ ...e, ...patch }, prev) : e));
+      return { ...prev, events: patch.frame !== undefined ? sortActionEvents(events) : events };
     });
   const deleteEvent = (idx: number) => {
     setSelectedIdx(-1);
     mutate((prev) => ({ ...prev, events: prev.events.filter((_, i) => i !== idx) }));
   };
 
-  const save = async (silent = false) => {
-    if (!ed.video) {
-      if (!silent) toast.warning('No video loaded');
-      return;
-    }
-    try {
-      await apiFetch(API.actionAnnotate.annotations, { method: 'POST', body: { video: ed.video, fps: ed.fps, num_frames: ed.numFrames, events: ed.events } });
-      setEd((prev) => ({ ...prev, dirty: false }));
-      clearActionDraft(ed.video); // server now holds the truth; drop the local backup
+  const save = useSerializedSave({
+    revision: editRevision,
+    save: async ({ revision, silent }) => {
+      // The ref is updated synchronously with every mutation. A queued save
+      // can start before React's next render and still capture the new data.
+      const snapshot = edRef.current;
+      if (!snapshot.video) {
+        if (!silent) toast.warning('No video loaded');
+        return;
+      }
+      const video = snapshot.video;
+      await apiFetch(API.actionAnnotate.annotations, {
+        method: 'POST',
+        body: {
+          video,
+          fps: snapshot.fps,
+          num_frames: snapshot.numFrames,
+          events: snapshot.events,
+        },
+      });
+      // A request only owns the revision it sent. Mid-request edits retain
+      // dirty=true and their local draft; useSerializedSave queues the latest.
+      if (editRevision.current === revision) {
+        const next = { ...edRef.current, dirty: false };
+        edRef.current = next;
+        setEd(next);
+        clearActionDraft(video);
+      }
       if (!silent) {
         void videosQuery.refetch();
         toast.success('Action annotations saved');
       }
-    } catch (e) {
-      // Keep dirty=true and the draft intact so the work survives — autosave
-      // retries on the next edit, and the draft survives a reload.
+    },
+    onError: (e) => {
+      // Dirty state and the draft deliberately survive a failed request.
       toast.error(`Save failed: ${errMsg(e)}`);
-    }
-  };
+    },
+  });
 
   // ── Mirror unsaved work to localStorage (debounced to coalesce drags) ──
   useEffect(() => {
     if (!ed.dirty || !ed.video) return;
-    const t = setTimeout(() => writeActionDraft(ed), DRAFT_DEBOUNCE_MS);
+    const t = setTimeout(() => writeActionDraft(ed), ACTION_DRAFT_DEBOUNCE_MS);
     return () => clearTimeout(t);
   }, [ed]);
 
-  // ── Debounced autosave: push to the server AUTOSAVE_MS after editing stops ──
-  const saveRef = useRef(save);
-  saveRef.current = save;
+  // ── Debounced autosave ──
   useEffect(() => {
     if (!ed.dirty || !ed.video) return;
-    const t = setTimeout(() => void saveRef.current(true), AUTOSAVE_MS);
+    const t = setTimeout(() => void save(true), ACTION_AUTOSAVE_MS);
     return () => clearTimeout(t);
-  }, [ed]);
+  }, [ed, save]);
   const copyVideoName = async () => {
     const name = ed.video || picked;
     if (!name) return toast.warning('No video loaded');
@@ -513,7 +446,7 @@ export function ActionAnnotatePage() {
       setExpanded(String(evt.rally_id));
     } else {
       setSelectedRallyId('all');
-      setExpanded(OUTSIDE);
+      setExpanded(OUTSIDE_RALLY_KEY);
     }
     videoRef.current?.pause();
     seekFrame(evt.frame);
@@ -615,9 +548,9 @@ export function ActionAnnotatePage() {
               renderItem={(v) => (
                 <>
                   <KindBadge kind={v.kind} />
-                  <span className={cn('shrink-0 text-[11px]', isReviewed(v) ? 'text-primary-light' : hasActive(v) ? 'text-amber-300' : 'text-text-muted')}>{isReviewed(v) ? '✓' : hasActive(v) ? 'P' : '○'}</span>
+                  <span className={cn('shrink-0 text-[11px]', isActionReviewed(v) ? 'text-primary-light' : hasActiveActionAnnotation(v) ? 'text-amber-300' : 'text-text-muted')}>{isActionReviewed(v) ? '✓' : hasActiveActionAnnotation(v) ? 'P' : '○'}</span>
                   <span className="min-w-0 flex-1 break-all font-mono">{v.name}</span>
-                  <span className="shrink-0 text-[10px] text-text-muted">{isReviewed(v) ? `${v.event_count || 0} labeled` : hasActive(v) ? `${v.event_count || 0} pre` : ''}</span>
+                  <span className="shrink-0 text-[10px] text-text-muted">{isActionReviewed(v) ? `${v.event_count || 0} labeled` : hasActiveActionAnnotation(v) ? `${v.event_count || 0} pre` : ''}</span>
                 </>
               )}
             />
@@ -723,7 +656,7 @@ export function ActionAnnotatePage() {
             </div>
             <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
               <span className="rounded-lg border border-border bg-surface-200/50 px-2.5 py-1 font-mono text-sm tabular-nums text-text-primary">
-                {fmt(frame / (ed.fps || 30))} / f{frame}
+                {formatActionTime(frame / (ed.fps || 30))} / f{frame}
               </span>
               <div className="flex items-center gap-2">
                 <Button size="sm" onClick={togglePlay}>
@@ -772,7 +705,7 @@ export function ActionAnnotatePage() {
                 <option value="all">All rallies ({ed.events.length})</option>
                 {ed.rallies.map((r, i) => (
                   <option key={r.rally_id} value={r.rally_id}>
-                    R{i + 1} · {fmt(r.start)}-{fmt(r.end)} · {eventsByRally(r.rally_id).length}
+                    R{i + 1} · {formatActionTime(r.start)}-{formatActionTime(r.end)} · {eventsByRally(r.rally_id).length}
                   </option>
                 ))}
               </select>
@@ -822,31 +755,31 @@ export function ActionAnnotatePage() {
                             <span className={cn('transition-transform', isOpen && 'rotate-90')}>▸</span> actions <span className="opacity-70">{entries.length}</span>
                           </button>
                           <span className="ml-auto font-mono text-[11px] tabular-nums text-text-muted">
-                            {fmt(rally.start)} → {fmt(rally.end)}
+                            {formatActionTime(rally.start)} → {formatActionTime(rally.end)}
                           </span>
                           <span className="rounded bg-surface-200/40 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-text-muted">{Math.max(0, rally.end - rally.start).toFixed(1)}s</span>
                         </div>
-                        {isOpen && <EventPanel entries={entries} empty="No actions in this rally" {...{ labels, selectedIdx, fps: ed.fps, frame, onEdit: editEvent, onDelete: deleteEvent, onJump: jumpToEvent }} />}
+                        {isOpen && <ActionEventPanel entries={entries} empty="No actions in this rally" {...{ labels, selectedIdx, fps: ed.fps, frame, onEdit: editEvent, onDelete: deleteEvent, onJump: jumpToEvent }} />}
                       </div>
                     );
                   })}
                   {outside.length > 0 && (
                     <div className="space-y-1.5">
-                      <div onClick={() => setExpanded(OUTSIDE)} className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-amber-500/20 bg-amber-500/[0.04] px-3 py-2.5 hover:bg-amber-500/[0.08]">
+                      <div onClick={() => setExpanded(OUTSIDE_RALLY_KEY)} className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-amber-500/20 bg-amber-500/[0.04] px-3 py-2.5 hover:bg-amber-500/[0.08]">
                         <span className="w-4 select-none text-right font-heading text-[10px] text-text-muted/60">out</span>
                         <button
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            setExpanded(expanded === OUTSIDE ? null : OUTSIDE);
+                            setExpanded(expanded === OUTSIDE_RALLY_KEY ? null : OUTSIDE_RALLY_KEY);
                           }}
                           className="flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-300 ring-1 ring-amber-500/25"
                         >
-                          <span className={cn('transition-transform', expanded === OUTSIDE && 'rotate-90')}>▸</span> outside <span className="opacity-70">{outside.length}</span>
+                          <span className={cn('transition-transform', expanded === OUTSIDE_RALLY_KEY && 'rotate-90')}>▸</span> outside <span className="opacity-70">{outside.length}</span>
                         </button>
                         <span className="ml-auto font-heading text-[11px] text-text-muted">outside rally</span>
                       </div>
-                      {expanded === OUTSIDE && <EventPanel entries={outside} empty="No outside actions" {...{ labels, selectedIdx, fps: ed.fps, frame, onEdit: editEvent, onDelete: deleteEvent, onJump: jumpToEvent }} />}
+                      {expanded === OUTSIDE_RALLY_KEY && <ActionEventPanel entries={outside} empty="No outside actions" {...{ labels, selectedIdx, fps: ed.fps, frame, onEdit: editEvent, onDelete: deleteEvent, onJump: jumpToEvent }} />}
                     </div>
                   )}
                 </>
@@ -860,7 +793,7 @@ export function ActionAnnotatePage() {
 }
 
 const fieldCls = 'rounded-lg border border-border-light bg-surface-50 px-3 py-2 text-sm text-text-primary focus:border-primary/50 focus:outline-none';
-const clampToRally = (frame: number, ed: Editor, rid: number | 'all') => {
+const clampToRally = (frame: number, ed: ActionEditor, rid: number | 'all') => {
   if (rid === 'all') return frame;
   const r = ed.rallies.find((x) => x.rally_id === rid);
   if (!r) return frame;
@@ -883,74 +816,5 @@ function DotIcon() {
     <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v12m6-6H6" />
     </svg>
-  );
-}
-
-interface EventPanelProps {
-  entries: Array<{ e: ActionEvent; idx: number }>;
-  empty: string;
-  labels: string[];
-  selectedIdx: number;
-  fps: number;
-  /** Current playhead frame — rows within ±½ s light up (Rally Label rule). */
-  frame: number;
-  onEdit: (idx: number, patch: Partial<ActionEvent>) => void;
-  onDelete: (idx: number) => void;
-  onJump: (idx: number) => void;
-}
-function EventPanel({ entries, empty, labels, selectedIdx, fps, frame, onEdit, onDelete, onJump }: EventPanelProps) {
-  if (!entries.length) return <div className="ml-6 rounded-xl border border-border bg-surface-100 px-3 py-2 text-xs text-text-muted">{empty}</div>;
-  const windowFrames = Math.max(1, Math.round((fps || 30) / 2));
-  return (
-    <div className="ml-6 space-y-1.5 rounded-xl border border-border bg-surface-100 p-2">
-      {entries.map(({ e, idx }, row) => {
-        const color = actionColor(e.label);
-        const active = Math.abs(e.frame - frame) <= windowFrames;
-        return (
-          <div
-            key={e.id}
-            onClick={() => onJump(idx)}
-            className={cn(
-              'grid cursor-pointer grid-cols-[1rem_minmax(5rem,1fr)_3.6rem_2.6rem_2.4rem] items-center gap-1.5 rounded-lg border px-2 py-1.5 transition-colors',
-              idx === selectedIdx ? 'border-primary/35 bg-primary/10' : 'border-border bg-surface-50 hover:bg-surface-200/40',
-              active && 'ring-1 ring-accent/50',
-            )}
-          >
-            <span className="text-right font-heading text-[10px] text-text-muted/70">{row + 1}</span>
-            <span className="flex min-w-0 items-center gap-1.5" onClick={(ev) => ev.stopPropagation()}>
-              <button
-                type="button"
-                onClick={() => onEdit(idx, { visible: !e.visible })}
-                className={cn('h-2.5 w-2.5 flex-shrink-0 rounded-full', !e.visible && 'border')}
-                style={e.visible ? { background: color } : { borderColor: color }}
-                title={e.visible ? 'Visible — click to hide' : 'Non-visible — click to show'}
-              />
-              <select value={e.label} onChange={(ev) => onEdit(idx, { label: ev.target.value })} className="w-full min-w-0 rounded-lg border border-border bg-surface-100 px-1.5 py-1 text-xs text-text-primary">
-                {labels.map((l) => (
-                  <option key={l} value={l}>
-                    {l}
-                  </option>
-                ))}
-              </select>
-            </span>
-            <input
-              value={e.frame}
-              onClick={(ev) => ev.stopPropagation()}
-              onChange={(ev) => onEdit(idx, { frame: Math.max(0, Math.round(Number(ev.target.value) || 0)) })}
-              className="w-full border-0 border-b border-white/10 bg-transparent text-center font-heading text-[11px] tabular-nums text-text-primary focus:border-primary-light focus:outline-none"
-            />
-            <span className="text-center font-heading text-[10px] tabular-nums text-text-muted">{fmt(e.frame / (fps || 30))}</span>
-            <span className="flex items-center justify-end gap-1" onClick={(ev) => ev.stopPropagation()}>
-              <button type="button" onClick={() => onJump(idx)} className="text-primary-light hover:text-text-primary" title="Jump to event">
-                →
-              </button>
-              <button type="button" onClick={() => onDelete(idx)} className="text-red-400/60 hover:text-red-400" title="Delete">
-                ✕
-              </button>
-            </span>
-          </div>
-        );
-      })}
-    </div>
   );
 }

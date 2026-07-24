@@ -70,6 +70,7 @@ export const API = {
     list: '/jobs',
     activeCount: '/jobs/active-count',
     get: (id: string) => `/jobs/${id}`,
+    logs: (id: string) => `/jobs/${id}/logs`,
     cancel: (id: string) => `/jobs/${id}/cancel`,
     eventsSSE: (id: string) => `/jobs/${id}/events`,
   },

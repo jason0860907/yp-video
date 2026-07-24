@@ -43,6 +43,7 @@ from yp_video.reid.detector import (
     iou,
 )
 from yp_video.reid.embedder import build_embedders
+from yp_video.reid.resolution import ActorResolution
 from yp_video.reid.store import (
     EMBEDDINGS_DIR,
     SKIP_LABELS,
@@ -294,6 +295,7 @@ def extract_video(
                 "label": event.get("label"),
                 "xy": xy,
                 "status": "miss",
+                "resolution": ActorResolution.UNRESOLVED.value,
                 "box": None,
                 "score": None,
                 "candidates": 0,
@@ -316,16 +318,24 @@ def extract_video(
                 auto = candidates[0] if candidates else None
                 fix = fixes.get(record["id"])
                 if fix is None:
-                    if auto is not None:
-                        crop = _attach_person(record, frame, auto, *pt, frame_w, frame_h, out_crops)
+                    if auto is not None and pt is not None:
+                        px, py = pt
+                        crop = _attach_person(record, frame, auto, px, py, frame_w, frame_h, out_crops)
                         if crop is not None:
                             record["status"] = "ok" if len(candidates) == 1 else "multi"
+                            record["resolution"] = ActorResolution.AUTO.value
                 else:
                     # Replay the user's actor fix; keep the auto pick alongside
                     # so the disagreement survives re-extraction.
                     record["box_source"] = "manual"
-                    if auto is not None:
-                        record["auto_box"] = list(_display_box(auto, *pt, frame_w, frame_h))
+                    record["resolution"] = (
+                        ActorResolution.OCCLUDED.value
+                        if fix.get("none")
+                        else ActorResolution.MANUAL.value
+                    )
+                    if auto is not None and pt is not None:
+                        px, py = pt
+                        record["auto_box"] = list(_display_box(auto, px, py, frame_w, frame_h))
                     if fix.get("box"):
                         src = fix.get("frame")
                         if src is not None and src != record["frame"]:
@@ -552,10 +562,16 @@ def _apply_actor_fix(
     if revert:
         record.pop("box_source", None)
         record.pop("auto_box", None)
+        record["resolution"] = ActorResolution.UNRESOLVED.value
     else:
         if record.get("box_source") != "manual":  # first fix stashes the auto pick
             record["auto_box"] = record.get("box")
         record["box_source"] = "manual"
+        record["resolution"] = (
+            ActorResolution.OCCLUDED.value
+            if none
+            else ActorResolution.MANUAL.value
+        )
 
     # Clear the previous pick; each branch below re-fills what applies.
     record.update(status="miss", box=None, actor_box=None, score=None, crop=None, keypoints=None)
@@ -575,9 +591,12 @@ def _apply_actor_fix(
     elif box is not None:
         # No snapping for a cross-frame box (stored detections belong to the
         # event frame) or when the client's mask arbitration vetoed it.
+        if len(box) != 4:
+            raise ValueError("Actor box must contain four coordinates")
+        x0, y0, x1, y1 = box
         person = (
             _snap_to_detection(detections, box) if snap and not cross_frame else None
-        ) or PersonBox(xyxy=tuple(box), score=0.0)
+        ) or PersonBox(xyxy=(x0, y0, x1, y1), score=0.0)
 
     crop = None
     if person is not None:
@@ -602,6 +621,7 @@ def _apply_actor_fix(
             record["crop_frame"] = src_frame
         if revert:
             record["status"] = "ok" if n_candidates == 1 else "multi"
+            record["resolution"] = ActorResolution.AUTO.value
         else:
             record["status"] = "ok"
 

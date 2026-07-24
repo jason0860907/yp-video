@@ -235,7 +235,7 @@ export function resolveActorFix({
   clickedBox: Box;
   clickedFrame: number;
 }): ActorFix {
-  if (!trackBox) return { box: clickedBox, frame: clickedFrame };
+  if (!trackBox) return { mode: 'pick', box: clickedBox, frame: clickedFrame };
 
   if (silhouette) {
     // "Which detection contains most of this silhouette, tightest box first"
@@ -246,7 +246,9 @@ export function resolveActorFix({
     const covered = detections
       .filter((d) => maskCoverage(silhouette, d.box) >= MASK_COVERAGE_MIN)
       .sort((a, b) => boxArea(a.box) - boxArea(b.box));
-    return covered.length ? { box: covered[0]!.box } : { box: trackBox, snap: false };
+    return covered.length
+      ? { mode: 'pick', box: covered[0]!.box }
+      : { mode: 'pick', box: trackBox, snap: false };
   }
 
   // No masks stored for this video — box IoU is the best available.
@@ -259,7 +261,7 @@ export function resolveActorFix({
       box = d.box;
     }
   }
-  return { box };
+  return { mode: 'pick', box };
 }
 
 // A rally's worth of tinted silhouettes: ~12 players × a few hundred frames,

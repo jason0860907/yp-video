@@ -1,7 +1,10 @@
+import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { API, apiFetch } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { formatClock } from '@/lib/format';
 import { isPartialSuccess, statusLabel, statusTheme } from '@/lib/job';
-import type { Job } from '@/types/api';
+import type { Job, JobLogs } from '@/types/api';
 import { ProgressBar } from './ProgressBar';
 
 interface JobProgressProps {
@@ -19,7 +22,7 @@ export function JobProgress({ job, detail = '', showLogs = false, truncateMsg = 
   const isFailed = job.status === 'failed';
   const showMessage = job.message && (isRunning || isDone || isFailed);
   const trunc = truncateMsg ? 'truncate' : '';
-  const hasLogs = Array.isArray(job.logs) && job.logs.length > 0;
+  const hasLogs = (job.log_count ?? 0) > 0;
   const showLogsBlock = showLogs && hasLogs && (isFailed || isPartialSuccess(job));
 
   return (
@@ -39,16 +42,28 @@ export function JobProgress({ job, detail = '', showLogs = false, truncateMsg = 
       {detail && <div className="text-[11px] tabular-nums text-text-muted">{detail}</div>}
       {showMessage && <p className={cn('text-[10px] text-text-muted', trunc)}>{job.message}</p>}
       {job.error && <p className={cn('text-[10px] text-red-400/80', trunc)}>{job.error}</p>}
-      {showLogsBlock && (
-        <details className="mt-1">
-          <summary className="cursor-pointer text-[10px] text-text-muted hover:text-text-primary">
-            Show logs ({job.logs!.length} lines)
-          </summary>
-          <pre className="mt-1 max-h-64 overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-ink/5 bg-black/40 p-2 font-mono text-[10px] text-red-300/80">
-            {job.logs!.join('\n')}
-          </pre>
-        </details>
-      )}
+      {showLogsBlock && <JobLogDisclosure job={job} />}
     </div>
+  );
+}
+
+function JobLogDisclosure({ job }: { job: Job }) {
+  const [open, setOpen] = useState(false);
+  const logs = useQuery({
+    queryKey: ['job-logs', job.id],
+    queryFn: () => apiFetch<JobLogs>(API.jobs.logs(job.id)),
+    enabled: open,
+    staleTime: 5_000,
+  });
+
+  return (
+    <details className="mt-1" onToggle={(e) => setOpen(e.currentTarget.open)}>
+      <summary className="cursor-pointer text-[10px] text-text-muted hover:text-text-primary">
+        Show logs ({job.log_count ?? 0} retained lines)
+      </summary>
+      <pre className="mt-1 max-h-64 overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-ink/5 bg-black/40 p-2 font-mono text-[10px] text-red-300/80">
+        {logs.isLoading ? 'Loading logs…' : logs.error ? 'Could not load logs.' : (logs.data?.lines ?? []).join('\n')}
+      </pre>
+    </details>
   );
 }

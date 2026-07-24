@@ -22,12 +22,18 @@ export interface Job {
   progress?: number;
   message?: string;
   error?: string;
-  logs?: string[];
+  /** Number of retained log lines; fetch bodies from /jobs/{id}/logs. */
+  log_count?: number;
   /** Unix seconds. `started_at` is set on the first transition to running. */
   created_at?: number;
   started_at?: number | null;
   // items is the batch sub-progress; other keys are job-type-specific payloads.
   params?: { items?: JobItem[]; [k: string]: unknown };
+}
+
+export interface JobLogs {
+  lines: string[];
+  count: number;
 }
 
 export interface ActionTrainStatus {
@@ -275,6 +281,8 @@ export interface ReidRecord {
   crop_frame?: number;
   /** ok = unique person box, multi = ranked pick among overlaps, miss = none. */
   status: 'ok' | 'multi' | 'miss';
+  /** Explicit actor-resolution verdict; never infer this from crop presence. */
+  resolution: 'unresolved' | 'auto' | 'manual' | 'occluded';
   box?: [number, number, number, number] | null;
   score?: number | null;
   candidates: number;
@@ -283,7 +291,7 @@ export interface ReidRecord {
   keypoints?: [number, number, number][] | null;
   /** ALL person detections on the event frame — the actor picker's choices. */
   detections?: { box: [number, number, number, number]; score: number }[];
-  /** "manual" once the user re-pointed (or cleared) the actor; absent = auto. */
+  /** Legacy source marker retained in stored extraction files. */
   box_source?: 'auto' | 'manual';
   /** The automatic pick, kept when a manual fix overrides it. */
   auto_box?: [number, number, number, number] | null;

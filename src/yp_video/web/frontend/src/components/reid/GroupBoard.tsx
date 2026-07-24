@@ -387,7 +387,9 @@ export const GroupBoard = forwardRef<BoardHandle, GroupBoardProps>(function Grou
   // places them in a group — surface them in their own board section. Ones
   // dragged into a group render there instead.
   const groupedIds = new Set(groups.flatMap((g) => g.eventIds));
-  const missIds = records.filter((r) => !r.crop && !groupedIds.has(r.id)).map((r) => r.id);
+  const missIds = records
+    .filter((r) => r.resolution !== 'occluded' && !r.crop && !groupedIds.has(r.id))
+    .map((r) => r.id);
   // The status filter applies to both views; on the board it hides tiles but
   // keeps every row visible as a drop target.
   const statusPass = (id: string) => statusFilter === 'all' || recordById.get(id)?.status === statusFilter;

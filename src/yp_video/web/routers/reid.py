@@ -10,18 +10,20 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Annotated, Literal
 from urllib.parse import unquote
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from yp_video.config import cut_kind_of, find_cut, iter_all_cuts
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import read_jsonl, read_jsonl_cached
-from yp_video.reid import identity, pipeline, store, tracking
+from yp_video.reid import actor_fixes, identity, pipeline, store, tracking
 from yp_video.reid.detector import build_keypoint_sources
 from yp_video.reid.embedder import DEFAULT_EMBEDDER, EMBEDDER_NAMES, build_embedders, threshold_calibration
+from yp_video.reid.resolution import actor_resolution
 from yp_video.web.job_helpers import init_batch_items, spawn_batch_video_job
 from yp_video.web.jobs import job_manager
 
@@ -308,6 +310,10 @@ def _slim_records(path: Path) -> list[dict]:
         if r.get("label") in store.SKIP_LABELS:
             continue
         r = dict(r)
+        # Normalize old extraction files once at the API boundary. Frontend
+        # consumers receive one explicit state and never infer Occluded from
+        # box_source/crop combinations.
+        r["resolution"] = actor_resolution(r).value
         # The actor picker only needs boxes + scores; skeletons stay server-side.
         if r.get("detections"):
             r["detections"] = [{k: v for k, v in d.items() if k != "keypoints"} for d in r["detections"]]
@@ -448,17 +454,35 @@ def seed_cluster(name: str, req: SeedClusterRequest) -> dict:
     return {"groups": groups, "leftover_clusters": leftover_clusters}
 
 
-class ActorFixRequest(BaseModel):
-    event_id: str
-    # box = manual pick; none = nobody is the actor; neither = revert to auto.
-    box: list[float] | None = Field(default=None, min_length=4, max_length=4)
-    none: bool = False
+class ActorFixBase(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    event_id: str = Field(min_length=1)
+
+
+class PickActorRequest(ActorFixBase):
+    mode: Literal["pick"]
+    box: tuple[float, float, float, float]
     # Cross-frame pick: the box lives on this frame, not the event's — the
     # crop is cut from here (actor undetected on the event frame).
-    frame: int | None = None
+    frame: int | None = Field(default=None, ge=0)
     # False = the client's mask arbitration ruled that NO stored detection is
     # this player — embed the box as drawn, never IoU-snap onto an occluder.
     snap: bool = True
+
+
+class OccludedActorRequest(ActorFixBase):
+    mode: Literal["occluded"]
+
+
+class AutoActorRequest(ActorFixBase):
+    mode: Literal["auto"]
+
+
+ActorFixRequest = Annotated[
+    PickActorRequest | OccludedActorRequest | AutoActorRequest,
+    Field(discriminator="mode"),
+]
 
 
 @router.post("/actor-fix/{name}")
@@ -476,16 +500,23 @@ def actor_fix(name: str, req: ActorFixRequest) -> dict:
     if not store.reid_path(stem).exists():
         raise HTTPException(404, f"No ReID results for {stem}")
     try:
-        if req.box is not None:
-            identity.save_actor_fix(stem, req.event_id, req.box, frame=req.frame, snap=req.snap)
-        elif req.none:
-            identity.save_actor_fix(stem, req.event_id, None)
+        if isinstance(req, PickActorRequest):
+            command: actor_fixes.ActorFixCommand = actor_fixes.PickActor(
+                mode="pick",
+                event_id=req.event_id,
+                box=req.box,
+                frame=req.frame,
+                snap=req.snap,
+            )
+        elif isinstance(req, OccludedActorRequest):
+            command = actor_fixes.MarkOccluded(
+                mode="occluded", event_id=req.event_id
+            )
         else:
-            identity.remove_actor_fix(stem, req.event_id)
-        # Any re-pick invalidates the event's player assignment: the crop is a
-        # different person now, so it returns to the unassigned pool.
-        identity.remove_assignment(stem, req.event_id)
-        record = pipeline.apply_actor_fix(video_path, req.event_id, req.box, none=req.none, frame=req.frame, snap=req.snap)
+            command = actor_fixes.RevertActor(mode="auto", event_id=req.event_id)
+        record = actor_fixes.apply(video_path, command)
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e)) from e
     except KeyError as e:
         raise HTTPException(404, str(e)) from e
     except ValueError as e:

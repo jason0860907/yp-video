@@ -19,12 +19,18 @@ export interface SidebarAction {
   visible: boolean;
 }
 
-/** {box} = manual pick, {none} = nobody is the actor, {} = revert to auto.
- *  ``frame`` marks a cross-frame pick: the box (and the crop the backend
- *  cuts) lives on that frame — the actor went undetected on the event's.
- *  ``snap: false`` forbids the backend's IoU snap onto a stored detection —
- *  sent when the clicked mask ruled that no detection is this player. */
-export type ActorFix = { box?: [number, number, number, number]; none?: boolean; frame?: number; snap?: boolean };
+/** Explicit actor-fix commands; invalid combinations are unrepresentable. */
+export type ActorFix =
+  | {
+      mode: 'pick';
+      box: [number, number, number, number];
+      /** Cross-frame pick: crop pixels from this frame. */
+      frame?: number;
+      /** False when mask arbitration vetoed snapping to a detection. */
+      snap?: boolean;
+    }
+  | { mode: 'occluded' }
+  | { mode: 'auto' };
 
 /** ByteTrack tracklets + which tracklet each event's actor sits on. */
 export interface TrackData {

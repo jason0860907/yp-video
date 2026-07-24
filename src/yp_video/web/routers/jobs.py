@@ -25,11 +25,20 @@ def active_count():
 
 @router.get("/{job_id}")
 def get_job(job_id: str):
-    """Get job details."""
+    """Get one job summary. Logs have their own bounded endpoint."""
     job = job_manager.get_job(job_id)
     if not job:
         raise HTTPException(404, "Job not found")
     return job.to_dict()
+
+
+@router.get("/{job_id}/logs")
+def get_job_logs(job_id: str):
+    """Return the bounded log tail without bloating list/SSE payloads."""
+    lines = job_manager.job_logs(job_id)
+    if lines is None:
+        raise HTTPException(404, "Job not found")
+    return {"lines": lines, "count": len(lines)}
 
 
 @router.get("/{job_id}/events")

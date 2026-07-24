@@ -261,7 +261,7 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
   // shows the verdict where a player name would sit, so the column reads as
   // "resolved" rather than "forgotten".
   const occludedIds = useMemo(
-    () => new Set(records.filter((r) => r.box_source === 'manual' && !r.crop).map((r) => r.id)),
+    () => new Set(records.filter((r) => r.resolution === 'occluded').map((r) => r.id)),
     [records],
   );
 
@@ -645,7 +645,7 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
                       fontFamily="ui-monospace, SF Mono, Menlo"
                     >
                       {label}
-                      {r.box_source === 'manual' ? ' ✎' : ''} · f{r.frame}
+                      {r.resolution === 'manual' ? ' ✎' : ''} · f{r.frame}
                     </text>
                   </g>
                 );
@@ -672,7 +672,7 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
                       className={fixing ? 'pointer-events-none opacity-40' : 'pointer-events-auto cursor-pointer hover:fill-white/20'}
                       onClick={(e) => {
                         e.stopPropagation();
-                        onFixActor(pickTarget.id, { box: d.box });
+                        onFixActor(pickTarget.id, { mode: 'pick', box: d.box });
                       }}
                     >
                       <title>{`person · score ${d.score.toFixed(2)} — click to set as the actor`}</title>
@@ -799,11 +799,11 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
                         </span>
                       </label>
                     )}
-                    <Button size="sm" disabled={fixing} onClick={() => onFixActor(pickTarget.id, { none: true })} title="The player is occluded or otherwise unidentifiable — clears this event's crop and drops it from the labeling count">
+                    <Button size="sm" disabled={fixing} onClick={() => onFixActor(pickTarget.id, { mode: 'occluded' })} title="The player is occluded or otherwise unidentifiable — clears this event's crop and drops it from the labeling count">
                       Occluded
                     </Button>
-                    {pickTarget.box_source === 'manual' && (
-                      <Button size="sm" disabled={fixing} onClick={() => onFixActor(pickTarget.id, {})} title="Discard the manual fix and re-run the automatic pick">
+                    {(pickTarget.resolution === 'manual' || pickTarget.resolution === 'occluded') && (
+                      <Button size="sm" disabled={fixing} onClick={() => onFixActor(pickTarget.id, { mode: 'auto' })} title="Discard the manual fix and re-run the automatic pick">
                         Revert to auto
                       </Button>
                     )}

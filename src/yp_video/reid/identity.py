@@ -27,6 +27,8 @@ Done button) — a human verdict the counts can't derive.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 import json
 import threading
 
@@ -39,7 +41,7 @@ from yp_video.reid.store import SKIP_LABELS, load_embedding_matrix, players_path
 
 # Serializes read-modify-write of the players file: the UI auto-saves
 # assignments while actor fixes land, and interleaving would drop one edit.
-_players_lock = threading.Lock()
+_players_lock = threading.RLock()
 
 # Average-linkage cosine-distance cutoff on CLIP-ReID's scale — its ViT
 # features sit in a tight cone (pairwise distances p5–p95 ≈ 0.12–0.32), so
@@ -162,6 +164,13 @@ def _save_players_file(stem: str, data: dict) -> None:
         json.dump(data, f, ensure_ascii=False, indent=1)
 
 
+@contextmanager
+def players_write_transaction() -> Iterator[None]:
+    """Exclude assignment/done writes across a multi-file actor transaction."""
+    with _players_lock:
+        yield
+
+
 def seeded_groups(
     records: list[dict],
     matrix: np.ndarray,
@@ -242,44 +251,45 @@ def load_actor_fixes(stem: str) -> dict[str, dict]:
     return {str(k): v for k, v in data.get("actor_fixes", {}).items() if isinstance(v, dict)}
 
 
-def save_actor_fix(
-    stem: str, event_id: str, box: list[float] | None, frame: int | None = None, snap: bool = True
+def apply_actor_fix_annotation(
+    stem: str,
+    event_id: str,
+    *,
+    mode: str,
+    box: list[float] | None = None,
+    frame: int | None = None,
+    snap: bool = True,
 ) -> None:
-    """Record a manual actor pick; ``box=None`` means "nobody is the actor".
+    """Atomically update the durable actor verdict and its assignment.
 
-    ``frame`` marks a cross-frame pick (the box lives on that frame, not the
-    event's); ``snap=False`` forbids the IoU snap onto a stored detection.
-    Both replay identically on re-extraction.
+    The actor crop and identity assignment describe the same event. A new
+    pick, occluded verdict, or revert invalidates the old assignment, so both
+    mutations belong to one players-file read/modify/write.
     """
+    if mode not in {"pick", "occluded", "auto"}:
+        raise ValueError(f"Unknown actor-fix mode: {mode}")
+    if mode == "pick" and box is None:
+        raise ValueError("A pick requires a box")
+
     with _players_lock:
         data = _read_players_file(stem)
         fixes = data.setdefault("actor_fixes", {})
-        if box is None:
+        if mode == "pick":
+            fix: dict = {"box": [round(float(v), 1) for v in box or []]}
+            if frame is not None:
+                fix["frame"] = int(frame)
+            if not snap:
+                fix["snap"] = False
+            fixes[event_id] = fix
+        elif mode == "occluded":
             fixes[event_id] = {"none": True}
         else:
-            fixes[event_id] = {"box": [round(float(v), 1) for v in box]}
-            if frame is not None:
-                fixes[event_id]["frame"] = int(frame)
-            if not snap:
-                fixes[event_id]["snap"] = False
+            fixes.pop(event_id, None)
+            if not fixes:
+                data.pop("actor_fixes", None)
+
+        data.get("assignments", {}).pop(event_id, None)
         _save_players_file(stem, data)
-
-
-def remove_assignment(stem: str, event_id: str) -> None:
-    """Drop one event's player assignment — a re-picked actor is a different
-    person, so whatever identity the event carried no longer applies."""
-    with _players_lock:
-        data = _read_players_file(stem)
-        if data.get("assignments", {}).pop(event_id, None) is not None:
-            _save_players_file(stem, data)
-
-
-def remove_actor_fix(stem: str, event_id: str) -> None:
-    """Revert an event to the automatic pick."""
-    with _players_lock:
-        data = _read_players_file(stem)
-        if data.get("actor_fixes", {}).pop(event_id, None) is not None:
-            _save_players_file(stem, data)
 
 
 def match(

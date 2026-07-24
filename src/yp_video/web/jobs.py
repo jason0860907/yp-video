@@ -4,11 +4,14 @@ import asyncio
 import logging
 import time
 import uuid
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 
 log = logging.getLogger(__name__)
+MAX_LOG_LINES = 5_000
+MAX_RETAINED_JOBS = 200
 
 
 class JobStatus(str, Enum):
@@ -29,7 +32,7 @@ class Job:
     message: str = ""
     params: dict = field(default_factory=dict)
     error: str | None = None
-    logs: list[str] = field(default_factory=list)
+    logs: deque[str] = field(default_factory=lambda: deque(maxlen=MAX_LOG_LINES))
     created_at: float = field(default_factory=time.time)
     started_at: float | None = None
     _task: asyncio.Task | None = field(default=None, repr=False)
@@ -40,6 +43,7 @@ class Job:
         self._task = task
 
     def to_dict(self) -> dict:
+        """Small summary used by lists, status routes and SSE."""
         return {
             "id": self.id,
             "type": self.type,
@@ -49,7 +53,7 @@ class Job:
             "message": self.message,
             "params": self.params,
             "error": self.error,
-            "logs": self.logs,
+            "log_count": len(self.logs),
             "created_at": self.created_at,
             "started_at": self.started_at,
         }
@@ -98,7 +102,28 @@ class JobManager:
             params=params or {},
         )
         self.jobs[job.id] = job
+        self._prune_terminal_jobs()
         return job
+
+    def _prune_terminal_jobs(self) -> None:
+        overflow = len(self.jobs) - MAX_RETAINED_JOBS
+        if overflow <= 0:
+            return
+        terminal = sorted(
+            (
+                job
+                for job in self.jobs.values()
+                if job.status
+                in {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED}
+            ),
+            key=lambda job: job.created_at,
+        )
+        for job in terminal[:overflow]:
+            self.jobs.pop(job.id, None)
+
+    def job_logs(self, job_id: str) -> list[str] | None:
+        job = self.jobs.get(job_id)
+        return list(job.logs) if job is not None else None
 
     def get_job(self, job_id: str) -> Job | None:
         return self.jobs.get(job_id)

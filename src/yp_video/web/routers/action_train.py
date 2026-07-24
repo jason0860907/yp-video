@@ -10,9 +10,10 @@ import re
 import shutil
 from datetime import datetime
 from pathlib import Path
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from yp_video.config import (
     ACTION_ANNOTATIONS_DIR,
@@ -58,9 +59,9 @@ log = logging.getLogger(__name__)
 router = APIRouter()
 
 
-class ActionTrainRequest(BaseModel):
-    source: str = Field(default="vnl_1_5", pattern="^(vnl_1_5|action_annotations)$")
-    training_mode: str = Field(default="split", pattern="^(split|all|holdout)$")
+class ActionTrainBase(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     dataset: str | None = None
     frame_dir: str | None = None
     save_dir: str | None = None
@@ -92,6 +93,27 @@ class ActionTrainRequest(BaseModel):
     criterion: str = Field(default="map", pattern="^(map|loss)$")
     start_val_epoch: int = Field(default=0, ge=0)
     epoch_num_frames: int | None = Field(default=None, ge=1)
+    predict_location: bool = True
+    stop_vllm: bool = False
+
+    @model_validator(mode="after")
+    def validate_resume_mode(self):
+        if self.resume and self.init_checkpoint:
+            raise ValueError("resume and init_checkpoint are mutually exclusive")
+        if self.resume and not self.save_dir:
+            raise ValueError("resume requires save_dir")
+        return self
+
+
+class VnlActionTrainRequest(ActionTrainBase):
+    """Built-in VNL data owns its train/val split and has no camera-view mode."""
+
+    source: Literal["vnl_1_5"] = "vnl_1_5"
+
+
+class AnnotationActionTrainRequest(ActionTrainBase):
+    source: Literal["action_annotations"]
+    training_mode: Literal["split", "all", "holdout"] = "split"
     val_ratio: float = Field(default=0.2, gt=0, lt=1)
     split_seed: int = 42
     # holdout mode: the exact videos to hold out as the validation set; every
@@ -100,9 +122,13 @@ class ActionTrainRequest(BaseModel):
     holdout_videos: list[str] = Field(default_factory=list)
     # "all" trains every view together; "broadcast"/"sideline" restrict to one
     # camera view (labels carry a camera_view tag from _prepare_action_training_labels).
-    camera_view: str = Field(default="all", pattern="^(all|broadcast|sideline)$")
-    predict_location: bool = True
-    stop_vllm: bool = False
+    camera_view: Literal["all", "broadcast", "sideline"] = "all"
+
+
+ActionTrainRequest = Annotated[
+    VnlActionTrainRequest | AnnotationActionTrainRequest,
+    Field(discriminator="source"),
+]
 
 
 def _spot_path(path: str | Path) -> Path:
@@ -126,7 +152,7 @@ def _safe_run_name(dataset: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", dataset).strip("._") or "actions"
 
 
-def _audio_tag(req: ActionTrainRequest) -> str:
+def _audio_tag(req: ActionTrainBase) -> str:
     """Run-name fragment marking the modality: 'visual' or 'fusion'.
 
     Makes a run dir self-describing (e.g. yp_actions_fusion_<stamp> vs
@@ -139,7 +165,8 @@ def _audio_tag(req: ActionTrainRequest) -> str:
 def _resolve_save_dir(req: ActionTrainRequest, dataset: str | None = None) -> Path:
     dataset = dataset or req.dataset or _default_dataset(req.source)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    name = f"{_safe_run_name(dataset)}_{req.camera_view}_{_audio_tag(req)}_{stamp}"
+    view = req.camera_view if isinstance(req, AnnotationActionTrainRequest) else "all"
+    name = f"{_safe_run_name(dataset)}_{view}_{_audio_tag(req)}_{stamp}"
     return _spot_path(req.save_dir or (Path("exp") / name))
 
 
@@ -149,7 +176,7 @@ def _action_checkpoint_path(path: str | Path) -> Path:
     )
 
 
-def _resolve_checkpoint_dir(req: ActionTrainRequest, *, save_dir: Path) -> Path:
+def _resolve_checkpoint_dir(req: ActionTrainBase, *, save_dir: Path) -> Path:
     if req.checkpoint_dir:
         return _action_checkpoint_path(req.checkpoint_dir)
     return validate_checkpoint_dir(
@@ -387,7 +414,7 @@ def _read_val_set_file() -> list[str]:
     return names
 
 
-def _resolve_holdout_videos(req: ActionTrainRequest) -> list[str]:
+def _resolve_holdout_videos(req: AnnotationActionTrainRequest) -> list[str]:
     """Explicit request list wins; otherwise fall back to the val-set file."""
     names = req.holdout_videos or _read_val_set_file()
     if not names:
@@ -498,7 +525,7 @@ def _resolve_audio_dir(req: ActionTrainRequest, *, frame_dir: Path) -> Path | No
 
 
 def _audio_precompute_command(
-    req: ActionTrainRequest, *, label_dir: Path, audio_dir: Path
+    req: ActionTrainBase, *, label_dir: Path, audio_dir: Path
 ) -> list[str]:
     """Build the ``yp_spot.audio.precompute`` command for the run-local labels.
 
@@ -540,7 +567,11 @@ def _export_action_checkpoint_package(
         label_glob="*_actions.jsonl",
         training={
             "source": req.source,
-            "training_mode": req.training_mode,
+            "training_mode": (
+                req.training_mode
+                if isinstance(req, AnnotationActionTrainRequest)
+                else "dataset_split"
+            ),
             "dataset": req.dataset or _default_dataset(req.source),
             "frame_dir": str(_spot_path(req.frame_dir or _default_frame_dir(req.source))),
             "init_checkpoint": req.init_checkpoint or "",
@@ -628,11 +659,6 @@ def _build_command(
     if not SPOT_PYTHON.exists():
         raise HTTPException(503, f"SPOT python not found: {SPOT_PYTHON}")
 
-    if req.training_mode == "holdout" and req.source != "action_annotations":
-        raise HTTPException(
-            400, "holdout mode is only supported for action_annotations labels"
-        )
-
     dataset = req.dataset or _default_dataset(req.source)
     frame_dir_value = req.frame_dir or _default_frame_dir(req.source)
     frame_dir = _spot_path(frame_dir_value)
@@ -693,13 +719,7 @@ def _build_command(
         if audio_dir is None:
             raise HTTPException(400, "Audio features missing for late-fusion training")
         cmd.extend(["--audio_dir", str(audio_dir)])
-    if req.camera_view != "all":
-        if req.source != "action_annotations":
-            raise HTTPException(
-                400,
-                f"camera_view='{req.camera_view}' is only supported for "
-                "action_annotations labels; VNL labels carry no camera_view tag.",
-            )
+    if isinstance(req, AnnotationActionTrainRequest) and req.camera_view != "all":
         cmd.extend(["--camera_view", req.camera_view])
     if req.predict_location:
         cmd.append("--predict_location")
@@ -714,7 +734,7 @@ def _build_command(
         cmd.extend(["--init_checkpoint", str(init_checkpoint)])
     if req.epoch_num_frames is not None:
         cmd.extend(["--epoch_num_frames", str(req.epoch_num_frames)])
-    if req.source == "action_annotations":
+    if isinstance(req, AnnotationActionTrainRequest):
         label_dir = action_label_dir or ACTION_ANNOTATIONS_DIR
         if not any(label_dir.glob("*_actions.jsonl")):
             raise HTTPException(400, f"No action JSONL labels found in {label_dir}")
@@ -760,7 +780,7 @@ def _build_command(
     }
     if audio_dir is not None:
         params["audio_dir"] = str(audio_dir)
-    if req.source == "action_annotations":
+    if isinstance(req, AnnotationActionTrainRequest):
         params["label_dir"] = str(action_label_dir or ACTION_ANNOTATIONS_DIR)
         params["training_mode"] = req.training_mode
         params["camera_view"] = req.camera_view
@@ -791,7 +811,7 @@ async def start(req: ActionTrainRequest) -> dict:
         "feature_arch": req.feature_arch,
         "criterion": req.criterion,
     }
-    if req.source == "action_annotations":
+    if isinstance(req, AnnotationActionTrainRequest):
         initial_params["training_mode"] = req.training_mode
     job = job_manager.create_job(
         "action_train",
@@ -806,7 +826,7 @@ async def start(req: ActionTrainRequest) -> dict:
             frame_dir = _spot_path(req.frame_dir or _default_frame_dir(req.source))
             action_label_dir = None
             label_summary = None
-            if req.source == "action_annotations":
+            if isinstance(req, AnnotationActionTrainRequest):
                 items = await asyncio.to_thread(_action_label_items)
                 if not items:
                     raise RuntimeError(f"No action JSONL labels found in {ACTION_ANNOTATIONS_DIR}")
@@ -865,7 +885,9 @@ async def start(req: ActionTrainRequest) -> dict:
             audio_dir = await asyncio.to_thread(
                 _resolve_audio_dir, req, frame_dir=frame_dir
             )
-            if audio_dir is not None and req.source == "action_annotations":
+            if audio_dir is not None and isinstance(req, AnnotationActionTrainRequest):
+                if action_label_dir is None:
+                    raise RuntimeError("Action label snapshot was not prepared")
                 audio_dir.mkdir(parents=True, exist_ok=True)
                 pre_cmd = _audio_precompute_command(
                     req, label_dir=action_label_dir, audio_dir=audio_dir
