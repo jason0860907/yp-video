@@ -29,6 +29,13 @@ export interface Group {
 // shared "unsorted" row instead of each getting its own.
 export const MIN_CLUSTER_SIZE = 3;
 
+// Holding pen for a just-re-picked event: its crop is a different person now,
+// so it is pulled out of its old row and parked here as unassigned. Unlike an
+// auto-cluster it survives the rebuild (see below), so a pick always lands the
+// event in a distinct "unassigned" row until the user assigns it by hand — it
+// never silently re-clusters back into its old group.
+const REPICK_POOL = 'repick-pool';
+
 export interface GroupBoardOptions {
   picked: string;
   embedder: string;
@@ -55,13 +62,20 @@ export function useGroupBoard({ picked, embedder, threshold, records, recordById
   const newGroupSeq = useRef(0);
 
   // (Re)build the board whenever the clustering or saved players change:
-  // locked rows carry over untouched, saved players fill in what locked rows
-  // don't already hold, fresh clusters cover the rest. Unlocked rows are
-  // disposable by design — edits lock their row automatically.
+  // locked rows carry over untouched, the re-pick pool carries over as a
+  // sticky unassigned row, saved players fill in what those don't already
+  // hold, fresh clusters cover the rest. Other unlocked rows are disposable
+  // by design — edits lock their row automatically.
   useEffect(() => {
     if (!picked) return;
     setGroups((prev) => {
-      const out: Group[] = prev.filter((g) => g.locked).map((g) => ({ ...g, eventIds: [...g.eventIds] }));
+      // Locked rows and the (non-empty) re-pick pool survive. The pool keeps a
+      // just-picked event parked as unassigned instead of letting re-clustering
+      // re-home it; its events count as covered below so neither saved players
+      // nor fresh clusters can pull them back into a group.
+      const out: Group[] = prev
+        .filter((g) => g.locked || (g.key === REPICK_POOL && g.eventIds.length > 0))
+        .map((g) => ({ ...g, eventIds: [...g.eventIds] }));
       const covered = new Set(out.flatMap((g) => g.eventIds));
 
       const byPlayer = new Map<string, string[]>();
@@ -112,15 +126,11 @@ export function useGroupBoard({ picked, embedder, threshold, records, recordById
     markDirty();
   };
 
-  // Unlocked holding pen for a just-re-picked event: pulled out of its old
-  // player row (its crop is a different person now) but kept ON the board
-  // and clickable until the refetch + rebuild re-homes it into its new
-  // cluster. Unlocked, so the rebuild discards it and auto-save ignores it.
-  const REPICK_POOL = 'repick-pool';
-
   /** Pull one event out of every row — a re-picked actor is a different
    *  person, so the old player row no longer applies — and park it in the
-   *  unassigned pool. Locked rows included: that is the point. */
+   *  unassigned re-pick pool. Locked rows included: that is the point. The
+   *  pool survives the rebuild, so the event stays unassigned until the user
+   *  moves it, never silently re-clustering back into its old group. */
   const removeEvent = (eventId: string) => {
     setGroups((prev) => {
       const stripped = prev

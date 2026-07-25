@@ -23,7 +23,11 @@ model name stands for is answered by embedder.weights_id() at runtime.
 
 from __future__ import annotations
 
+import json
 import os
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
@@ -36,6 +40,7 @@ from yp_video.config import (
     REID_DIR,
 )
 from yp_video.core.cache import StatCache
+from yp_video.core.jsonl import atomic_write
 
 EMBEDDINGS_DIR = REID_DIR / "embeddings"
 CROPS_DIR = REID_DIR / "crops"
@@ -59,6 +64,81 @@ def embedding_path(stem: str, model: str) -> Path:
     return EMBEDDINGS_DIR / f"{stem}.{model}.npy"
 
 
+def embedding_refresh_path(stem: str) -> Path:
+    """Pending per-event matrix refreshes after actor fixes."""
+    return EMBEDDINGS_DIR / f"{stem}_embedding-refresh.json"
+
+
+_embedding_write_lock = threading.RLock()
+
+
+@contextmanager
+def embedding_write_transaction() -> Iterator[None]:
+    """Serialize matrix/state commits without serializing model inference."""
+    with _embedding_write_lock:
+        yield
+
+
+def _load_embedding_refreshes(stem: str) -> dict[str, set[str]]:
+    path = embedding_refresh_path(stem)
+    if not path.exists():
+        return {}
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    return {
+        str(model): {str(event_id) for event_id in event_ids}
+        for model, event_ids in data.items()
+    }
+
+
+def _save_embedding_refreshes(
+    stem: str, refreshes: dict[str, set[str]]
+) -> None:
+    path = embedding_refresh_path(stem)
+    data = {
+        model: sorted(event_ids)
+        for model, event_ids in sorted(refreshes.items())
+        if event_ids
+    }
+    if not data:
+        path.unlink(missing_ok=True)
+        return
+    with atomic_write(path) as f:
+        json.dump(data, f, ensure_ascii=False, indent=1)
+
+
+def mark_actor_embedding_stale(
+    stem: str, models: list[str], event_id: str
+) -> None:
+    """Record the exact event each matrix still needs to incorporate."""
+    with _embedding_write_lock:
+        refreshes = _load_embedding_refreshes(stem)
+        for model in models:
+            refreshes.setdefault(model, set()).add(event_id)
+        _save_embedding_refreshes(stem, refreshes)
+
+
+def mark_actor_embedding_refreshed(
+    stem: str, model: str, event_id: str
+) -> None:
+    with _embedding_write_lock:
+        refreshes = _load_embedding_refreshes(stem)
+        pending = refreshes.get(model)
+        if pending is not None:
+            pending.discard(event_id)
+            if not pending:
+                refreshes.pop(model)
+        _save_embedding_refreshes(stem, refreshes)
+
+
+def clear_embedding_refreshes(stem: str, model: str) -> None:
+    """A full model backfill supersedes every pending one-row refresh."""
+    with _embedding_write_lock:
+        refreshes = _load_embedding_refreshes(stem)
+        refreshes.pop(model, None)
+        _save_embedding_refreshes(stem, refreshes)
+
+
 # One dir scan serves every embedded_models call (the video list asks per
 # cut); any matrix create/delete churns the directory entry via temp+rename,
 # so the dir's own stat is a correct invalidation key.
@@ -70,6 +150,37 @@ def embedded_models(stem: str) -> list[str]:
     if not EMBEDDINGS_DIR.exists():
         return []
     return _models_map().get(stem, [])
+
+
+def stale_embedding_models(stem: str) -> list[str]:
+    """Matrices with pending actor events or older than their source records.
+
+    The event-level sidecar is the authoritative state. The mtime fallback
+    recognizes stale matrices created before that sidecar was introduced and
+    also keeps a crashed partial write safely unavailable.
+    """
+    source = reid_path(stem)
+    if not source.exists():
+        return []
+    source_mtime = source.stat().st_mtime_ns
+    with _embedding_write_lock:
+        pending = _load_embedding_refreshes(stem)
+    return [
+        model
+        for model in embedded_models(stem)
+        if pending.get(model)
+        or embedding_path(stem, model).stat().st_mtime_ns < source_mtime
+    ]
+
+
+def embedding_is_fresh(stem: str, model: str) -> bool:
+    path = embedding_path(stem, model)
+    source = reid_path(stem)
+    return (
+        path.exists()
+        and source.exists()
+        and model not in stale_embedding_models(stem)
+    )
 
 
 def _models_map() -> dict[str, list[str]]:
@@ -103,13 +214,14 @@ def save_embedding_matrix(stem: str, model: str, matrix: np.ndarray) -> None:
     """Atomic replace, mirroring jsonl.atomic_write: readers see old or new."""
     path = embedding_path(stem, model)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with NamedTemporaryFile(dir=path.parent, prefix=f"{path.name}.", suffix=".tmp", delete=False) as f:
-        try:
-            np.save(f, matrix.astype(np.float32, copy=False))
-        except BaseException:
-            os.unlink(f.name)
-            raise
-    os.replace(f.name, path)
+    with _embedding_write_lock:
+        with NamedTemporaryFile(dir=path.parent, prefix=f"{path.name}.", suffix=".tmp", delete=False) as f:
+            try:
+                np.save(f, matrix.astype(np.float32, copy=False))
+            except BaseException:
+                os.unlink(f.name)
+                raise
+        os.replace(f.name, path)
 
 
 def crop_dir(stem: str) -> Path:

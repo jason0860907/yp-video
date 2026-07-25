@@ -13,14 +13,14 @@ from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import unquote
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from yp_video.config import cut_kind_of, find_cut, iter_all_cuts
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import read_jsonl, read_jsonl_cached
-from yp_video.reid import actor_fixes, identity, pipeline, store, tracking
+from yp_video.reid import actor_fixes, checkpoints, identity, pipeline, store, tracking
 from yp_video.reid.detector import build_keypoint_sources
 from yp_video.reid.embedder import DEFAULT_EMBEDDER, EMBEDDER_NAMES, build_embedders, threshold_calibration
 from yp_video.reid.resolution import actor_resolution
@@ -31,6 +31,16 @@ log = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _resolve_optional_checkpoint(ref: str | None) -> Path | None:
+    """A checkpoint ref from the UI; None keeps the official default."""
+    if not ref:
+        return None
+    try:
+        return checkpoints.resolve_checkpoint(ref)
+    except (ValueError, FileNotFoundError, KeyError) as exc:
+        raise HTTPException(400, f"Bad checkpoint: {exc}") from exc
+
+
 class ReidStartRequest(BaseModel):
     videos: list[str] = Field(min_length=1)
     overwrite: bool = False
@@ -38,6 +48,9 @@ class ReidStartRequest(BaseModel):
     # Keypoint source from the registry (see /reid/options); detection
     # itself is always RF-DETR.
     keypoints: str = "rf-detr"
+    # Checkpoint package ref for the clip-reident embedder; None = official
+    # default. Only affects the clip-reident family.
+    checkpoint: str | None = None
 
 
 def _read_header(stem: str) -> dict | None:
@@ -65,6 +78,7 @@ def list_videos() -> list[dict]:
                 {k: header.get(k, 0) for k in ("ok", "multi", "miss")} if header else None
             ),
             "embedded_models": store.embedded_models(f.stem),
+            "stale_embedding_models": store.stale_embedding_models(f.stem),
             "player_count": len(set(identity.load_assignments(f.stem).values())),
             "done": identity.load_done(f.stem),
         })
@@ -77,6 +91,7 @@ def options() -> dict:
     pages. Each embedder ships its cluster-threshold slider calibration, so
     adding a model server-side never needs a frontend edit."""
     registry = build_embedders()
+    runs = checkpoints.list_checkpoints()
     return {
         "keypoint_sources": list(build_keypoint_sources()),
         "default_embedder": DEFAULT_EMBEDDER if DEFAULT_EMBEDDER in registry else next(iter(registry)),
@@ -85,11 +100,20 @@ def options() -> dict:
             {"name": n, "threshold": threshold_calibration(n), "masked": getattr(e, "masked_input", False)}
             for n, e in registry.items()
         ],
+        "checkpoints": [
+            {
+                "ref": r["path"],
+                "run_name": r["run_name"],
+                "active": r["active"],
+            }
+            for r in runs
+        ],
     }
 
 
 @router.post("/start")
 async def start(req: ReidStartRequest) -> dict:
+    checkpoint = _resolve_optional_checkpoint(req.checkpoint)
     keypoint_sources = build_keypoint_sources()
     if req.keypoints not in keypoint_sources:
         raise HTTPException(
@@ -126,7 +150,7 @@ async def start(req: ReidStartRequest) -> dict:
         job,
         video_paths,
         stop_vllm=req.stop_vllm,
-        work=lambda p, cb: pipeline.extract_video(p, keypoints=req.keypoints, on_progress=cb),
+        work=lambda p, cb: pipeline.extract_video(p, keypoints=req.keypoints, checkpoint=checkpoint, on_progress=cb),
         done_message=lambda c: f"{c['ok']} ok · {c['multi']} multi · {c['miss']} miss",
         start_message="detecting players...",
     )
@@ -186,6 +210,9 @@ class EmbedStartRequest(BaseModel):
     models: list[str] | None = None
     overwrite: bool = False
     stop_vllm: bool = False
+    # Checkpoint package ref for the clip-reident embedder; None = official
+    # default. Only affects the clip-reident family.
+    checkpoint: str | None = None
 
 
 @router.post("/embed")
@@ -195,6 +222,7 @@ async def embed(req: EmbedStartRequest) -> dict:
     This is how a newly registered embedder covers already-extracted videos —
     no re-extraction, the video file is never opened.
     """
+    checkpoint = _resolve_optional_checkpoint(req.checkpoint)
     registry = build_embedders()
     unknown = set(req.models or ()) - set(registry)
     if unknown:
@@ -217,7 +245,7 @@ async def embed(req: EmbedStartRequest) -> dict:
         job,
         video_paths,
         stop_vllm=req.stop_vllm,
-        work=lambda p, cb: pipeline.embed_video(p.stem, models=req.models, overwrite=req.overwrite, on_progress=cb),
+        work=lambda p, cb: pipeline.embed_video(p.stem, models=req.models, overwrite=req.overwrite, checkpoint=checkpoint, on_progress=cb),
         done_message=lambda c: (
             f"{', '.join(c['models'])} over {c['crops']} crops" if c["models"] else "already embedded"
         ),
@@ -342,6 +370,20 @@ def _validated_model(model: str) -> str:
     return model
 
 
+def _validated_fresh_model(stem: str, model: str) -> str:
+    model = _validated_model(model)
+    if not store.embedding_is_fresh(stem, model):
+        if store.embedding_path(stem, model).exists():
+            raise HTTPException(
+                409,
+                f"{model} embeddings for {stem} are refreshing after an actor fix",
+            )
+        raise HTTPException(
+            404, f"No {model} embeddings for {stem} — backfill the model first"
+        )
+    return model
+
+
 def _load_or_http(loader):
     """Run a reid data loader with its failures mapped to actionable HTTP
     errors: matrix file missing → 404, matrix/record row mismatch → 409."""
@@ -361,7 +403,11 @@ def clusters(
 ) -> dict:
     """Unsupervised grouping of one video's embeddings (event ids per cluster)."""
     stem = Path(unquote(name)).stem
-    records, labels = _load_or_http(lambda: identity.cluster_video(stem, _validated_model(model), threshold))
+    records, labels = _load_or_http(
+        lambda: identity.cluster_video(
+            stem, _validated_fresh_model(stem, model), threshold
+        )
+    )
     grouped: dict[int, list[str]] = {}
     for record, label in zip(records, labels):
         grouped.setdefault(int(label), []).append(record["id"])
@@ -386,7 +432,11 @@ def get_players(name: str, model: str = DEFAULT_EMBEDDER) -> dict:
     assignments = identity.load_assignments(stem)
     matches: dict[str, dict] = {}
     if assignments:
-        records, matrix = _load_or_http(lambda: identity.load_embeddings(stem, model=_validated_model(model)))
+        records, matrix = _load_or_http(
+            lambda: identity.load_embeddings(
+                stem, model=_validated_fresh_model(stem, model)
+            )
+        )
         matches = identity.match(records, matrix, assignments)
     return {
         "assignments": assignments,
@@ -458,6 +508,7 @@ class ActorFixBase(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     event_id: str = Field(min_length=1)
+    model: str = Field(min_length=1)
 
 
 class PickActorRequest(ActorFixBase):
@@ -486,7 +537,9 @@ ActorFixRequest = Annotated[
 
 
 @router.post("/actor-fix/{name}")
-def actor_fix(name: str, req: ActorFixRequest) -> dict:
+def actor_fix(
+    name: str, req: ActorFixRequest, background_tasks: BackgroundTasks
+) -> dict:
     """Re-point one event at the person the user clicked (or nobody / auto).
 
     The fix lands in the players file (the durable human record, replayed on
@@ -514,13 +567,30 @@ def actor_fix(name: str, req: ActorFixRequest) -> dict:
             )
         else:
             command = actor_fixes.RevertActor(mode="auto", event_id=req.event_id)
-        record = actor_fixes.apply(video_path, command)
+        result = actor_fixes.apply(
+            video_path, command, active_model=_validated_model(req.model)
+        )
     except FileNotFoundError as e:
         raise HTTPException(404, str(e)) from e
     except KeyError as e:
         raise HTTPException(404, str(e)) from e
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
+    record = result.record
     for d in record.get("detections") or []:
         d.pop("keypoints", None)
-    return {"record": record}
+    track_link = None
+    if store.tracks_path(stem).exists():
+        track_link = tracking.link_events(stem).get(req.event_id)
+    background_tasks.add_task(
+        actor_fixes.refresh_deferred,
+        stem,
+        req.event_id,
+        models=result.refreshing_models,
+        expected_revision=result.actor_revision,
+    )
+    return {
+        "record": record,
+        "track_link": track_link,
+        "refreshing_models": result.refreshing_models,
+    }

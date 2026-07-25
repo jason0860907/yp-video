@@ -25,6 +25,8 @@ export function ReidPredictPage() {
   const [overwrite, setOverwrite] = useState(false);
   const [stopVllm, setStopVllm] = useState(false);
   const [keypoints, setKeypoints] = useState('rf-detr');
+  // '' = the fixed official checkpoint; else an explicitly selected candidate.
+  const [checkpoint, setCheckpoint] = useState('');
   // Server list + live overrides (POST responses and SSE frames). The list
   // is the durable source; overrides keep cards fresh between refetches.
   const [jobOverrides, setJobOverrides] = useState<Record<string, Job>>({});
@@ -44,6 +46,7 @@ export function ReidPredictPage() {
   });
   const keypointSources = optionsQuery.data?.keypoint_sources ?? ['rf-detr'];
   const registeredEmbedders = (optionsQuery.data?.embedders ?? []).map((e) => e.name);
+  const checkpoints = optionsQuery.data?.checkpoints ?? [];
   const videos = videosQuery.data ?? [];
   const extracted = videos.filter((v) => v.has_reid);
 
@@ -79,9 +82,9 @@ export function ReidPredictPage() {
     }
   };
 
-  const run = () => startJob(API.reid.start, 'ReID Predict', { keypoints });
+  const run = () => startJob(API.reid.start, 'ReID Predict', { keypoints, checkpoint: checkpoint || null });
   const runTracking = () => startJob(API.reid.track, 'Rally Tracking');
-  const runEmbed = () => startJob(API.reid.embed, 'embedding backfill');
+  const runEmbed = () => startJob(API.reid.embed, 'embedding backfill', { checkpoint: checkpoint || null });
   // Both jobs queue immediately; the inference lock runs them back to back
   // (one GPU — parallel would just thrash VRAM).
   const runBoth = async () => {
@@ -139,6 +142,26 @@ export function ReidPredictPage() {
                 ))}
               </select>
             </label>
+            {checkpoints.length > 0 && (
+              <label className="block text-xs text-text-secondary">
+                <span className="mb-1 block">
+                  Checkpoint <span className="text-text-muted">— clip-reident weights to embed with</span>
+                </span>
+                <select
+                  value={checkpoint}
+                  onChange={(e) => setCheckpoint(e.target.value)}
+                  className="w-full cursor-pointer appearance-none rounded-lg border border-border-light bg-surface-50 px-3 py-1.5 text-xs text-text-primary focus:border-primary/50 focus:outline-none"
+                >
+                  <option value="">Default (official) — {checkpoints.find((c) => c.active)?.run_name ?? 'none'}</option>
+                  {checkpoints.map((c) => (
+                    <option key={c.ref} value={c.ref}>
+                      {c.run_name}
+                      {c.active ? ' (active)' : ''}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <label className="flex cursor-pointer items-center gap-2 text-xs text-text-secondary">
               <input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} className="h-3.5 w-3.5 accent-primary" />
               Overwrite existing ReID results

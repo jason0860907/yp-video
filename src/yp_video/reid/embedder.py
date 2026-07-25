@@ -54,9 +54,19 @@ class Embedder(Protocol):
     """One entry in the embedder registry (see build_embedders)."""
 
     def embed_paths(
-        self, paths: Sequence[Path], *, batch_size: int = 32, on_progress: ProgressFn | None = None
+        self,
+        paths: Sequence[Path],
+        *,
+        batch_size: int = 32,
+        on_progress: ProgressFn | None = None,
+        checkpoint: Path | None = None,
     ) -> np.ndarray:
-        """Crop files → (N, dim) float32, L2-normalized, NaN row per unreadable file."""
+        """Crop files → (N, dim) float32, L2-normalized, NaN row per unreadable file.
+
+        ``checkpoint`` overrides which weight package to load; only the
+        checkpoint-backed embedders (clip-reident) honor it — the rest ignore
+        it. ``None`` means the fixed official default package.
+        """
         ...
 
     @property
@@ -90,7 +100,12 @@ class ClipReidEmbedder:
         self._session = ort.InferenceSession(path, providers=["CPUExecutionProvider"])
 
     def embed_paths(
-        self, paths: Sequence[Path], *, batch_size: int = 32, on_progress: ProgressFn | None = None
+        self,
+        paths: Sequence[Path],
+        *,
+        batch_size: int = 32,
+        on_progress: ProgressFn | None = None,
+        checkpoint: Path | None = None,  # ONNX weights are fixed; ignored here
     ) -> np.ndarray:
         import cv2
 
@@ -134,9 +149,14 @@ class SubprocessEmbedder:
         return False  # every call cold-loads in the subprocess; be honest
 
     def embed_paths(
-        self, paths: Sequence[Path], *, batch_size: int = 32, on_progress: ProgressFn | None = None
+        self,
+        paths: Sequence[Path],
+        *,
+        batch_size: int = 32,
+        on_progress: ProgressFn | None = None,
+        checkpoint: Path | None = None,
     ) -> np.ndarray:
-        package = default_checkpoint()
+        package = checkpoint or default_checkpoint()
         if package is None:
             raise ReidInferenceError("No ReID checkpoint package available")
         dim = read_manifest(package)["model"]["embedding_dim"]
@@ -222,9 +242,16 @@ class MaskedEmbedder:
         return self._base.loaded
 
     def embed_paths(
-        self, paths: Sequence[Path], *, batch_size: int = 32, on_progress: ProgressFn | None = None
+        self,
+        paths: Sequence[Path],
+        *,
+        batch_size: int = 32,
+        on_progress: ProgressFn | None = None,
+        checkpoint: Path | None = None,
     ) -> np.ndarray:
-        return self._base.embed_paths(paths, batch_size=batch_size, on_progress=on_progress)
+        return self._base.embed_paths(
+            paths, batch_size=batch_size, on_progress=on_progress, checkpoint=checkpoint
+        )
 
 
 # Registered embedder names — the API-facing whitelist. What weights a name
@@ -232,10 +259,15 @@ class MaskedEmbedder:
 EMBEDDER_NAMES = ("clip-reid", "clip-reid-masked", "clip-reident", "clip-reident-masked")
 
 
+def base_embedder_name(name: str) -> str:
+    """Weight-sharing family for masked/unmasked input variants."""
+    return name.removesuffix("-masked")
+
+
 def weights_id(name: str) -> str:
     """Identifier of the weights a name currently binds to.
 
-    The clip-reident names follow the best checkpoint package, so this is the
+    The clip-reident names follow the default checkpoint package, so this is the
     only honest answer to "which weights produced this matrix" — record it
     wherever that question will be asked later.
     """

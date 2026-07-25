@@ -26,7 +26,7 @@ import { ReidVideoPlayer, type PlayerHandle } from '@/components/reid/ReidVideoP
 import { useGroupBoard } from '@/components/reid/useGroupBoard';
 import { errMsg, type ActorFix, type Rally, type SidebarAction, type TrackData } from '@/components/reid/shared';
 import { LiveJob } from '@/components/job/LiveJob';
-import type { ActionAnnotationData, Job, ReidCluster, ReidOptions, ReidPlayers, ReidRecord, ReidVideo } from '@/types/api';
+import type { ActionAnnotationData, Job, ReidActorFixResponse, ReidCluster, ReidOptions, ReidPlayers, ReidRecord, ReidVideo } from '@/types/api';
 
 // Embedders and their threshold-slider calibration both come from
 // /reid/options (types/api.ts ReidOptions) — cosine-distance scales differ
@@ -35,6 +35,14 @@ import type { ActionAnnotationData, Job, ReidCluster, ReidOptions, ReidPlayers, 
 const FALLBACK_THRESHOLD = { min: 0.05, max: 0.95, default: 0.3, step: 0.01 };
 // Show enough decimals to tell adjacent slider stops apart.
 const fmtThreshold = (v: number, step: number) => v.toFixed(step < 0.01 ? 3 : 2);
+const retryEmbeddingRefresh = (failureCount: number, error: Error) =>
+  error instanceof ApiError && error.status === 409
+    ? failureCount < 20
+    : failureCount < 1;
+const embeddingRetryDelay = (attempt: number, error: Error) =>
+  error instanceof ApiError && error.status === 409
+    ? 500
+    : Math.min(1000 * 2 ** attempt, 5000);
 
 const selectCls =
   'w-auto cursor-pointer appearance-none rounded-lg border border-border-light bg-surface-50 px-3 py-1 text-xs text-text-primary focus:border-primary/50 focus:outline-none';
@@ -173,6 +181,8 @@ export function ReidLabelPage() {
     queryKey: ['reid-clusters', picked, threshold, embedder],
     queryFn: () => apiFetch<{ clusters: ReidCluster[] }>(API.reid.clusters(picked, threshold, embedder)),
     enabled: Boolean(picked),
+    retry: retryEmbeddingRefresh,
+    retryDelay: embeddingRetryDelay,
   });
   const clusters = useMemo(() => clustersQuery.data?.clusters ?? [], [clustersQuery.data]);
 
@@ -180,6 +190,8 @@ export function ReidLabelPage() {
     queryKey: ['reid-players', picked, embedder],
     queryFn: () => apiFetch<ReidPlayers>(API.reid.players(picked, embedder)),
     enabled: Boolean(picked),
+    retry: retryEmbeddingRefresh,
+    retryDelay: embeddingRetryDelay,
   });
   const assignments = useMemo(() => playersQuery.data?.assignments ?? {}, [playersQuery.data]);
   const matches = playersQuery.data?.matches ?? {};
@@ -233,19 +245,57 @@ export function ReidLabelPage() {
     if (fixingEvent) return;
     setFixingEvent(eventId);
     try {
-      await apiFetch(API.reid.actorFix(picked), { method: 'POST', body: { event_id: eventId, ...fix } });
+      const result = await apiFetch<ReidActorFixResponse>(API.reid.actorFix(picked), {
+        method: 'POST',
+        body: { event_id: eventId, model: embedder, ...fix },
+      });
+      // The POST already returns the changed record and its one track link.
+      // Patch the two large payloads locally instead of downloading them again.
+      qc.setQueryData<{ meta: Record<string, unknown>; records: ReidRecord[] }>(
+        ['reid-results', picked],
+        (current) =>
+          current
+            ? {
+                ...current,
+                records: current.records.map((record) =>
+                  record.id === eventId ? result.record : record,
+                ),
+              }
+            : current,
+      );
+      qc.setQueryData<TrackData | null>(['reid-tracks', picked], (current) => {
+        if (!current) return current;
+        const links = { ...current.links };
+        if (result.track_link) links[eventId] = result.track_link;
+        else delete links[eventId];
+        return { ...current, links };
+      });
       // The crop is a different person now — the server dropped the event's
       // assignment; mirror it locally so a locked row's auto-save can't
       // resurrect the stale identity.
       board.removeEvent(eventId);
       toast.success(fix.mode === 'occluded' ? 'Marked as occluded' : fix.mode === 'pick' ? 'Player updated' : 'Reverted to the auto pick');
+      // Cached inactive models must not look current while their background
+      // rows are refreshing. Only the visible model blocks this interaction.
       await Promise.all([
-        qc.invalidateQueries({ queryKey: ['reid-results', picked] }),
-        qc.invalidateQueries({ queryKey: ['reid-clusters', picked] }),
-        qc.invalidateQueries({ queryKey: ['reid-players', picked] }),
-        // The event's box changed, so its event→tracklet link did too — a
-        // "no actor" event must drop off the overlay immediately.
-        qc.invalidateQueries({ queryKey: ['reid-tracks', picked] }),
+        qc.invalidateQueries({
+          queryKey: ['reid-clusters', picked],
+          refetchType: 'none',
+        }),
+        qc.invalidateQueries({
+          queryKey: ['reid-players', picked],
+          refetchType: 'none',
+        }),
+      ]);
+      await Promise.all([
+        qc.refetchQueries({
+          queryKey: ['reid-clusters', picked, threshold, embedder],
+          exact: true,
+        }),
+        qc.refetchQueries({
+          queryKey: ['reid-players', picked, embedder],
+          exact: true,
+        }),
       ]);
     } catch (e) {
       toast.error(`Actor fix failed: ${errMsg(e)}`);

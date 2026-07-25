@@ -42,16 +42,20 @@ from yp_video.reid.detector import (
     build_keypoint_sources,
     iou,
 )
-from yp_video.reid.embedder import build_embedders
+from yp_video.reid.embedder import base_embedder_name, build_embedders
 from yp_video.reid.resolution import ActorResolution
 from yp_video.reid.store import (
     EMBEDDINGS_DIR,
     SKIP_LABELS,
     action_annotation_path,
+    clear_embedding_refreshes,
     crop_dir,
     embedded_models,
     embedding_path,
+    embedding_write_transaction,
     load_embedding_matrix,
+    mark_actor_embedding_refreshed,
+    mark_actor_embedding_stale,
     reid_path,
     save_embedding_matrix,
 )
@@ -197,7 +201,11 @@ def _attach_person(
 
 
 def extract_video(
-    video_path: Path, *, keypoints: str = DEFAULT_KEYPOINT_SOURCE, on_progress: ProgressFn | None = None
+    video_path: Path,
+    *,
+    keypoints: str = DEFAULT_KEYPOINT_SOURCE,
+    checkpoint: Path | None = None,
+    on_progress: ProgressFn | None = None,
 ) -> dict:
     """Run the full detect → associate → crop → embed pass for one video.
 
@@ -387,12 +395,17 @@ def extract_video(
     write_jsonl(reid_path(stem), header, records)
     # Fresh extraction invalidates every model's rows — recompute them all,
     # continuing the same progress channel (the item bar restarts per phase).
-    embed_video(stem, overwrite=True, on_progress=on_progress)
+    embed_video(stem, overwrite=True, checkpoint=checkpoint, on_progress=on_progress)
     return counts
 
 
 def embed_video(
-    stem: str, *, models: list[str] | None = None, overwrite: bool = False, on_progress: ProgressFn | None = None
+    stem: str,
+    *,
+    models: list[str] | None = None,
+    overwrite: bool = False,
+    checkpoint: Path | None = None,
+    on_progress: ProgressFn | None = None,
 ) -> dict:
     """Crops on disk → one (n_records, dim) npy matrix per embedder.
 
@@ -443,11 +456,13 @@ def embed_video(
         progress: ProgressFn | None = None
         if on_progress:
             progress = lambda done, total, msg, name=name: on_progress(done, total, f"{name} · {msg}")
-        matrix = embedder.embed_paths(inputs, on_progress=progress)
+        matrix = embedder.embed_paths(inputs, on_progress=progress, checkpoint=checkpoint)
         full = np.full((len(records), matrix.shape[1]), np.nan, dtype=np.float32)
         if len(owners):
             full[owners] = matrix
-        save_embedding_matrix(stem, name, full)
+        with embedding_write_transaction():
+            save_embedding_matrix(stem, name, full)
+            clear_embedding_refreshes(stem, name)
     return {"models": sorted(targets), "crops": len(paths)}
 
 
@@ -498,7 +513,7 @@ def _mask_crops(
 
 # Serializes apply_actor_fix's read-modify-write of the reid jsonl: two
 # quick picks would otherwise interleave and one would be lost.
-_actor_fix_lock = threading.Lock()
+_actor_fix_lock = threading.RLock()
 
 
 def apply_actor_fix(
@@ -506,6 +521,7 @@ def apply_actor_fix(
     event_id: str,
     box: list[float] | None,
     *,
+    models: list[str],
     none: bool = False,
     frame: int | None = None,
     snap: bool = True,
@@ -528,10 +544,27 @@ def apply_actor_fix(
     arbitration ruled that no stored detection is this player, so an IoU
     snap could only attach an occluder.
 
+    Only ``models`` are refreshed synchronously. Other existing matrices keep
+    an explicit pending event in the refresh sidecar; the application service
+    refreshes them after the response.
+
     Returns the updated record without embeddings (the UI payload).
     """
-    with _actor_fix_lock:
-        return _apply_actor_fix(video_path, event_id, box, none=none, frame=frame, snap=snap)
+    stem = video_path.stem
+    with embedding_write_transaction(), _actor_fix_lock:
+        mark_actor_embedding_stale(stem, embedded_models(stem), event_id)
+        record, row, crop = _apply_actor_fix(
+            video_path, event_id, box, none=none, frame=frame, snap=snap
+        )
+    _patch_embedding_row(
+        stem,
+        record,
+        row,
+        crop,
+        models=models,
+        expected_revision=int(record["actor_revision"]),
+    )
+    return record
 
 
 def _apply_actor_fix(
@@ -542,7 +575,7 @@ def _apply_actor_fix(
     none: bool = False,
     frame: int | None = None,
     snap: bool = True,
-) -> dict:
+) -> tuple[dict, int, object | None]:
     import cv2
 
     stem = video_path.stem
@@ -552,6 +585,7 @@ def _apply_actor_fix(
     if row is None:
         raise KeyError(f"No ReID record for event {event_id}")
     record = records[row]
+    record["actor_revision"] = int(record.get("actor_revision") or 0) + 1
 
     frame_w, frame_h = meta.get("frame_size") or [0, 0]
     xy = record.get("xy")  # None for invisible / point-less events
@@ -626,32 +660,149 @@ def _apply_actor_fix(
             record["status"] = "ok"
 
     write_jsonl(path, meta, records)
-    _patch_embedding_row(stem, record, row, crop)
-    return dict(record)
+    return dict(record), row, crop
 
 
-def _patch_embedding_row(stem: str, record: dict, row: int, crop) -> None:
-    """Refresh one record's row in every embedding matrix on disk.
+_embedding_locks_guard = threading.Lock()
+_embedding_locks: dict[tuple[str, str], threading.Lock] = {}
+
+
+def _embedding_lock(stem: str, model: str) -> threading.Lock:
+    with _embedding_locks_guard:
+        return _embedding_locks.setdefault((stem, model), threading.Lock())
+
+
+def _record_revision_is_current(
+    stem: str, event_id: str, expected_revision: int
+) -> bool:
+    with _actor_fix_lock:
+        _meta, records = read_jsonl_cached(reid_path(stem))
+    return any(
+        record.get("id") == event_id
+        and int(record.get("actor_revision") or 0) == expected_revision
+        for record in records
+    )
+
+
+def refresh_actor_embeddings(
+    stem: str,
+    event_id: str,
+    *,
+    models: list[str],
+    expected_revision: int,
+) -> list[str]:
+    """Refresh deferred models if this actor verdict is still current.
+
+    A later pick supersedes this background task through ``actor_revision``.
+    Each matrix is loaded only after inference and under its own lock, so
+    concurrent fixes to different events merge instead of losing a row.
+    """
+    import cv2
+
+    if not models or not _record_revision_is_current(
+        stem, event_id, expected_revision
+    ):
+        return []
+    with _actor_fix_lock:
+        _meta, records = read_jsonl_cached(reid_path(stem))
+    row = next(
+        (i for i, record in enumerate(records) if record["id"] == event_id),
+        None,
+    )
+    if row is None:
+        return []
+    record = dict(records[row])
+    crop = None
+    if record.get("crop"):
+        crop = cv2.imread(str(crop_dir(stem) / record["crop"]))
+        if crop is None:
+            raise ValueError(f"Actor crop is unreadable: {record['crop']}")
+    return _patch_embedding_row(
+        stem,
+        record,
+        row,
+        crop,
+        models=models,
+        expected_revision=expected_revision,
+    )
+
+
+def _patch_embedding_row(
+    stem: str,
+    record: dict,
+    row: int,
+    crop,
+    *,
+    models: list[str],
+    expected_revision: int,
+) -> list[str]:
+    """Refresh selected matrix rows, batching variants with shared weights.
 
     ``crop=None`` (nobody is the actor) blanks the row to NaN; so does a
     matrix whose model is no longer registered — a stale embedding presented
-    as current would silently corrupt that model's clusters.
+    as current would silently corrupt that model's clusters. Masked and
+    unmasked variants of one base model are inferred in one batch, so the
+    subprocess embedder loads its weights only once.
     """
     import numpy as np
 
     from yp_video.reid.store import masked_crop_dir
 
+    existing = set(embedded_models(stem))
+    targets = sorted(set(models) & existing)
+    if not targets:
+        return []
+    if not _record_revision_is_current(
+        stem, str(record["id"]), expected_revision
+    ):
+        return []
+
     registry = build_embedders()
-    for name in embedded_models(stem):
-        matrix = load_embedding_matrix(stem, name)
-        embedder = registry.get(name)
+    normal_path = crop_dir(stem) / record["crop"] if crop is not None else None
+    masked_path = None
+    if crop is not None and any(name.endswith("-masked") for name in targets):
+        masked_path = masked_crop_dir(stem) / record["crop"]
+        if not masked_path.exists():
+            # Crop creation participates in the same commit boundary as the
+            # application-service rollback. A foreground failure must never
+            # delete a crop concurrently produced by an older background job.
+            with embedding_write_transaction():
+                if not masked_path.exists():
+                    _masked_record_crop(stem, record, crop)
+
+    groups: dict[str, list[str]] = {}
+    for name in targets:
+        groups.setdefault(base_embedder_name(name), []).append(name)
+
+    updated: list[str] = []
+    for base_name, variants in groups.items():
+        vectors: dict[str, np.ndarray] = {}
+        embedder = registry.get(base_name)
         if crop is not None and embedder is not None:
-            if getattr(embedder, "masked_input", False):
-                _masked_record_crop(stem, record, crop)  # refresh the persisted masked jpg
-                path = masked_crop_dir(stem) / record["crop"]
-            else:
-                path = crop_dir(stem) / record["crop"]
-            matrix[row] = embedder.embed_paths([path])[0]
-        else:
-            matrix[row] = np.nan
-        save_embedding_matrix(stem, name, matrix)
+            paths: list[Path] = []
+            for name in variants:
+                path = masked_path if name.endswith("-masked") else normal_path
+                if path is None:
+                    raise ValueError(f"Missing actor crop for {base_name}")
+                paths.append(path)
+            batch = embedder.embed_paths(paths)
+            vectors = {name: batch[index] for index, name in enumerate(variants)}
+
+        for name in variants:
+            with (
+                embedding_write_transaction(),
+                _embedding_lock(stem, name),
+                _actor_fix_lock,
+            ):
+                if not _record_revision_is_current(
+                    stem, str(record["id"]), expected_revision
+                ):
+                    continue
+                matrix = load_embedding_matrix(stem, name)
+                matrix[row] = vectors.get(name, np.nan)
+                save_embedding_matrix(stem, name, matrix)
+                mark_actor_embedding_refreshed(
+                    stem, name, str(record["id"])
+                )
+                updated.append(name)
+    return updated
