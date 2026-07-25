@@ -23,7 +23,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from yp_video.config import REID_ANNOTATIONS_DIR
-from yp_video.reid.identity import load_assignments
+from yp_video.reid.identity import load_assignments, load_done
 
 
 @dataclass(frozen=True)
@@ -46,23 +46,37 @@ class SessionGroup:
         return len(self.stems) == 1
 
 
-def labeled_stems() -> list[str]:
-    """Video stems with at least one player assignment, sorted."""
+def labeled_stems(*, done_only: bool = False) -> list[str]:
+    """Video stems with at least one player assignment, sorted.
+
+    ``done_only`` keeps only videos the user marked finished on the Label page
+    (the Done button). That flag is the training gate: an unfinished cut's
+    labels are provisional, so training and its baseline scoring must ignore
+    them until the human says the cut is settled.
+    """
     if not REID_ANNOTATIONS_DIR.exists():
         return []
     suffix = "_players.json"
     stems = [p.name[: -len(suffix)] for p in REID_ANNOTATIONS_DIR.glob(f"*{suffix}")]
-    return sorted(s for s in stems if load_assignments(s))
+    keep = (s for s in stems if load_assignments(s))
+    if done_only:
+        keep = (s for s in keep if load_done(s))
+    return sorted(keep)
 
 
-def build_sessions(stems: Sequence[str] | None = None) -> list[SessionGroup]:
+def build_sessions(
+    stems: Sequence[str] | None = None, *, done_only: bool = False
+) -> list[SessionGroup]:
     """Group videos by shared player names (union-find).
 
     Groups come back ordered by descending assignment count, so the
     richest session is ``g0``. That ordering is NOT stable across relabeling —
     exports snapshot their resolved membership rather than trusting the id.
+
+    ``done_only`` restricts the default stem set to finished videos; it is
+    ignored when ``stems`` is passed explicitly (the caller owns membership).
     """
-    stems = list(stems) if stems is not None else labeled_stems()
+    stems = list(stems) if stems is not None else labeled_stems(done_only=done_only)
     assignments = {s: load_assignments(s) for s in stems}
 
     # name -> stems that use it; a name in two stems links them.

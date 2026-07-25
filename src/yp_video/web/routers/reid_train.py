@@ -70,22 +70,30 @@ def _session_payload(group: sessions.SessionGroup) -> dict:
 
 @router.get("/status")
 def status() -> dict:
-    """Session grouping, per-model coverage, existing exports, active job."""
-    groups = sessions.build_sessions()
-    labeled = [stem for g in groups for stem in g.stems]
+    """Session grouping, per-model coverage, existing exports, active job.
+
+    Everything here is scoped to *finished* videos — the ones the Done button
+    marked — because those are the only cuts that train. Videos still being
+    labeled are surfaced only as ``pending_videos`` so the page can nudge the
+    user to finish them, never as training material.
+    """
+    groups = sessions.build_sessions(done_only=True)
+    ready = [stem for g in groups for stem in g.stems]
+    pending = len(sessions.labeled_stems()) - len(ready)
     registry = build_embedders()
     return {
         "sessions": [_session_payload(g) for g in groups],
         "models": [
             {
                 "name": name,
-                "labeled_videos": sum(1 for s in labeled if name in store.embedded_models(s)),
+                "labeled_videos": sum(1 for s in ready if name in store.embedded_models(s)),
                 "threshold": threshold_calibration(name),
             }
             for name in registry
         ],
         "totals": {
-            "labeled_videos": len(labeled),
+            "ready_videos": len(ready),
+            "pending_videos": pending,
             "assigned_events": sum(g.n_assigned for g in groups),
             "identities": sum(len(g.players) for g in groups),
             "sessions": len(groups),
@@ -100,7 +108,7 @@ def status() -> dict:
 
 @router.get("/runs")
 def runs() -> dict:
-    """Checkpoint packages on disk, best first — what the embedder binds to."""
+    """Stable official default followed by unpromoted training candidates."""
     return {"runs": checkpoints.list_checkpoints()}
 
 
@@ -123,7 +131,7 @@ async def performance(model: str | None = None) -> dict:
     Note this takes ``model=`` rather than the other train routers' ``run=``:
     there are no training runs here yet, there are embedders.
     """
-    groups = sessions.build_sessions()
+    groups = sessions.build_sessions(done_only=True)
     if not groups:
         return {"models": [], "evaluated_at": time.time()}
     registry = list(build_embedders())
@@ -147,8 +155,15 @@ async def performance(model: str | None = None) -> dict:
 
 
 def _plan(split_mode: str, test_ratio: float, seed: int, masked: bool):
-    groups = sessions.build_sessions()
+    groups = sessions.build_sessions(done_only=True)
     if not groups:
+        pending = len(sessions.labeled_stems())
+        if pending:
+            raise HTTPException(
+                400,
+                f"No finished videos — {pending} labeled video(s) are still in progress. "
+                "Mark labeling done on the ReID Label page to include them.",
+            )
         raise HTTPException(400, "No labeled videos — assign players on the ReID Label page first")
     try:
         return dataset.plan_export(
@@ -281,8 +296,8 @@ async def train(req: ReidTrainRequest) -> dict:
     """Fine-tune yp-reid on an exported dataset, as a GPU-locked job.
 
     The subprocess writes the checkpoint package itself on every new best
-    (Contract B), so a kill mid-run still leaves the best-so-far usable and
-    the embedder registry picks it up without a restart.
+    (Contract B), so a kill mid-run still leaves the best-so-far candidate
+    usable. Candidates never replace the fixed official default implicitly.
     """
     dataset_root = REID_DATASETS_DIR / req.dataset
     if "/" in req.dataset or req.dataset.startswith(".") or not dataset_root.is_dir():
@@ -290,6 +305,11 @@ async def train(req: ReidTrainRequest) -> dict:
     run_name = req.run_name or f"reid_{time.strftime('%Y%m%d-%H%M%S')}"
     if "/" in run_name or run_name.startswith("."):
         raise HTTPException(400, f"Invalid run name: {run_name}")
+    if run_name == checkpoints.DEFAULT_CHECKPOINT_PACKAGE:
+        raise HTTPException(
+            400,
+            f"{run_name} is the reserved official baseline and cannot be overwritten by training",
+        )
     export_dir = REID_CHECKPOINTS_DIR / run_name
     if export_dir.exists() and not req.overwrite:
         raise HTTPException(409, f"Checkpoint package {run_name} already exists (enable overwrite)")

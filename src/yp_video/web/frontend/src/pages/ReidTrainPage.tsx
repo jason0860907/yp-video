@@ -4,9 +4,9 @@
  *  The ordering on the page mirrors the workflow: the embedder comparison is
  *  the baseline a fine-tune has to beat, the export turns labels into a
  *  Contract A dataset, and the fine-tune card spawns yp-reid training on one.
- *  Every new best rewrites a checkpoint package under reid/checkpoints/, and
- *  the clip-reident embedder binds to the best package automatically — the
- *  runs table shows which one that is.
+ *  Every new best rewrites its candidate package under reid/checkpoints/.
+ *  Production stays on the official paper checkpoint unless a future
+ *  explicit promotion workflow changes that policy.
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -87,7 +87,7 @@ export function ReidTrainPage() {
   const perfQuery = useQuery({
     queryKey: ['reid-train-performance'],
     queryFn: () => apiFetch<ReidPerfData>(API.reidTrain.performance()),
-    enabled: Boolean(status?.totals.labeled_videos),
+    enabled: Boolean(status?.totals.ready_videos),
     placeholderData: keepPreviousData,
     staleTime: 60_000,
   });
@@ -118,6 +118,27 @@ export function ReidTrainPage() {
     } catch (e) {
       toast.error(`Export failed to start: ${errMsg(e)}`);
     }
+  };
+
+  // Download the export plan (writes nothing) so the split can be inspected
+  // before committing to a dataset build.
+  const downloadPlan = () => {
+    if (!status?.totals.assigned_events) {
+      toast.warning(
+        status?.totals.pending_videos
+          ? 'No finished videos — press Done on the ReID Label page to include them'
+          : 'Nothing labeled yet — assign players on the ReID Label page first',
+      );
+      return;
+    }
+    window.location.href = apiUrl(
+      API.reidTrain.exportPlan({
+        split_mode: form.split_mode,
+        test_ratio: form.test_ratio,
+        seed: form.seed,
+        masked: form.masked,
+      }),
+    );
   };
 
   const startTrain = async () => {
@@ -162,50 +183,173 @@ export function ReidTrainPage() {
       <PageHeader
         subtitle={
           status
-            ? `${status.totals.assigned_events} labeled events across ${status.totals.labeled_videos} video(s)`
+            ? `${status.totals.assigned_events} events across ${status.totals.ready_videos} finished video(s)`
             : undefined
-        }
-        actions={
-          <>
-            <Button
-              size="sm"
-              onClick={() => {
-                if (!status?.totals.assigned_events) {
-                  toast.warning('Nothing labeled yet — assign players on the ReID Label page first');
-                  return;
-                }
-                window.location.href = apiUrl(
-                  API.reidTrain.exportPlan({
-                    split_mode: form.split_mode,
-                    test_ratio: form.test_ratio,
-                    seed: form.seed,
-                    masked: form.masked,
-                  }),
-                );
-              }}
-            >
-              Export plan JSONL
-            </Button>
-            <Button size="sm" intent="primary" disabled={busy || !status?.totals.assigned_events} onClick={() => void startExport()}>
-              {busy ? 'Building…' : 'Build dataset'}
-            </Button>
-          </>
         }
       />
 
-      <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatTile label="Labeled videos" value={status?.totals.labeled_videos ?? '—'} />
-        <StatTile label="Assigned events" value={status?.totals.assigned_events ?? '—'} />
-        <StatTile label="Identities" value={status?.totals.identities ?? '—'} />
-        <StatTile
-          label="Sessions"
-          value={status?.totals.sessions ?? '—'}
-          sub={isolated.length ? `${isolated.length} unlinked` : undefined}
-          tintClass={isolated.length ? 'text-amber-400' : 'text-text-primary'}
-        />
+      <div className="mb-5 space-y-3">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <StatTile label="Ready to train" value={status?.totals.ready_videos ?? '—'} sub="finished videos" />
+          <StatTile label="Assigned events" value={status?.totals.assigned_events ?? '—'} />
+          <StatTile label="Identities" value={status?.totals.identities ?? '—'} />
+          <StatTile
+            label="Sessions"
+            value={status?.totals.sessions ?? '—'}
+            sub={isolated.length ? `${isolated.length} unlinked` : undefined}
+            tintClass={isolated.length ? 'text-amber-400' : 'text-text-primary'}
+          />
+        </div>
+        {status?.totals.pending_videos ? (
+          <div className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/[0.06] px-3 py-2 text-xs text-amber-300">
+            <svg className="mt-0.5 h-4 w-4 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m0 3.75h.008M10.34 3.94l-8.4 14.55A1.5 1.5 0 003.24 21h17.52a1.5 1.5 0 001.3-2.51L13.66 3.94a1.5 1.5 0 00-2.6 0z" />
+            </svg>
+            <span>
+              <span className="font-semibold">{status.totals.pending_videos}</span> labeled video(s) are not marked done —
+              excluded from training &amp; scoring. Press <span className="font-semibold">Done</span> on the ReID Label
+              page to include them.
+            </span>
+          </div>
+        ) : null}
       </div>
 
       <div className="space-y-5">
+        <Card>
+          <SectionLabel>① Dataset export</SectionLabel>
+          <p className="mb-3 text-[11px] text-text-muted">
+            Pack the finished videos' labeled crops into a yp-reid dataset. Preview the split with
+            <span className="font-medium"> Export plan JSONL</span> (writes nothing), then
+            <span className="font-medium"> Build dataset</span> to commit it under reid/datasets/.
+          </p>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <Field label="Split mode">
+              <SelectArch value={form.split_mode} options={status?.split_modes ?? ['auto']} onChange={(v) => set('split_mode', v)} />
+            </Field>
+            <Field label="Test ratio">
+              <input type="number" min={0.05} max={0.9} step={0.05} value={form.test_ratio} onChange={(e) => set('test_ratio', Number(e.target.value))} className={fieldCls} />
+            </Field>
+            <Field label="Seed">
+              <input type="number" value={form.seed} onChange={(e) => set('seed', Number(e.target.value))} className={fieldCls} />
+            </Field>
+            <Field label="Name (optional)">
+              <input value={form.name} onChange={(e) => set('name', e.target.value)} placeholder="reid_<mode>_<timestamp>" className={fieldCls} />
+            </Field>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-4">
+            {([
+              ['masked', 'Masked crops', 'Reference the background-suppressed crops the masked embedders saw'],
+              ['overwrite', 'Overwrite', 'Replace an existing dataset of the same name'],
+            ] as const).map(([key, label, title]) => (
+              <label key={key} className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-text-secondary" title={title}>
+                <input type="checkbox" checked={form[key]} onChange={(e) => set(key, e.target.checked)} className="h-3.5 w-3.5 accent-primary" />
+                {label}
+              </label>
+            ))}
+          </div>
+          <div className="mt-4 flex items-center gap-2">
+            <Button className="flex-1" disabled={!status?.totals.assigned_events} onClick={downloadPlan}>
+              Export plan JSONL
+            </Button>
+            <Button intent="primary" className="flex-1" disabled={busy || !status?.totals.assigned_events} onClick={() => void startExport()}>
+              {busy && job?.type === 'reid_dataset_export' ? 'Building…' : 'Build dataset'}
+            </Button>
+          </div>
+          {status?.datasets.length ? (
+            <div className="mt-4">
+              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-text-muted">Existing datasets</p>
+              <div className="space-y-1">
+                {status.datasets.map((d) => (
+                  <div key={d.name} className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-50 px-2.5 py-1.5 text-[11px]">
+                    <span className="font-mono text-text-primary">{d.name}</span>
+                    <span className="text-text-muted">
+                      {d.counts.n_samples} crops · {d.counts.n_players} players · train {d.counts.n_train} / test {d.counts.n_test}
+                    </span>
+                    <span className="ml-auto font-mono text-[10px] text-text-muted">{String(d.config.split_mode ?? '')}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </Card>
+
+        <Card>
+          <SectionLabel>② Fine-tune</SectionLabel>
+          <p className="mb-3 text-[11px] text-text-muted">
+            Spawns yp-reid training on an exported dataset (GPU-locked job). Every new best rewrites the
+            checkpoint package, so even a cancelled run leaves its best-so-far usable — the clip-reident
+            embedder rebinds to whichever package leads the runs table below.
+          </p>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+            <Field label="Dataset">
+              <SelectArch
+                value={trainForm.dataset || status?.datasets[0]?.name || ''}
+                options={(status?.datasets ?? []).map((d) => d.name)}
+                onChange={(v) => setTrain('dataset', v)}
+              />
+            </Field>
+            <Field label="Init checkpoint">
+              <select
+                value={trainForm.init_checkpoint}
+                onChange={(e) => setTrain('init_checkpoint', e.target.value)}
+                className={fieldCls}
+              >
+                <option value="">fresh (OpenAI ViT-L/14)</option>
+                {(status?.runs ?? []).map((r) => (
+                  <option key={r.path} value={r.path}>{r.run_name}</option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Run name (optional)">
+              <input value={trainForm.run_name} onChange={(e) => setTrain('run_name', e.target.value)} placeholder="reid_<timestamp>" className={fieldCls} />
+            </Field>
+            <Field label="Epochs">
+              <input type="number" min={1} value={trainForm.epochs} onChange={(e) => setTrain('epochs', Number(e.target.value))} className={fieldCls} />
+            </Field>
+            <Field label="Batch size (≤ identities)">
+              <input type="number" min={2} value={trainForm.batch_size} onChange={(e) => setTrain('batch_size', Number(e.target.value))} className={fieldCls} />
+            </Field>
+            <Field label="Learning rate">
+              <input type="number" step="any" value={trainForm.lr} onChange={(e) => setTrain('lr', Number(e.target.value))} className={fieldCls} />
+            </Field>
+          </div>
+          <div className="mt-3 flex flex-wrap items-center gap-4">
+            <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-text-secondary" title="Replace an existing checkpoint package of the same run name">
+              <input type="checkbox" checked={trainForm.overwrite} onChange={(e) => setTrain('overwrite', e.target.checked)} className="h-3.5 w-3.5 accent-primary" />
+              Overwrite
+            </label>
+            {!status?.reid_engine_available && (
+              <span className="text-[11px] text-amber-400">
+                clip-reident engine not registered — needs the yp-reid venv and at least one checkpoint package
+              </span>
+            )}
+          </div>
+          <div className="mt-4 flex items-center gap-2">
+            <Button intent="primary" className="flex-1" disabled={busy || !status?.datasets.length} onClick={() => void startTrain()}>
+              {busy && job?.type === 'reid_train' ? 'Training…' : 'Start Training'}
+            </Button>
+            {busy && <Button onClick={() => void cancelJob()}>Cancel</Button>}
+          </div>
+        </Card>
+
+        {status?.runs.length ? <RunsCard runs={status.runs} /> : null}
+
+        {job && (
+          <Card>
+            <SectionLabel>{job.type === 'reid_train' ? 'Training job' : 'Export job'}</SectionLabel>
+            <JobProgress job={job} showLogs />
+            {job.type === 'reid_train' && <TrainEvalTiles job={job} />}
+          </Card>
+        )}
+
+        <div className="pt-3">
+          <h2 className="text-sm font-semibold text-text-secondary">Diagnostics</h2>
+          <p className="mt-0.5 text-[11px] text-text-muted">
+            Reference only — how well the current embedder separates your finished labels, and the sessions those
+            labels form. Nothing here changes what trains.
+          </p>
+        </div>
+
         <Card>
           <SectionLabel>Recording sessions</SectionLabel>
           {!status?.sessions.length ? (
@@ -215,8 +359,8 @@ export function ReidTrainPage() {
                   <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.5 20.25a8.25 8.25 0 0115 0" />
                 </svg>
               }
-              title="No labeled videos"
-              subtitle="Assign players on the ReID Label page first"
+              title="No finished videos"
+              subtitle="Mark labeling done on the ReID Label page — only finished cuts train"
             />
           ) : (
             <div className="space-y-2">
@@ -291,120 +435,6 @@ export function ReidTrainPage() {
             {models.filter((m) => m.threshold).map((m) => <ThresholdCard key={m.model} m={m} />)}
           </div>
         </Card>
-
-        <Card>
-          <SectionLabel>Dataset export</SectionLabel>
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            <Field label="Split mode">
-              <SelectArch value={form.split_mode} options={status?.split_modes ?? ['auto']} onChange={(v) => set('split_mode', v)} />
-            </Field>
-            <Field label="Test ratio">
-              <input type="number" min={0.05} max={0.9} step={0.05} value={form.test_ratio} onChange={(e) => set('test_ratio', Number(e.target.value))} className={fieldCls} />
-            </Field>
-            <Field label="Seed">
-              <input type="number" value={form.seed} onChange={(e) => set('seed', Number(e.target.value))} className={fieldCls} />
-            </Field>
-            <Field label="Name (optional)">
-              <input value={form.name} onChange={(e) => set('name', e.target.value)} placeholder="reid_<mode>_<timestamp>" className={fieldCls} />
-            </Field>
-          </div>
-          <div className="mt-3 flex flex-wrap gap-4">
-            {([
-              ['masked', 'Masked crops', 'Reference the background-suppressed crops the masked embedders saw'],
-              ['overwrite', 'Overwrite', 'Replace an existing dataset of the same name'],
-            ] as const).map(([key, label, title]) => (
-              <label key={key} className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-text-secondary" title={title}>
-                <input type="checkbox" checked={form[key]} onChange={(e) => set(key, e.target.checked)} className="h-3.5 w-3.5 accent-primary" />
-                {label}
-              </label>
-            ))}
-          </div>
-          {status?.datasets.length ? (
-            <div className="mt-4">
-              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-text-muted">Existing</p>
-              <div className="space-y-1">
-                {status.datasets.map((d) => (
-                  <div key={d.name} className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-50 px-2.5 py-1.5 text-[11px]">
-                    <span className="font-mono text-text-primary">{d.name}</span>
-                    <span className="text-text-muted">
-                      {d.counts.n_samples} crops · {d.counts.n_players} players · train {d.counts.n_train} / test {d.counts.n_test}
-                    </span>
-                    <span className="ml-auto font-mono text-[10px] text-text-muted">{String(d.config.split_mode ?? '')}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : null}
-        </Card>
-
-        <Card>
-          <SectionLabel>Fine-tune</SectionLabel>
-          <p className="mb-3 text-[11px] text-text-muted">
-            Spawns yp-reid training on an exported dataset (GPU-locked job). Every new best rewrites the
-            checkpoint package, so even a cancelled run leaves its best-so-far usable — the clip-reident
-            embedder rebinds to whichever package leads the runs table below.
-          </p>
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-            <Field label="Dataset">
-              <SelectArch
-                value={trainForm.dataset || status?.datasets[0]?.name || ''}
-                options={(status?.datasets ?? []).map((d) => d.name)}
-                onChange={(v) => setTrain('dataset', v)}
-              />
-            </Field>
-            <Field label="Init checkpoint">
-              <select
-                value={trainForm.init_checkpoint}
-                onChange={(e) => setTrain('init_checkpoint', e.target.value)}
-                className={fieldCls}
-              >
-                <option value="">fresh (OpenAI ViT-L/14)</option>
-                {(status?.runs ?? []).map((r) => (
-                  <option key={r.path} value={r.path}>{r.run_name}</option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Run name (optional)">
-              <input value={trainForm.run_name} onChange={(e) => setTrain('run_name', e.target.value)} placeholder="reid_<timestamp>" className={fieldCls} />
-            </Field>
-            <Field label="Epochs">
-              <input type="number" min={1} value={trainForm.epochs} onChange={(e) => setTrain('epochs', Number(e.target.value))} className={fieldCls} />
-            </Field>
-            <Field label="Batch size (≤ identities)">
-              <input type="number" min={2} value={trainForm.batch_size} onChange={(e) => setTrain('batch_size', Number(e.target.value))} className={fieldCls} />
-            </Field>
-            <Field label="Learning rate">
-              <input type="number" step="any" value={trainForm.lr} onChange={(e) => setTrain('lr', Number(e.target.value))} className={fieldCls} />
-            </Field>
-          </div>
-          <div className="mt-3 flex flex-wrap items-center gap-4">
-            <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-text-secondary" title="Replace an existing checkpoint package of the same run name">
-              <input type="checkbox" checked={trainForm.overwrite} onChange={(e) => setTrain('overwrite', e.target.checked)} className="h-3.5 w-3.5 accent-primary" />
-              Overwrite
-            </label>
-            {!status?.reid_engine_available && (
-              <span className="text-[11px] text-amber-400">
-                clip-reident engine not registered — needs the yp-reid venv and at least one checkpoint package
-              </span>
-            )}
-          </div>
-          <div className="mt-4 flex items-center gap-2">
-            <Button intent="primary" className="flex-1" disabled={busy || !status?.datasets.length} onClick={() => void startTrain()}>
-              {busy && job?.type === 'reid_train' ? 'Training…' : 'Start Training'}
-            </Button>
-            {busy && <Button onClick={() => void cancelJob()}>Cancel</Button>}
-          </div>
-        </Card>
-
-        {status?.runs.length ? <RunsCard runs={status.runs} /> : null}
-
-        {job && (
-          <Card>
-            <SectionLabel>{job.type === 'reid_train' ? 'Training job' : 'Export job'}</SectionLabel>
-            <JobProgress job={job} showLogs />
-            {job.type === 'reid_train' && <TrainEvalTiles job={job} />}
-          </Card>
-        )}
       </div>
     </div>
   );
@@ -429,15 +459,15 @@ function TrainEvalTiles({ job }: { job: Job }) {
   );
 }
 
-/** Checkpoint packages, best first — row one is what clip-reident binds to. */
+/** Stable official checkpoint followed by unpromoted training candidates. */
 function RunsCard({ runs }: { runs: ReidRun[] }) {
   return (
     <Card>
       <SectionLabel>Checkpoint runs</SectionLabel>
       <p className="mb-3 text-[11px] text-text-muted">
-        Every checkpoint package under <span className="font-mono">reid/checkpoints/</span>, best recorded
-        metric first. The clip-reident embedder binds to the top row; re-run Predict/backfill embeddings to
-        see a new package's effect, and recalibrate thresholds after — distance scales move with the weights.
+        The official paper release remains active. Training outputs are candidates and never replace it
+        automatically; select one explicitly on Predict to evaluate it, then recalibrate thresholds because
+        distance scales move with the weights.
       </p>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[40rem] text-xs">
@@ -449,11 +479,12 @@ function RunsCard({ runs }: { runs: ReidRun[] }) {
             </tr>
           </thead>
           <tbody>
-            {runs.map((r, i) => (
+            {runs.map((r) => (
               <tr key={r.path} className="border-t border-border">
                 <td className="px-2 py-1.5 font-mono text-text-primary" title={r.note ?? r.path}>
                   {r.run_name}
-                  {i === 0 && <Badge tone="success" className="ml-2">active</Badge>}
+                  {r.active && <Badge tone="success" className="ml-2">active</Badge>}
+                  {!r.active && <Badge className="ml-2">candidate</Badge>}
                 </td>
                 <td className="px-2 py-1.5 text-right text-text-muted">{r.source ?? '—'}</td>
                 <td className="px-2 py-1.5 text-right font-mono tabular-nums text-primary-light">

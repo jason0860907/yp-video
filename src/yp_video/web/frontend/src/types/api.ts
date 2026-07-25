@@ -248,6 +248,8 @@ export interface ReidVideo {
   reid_counts?: { ok: number; multi: number; miss: number } | null;
   /** Embedders whose matrix exists for this video (backfill fills gaps). */
   embedded_models: string[];
+  /** Existing matrices being refreshed after an actor fix. */
+  stale_embedding_models?: string[];
   /** Distinct saved identities (0 = extracted but not labeled yet). */
   player_count?: number;
   /** Labeling marked finished by the user (the Label page's Done button). */
@@ -264,6 +266,9 @@ export interface ReidOptions {
     /** Embeds background-suppressed crops — the viewer should show those. */
     masked: boolean;
   }[];
+  /** Official clip-reident default first, then candidates; Predict/Backfill
+   *  can explicitly override the active package. */
+  checkpoints: { ref: string; run_name: string; active: boolean }[];
 }
 
 /** One action event's extraction outcome (embedding stripped server-side). */
@@ -295,6 +300,13 @@ export interface ReidRecord {
   box_source?: 'auto' | 'manual';
   /** The automatic pick, kept when a manual fix overrides it. */
   auto_box?: [number, number, number, number] | null;
+}
+
+export interface ReidActorFixResponse {
+  record: ReidRecord;
+  track_link: { rally_id: number; track_id: number } | null;
+  /** Non-visible models refreshing after the response. */
+  refreshing_models: string[];
 }
 
 export interface ReidCluster {
@@ -427,11 +439,12 @@ export interface ReidDatasetInfo {
   config: Record<string, unknown>;
 }
 
-/** One yp-reid checkpoint package (reid/checkpoints/<run>/). The list is
- *  best-metric first; the clip-reident embedder binds to the top entry. */
+/** One yp-reid checkpoint package (reid/checkpoints/<run>/). */
 export interface ReidRun {
   path: string;
   run_name: string;
+  /** True only for the fixed production default, never inferred from metrics. */
+  active: boolean;
   source: 'trained' | 'imported' | null;
   architecture: string | null;
   embedding_dim: number | null;
@@ -446,7 +459,9 @@ export interface ReidRun {
 export interface ReidTrainStatus {
   sessions: ReidSession[];
   models: Array<{ name: string; labeled_videos: number; threshold: ReidSlider }>;
-  totals: { labeled_videos: number; assigned_events: number; identities: number; sessions: number };
+  /** Everything is scoped to finished (Done-marked) videos; pending_videos
+   *  counts labeled-but-unfinished cuts that are excluded from training. */
+  totals: { ready_videos: number; pending_videos: number; assigned_events: number; identities: number; sessions: number };
   datasets: ReidDatasetInfo[];
   split_modes: string[];
   reid_engine_available: boolean;
