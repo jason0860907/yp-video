@@ -1,9 +1,10 @@
-"""Per-video ReID extraction: action events → person crops → embeddings.
+"""Per-video extraction: action events → person crops → embeddings.
 
 Two stages, coupled only through what extraction leaves on disk:
 
 - ``extract_video``: decode + detect + associate + crop. Writes the record
-  jsonl and the crop jpgs — everything embedding needs, nothing more.
+  jsonl and the crop jpgs (see extraction/store.py) — everything embedding
+  needs, nothing more.
 - ``embed_video``: crops → one npy matrix per embedder (see reid/store.py).
   Reads the saved jpgs (the embedder input IS the reviewable artifact), so a
   new embedder backfills old videos without touching the video file, and
@@ -15,12 +16,15 @@ Records keep the association outcome (ok / multi / miss) so downstream
 matching and the UI can treat ambiguous events differently.
 
 Every record also stores ``detections`` — ALL person boxes the detector found
-on that frame, unfiltered by the association heuristic. The labeling UI needs
-them so the user can re-point an event at the right person when the heuristic
-picked the wrong one; those manual picks (identity.actor_fixes) are replayed
+on that frame, unfiltered by the association policy. The labeling UI needs
+them so the user can re-point an event at the right person when the policy
+picked the wrong one; those manual picks (see actor/labels.py) are replayed
 here on re-extraction and stashed alongside the auto pick (``auto_box``), so
-the auto/manual disagreement set is preserved as future association training
-data.
+the auto/manual disagreement set is preserved as association training data.
+
+This module is where the three packages meet: ``person`` finds the people,
+``actor`` says which of them acted, ``reid`` turns the resulting crop into an
+embedding.
 """
 
 from __future__ import annotations
@@ -29,39 +33,42 @@ import json
 import queue
 import threading
 import time
-from collections.abc import Callable
 from pathlib import Path
 
+from yp_video.actor import labels as actor_labels
+from yp_video.actor.labels import ActorLabel, ActorVerdict
+from yp_video.actor.resolution import ActorResolution, actor_resolution
+from yp_video.actor.service import ActorAssociationService
 from yp_video.core.jsonl import read_jsonl, read_jsonl_cached, write_jsonl
-from yp_video.reid.detector import (
+from yp_video.core.progress import ProgressFn
+from yp_video.extraction.links import resolve_track
+from yp_video.extraction.store import (
+    RECORDS_DIR,
+    SKIP_LABELS,
+    action_annotation_path,
+    crop_dir,
+    records_path,
+)
+from yp_video.person.detector import (
     DEFAULT_KEYPOINT_SOURCE,
     DETECTOR_NAME,
     KEYPOINT_SOURCES,
     PersonBox,
-    associate,
     build_keypoint_sources,
     iou,
+    person_from_detection,
 )
 from yp_video.reid.embedder import base_embedder_name, build_embedders
-from yp_video.reid.resolution import ActorResolution
 from yp_video.reid.store import (
-    EMBEDDINGS_DIR,
-    SKIP_LABELS,
-    action_annotation_path,
     clear_embedding_refreshes,
-    crop_dir,
     embedded_models,
     embedding_path,
     embedding_write_transaction,
     load_embedding_matrix,
     mark_actor_embedding_refreshed,
     mark_actor_embedding_stale,
-    reid_path,
     save_embedding_matrix,
 )
-
-ProgressFn = Callable[[int, int, str], None]
-
 
 def load_events(stem: str) -> list[dict]:
     """Action events with a frame, sorted by frame.
@@ -136,21 +143,32 @@ def _serialize_detections(boxes: list[PersonBox], w: int, h: int) -> list[dict]:
     return out
 
 
-def _person_from_detection(d: dict) -> PersonBox:
-    import numpy as np
-
-    kps = d.get("keypoints")
-    return PersonBox(
-        xyxy=tuple(d["box"]),
-        score=float(d.get("score") or 0.0),
-        keypoints=np.array([[k[0], k[1]] for k in kps], dtype=np.float32) if kps else None,
-        keypoint_conf=np.array([k[2] for k in kps], dtype=np.float32) if kps else None,
-    )
-
-
 # A fix box must overlap a fresh detection this much to snap onto it (and
 # inherit its keypoints); below that the fix box is embedded as drawn.
 FIX_SNAP_IOU = 0.5
+
+
+def _label_target(
+    stem: str, record: dict, label: ActorLabel
+) -> tuple[tuple[float, float, float, float], int, bool] | None:
+    """Where a label says to crop: (box, frame, may-snap).
+
+    A tracklet label is re-resolved from the tracklet every time (see
+    extraction/links.resolve_track), so a re-extraction with fresh detections
+    self-heals instead of IoU-guessing which box the old one meant. Its box
+    is only the anchor, and it takes over when the tracklet cannot be
+    resolved — tracking may have been re-run, and ``track_id`` restarts per
+    rally, so re-tracking renumbers everything. Falling back to what the human
+    actually clicked keeps the label meaningful; dropping it would not.
+    """
+    if label.track is not None:
+        pick = resolve_track(stem, record, label.track)
+        if pick is not None:
+            return pick.box, pick.frame, pick.snap
+    if label.box is None:
+        return None
+    frame = label.frame if label.frame is not None else record["frame"]
+    return label.box, frame, label.snap
 
 
 def _snap_to_detection(detections: list[dict], box: list[float]) -> PersonBox | None:
@@ -160,7 +178,7 @@ def _snap_to_detection(detections: list[dict], box: list[float]) -> PersonBox | 
         overlap = iou(d["box"], box)
         if overlap >= best_iou:
             best, best_iou = d, overlap
-    return _person_from_detection(best) if best else None
+    return person_from_detection(best) if best else None
 
 
 def _attach_person(
@@ -221,10 +239,13 @@ def extract_video(
     if not events:
         raise ValueError(f"No action events for {video_path.name}")
 
-    # Deferred: identity imports this module at load time.
-    from yp_video.reid.identity import load_actor_fixes
-
-    fixes = load_actor_fixes(stem)
+    # Only labels that contradict the automatic pick are replayed; a
+    # confirmed_auto label agrees with it by definition.
+    fixes = {
+        event_id: label
+        for event_id, label in actor_labels.load(stem).items()
+        if label.overrides_auto
+    }
 
     out_crops = crop_dir(stem)
     out_crops.mkdir(parents=True, exist_ok=True)
@@ -286,6 +307,7 @@ def extract_video(
         return img if ok else None
 
     try:
+        association_service = ActorAssociationService.from_active_shadow()
         for i, event in enumerate(events):
             while True:
                 try:
@@ -321,7 +343,14 @@ def extract_video(
                 # Auto-association needs a contact point AND a visible actor —
                 # an invisible event's point (if any) sits next to somebody
                 # who did NOT perform it. Those stay miss until picked by hand.
-                candidates = associate(detections, *pt) if pt and event_visible else []
+                if pt and event_visible:
+                    association = association_service.associate(
+                        detections, *pt
+                    )
+                    candidates = association.production_candidates
+                    record["association"] = association.diagnostic()
+                else:
+                    candidates = []
                 record["candidates"] = len(candidates)
                 auto = candidates[0] if candidates else None
                 fix = fixes.get(record["id"])
@@ -335,24 +364,24 @@ def extract_video(
                 else:
                     # Replay the user's actor fix; keep the auto pick alongside
                     # so the disagreement survives re-extraction.
-                    record["box_source"] = "manual"
                     record["resolution"] = (
                         ActorResolution.OCCLUDED.value
-                        if fix.get("none")
+                        if fix.verdict is ActorVerdict.OCCLUDED
                         else ActorResolution.MANUAL.value
                     )
                     if auto is not None and pt is not None:
                         px, py = pt
                         record["auto_box"] = list(_display_box(auto, px, py, frame_w, frame_h))
-                    if fix.get("box"):
-                        src = fix.get("frame")
-                        if src is not None and src != record["frame"]:
+                    target = _label_target(stem, record, fix)
+                    if target is not None:
+                        fix_box, src, fix_snap = target
+                        if src != record["frame"]:
                             # Cross-frame fix: the actor was undetected here —
                             # crop from the frame the user actually clicked,
                             # anchored on the box (the contact point belongs
                             # to the event frame, where the player isn't).
                             img = fix_frame_img(src)
-                            person = PersonBox(xyxy=tuple(fix["box"]), score=0.0)
+                            person = PersonBox(xyxy=fix_box, score=0.0)
                             ax, ay = (person.xyxy[0] + person.xyxy[2]) / 2, (person.xyxy[1] + person.xyxy[3]) / 2
                             crop = _attach_person(record, img, person, ax, ay, frame_w, frame_h, out_crops) if img is not None else None
                             if crop is not None:
@@ -360,10 +389,10 @@ def extract_video(
                                 record["status"] = "ok"
                         else:
                             person = (
-                                _snap_to_detection(record["detections"], fix["box"])
-                                if fix.get("snap", True)
+                                _snap_to_detection(record["detections"], list(fix_box))
+                                if fix_snap
                                 else None
-                            ) or PersonBox(xyxy=tuple(fix["box"]), score=0.0)
+                            ) or PersonBox(xyxy=fix_box, score=0.0)
                             ax, ay = pt if pt else ((person.xyxy[0] + person.xyxy[2]) / 2, (person.xyxy[1] + person.xyxy[3]) / 2)
                             crop = _attach_person(record, frame, person, ax, ay, frame_w, frame_h, out_crops)
                             if crop is not None:
@@ -391,8 +420,8 @@ def extract_video(
         "created_at": time.time(),
         **counts,
     }
-    EMBEDDINGS_DIR.mkdir(parents=True, exist_ok=True)
-    write_jsonl(reid_path(stem), header, records)
+    RECORDS_DIR.mkdir(parents=True, exist_ok=True)
+    write_jsonl(records_path(stem), header, records)
     # Fresh extraction invalidates every model's rows — recompute them all,
     # continuing the same progress channel (the item bar restarts per phase).
     embed_video(stem, overwrite=True, checkpoint=checkpoint, on_progress=on_progress)
@@ -423,7 +452,7 @@ def embed_video(
     """
     import numpy as np
 
-    _meta, records = read_jsonl(reid_path(stem))
+    _meta, records = read_jsonl(records_path(stem))
     registry = build_embedders()
     unknown = set(models or ()) - set(registry)
     if unknown:
@@ -472,8 +501,8 @@ def _masked_record_crop(stem: str, record: dict, crop):
     box comes back to crop coordinates via the display-box origin."""
     import cv2
 
-    from yp_video.reid.seg import crop_masker
-    from yp_video.reid.store import masked_crop_dir
+    from yp_video.person.seg import crop_masker
+    from yp_video.extraction.store import masked_crop_dir
 
     dx0, dy0 = record["box"][:2]
     bx = record.get("actor_box") or record["box"]
@@ -493,8 +522,8 @@ def _mask_crops(
     turns that into a NaN row."""
     import cv2
 
-    from yp_video.reid.seg import crop_masker
-    from yp_video.reid.store import masked_crop_dir
+    from yp_video.person.seg import crop_masker
+    from yp_video.extraction.store import masked_crop_dir
 
     if on_progress:
         on_progress(0, len(paths), "loading rf-detr-seg-medium weights..." if not crop_masker().loaded else "masking crops...")
@@ -511,7 +540,7 @@ def _mask_crops(
     return out
 
 
-# Serializes apply_actor_fix's read-modify-write of the reid jsonl: two
+# Serializes apply_actor_fix's read-modify-write of the record jsonl: two
 # quick picks would otherwise interleave and one would be lost.
 _actor_fix_lock = threading.RLock()
 
@@ -519,30 +548,23 @@ _actor_fix_lock = threading.RLock()
 def apply_actor_fix(
     video_path: Path,
     event_id: str,
-    box: list[float] | None,
+    label: ActorLabel | None,
     *,
     models: list[str],
-    none: bool = False,
-    frame: int | None = None,
-    snap: bool = True,
 ) -> dict:
-    """Re-point one extracted event at a user-chosen person, in place.
+    """Re-point one extracted event at the person a human named, in place.
 
-    Three modes: ``box`` given = manual pick (snapped by IoU onto a stored
-    detection when possible, so keypoints carry over); ``none=True`` = nobody
-    is the actor (crop/embedding cleared, so the event drops out of
-    clustering and matching); neither = revert to the automatic pick, re-run
-    from the stored detections. Persisting the fix into the players file is
-    the caller's job — this only patches the derived jsonl.
+    The verdict drives everything: ``MANUAL`` crops the labeled box (snapped
+    by IoU onto a stored detection when possible, so keypoints carry over);
+    ``OCCLUDED`` clears the crop and embedding, dropping the event out of
+    clustering and matching; ``None`` reverts to the automatic pick, re-run
+    from the stored detections. Persisting the label is the caller's job —
+    this only patches the derived jsonl.
 
-    ``frame`` marks a CROSS-FRAME pick: the actor went undetected on the
-    event frame, so the user clicked them on a nearby frame — the crop is
+    ``label.frame`` marks a CROSS-FRAME pick: the actor went undetected on
+    the event frame, so the user clicked them on a nearby frame — the crop is
     cut from THAT frame (the pixels actually contain the actor) and no
     detection snap applies (stored detections belong to the event frame).
-
-    ``snap=False`` embeds the box exactly as drawn — the client's mask
-    arbitration ruled that no stored detection is this player, so an IoU
-    snap could only attach an occluder.
 
     Only ``models`` are refreshed synchronously. Other existing matrices keep
     an explicit pending event in the refresh sidecar; the application service
@@ -553,9 +575,7 @@ def apply_actor_fix(
     stem = video_path.stem
     with embedding_write_transaction(), _actor_fix_lock:
         mark_actor_embedding_stale(stem, embedded_models(stem), event_id)
-        record, row, crop = _apply_actor_fix(
-            video_path, event_id, box, none=none, frame=frame, snap=snap
-        )
+        record, row, crop = _apply_actor_fix(video_path, event_id, label)
     _patch_embedding_row(
         stem,
         record,
@@ -570,20 +590,16 @@ def apply_actor_fix(
 def _apply_actor_fix(
     video_path: Path,
     event_id: str,
-    box: list[float] | None,
-    *,
-    none: bool = False,
-    frame: int | None = None,
-    snap: bool = True,
+    label: ActorLabel | None,
 ) -> tuple[dict, int, object | None]:
     import cv2
 
     stem = video_path.stem
-    path = reid_path(stem)
+    path = records_path(stem)
     meta, records = read_jsonl(path)
     row = next((i for i, r in enumerate(records) if r["id"] == event_id), None)
     if row is None:
-        raise KeyError(f"No ReID record for event {event_id}")
+        raise KeyError(f"No extraction record for event {event_id}")
     record = records[row]
     record["actor_revision"] = int(record.get("actor_revision") or 0) + 1
 
@@ -592,18 +608,20 @@ def _apply_actor_fix(
     x, y = (xy[0] * frame_w, xy[1] * frame_h) if xy else (0.0, 0.0)
     detections = record.get("detections") or []
 
-    revert = box is None and not none
+    revert = label is None
+    human_picked = actor_resolution(record) in (
+        ActorResolution.MANUAL,
+        ActorResolution.OCCLUDED,
+    )
     if revert:
-        record.pop("box_source", None)
         record.pop("auto_box", None)
         record["resolution"] = ActorResolution.UNRESOLVED.value
     else:
-        if record.get("box_source") != "manual":  # first fix stashes the auto pick
+        if not human_picked:  # first fix stashes the auto pick
             record["auto_box"] = record.get("box")
-        record["box_source"] = "manual"
         record["resolution"] = (
             ActorResolution.OCCLUDED.value
-            if none
+            if label.verdict is ActorVerdict.OCCLUDED
             else ActorResolution.MANUAL.value
         )
 
@@ -611,26 +629,36 @@ def _apply_actor_fix(
     record.update(status="miss", box=None, actor_box=None, score=None, crop=None, keypoints=None)
     record.pop("crop_frame", None)
 
-    src_frame = frame if frame is not None else record["frame"]
+    target = _label_target(stem, record, label) if label is not None else None
+    src_frame = target[1] if target is not None else record["frame"]
     cross_frame = src_frame != record["frame"]
     person = None
     n_candidates = record.get("candidates", 0)
     if revert:
         # No contact point (invisible event) → there IS no automatic pick;
         # revert just clears back to miss.
-        candidates = associate([_person_from_detection(d) for d in detections], x, y) if xy else []
+        people = [person_from_detection(d) for d in detections]
+        if xy:
+            association = ActorAssociationService.from_active_shadow().associate(
+                people, x, y
+            )
+            candidates = association.production_candidates
+            record["association"] = association.diagnostic()
+        else:
+            candidates = []
         n_candidates = len(candidates)
         record["candidates"] = n_candidates
         person = candidates[0] if candidates else None
-    elif box is not None:
+    elif target is not None:
+        target_box, _at, may_snap = target
         # No snapping for a cross-frame box (stored detections belong to the
-        # event frame) or when the client's mask arbitration vetoed it.
-        if len(box) != 4:
-            raise ValueError("Actor box must contain four coordinates")
-        x0, y0, x1, y1 = box
+        # event frame) or when mask arbitration ruled that no stored detection
+        # is this player — snapping could then only attach the occluder.
         person = (
-            _snap_to_detection(detections, box) if snap and not cross_frame else None
-        ) or PersonBox(xyxy=(x0, y0, x1, y1), score=0.0)
+            _snap_to_detection(detections, list(target_box))
+            if may_snap and not cross_frame
+            else None
+        ) or PersonBox(xyxy=target_box, score=0.0)
 
     crop = None
     if person is not None:
@@ -676,7 +704,7 @@ def _record_revision_is_current(
     stem: str, event_id: str, expected_revision: int
 ) -> bool:
     with _actor_fix_lock:
-        _meta, records = read_jsonl_cached(reid_path(stem))
+        _meta, records = read_jsonl_cached(records_path(stem))
     return any(
         record.get("id") == event_id
         and int(record.get("actor_revision") or 0) == expected_revision
@@ -704,7 +732,7 @@ def refresh_actor_embeddings(
     ):
         return []
     with _actor_fix_lock:
-        _meta, records = read_jsonl_cached(reid_path(stem))
+        _meta, records = read_jsonl_cached(records_path(stem))
     row = next(
         (i for i, record in enumerate(records) if record["id"] == event_id),
         None,
@@ -746,7 +774,7 @@ def _patch_embedding_row(
     """
     import numpy as np
 
-    from yp_video.reid.store import masked_crop_dir
+    from yp_video.extraction.store import masked_crop_dir
 
     existing = set(embedded_models(stem))
     targets = sorted(set(models) & existing)

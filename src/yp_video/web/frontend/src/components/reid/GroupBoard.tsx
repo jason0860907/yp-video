@@ -20,8 +20,8 @@ import { Badge } from '@/components/ui/Badge';
 import { CropImage } from '@/components/video/CropImage';
 import { toast } from '@/components/feedback/toast';
 import type { ReidRecord } from '@/types/api';
-import { trackColor, trackKeyOf, type TrackData } from './shared';
-import { MIN_CLUSTER_SIZE, type useGroupBoard } from './useGroupBoard';
+import { trackColor, trackKeyOf, type TrackData } from '@/components/labeling/shared';
+import { MIN_CLUSTER_SIZE, type Group, type useGroupBoard } from './useGroupBoard';
 
 const STATUS_DOT: Record<ReidRecord['status'], string> = {
   ok: 'bg-primary-light',
@@ -113,8 +113,17 @@ export const GroupBoard = forwardRef<BoardHandle, GroupBoardProps>(function Grou
   }, []);
 
   /** User-driven moves clear the selection (it just went somewhere). */
+  /** The crops a group covers. Rows hold UNITS; tiles are still per crop. */
+  const eventsIn = (g: Group) => g.unitKeys.flatMap(board.eventsOf);
+  const unitsOf = (eventIds: string[]) => [
+    ...new Set(eventIds.map((id) => board.unitOf.get(id)).filter(Boolean) as string[]),
+  ];
+
+  // Dragging a crop moves the whole tracklet it belongs to — the name is
+  // about the person, and half a tracklet in another group would be a claim
+  // that tracking changed people mid-track.
   const moveSelection = (eventIds: string[], toKey: string) => {
-    board.moveEvents(eventIds, toKey);
+    board.moveUnits(unitsOf(eventIds), toKey);
     setSelectedCrops(new Set());
   };
 
@@ -146,7 +155,7 @@ export const GroupBoard = forwardRef<BoardHandle, GroupBoardProps>(function Grou
         pulse(tile, 'crop', eventId);
         return;
       }
-      const group = groups.find((g) => g.eventIds.includes(eventId));
+      const group = groups.find((g) => g.unitKeys.includes(board.unitOf.get(eventId) ?? ''));
       const card = group && document.querySelector(`[data-group-key="${CSS.escape(group.key)}"]`);
       if (card) {
         pulse(card, 'group', group.key);
@@ -260,7 +269,7 @@ export const GroupBoard = forwardRef<BoardHandle, GroupBoardProps>(function Grou
     const [kind, idList] = parts;
     const eventIds = (idList ?? '').split(',').filter(Boolean);
     if (kind !== 'events' || !eventIds.length) return;
-    moveSelection(eventIds, toKey === '__new__' ? board.newGroupBelow(eventIds[0]) : toKey);
+    moveSelection(eventIds, toKey === '__new__' ? board.newGroupBelow(board.unitOf.get(eventIds[0]!)) : toKey);
   };
 
   /** Shared drag/select/jump behavior for a crop tile (image or placeholder). */
@@ -386,7 +395,7 @@ export const GroupBoard = forwardRef<BoardHandle, GroupBoardProps>(function Grou
   // Crop-less events (miss / no-actor) have no embedding, so clustering never
   // places them in a group — surface them in their own board section. Ones
   // dragged into a group render there instead.
-  const groupedIds = new Set(groups.flatMap((g) => g.eventIds));
+  const groupedIds = new Set(groups.flatMap(eventsIn));
   const missIds = records
     .filter((r) => r.resolution !== 'occluded' && !r.crop && !groupedIds.has(r.id))
     .map((r) => r.id);
@@ -429,7 +438,8 @@ export const GroupBoard = forwardRef<BoardHandle, GroupBoardProps>(function Grou
           // noise awaiting triage, not a player — render it as
           // explicitly group-less instead of "just another group".
           const isPool = g.key.startsWith('pool:');
-          const shownIds = statusFilter === 'all' ? g.eventIds : g.eventIds.filter(statusPass);
+          const events = eventsIn(g);
+          const shownIds = statusFilter === 'all' ? events : events.filter(statusPass);
           return (
           <div
             key={g.key}
@@ -525,7 +535,7 @@ export const GroupBoard = forwardRef<BoardHandle, GroupBoardProps>(function Grou
                 />
               )}
               <span className="font-mono text-[11px] tabular-nums text-text-muted">
-                {statusFilter === 'all' ? `${g.eventIds.length}` : `${shownIds.length}/${g.eventIds.length}`} events
+                {statusFilter === 'all' ? `${events.length}` : `${shownIds.length}/${events.length}`} events
               </span>
               {isPool ? <Badge tone="warning">no group</Badge> : !g.name.trim() && <Badge tone="neutral">unassigned</Badge>}
             </div>
@@ -570,7 +580,7 @@ export const GroupBoard = forwardRef<BoardHandle, GroupBoardProps>(function Grou
       {dockGroups.length > 0 && (
         <aside className="sticky top-3 max-h-[calc(100vh-1.5rem)] w-60 flex-shrink-0 space-y-2 overflow-y-auto pr-0.5">
           {dockGroups.map((g) => {
-            const shownIds = g.eventIds.filter(statusPass);
+            const shownIds = eventsIn(g).filter(statusPass);
             return (
             <div
               key={g.key}
@@ -604,7 +614,7 @@ export const GroupBoard = forwardRef<BoardHandle, GroupBoardProps>(function Grou
                   placeholder="Player name…"
                   className="w-full min-w-0 rounded-md border border-border-light bg-surface-100 px-2 py-0.5 text-xs text-text-primary focus:border-primary/50 focus:outline-none"
                 />
-                <span className="flex-shrink-0 font-mono text-[10px] tabular-nums text-text-muted">{g.eventIds.length}</span>
+                <span className="flex-shrink-0 font-mono text-[10px] tabular-nums text-text-muted">{eventsIn(g).length}</span>
               </div>
               <div className="flex items-start gap-1">
                 {shownIds.slice(0, 3).map((id) => renderCrop(id, 'h-20'))}

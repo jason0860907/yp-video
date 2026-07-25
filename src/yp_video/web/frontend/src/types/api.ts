@@ -239,6 +239,23 @@ export interface SpotInfo {
   error?: string;
 }
 
+/** How far a video has walked the stage chain (see extraction/prerequisites.py).
+ *  `blocked_on` is the FIRST unmet stage; later gaps are its consequences. */
+export interface PipelineState {
+  /** Rally source tags present, in priority order (manual → SPOT → VLM). */
+  rally_sources: string[];
+  has_action: boolean;
+  has_tracks: boolean;
+  /** Tracking ran before instance masks existed — the picker loses silhouette
+   *  arbitration but labels are unaffected. */
+  has_masks: boolean;
+  /** The rallies moved since these tracklets were cut, so every
+   *  "{rally_id}:{track_id}" key now points somewhere else. */
+  tracks_stale: boolean;
+  has_records: boolean;
+  blocked_on: 'rallies' | 'action' | 'tracks' | 'records' | null;
+}
+
 /** Video record from the reid listing. */
 export interface ReidVideo {
   name: string;
@@ -254,6 +271,7 @@ export interface ReidVideo {
   player_count?: number;
   /** Labeling marked finished by the user (the Label page's Done button). */
   done?: boolean;
+  pipeline: PipelineState;
 }
 
 /** GET /reid/options — the server-side model registry. */
@@ -286,8 +304,41 @@ export interface ReidRecord {
   crop_frame?: number;
   /** ok = unique person box, multi = ranked pick among overlaps, miss = none. */
   status: 'ok' | 'multi' | 'miss';
-  /** Explicit actor-resolution verdict; never infer this from crop presence. */
+  /** How the actor was resolved. Always explicit — never infer it from crop
+   *  presence, the server never does either. */
   resolution: 'unresolved' | 'auto' | 'manual' | 'occluded';
+  /** The human verdict on this event's actor; drives association training. */
+  actor_review?: 'unreviewed' | 'confirmed_auto' | 'manual' | 'occluded';
+  /** What the rule decided, plus the learned ranker's opinion when a
+   *  shadow is activated. The rule is what produced the crop. */
+  association?: {
+    version: string;
+    decision: 'selected' | 'ambiguous' | 'no_candidate';
+    candidate_count: number;
+    margin: number | null;
+    confidence?: number | null;
+    none_probability?: number | null;
+    top: {
+      box: [number, number, number, number];
+      cost: number;
+      source: 'wrist' | 'box' | 'other';
+      detection_score: number;
+    } | null;
+    learned?: {
+      version: string;
+      decision: 'selected' | 'ambiguous' | 'no_candidate';
+      candidate_count: number;
+      margin: number | null;
+      confidence?: number | null;
+      none_probability?: number | null;
+      top: {
+        box: [number, number, number, number];
+        cost: number;
+        source: 'wrist' | 'box' | 'other';
+        detection_score: number;
+      } | null;
+    } | null;
+  };
   box?: [number, number, number, number] | null;
   score?: number | null;
   candidates: number;
@@ -296,8 +347,6 @@ export interface ReidRecord {
   keypoints?: [number, number, number][] | null;
   /** ALL person detections on the event frame — the actor picker's choices. */
   detections?: { box: [number, number, number, number]; score: number }[];
-  /** Legacy source marker retained in stored extraction files. */
-  box_source?: 'auto' | 'manual';
   /** The automatic pick, kept when a manual fix overrides it. */
   auto_box?: [number, number, number, number] | null;
 }
@@ -312,13 +361,35 @@ export interface ReidActorFixResponse {
 export interface ReidCluster {
   id: number;
   size: number;
-  event_ids: string[];
+  unit_keys: string[];
 }
 
-/** Saved identities + nearest-centroid matches for one video. */
+/** GET /reid/clusters — units and how they group.
+ *
+ *  A UNIT is what identity is about: the tracklet a crop belongs to
+ *  ("t:<rally>:<track>"), or the event itself when no tracklet reaches it
+ *  ("e:<event_id>"). `units` carries each one's events so the board can draw
+ *  crops without a second round trip. */
+export interface ReidClusters {
+  threshold: number;
+  model: string;
+  units: Record<string, { event_ids: string[] }>;
+  clusters: ReidCluster[];
+}
+
+/** Saved identities + nearest-centroid matches for one video.
+ *
+ *  Names live on the unit: `tracks` names a tracklet (and with it every
+ *  action it performed), `assignments` names a single event — for events no
+ *  tracklet reaches, and for the ones that contradict their tracklet, which
+ *  is what an identity switch looks like. An event name WINS over its
+ *  tracklet's. `unit_names` is the two resolved onto units. */
 export interface ReidPlayers {
+  tracks: Record<string, string>;
   assignments: Record<string, string>;
+  unit_names: Record<string, string>;
   players: string[];
+  /** Keyed by UNIT key, not event id. */
   matches: Record<string, { player: string; sim: number; assigned: boolean }>;
 }
 
@@ -329,6 +400,8 @@ export interface SystemStats {
   annotations?: number;
   action_pre_annotations?: number;
   actions?: number;
+  association_labels?: number;
+  reid_labels?: number;
 }
 
 export interface ActiveCount {
@@ -430,6 +503,75 @@ export interface ReidModelEval {
 export interface ReidPerfData {
   models: ReidModelEval[];
   evaluated_at: number;
+}
+
+/** GET /actor-association/videos — one row of the Association work list. */
+export interface AssociationVideo {
+  name: string;
+  kind: 'broadcast' | 'sideline';
+  /** Records extraction wrote — the review denominator. */
+  event_count: number;
+  reviewed: number;
+  unreviewed: number;
+  /** verdict -> count; keys are absent when the count is zero. */
+  verdicts: Partial<Record<'manual' | 'occluded' | 'confirmed_auto', number>>;
+  /** What the automatic policy produced, for context on the remainder. */
+  auto_counts: { ok: number; multi: number; miss: number };
+  pipeline: PipelineState;
+}
+
+export interface ReidAssociationMetrics {
+  reviewed: number;
+  positive: number;
+  occluded: number;
+  candidate_recall: number | null;
+  top1_accuracy: number | null;
+  auto_coverage: number | null;
+  selective_accuracy: number | null;
+  operational_precision?: number | null;
+  occluded_rejection_rate: number | null;
+  overall_accuracy: number | null;
+  threshold?: number;
+}
+
+export interface ReidAssociationPerfData {
+  models: Record<string, ReidAssociationMetrics>;
+  candidates?: Record<string, ReidAssociationMetrics | null>;
+  labels: Record<string, number>;
+  skipped: Record<string, number>;
+  dataset?: ReidAssociationDatasetSummary;
+}
+
+export interface ReidAssociationDatasetSummary {
+  examples: number;
+  stems: number;
+  labels: Record<string, number>;
+  skipped: Record<string, number>;
+}
+
+export interface ReidAssociationCheckpoint {
+  name: string;
+  active_shadow: boolean;
+  /** Which feature contract it was trained on: 'box-v2' | 'track-v1'. */
+  feature_set: string;
+  /** Why it cannot be the extraction shadow, or null when it can. */
+  shadow_blocked_on: string | null;
+  created_at: number;
+  threshold: number;
+  metrics: {
+    grouped_oof?: ReidAssociationMetrics;
+  };
+  training: {
+    examples: number;
+    stems: string[];
+  };
+}
+
+export interface ReidAssociationStatus {
+  dataset: ReidAssociationDatasetSummary;
+  checkpoints: ReidAssociationCheckpoint[];
+  active_shadow: string | null;
+  active_job: Job | null;
 }
 
 export interface ReidDatasetInfo {

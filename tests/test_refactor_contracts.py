@@ -10,20 +10,22 @@ from unittest.mock import patch
 import numpy as np
 from pydantic import TypeAdapter, ValidationError
 
-from yp_video.reid import actor_fixes, checkpoints, pipeline, store
+from yp_video.actor.labels import ActorLabel, ActorVerdict
+from yp_video.actor.resolution import ActorResolution, actor_resolution
 from yp_video.contracts.reid import (
     CHECKPOINT_MANIFEST_NAME,
     CHECKPOINT_TYPE,
     REID_CONTRACT_VERSION,
 )
-from yp_video.reid.resolution import ActorResolution, actor_resolution
+from yp_video.extraction import actor_fix, pipeline
+from yp_video.reid import checkpoints, store
 from yp_video.web.jobs import MAX_LOG_LINES, Job, JobManager, JobStatus
 from yp_video.web.routers.action_train import (
     ActionTrainRequest,
     AnnotationActionTrainRequest,
     VnlActionTrainRequest,
 )
-from yp_video.web.routers.reid import (
+from yp_video.web.routers.actor_association import (
     ActorFixRequest,
     AutoActorRequest,
     OccludedActorRequest,
@@ -69,7 +71,6 @@ class DiscriminatedRequestTests(unittest.TestCase):
             {
                 "mode": "pick",
                 "event_id": "e1",
-                "model": "clip-reident-masked",
                 "box": [1, 2, 3, 4],
             }
         )
@@ -79,8 +80,7 @@ class DiscriminatedRequestTests(unittest.TestCase):
                 {
                     "mode": "occluded",
                     "event_id": "e1",
-                    "model": "clip-reident-masked",
-                }
+                    }
             ),
             OccludedActorRequest,
         )
@@ -89,8 +89,7 @@ class DiscriminatedRequestTests(unittest.TestCase):
                 {
                     "mode": "auto",
                     "event_id": "e1",
-                    "model": "clip-reident-masked",
-                }
+                    }
             ),
             AutoActorRequest,
         )
@@ -100,8 +99,7 @@ class DiscriminatedRequestTests(unittest.TestCase):
                 {
                     "mode": "occluded",
                     "event_id": "e1",
-                    "model": "clip-reident-masked",
-                    "box": [1, 2, 3, 4],
+                        "box": [1, 2, 3, 4],
                 }
             )
         with self.assertRaises(ValidationError):
@@ -109,47 +107,36 @@ class DiscriminatedRequestTests(unittest.TestCase):
                 {
                     "mode": "pick",
                     "event_id": "e1",
-                    "model": "clip-reident-masked",
-                }
+                    }
             )
         with self.assertRaises(ValidationError):
             adapter.validate_python(
                 {
                     "mode": "pick",
                     "event_id": "e1",
-                    "model": "clip-reident-masked",
-                    "box": [1, 2, 3, 4],
+                        "box": [1, 2, 3, 4],
                     "frame": -1,
                 }
             )
 
 
 class ActorResolutionTests(unittest.TestCase):
-    def test_legacy_records_normalize_to_explicit_domain_state(self) -> None:
+    def test_state_is_read_never_inferred(self) -> None:
         self.assertEqual(
-            actor_resolution({"crop": "auto.jpg"}), ActorResolution.AUTO
-        )
-        self.assertEqual(
-            actor_resolution({"box_source": "manual", "crop": "fix.jpg"}),
-            ActorResolution.MANUAL,
-        )
-        self.assertEqual(
-            actor_resolution({"box_source": "manual", "crop": None}),
+            actor_resolution({"resolution": "occluded", "crop": "stale.jpg"}),
             ActorResolution.OCCLUDED,
         )
-        self.assertEqual(actor_resolution({}), ActorResolution.UNRESOLVED)
+        self.assertEqual(
+            actor_resolution({"resolution": "auto", "crop": None}),
+            ActorResolution.AUTO,
+        )
 
-    def test_explicit_state_wins_over_legacy_shape(self) -> None:
-        self.assertEqual(
-            actor_resolution(
-                {
-                    "resolution": "occluded",
-                    "box_source": "manual",
-                    "crop": "stale.jpg",
-                }
-            ),
-            ActorResolution.OCCLUDED,
-        )
+    def test_a_record_without_state_fails_loudly(self) -> None:
+        """A crop is not evidence of how the actor was chosen — guessing here
+        is what let 'manual' and 'occluded' drift apart before."""
+        for record in ({"id": "e1", "crop": "auto.jpg"}, {"id": "e1"}):
+            with self.assertRaisesRegex(ValueError, "re-run extraction"):
+                actor_resolution(record)
 
 
 class JobPayloadTests(unittest.TestCase):
@@ -205,50 +192,56 @@ class ActorFixTransactionTests(unittest.TestCase):
 
             with (
                 patch.object(
-                    actor_fixes.store, "reid_path", return_value=reid_file
+                    actor_fix.extraction_store,
+                    "records_path",
+                    return_value=reid_file,
                 ),
                 patch.object(
-                    actor_fixes.store,
+                    actor_fix.actor_labels,
+                    "actors_path",
+                    return_value=root / "actors.json",
+                ),
+                patch.object(
+                    actor_fix.store,
                     "players_path",
                     return_value=root / "players.json",
                 ),
                 patch.object(
-                    actor_fixes.store,
+                    actor_fix.store,
                     "embedding_refresh_path",
                     return_value=root / "embedding-refresh.json",
                 ),
                 patch.object(
-                    actor_fixes.store,
+                    actor_fix.store,
                     "embedded_models",
                     return_value=models,
                 ),
                 patch.object(
-                    actor_fixes.store,
+                    actor_fix.store,
                     "embedding_path",
                     side_effect=lambda _stem, model: model_files[model],
                 ),
                 patch.object(
-                    actor_fixes.store,
+                    actor_fix.extraction_store,
                     "crop_dir",
                     return_value=root / "crops",
                 ),
                 patch.object(
-                    actor_fixes.store,
+                    actor_fix.extraction_store,
                     "masked_crop_dir",
                     return_value=root / "masked",
                 ),
                 patch.object(
-                    actor_fixes.pipeline,
+                    actor_fix.pipeline,
                     "apply_actor_fix",
                     return_value={"id": "event-1", "actor_revision": 7},
                 ) as apply_actor_fix,
-                patch.object(
-                    actor_fixes.identity, "apply_actor_fix_annotation"
-                ),
+                patch.object(actor_fix.actor_labels, "save"),
+                patch.object(actor_fix.identity, "drop_assignment"),
             ):
-                result = actor_fixes.apply(
+                result = actor_fix.apply(
                     root / "match.mp4",
-                    actor_fixes.MarkOccluded(
+                    actor_fix.MarkOccluded(
                         mode="occluded", event_id="event-1"
                     ),
                     active_model="clip-reident-masked",
@@ -264,74 +257,134 @@ class ActorFixTransactionTests(unittest.TestCase):
         )
         self.assertEqual(result.actor_revision, 7)
 
+    def test_request_mode_resolves_to_one_command_without_branching(
+        self,
+    ) -> None:
+        """Transport → command → label, with no re-branching on the way."""
+        adapter = TypeAdapter(ActorFixRequest)
+        cases = {
+            ("pick", ActorVerdict.MANUAL): {
+                "mode": "pick",
+                "event_id": "e1",
+                "box": [1, 2, 3, 4],
+                "frame": 9,
+                "snap": False,
+            },
+            ("occluded", ActorVerdict.OCCLUDED): {
+                "mode": "occluded",
+                "event_id": "e1",
+            },
+            ("auto", None): {"mode": "auto", "event_id": "e1"},
+        }
+        for (mode, verdict), payload in cases.items():
+            command = adapter.validate_python(payload).command
+            self.assertEqual(command.mode, mode)
+            self.assertEqual(command.event_id, "e1")
+            self.assertEqual(
+                command.label.verdict if command.label else None, verdict
+            )
+
+    def test_each_command_carries_the_label_it_stands_for(self) -> None:
+        """One uniform write per fix — the mode never re-branches downstream."""
+        self.assertEqual(
+            actor_fix.PickActor(
+                mode="pick",
+                event_id="e1",
+                box=(1, 2, 3, 4),
+                frame=9,
+                snap=False,
+            ).label,
+            ActorLabel(
+                ActorVerdict.MANUAL, box=(1, 2, 3, 4), frame=9, snap=False
+            ),
+        )
+        self.assertEqual(
+            actor_fix.MarkOccluded(mode="occluded", event_id="e1").label,
+            ActorLabel(ActorVerdict.OCCLUDED),
+        )
+        self.assertIsNone(
+            actor_fix.RevertActor(mode="auto", event_id="e1").label
+        )
+
     def test_derived_and_annotation_files_roll_back_together(self) -> None:
         with tempfile.TemporaryDirectory() as raw_dir:
             root = Path(raw_dir)
-            reid_file = root / "match_reid.jsonl"
+            record_file = root / "match.jsonl"
+            actors_file = root / "match_actors.json"
             players_file = root / "match_players.json"
             embedding_file = root / "match.model.npy"
             crop_dir = root / "crops"
             masked_dir = root / "masked"
             for path, content in (
-                (reid_file, b"reid-before"),
+                (record_file, b"records-before"),
+                (actors_file, b"actors-before"),
                 (players_file, b"players-before"),
                 (embedding_file, b"embedding-before"),
             ):
                 path.write_bytes(content)
 
             def mutate_derived(*_args, **_kwargs):
-                reid_file.write_bytes(b"reid-after")
+                record_file.write_bytes(b"records-after")
                 embedding_file.write_bytes(b"embedding-after")
-                actor_fixes.store.mark_actor_embedding_stale(
+                actor_fix.store.mark_actor_embedding_stale(
                     "match", ["model"], "event-1"
                 )
                 crop_dir.mkdir()
                 (crop_dir / "new.jpg").write_bytes(b"new crop")
                 return {"id": "event-1"}
 
-            def fail_annotation(*_args, **_kwargs):
-                players_file.write_bytes(b"players-after")
-                raise RuntimeError("annotation write failed")
+            def fail_label(*_args, **_kwargs):
+                actors_file.write_bytes(b"actors-after")
+                raise RuntimeError("label write failed")
 
             with (
-                patch.object(actor_fixes.store, "reid_path", return_value=reid_file),
                 patch.object(
-                    actor_fixes.store, "players_path", return_value=players_file
+                    actor_fix.extraction_store,
+                    "records_path",
+                    return_value=record_file,
                 ),
                 patch.object(
-                    actor_fixes.store,
+                    actor_fix.actor_labels,
+                    "actors_path",
+                    return_value=actors_file,
+                ),
+                patch.object(
+                    actor_fix.store, "players_path", return_value=players_file
+                ),
+                patch.object(
+                    actor_fix.store,
                     "embedding_refresh_path",
                     return_value=root / "embedding-refresh.json",
                 ),
                 patch.object(
-                    actor_fixes.store, "embedded_models", return_value=["model"]
+                    actor_fix.store, "embedded_models", return_value=["model"]
                 ),
                 patch.object(
-                    actor_fixes.store,
+                    actor_fix.store,
                     "embedding_path",
                     return_value=embedding_file,
                 ),
-                patch.object(actor_fixes.store, "crop_dir", return_value=crop_dir),
                 patch.object(
-                    actor_fixes.store, "masked_crop_dir", return_value=masked_dir
+                    actor_fix.extraction_store, "crop_dir", return_value=crop_dir
                 ),
                 patch.object(
-                    actor_fixes.pipeline,
+                    actor_fix.extraction_store,
+                    "masked_crop_dir",
+                    return_value=masked_dir,
+                ),
+                patch.object(
+                    actor_fix.pipeline,
                     "apply_actor_fix",
                     side_effect=mutate_derived,
                 ),
                 patch.object(
-                    actor_fixes.identity,
-                    "apply_actor_fix_annotation",
-                    side_effect=fail_annotation,
+                    actor_fix.actor_labels, "save", side_effect=fail_label
                 ),
             ):
-                with self.assertRaisesRegex(
-                    RuntimeError, "annotation write failed"
-                ):
-                    actor_fixes.apply(
+                with self.assertRaisesRegex(RuntimeError, "label write failed"):
+                    actor_fix.apply(
                         root / "match.mp4",
-                        actor_fixes.PickActor(
+                        actor_fix.PickActor(
                             mode="pick",
                             event_id="event-1",
                             box=(1, 2, 3, 4),
@@ -339,7 +392,8 @@ class ActorFixTransactionTests(unittest.TestCase):
                         active_model="model",
                     )
 
-            self.assertEqual(reid_file.read_bytes(), b"reid-before")
+            self.assertEqual(record_file.read_bytes(), b"records-before")
+            self.assertEqual(actors_file.read_bytes(), b"actors-before")
             self.assertEqual(players_file.read_bytes(), b"players-before")
             self.assertEqual(embedding_file.read_bytes(), b"embedding-before")
             self.assertFalse((root / "embedding-refresh.json").exists())
@@ -379,7 +433,7 @@ class ActorEmbeddingRefreshTests(unittest.TestCase):
                 ),
                 patch.object(pipeline, "crop_dir", return_value=root / "crops"),
                 patch(
-                    "yp_video.reid.store.masked_crop_dir",
+                    "yp_video.extraction.store.masked_crop_dir",
                     return_value=root / "masked",
                 ),
                 patch.object(pipeline, "_masked_record_crop"),
@@ -434,7 +488,7 @@ class ActorEmbeddingRefreshTests(unittest.TestCase):
 
             paths = {"fresh": fresh, "stale": stale}
             with (
-                patch.object(store, "reid_path", return_value=reid_file),
+                patch.object(store, "records_path", return_value=reid_file),
                 patch.object(
                     store,
                     "embedded_models",
@@ -464,7 +518,7 @@ class ActorEmbeddingRefreshTests(unittest.TestCase):
             os.utime(matrix, ns=(2, 2))
 
             with (
-                patch.object(store, "reid_path", return_value=reid_file),
+                patch.object(store, "records_path", return_value=reid_file),
                 patch.object(
                     store, "embedding_path", return_value=matrix
                 ),

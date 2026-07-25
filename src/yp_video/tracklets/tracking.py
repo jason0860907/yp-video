@@ -14,13 +14,19 @@ One tracker per rally: between rallies players reshuffle and broadcasts cut
 away, so cross-rally tracks would be fiction. Only rally spans are scanned —
 they are where the events live and everything else is replays and crowd.
 
+Rally spans come straight from the rally annotation (core/rallies.py), NOT
+from the action file's copy of them: tracking needs to know where the rallies
+are, not what happened inside them, and reading the action file made this
+stage wait for one it does not depend on.
+
 The dense pass is throughput-tuned (~9 ms/frame vs ~116 ms naive):
 a producer thread decodes and preprocesses frames while the GPU runs
 fixed-size fp16 batches, so neither side ever waits for the other.
 
-Storage: reid/tracks/<stem>_tracks.jsonl, one record per tracklet
-({rally_id, track_id, frames, boxes, scores}), plus <stem>_masks.npz with
-the packed per-frame masks keyed "rally:track".
+Storage lives in tracklets/store.py. Resolving a box back to the tracklet it
+belongs to lives in tracklets/geometry.py; joining tracklets to extracted
+events needs both files and therefore happens a layer up, in
+extraction/links.py.
 """
 
 from __future__ import annotations
@@ -28,16 +34,15 @@ from __future__ import annotations
 import queue
 import threading
 import time
-from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
 
-from yp_video.core.cache import StatCache
-from yp_video.core.jsonl import read_jsonl, read_jsonl_cached, write_jsonl
-from yp_video.reid.detector import iou
-from yp_video.reid.seg import PERSON_CLASS_ID, SEG_WEIGHTS
-from yp_video.reid.store import action_annotation_path, reid_path, save_track_masks, tracks_path
+from yp_video.core.jsonl import write_jsonl
+from yp_video.core.progress import ProgressFn
+from yp_video.core.rallies import load_rallies, rally_fingerprint
+from yp_video.person.seg import PERSON_CLASS_ID, SEG_WEIGHTS
+from yp_video.tracklets.store import save_track_masks, tracks_path
 
 # Detection floor for the dense pass — even lower than extraction's 0.1:
 # ByteTrack's second association stage recovers these low-score detections
@@ -47,10 +52,6 @@ TRACK_SCORE_THRESHOLD = 0.05
 
 # Tracklets shorter than this many detections are detector flicker, not a player.
 MIN_TRACK_FRAMES = 5
-# An event snaps onto a tracklet when at least this fraction of the track box
-# lies inside the event's display box (containment, not IoU — the display box
-# is a keypoint/contact-point union, a superset of the raw detector box).
-LINK_MIN_CONTAINMENT = 0.5
 
 # The traced fp16 graph bakes the batch dimension in, so every call must be
 # exactly this size — partial final batches are padded and sliced.
@@ -78,9 +79,6 @@ def _pack_mask(mask: np.ndarray, box) -> np.ndarray:
         return np.zeros(MASK_H * MASK_W // 8, dtype=np.uint8)
     crop = cv2.resize(mask[y0:y1, x0:x1].astype(np.uint8), (MASK_W, MASK_H), interpolation=cv2.INTER_NEAREST)
     return np.packbits(crop.astype(bool))
-
-ProgressFn = Callable[[int, int, str], None]
-
 
 class _BatchDetector:
     """fp16 batch-compiled RF-DETR Seg for the dense pass — person boxes,
@@ -133,18 +131,17 @@ def track_video(video_path: Path, *, stride: int = 1, on_progress: ProgressFn | 
     import torch
 
     stem = video_path.stem
-    ann_path = action_annotation_path(stem)
-    if ann_path is None:
-        raise ValueError(f"No action annotations for {stem}")
-    ann_meta, _rows = read_jsonl(ann_path)
-    rallies = ann_meta.get("rallies") or []
+    rallies = load_rallies(stem)
     if not rallies:
-        raise ValueError(f"No rally spans annotated for {stem} — tracking scans rallies only")
+        raise ValueError(
+            f"No rally spans for {stem} — label rallies or run Rally SPOT Predict; "
+            "tracking scans rallies only"
+        )
 
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
         raise ValueError(f"Cannot open video: {video_path}")
-    fps = cap.get(cv2.CAP_PROP_FPS) or float(ann_meta.get("fps") or 30.0)
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     frame_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
@@ -281,6 +278,11 @@ def track_video(video_path: Path, *, stride: int = 1, on_progress: ProgressFn | 
         "frame_size": [frame_w, frame_h],
         "stride": stride,
         "mask_res": [MASK_H, MASK_W],
+        # Which rallies these tracklets were cut from. A track key is
+        # "{rally_id}:{track_id}" and rally_id is positional, so if the spans
+        # move every key silently means something else — this is how a reader
+        # finds out instead of mis-resolving a human's tracklet label.
+        "rallies": {"count": len(spans), "fingerprint": rally_fingerprint(stem)},
         "created_at": time.time(),
         "counts": counts,
     }
@@ -289,64 +291,3 @@ def track_video(video_path: Path, *, stride: int = 1, on_progress: ProgressFn | 
     save_track_masks(stem, (MASK_H, MASK_W), masks_store)
     write_jsonl(tracks_path(stem), header, records)
     return counts
-
-
-def _containment(track_box: list[float], display_box: list[float]) -> float:
-    """Fraction of the track box's area inside the display box."""
-    ix0, iy0 = max(track_box[0], display_box[0]), max(track_box[1], display_box[1])
-    ix1, iy1 = min(track_box[2], display_box[2]), min(track_box[3], display_box[3])
-    inter = max(0.0, ix1 - ix0) * max(0.0, iy1 - iy0)
-    area = max(1.0, (track_box[2] - track_box[0]) * (track_box[3] - track_box[1]))
-    return inter / area
-
-
-# link_events results, keyed by stem on both source files. Tiny values
-# (one small dict per video), so unbounded is fine.
-_links_cache: StatCache = StatCache()
-
-
-def link_events(stem: str) -> dict[str, dict]:
-    """event_id → {rally_id, track_id} for events whose actor box lands on a tracklet.
-
-    Events without a box (miss / "no actor") never link. With a stride > 1
-    the event's exact frame may be undetected — the nearest detected frame
-    within the stride wins.
-    """
-    return _links_cache.get(stem, [tracks_path(stem), reid_path(stem)], lambda: _link_events(stem))
-
-
-def _link_events(stem: str) -> dict[str, dict]:
-    tmeta, tracklets = read_jsonl_cached(tracks_path(stem))  # read-only
-    _rmeta, records = read_jsonl_cached(reid_path(stem))  # read-only
-    stride = int(tmeta.get("stride") or 1)
-
-    by_frame: dict[int, list[tuple[int, int, list[float]]]] = {}
-    for t in tracklets:
-        for frame, box in zip(t["frames"], t["boxes"]):
-            by_frame.setdefault(frame, []).append((t["rally_id"], t["track_id"], box))
-
-    links: dict[str, dict] = {}
-    for r in records:
-        box = r.get("box")
-        if not box:
-            continue
-        # A cross-frame pick's boxes live on crop_frame, not the event frame
-        # (the actor wasn't trackable there) — look the tracklet up THERE.
-        # That resolves to exactly the track the user clicked, re-derived
-        # geometrically so a re-run of tracking can never leave it stale.
-        at = r.get("crop_frame") or r["frame"]
-        candidates = next(
-            (c for off in sorted(range(-stride + 1, stride), key=abs) if (c := by_frame.get(at + off))),
-            None,
-        )
-        if not candidates:
-            continue
-        # Rank by IoU against the RAW actor box: the padded display box can
-        # fully contain two overlapping players' track boxes, and containment
-        # against it picks whoever is bigger — the tight box discriminates.
-        # The link GATE keeps the display-box containment semantics.
-        anchor = r.get("actor_box") or box
-        rally_id, track_id, tbox = max(candidates, key=lambda c: iou(c[2], anchor))
-        if _containment(tbox, box) >= LINK_MIN_CONTAINMENT:
-            links[r["id"]] = {"rally_id": rally_id, "track_id": track_id}
-    return links

@@ -30,7 +30,15 @@ from yp_video.config import (
 )
 from yp_video.contracts.reid import REID_CONTRACT_VERSION, REID_CONTRACT_VERSION_ENV, REID_PROGRESS_PREFIX
 from yp_video.core.cache import StatCache
-from yp_video.reid import checkpoints, dataset, evaluate, sessions, store
+from yp_video.extraction import store as extraction_store
+from yp_video.extraction.links import track_keys
+from yp_video.reid import (
+    checkpoints,
+    dataset,
+    evaluate,
+    sessions,
+    store,
+)
 from yp_video.reid.checkpoints import reid_engine_available
 from yp_video.reid.embedder import build_embedders, threshold_calibration
 from yp_video.web.job_helpers import ProgressParser, fail_job_from_exc, stream_subprocess
@@ -77,9 +85,9 @@ def status() -> dict:
     labeled are surfaced only as ``pending_videos`` so the page can nudge the
     user to finish them, never as training material.
     """
-    groups = sessions.build_sessions(done_only=True)
+    groups = sessions.build_sessions(done_only=True, links_for=track_keys)
     ready = [stem for g in groups for stem in g.stems]
-    pending = len(sessions.labeled_stems()) - len(ready)
+    pending = len(sessions.labeled_stems(links_for=track_keys)) - len(ready)
     registry = build_embedders()
     return {
         "sessions": [_session_payload(g) for g in groups],
@@ -118,7 +126,7 @@ def _eval_sources(groups) -> list[Path]:
     for g in groups:
         for stem in g.stems:
             paths.append(store.players_path(stem))
-            paths.append(store.reid_path(stem))
+            paths.append(extraction_store.records_path(stem))
             for model in store.embedded_models(stem):
                 paths.append(store.embedding_path(stem, model))
     return paths
@@ -131,7 +139,7 @@ async def performance(model: str | None = None) -> dict:
     Note this takes ``model=`` rather than the other train routers' ``run=``:
     there are no training runs here yet, there are embedders.
     """
-    groups = sessions.build_sessions(done_only=True)
+    groups = sessions.build_sessions(done_only=True, links_for=track_keys)
     if not groups:
         return {"models": [], "evaluated_at": time.time()}
     registry = list(build_embedders())
@@ -141,7 +149,7 @@ async def performance(model: str | None = None) -> dict:
         registry = [model]
 
     def compute() -> dict:
-        return {**evaluate.evaluate_models(groups, registry), "evaluated_at": time.time()}
+        return {**evaluate.evaluate_models(groups, registry, track_keys), "evaluated_at": time.time()}
 
     try:
         # Off the event loop: numpy holds the GIL for the matmuls.
@@ -155,9 +163,9 @@ async def performance(model: str | None = None) -> dict:
 
 
 def _plan(split_mode: str, test_ratio: float, seed: int, masked: bool):
-    groups = sessions.build_sessions(done_only=True)
+    groups = sessions.build_sessions(done_only=True, links_for=track_keys)
     if not groups:
-        pending = len(sessions.labeled_stems())
+        pending = len(sessions.labeled_stems(links_for=track_keys))
         if pending:
             raise HTTPException(
                 400,
@@ -167,7 +175,12 @@ def _plan(split_mode: str, test_ratio: float, seed: int, masked: bool):
         raise HTTPException(400, "No labeled videos — assign players on the ReID Label page first")
     try:
         return dataset.plan_export(
-            groups, split_mode=split_mode, test_ratio=test_ratio, seed=seed, masked=masked
+            groups,
+            split_mode=split_mode,
+            test_ratio=test_ratio,
+            seed=seed,
+            masked=masked,
+            links_for=track_keys,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc

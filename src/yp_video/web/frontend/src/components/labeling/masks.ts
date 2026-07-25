@@ -1,10 +1,10 @@
 /** Tracklet masks and pick geometry — the ReID actor picker's pure core.
  *
  *  Nothing here touches React. Instance masks arrive as packed bits (see
- *  reid/tracking.py save_track_masks) and every decision the picker makes —
+ *  tracklets/store.py save_track_masks) and every decision the picker makes —
  *  who owns a pointer position, which stored detection is the player a
  *  silhouette belongs to, where a fix's box comes from — is a pure function
- *  of those bits and boxes. Kept out of ReidVideoPlayer so the fiddly parts
+ *  of those bits and boxes. Kept out of EventVideoPlayer so the fiddly parts
  *  (bit indexing, coverage, occlusion arbitration) stay testable alone.
  */
 
@@ -50,15 +50,6 @@ export interface RenderedSilhouette extends Silhouette {
 export const bitAt = (bits: Uint8Array, i: number): boolean => Boolean((bits[i >> 3]! >> (7 - (i & 7))) & 1);
 
 export const boxArea = (b: Box): number => (b[2] - b[0]) * (b[3] - b[1]);
-
-export function boxIou(a: Box, b: Box): number {
-  const ix = Math.max(0, Math.min(a[2], b[2]) - Math.max(a[0], b[0]));
-  const iy = Math.max(0, Math.min(a[3], b[3]) - Math.max(a[1], b[1]));
-  const inter = ix * iy;
-  const union = boxArea(a) + boxArea(b) - inter;
-  return union > 0 ? inter / union : 0;
-}
-
 // Exact frame first, then ±1: a stride-decoded tracking run leaves gaps, and
 // the playhead lands between detected frames. One policy, every lookup.
 const NEAR_OFFSETS = [0, -1, 1];
@@ -152,25 +143,6 @@ export function inMaskBits(s: Silhouette, px: number, py: number): boolean {
   return bitAt(s.bits, gy * s.mw + gx);
 }
 
-/** Fraction of a silhouette's on-pixels that fall inside a detection box. */
-export function maskCoverage(s: Silhouette, detBox: Box): number {
-  const [x0, y0, x1, y1] = s.box;
-  const cw = (x1 - x0) / s.mw;
-  const ch = (y1 - y0) / s.mh;
-  let on = 0;
-  let inside = 0;
-  for (let gy = 0; gy < s.mh; gy++) {
-    for (let gx = 0; gx < s.mw; gx++) {
-      if (!bitAt(s.bits, gy * s.mw + gx)) continue;
-      on++;
-      const cx = x0 + (gx + 0.5) * cw;
-      const cy = y0 + (gy + 0.5) * ch;
-      if (cx >= detBox[0] && cx < detBox[2] && cy >= detBox[1] && cy < detBox[3]) inside++;
-    }
-  }
-  return on ? inside / on : 0;
-}
-
 /** Who owns a pointer position: boxes containing it, silhouette hits first
  *  (they resolve overlaps), smallest box wins ties. */
 export function pickableAt(
@@ -205,63 +177,36 @@ export function trackBoxNearEvent(
   return null;
 }
 
-// Coverage a stored detection needs of the clicked silhouette to be accepted
-// as that player.
-const MASK_COVERAGE_MIN = 0.6;
-// Without masks, box IoU decides — under this nothing matches and the raw
-// track box goes through.
-const PICK_IOU_MIN = 0.3;
-
 /** Resolve a clicked player into an actor fix for the pinned event.
  *
- *  Track reaches the event frame → the fix uses the box THERE, resolved onto
- *  the stored detection that is actually this player. Track doesn't reach it
- *  (the actor went undetected around the action) → cross-frame fix: the
- *  clicked frame's box goes through with its frame number, and the backend
- *  crops the pixels that actually contain the player.
+ *  Clicking a tracklet sends the tracklet — deciding WHICH stored detection
+ *  is that player now happens server-side (extraction/links.resolve_track),
+ *  because the crop it chooses feeds the embedder and has to be reproducible
+ *  from the saved label long after the click, not just at click time.
+ *
+ *  The clicked box still rides along as the anchor: `track_id` restarts every
+ *  rally, so re-running tracking renumbers everything, and the anchor is what
+ *  re-derives the label when that happens.
  */
 export function resolveActorFix({
-  detections,
-  trackBox,
-  silhouette,
+  trackKey,
   clickedBox,
   clickedFrame,
+  reachesEvent,
 }: {
-  detections: { box: Box; score: number }[];
-  /** The clicked track's box at the event frame; null = never reaches it. */
-  trackBox: Box | null;
-  /** That track's mask there, when the video has masks stored. */
-  silhouette: Silhouette | null;
+  /** The clicked track, or null when the click landed on a bare detection. */
+  trackKey: string | null;
   clickedBox: Box;
   clickedFrame: number;
+  /** Whether that track has a box at the event frame. */
+  reachesEvent: boolean;
 }): ActorFix {
-  if (!trackBox) return { mode: 'pick', box: clickedBox, frame: clickedFrame };
-
-  if (silhouette) {
-    // "Which detection contains most of this silhouette, tightest box first"
-    // cannot pick an occluder the way box IoU can (a partial hull of an
-    // occluded player always loses an IoU contest). Nobody reaching coverage
-    // means NO stored detection is this player — the track box goes through
-    // with the backend's snap vetoed, so it can't re-attach the occluder.
-    const covered = detections
-      .filter((d) => maskCoverage(silhouette, d.box) >= MASK_COVERAGE_MIN)
-      .sort((a, b) => boxArea(a.box) - boxArea(b.box));
-    return covered.length
-      ? { mode: 'pick', box: covered[0]!.box }
-      : { mode: 'pick', box: trackBox, snap: false };
-  }
-
-  // No masks stored for this video — box IoU is the best available.
-  let box = trackBox;
-  let best = PICK_IOU_MIN;
-  for (const d of detections) {
-    const overlap = boxIou(d.box, trackBox);
-    if (overlap >= best) {
-      best = overlap;
-      box = d.box;
-    }
-  }
-  return { mode: 'pick', box };
+  if (trackKey) return { mode: 'pick', box: clickedBox, track: trackKey };
+  // No tracklet: the old box path, including the cross-frame case where the
+  // actor was never detected near the action.
+  return reachesEvent
+    ? { mode: 'pick', box: clickedBox }
+    : { mode: 'pick', box: clickedBox, frame: clickedFrame };
 }
 
 // A rally's worth of tinted silhouettes: ~12 players × a few hundred frames,

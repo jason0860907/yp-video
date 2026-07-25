@@ -1,29 +1,38 @@
 """Player ReID router.
 
-Runs the tracking-free ReID extraction (RF-DETR person detection → contact
-point association → OSNet embedding) over the annotated action events of
-selected cut videos. Results land in reid/ as per-video jsonl +
-crop images; identity matching consumes them later.
+Runs the tracking-free extraction (RF-DETR person detection → contact point
+association → embedding) over the annotated action events of selected cut
+videos, and serves the ReID Label page: crops, clusters and player
+assignments. Results land in reid/ as per-video jsonl + crop images.
+
+Reviewing WHICH person performed each action is the Association Label page's
+job and lives in routers/actor_association.py; the only thing the two share
+is the extraction records both read.
 """
 
 from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Annotated, Literal
 from urllib.parse import unquote
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
+from yp_video.actor import labels as actor_labels
 from yp_video.config import cut_kind_of, find_cut, iter_all_cuts
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import read_jsonl, read_jsonl_cached
-from yp_video.reid import actor_fixes, checkpoints, identity, pipeline, store, tracking
-from yp_video.reid.detector import build_keypoint_sources
+from yp_video.core.rallies import rally_sources
+from yp_video.extraction import done, links, pipeline
+from yp_video.extraction.prerequisites import prerequisites
+from yp_video.extraction import store as extraction_store
+from yp_video.person.detector import build_keypoint_sources
+from yp_video.reid import checkpoints, identity, store
+from yp_video.tracklets import store as tracks_store
+from yp_video.tracklets import tracking
 from yp_video.reid.embedder import DEFAULT_EMBEDDER, EMBEDDER_NAMES, build_embedders, threshold_calibration
-from yp_video.reid.resolution import actor_resolution
 from yp_video.web.job_helpers import init_batch_items, spawn_batch_video_job
 from yp_video.web.jobs import job_manager
 
@@ -54,7 +63,7 @@ class ReidStartRequest(BaseModel):
 
 
 def _read_header(stem: str) -> dict | None:
-    path = store.reid_path(stem)
+    path = extraction_store.records_path(stem)
     if not path.exists():
         return None
     return read_jsonl_cached(path)[0] or None  # read-only — shared cached object
@@ -69,6 +78,7 @@ def list_videos() -> list[dict]:
         if not events:
             continue
         header = _read_header(f.stem)
+        players = identity.load_players(f.stem)
         results.append({
             "name": f.name,
             "kind": cut_kind_of(f),
@@ -79,8 +89,11 @@ def list_videos() -> list[dict]:
             ),
             "embedded_models": store.embedded_models(f.stem),
             "stale_embedding_models": store.stale_embedding_models(f.stem),
-            "player_count": len(set(identity.load_assignments(f.stem).values())),
-            "done": identity.load_done(f.stem),
+            "player_count": len(
+                set(players.tracks.values()) | set(players.assignments.values())
+            ),
+            "done": players.done,
+            "pipeline": prerequisites(f.stem).payload(),
         })
     return results
 
@@ -127,9 +140,15 @@ async def start(req: ReidStartRequest) -> dict:
         path = find_cut(name)
         if path is None:
             raise HTTPException(404, f"Video not found: {name}")
-        if store.action_annotation_path(path.stem) is None:
+        if extraction_store.action_annotation_path(path.stem) is None:
             raise HTTPException(400, f"No action annotations for: {name}")
-        if not req.overwrite and store.reid_path(path.stem).exists():
+        # Association resolves an actor to a tracklet, so extraction without
+        # tracking would produce records nobody can label at the current unit.
+        if not tracks_store.tracks_path(path.stem).exists():
+            raise HTTPException(
+                400, f"No tracking for: {name} — run Rally Tracking first"
+            )
+        if not req.overwrite and extraction_store.records_path(path.stem).exists():
             skipped.append(path.stem)
             continue
         video_paths.append(path)
@@ -167,16 +186,21 @@ class TrackStartRequest(BaseModel):
 
 @router.post("/track")
 async def track(req: TrackStartRequest) -> dict:
-    """Dense per-rally detection + ByteTrack (see reid/tracking.py)."""
+    """Dense per-rally detection + ByteTrack (see tracklets/tracking.py)."""
     video_paths: list[Path] = []
     skipped: list[str] = []
     for name in req.videos:
         path = find_cut(name)
         if path is None:
             raise HTTPException(404, f"Video not found: {name}")
-        if store.action_annotation_path(path.stem) is None:
-            raise HTTPException(400, f"No action annotations for: {name}")
-        if not req.overwrite and store.tracks_path(path.stem).exists():
+        # Tracking needs rally spans and nothing else — deliberately NOT the
+        # action annotation, so it can run alongside action labeling.
+        if not rally_sources(path.stem):
+            raise HTTPException(
+                400,
+                f"No rally spans for: {name} — label rallies or run Rally SPOT Predict",
+            )
+        if not req.overwrite and tracks_store.tracks_path(path.stem).exists():
             skipped.append(path.stem)
             continue
         video_paths.append(path)
@@ -232,8 +256,8 @@ async def embed(req: EmbedStartRequest) -> dict:
         path = find_cut(name)
         if path is None:
             raise HTTPException(404, f"Video not found: {name}")
-        if not store.reid_path(path.stem).exists():
-            raise HTTPException(400, f"No ReID results for {name} — run extraction first")
+        if not extraction_store.records_path(path.stem).exists():
+            raise HTTPException(400, f"No extraction records for {name} — run extraction first")
         video_paths.append(path)
 
     job = job_manager.create_job(
@@ -267,18 +291,18 @@ def tracks(name: str) -> dict:
     draws boxes, and the payload holds ~286k of them (8.5 MB of JSON, but
     ~1.5 MB over the wire once GZipMiddleware has had it)."""
     stem = Path(unquote(name)).stem
-    if not store.tracks_path(stem).exists():
+    if not tracks_store.tracks_path(stem).exists():
         raise HTTPException(404, f"No tracking for {stem} — run tracking on the ReID Predict page first")
-    if not store.reid_path(stem).exists():
-        raise HTTPException(404, f"No ReID results for {stem}")
+    if not extraction_store.records_path(stem).exists():
+        raise HTTPException(404, f"No extraction records for {stem}")
 
     def slim() -> list[dict]:
-        _meta, tracklets = read_jsonl_cached(store.tracks_path(stem))  # read-only — copy, never mutate
+        _meta, tracklets = read_jsonl_cached(tracks_store.tracks_path(stem))  # read-only — copy, never mutate
         return [{k: t[k] for k in ("rally_id", "track_id", "frames", "boxes")} for t in tracklets]
 
     return {
-        "tracklets": _slim_tracks_cache.get(stem, [store.tracks_path(stem)], slim),
-        "links": tracking.link_events(stem),
+        "tracklets": _slim_tracks_cache.get(stem, [tracks_store.tracks_path(stem)], slim),
+        "links": links.link_payload(stem),
     }
 
 
@@ -286,17 +310,17 @@ def tracks(name: str) -> dict:
 def track_masks(name: str, rally: int) -> dict:
     """One rally's instance masks, whole tracklets at once — the overlay
     silhouettes. Each entry is the tracklet's packed mask rows (base64,
-    box-crop space, see store.save_track_masks), row i ↔ the tracklet's
+    box-crop space, see tracklets/store.save_track_masks), row i ↔ the tracklet's
     i-th frame in the tracks jsonl the client already holds."""
     import base64
 
     import numpy as np
 
     stem = Path(unquote(name)).stem
-    masks_path = store.tracks_masks_path(stem)
+    masks_path = tracks_store.tracks_masks_path(stem)
     if not masks_path.exists():
         raise HTTPException(404, f"No track masks for {stem} — re-run tracking")
-    _meta, tracklets = read_jsonl_cached(store.tracks_path(stem))  # read-only
+    _meta, tracklets = read_jsonl_cached(tracks_store.tracks_path(stem))  # read-only
     tracks: dict[str, str] = {}
     with np.load(masks_path) as z:
         h, w = (int(v) for v in z["_shape"])
@@ -311,9 +335,9 @@ def track_masks(name: str, rally: int) -> dict:
 def results(name: str) -> dict:
     """One video's extraction records (UI payload)."""
     stem = Path(unquote(name)).stem
-    path = store.reid_path(stem)
+    path = extraction_store.records_path(stem)
     if not path.exists():
-        raise HTTPException(404, f"No ReID results for {stem}")
+        raise HTTPException(404, f"No extraction records for {stem}")
     # Cached parse shares objects across requests — filter into copies, never
     # mutate what read_jsonl_cached hands out.
     meta, _records = read_jsonl_cached(path)
@@ -321,27 +345,40 @@ def results(name: str) -> dict:
     # The video-sync overlay needs fps (frame ↔ time) and the rally spans for
     # its rally navigator — both live in the annotation header, not the
     # extraction header.
-    ann = store.action_annotation_path(stem)
+    ann = extraction_store.action_annotation_path(stem)
     if ann is not None:
         ann_meta, _ = read_jsonl(ann)
         if not meta.get("fps") and ann_meta.get("fps"):
             meta["fps"] = ann_meta["fps"]
         meta["rallies"] = ann_meta.get("rallies") or []
-    return {"meta": meta, "records": _slim_records_cache.get(stem, [path], lambda: _slim_records(path))}
+    records = _slim_records_cache.get(
+        stem, [path], lambda: _slim_records(path)
+    )
+    labels = actor_labels.load(stem)
+    return {
+        "meta": meta,
+        "records": [
+            {
+                **record,
+                "actor_review": (
+                    labels[record["id"]].verdict.value
+                    if record["id"] in labels
+                    else "unreviewed"
+                ),
+            }
+            for record in records
+        ],
+    }
 
 
 def _slim_records(path: Path) -> list[dict]:
     _meta, records = read_jsonl_cached(path)
     out = []
-    # Drop score events from old extractions too (see store.SKIP_LABELS).
+    # Drop score events from old extractions too (see extraction_store.SKIP_LABELS).
     for r in records:
-        if r.get("label") in store.SKIP_LABELS:
+        if r.get("label") in extraction_store.SKIP_LABELS:
             continue
         r = dict(r)
-        # Normalize old extraction files once at the API boundary. Frontend
-        # consumers receive one explicit state and never infer Occluded from
-        # box_source/crop combinations.
-        r["resolution"] = actor_resolution(r).value
         # The actor picker only needs boxes + scores; skeletons stay server-side.
         if r.get("detections"):
             r["detections"] = [{k: v for k, v in d.items() if k != "keypoints"} for d in r["detections"]]
@@ -356,9 +393,9 @@ def crop(name: str, crop_file: str, masked: bool = False) -> FileResponse:
     masked embed hasn't run yet."""
     stem = Path(unquote(name)).stem
     fname = Path(unquote(crop_file)).name
-    path = store.masked_crop_dir(stem) / fname if masked else store.crop_dir(stem) / fname
+    path = extraction_store.masked_crop_dir(stem) / fname if masked else extraction_store.crop_dir(stem) / fname
     if masked and not path.exists():
-        path = store.crop_dir(stem) / fname
+        path = extraction_store.crop_dir(stem) / fname
     if not path.exists():
         raise HTTPException(404, "Crop not found")
     return FileResponse(path, media_type="image/jpeg")
@@ -401,52 +438,69 @@ def clusters(
     threshold: float = identity.DEFAULT_CLUSTER_THRESHOLD,
     model: str = DEFAULT_EMBEDDER,
 ) -> dict:
-    """Unsupervised grouping of one video's embeddings (event ids per cluster)."""
+    """Unsupervised grouping of one video's units (see reid/identity.py).
+
+    A unit is a tracklet where one exists and a lone event otherwise, so the
+    board can render crops without a second round trip: ``units`` carries the
+    membership every cluster entry refers to.
+    """
     stem = Path(unquote(name)).stem
-    records, labels = _load_or_http(
+    unit_links = links.track_keys(stem)
+    units, labels = _load_or_http(
         lambda: identity.cluster_video(
-            stem, _validated_fresh_model(stem, model), threshold
+            stem, _validated_fresh_model(stem, model), threshold, unit_links
         )
     )
     grouped: dict[int, list[str]] = {}
-    for record, label in zip(records, labels):
-        grouped.setdefault(int(label), []).append(record["id"])
+    for unit, label in zip(units, labels):
+        grouped.setdefault(int(label), []).append(unit.key)
     return {
         "threshold": threshold,
         "model": model,
+        "units": {u.key: {"event_ids": list(u.event_ids)} for u in units},
         "clusters": [
-            {"id": label, "size": len(ids), "event_ids": ids}
-            for label, ids in sorted(grouped.items())
+            {"id": label, "size": len(keys), "unit_keys": keys}
+            for label, keys in sorted(grouped.items())
         ],
     }
 
 
-class SaveAssignmentsRequest(BaseModel):
-    assignments: dict[str, str]
+class SavePlayersRequest(BaseModel):
+    """The naming maps as the board holds them (see identity.PlayersFile)."""
+
+    tracks: dict[str, str] = Field(default_factory=dict)
+    assignments: dict[str, str] = Field(default_factory=dict)
 
 
 @router.get("/players/{name}")
 def get_players(name: str, model: str = DEFAULT_EMBEDDER) -> dict:
-    """Saved identities + nearest-centroid match for every embedded event."""
+    """Saved identities + nearest-centroid match for every unit."""
     stem = Path(unquote(name)).stem
-    assignments = identity.load_assignments(stem)
+    players = identity.load_players(stem)
+    unit_links = links.track_keys(stem)
     matches: dict[str, dict] = {}
-    if assignments:
+    names: dict[str, str] = {}
+    if players.tracks or players.assignments:
         records, matrix = _load_or_http(
             lambda: identity.load_embeddings(
                 stem, model=_validated_fresh_model(stem, model)
             )
         )
-        matches = identity.match(records, matrix, assignments)
+        units, unit_matrix = identity.unit_embeddings(records, matrix, unit_links)
+        names = identity.unit_names(units, players)
+        matches = identity.match(units, unit_matrix, names)
     return {
-        "assignments": assignments,
-        "players": sorted(set(assignments.values())),
+        "tracks": players.tracks,
+        "assignments": players.assignments,
+        "unit_names": names,
+        "players": sorted(set(players.tracks.values()) | set(players.assignments.values())),
         "matches": matches,
     }
 
 
 class DoneRequest(BaseModel):
     done: bool = True
+    confirm_auto_actors: bool = False
 
 
 @router.put("/done/{name}")
@@ -454,28 +508,33 @@ def put_done(name: str, req: DoneRequest) -> dict:
     """Mark (or unmark) a video's labeling as finished — the Label page's
     Done button. A human verdict, stored alongside the assignments."""
     stem = Path(unquote(name)).stem
-    if not store.reid_path(stem).exists():
-        raise HTTPException(404, f"No ReID results for {stem}")
-    identity.save_done(stem, req.done)
-    return {"done": req.done}
+    if not extraction_store.records_path(stem).exists():
+        raise HTTPException(404, f"No extraction records for {stem}")
+    confirmed = done.mark_done(
+        stem,
+        req.done,
+        confirm_auto=req.confirm_auto_actors,
+    )
+    return {"done": req.done, "confirmed_auto_actors": confirmed}
 
 
 @router.put("/players/{name}")
-def put_players(name: str, req: SaveAssignmentsRequest) -> dict:
-    """Persist assignments. Returns them without matches — a save must
+def put_players(name: str, req: SavePlayersRequest) -> dict:
+    """Persist the naming maps. Returns them without matches — a save must
     succeed even when the current model's matrix is missing."""
     stem = Path(unquote(name)).stem
-    if not store.reid_path(stem).exists():
-        raise HTTPException(404, f"No ReID results for {stem}")
-    identity.save_assignments(stem, req.assignments)
+    if not extraction_store.records_path(stem).exists():
+        raise HTTPException(404, f"No extraction records for {stem}")
+    identity.save_players(stem, tracks=req.tracks, assignments=req.assignments)
     return {
+        "tracks": req.tracks,
         "assignments": req.assignments,
-        "players": sorted(set(req.assignments.values())),
+        "players": sorted(set(req.tracks.values()) | set(req.assignments.values())),
     }
 
 
 class SeedClusterRequest(BaseModel):
-    # Seed key (the UI's group row key) -> event ids anchoring that group.
+    # Seed key (the UI's group row key) -> unit keys anchoring that group.
     seeds: dict[str, list[str]]
     threshold: float = identity.DEFAULT_CLUSTER_THRESHOLD
     model: str = DEFAULT_EMBEDDER
@@ -483,18 +542,19 @@ class SeedClusterRequest(BaseModel):
 
 @router.post("/seed-cluster/{name}")
 def seed_cluster(name: str, req: SeedClusterRequest) -> dict:
-    """Distribute unassigned events to the nearest user-seeded group.
+    """Distribute unnamed units to the nearest user-seeded group.
 
-    Events farther than ``threshold`` from every seed centroid stay out;
-    they come back agglomeratively clustered (same threshold) so the UI can
-    show them as leftover pools for further seeding.
+    Units farther than ``threshold`` from every seed centroid stay out; they
+    come back agglomeratively clustered (same threshold) so the UI can show
+    them as leftover pools for further seeding.
     """
     stem = Path(unquote(name)).stem
     records, matrix = _load_or_http(lambda: identity.load_embeddings(stem, model=_validated_model(req.model)))
-    groups, leftover_ids = identity.seeded_groups(records, matrix, req.seeds, req.threshold)
+    units, matrix = identity.unit_embeddings(records, matrix, links.track_keys(stem))
+    groups, leftover_ids = identity.seeded_groups(units, matrix, req.seeds, req.threshold)
     leftover_clusters: list[list[str]] = []
     if leftover_ids:
-        index = {r["id"]: i for i, r in enumerate(records)}
+        index = {u.key: i for i, u in enumerate(units)}
         rows = [index[i] for i in leftover_ids]
         labels = identity.cluster(matrix[rows], threshold=req.threshold)
         grouped: dict[int, list[str]] = {}
@@ -502,95 +562,3 @@ def seed_cluster(name: str, req: SeedClusterRequest) -> dict:
             grouped.setdefault(int(label), []).append(event_id)
         leftover_clusters = [ids for _, ids in sorted(grouped.items())]
     return {"groups": groups, "leftover_clusters": leftover_clusters}
-
-
-class ActorFixBase(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    event_id: str = Field(min_length=1)
-    model: str = Field(min_length=1)
-
-
-class PickActorRequest(ActorFixBase):
-    mode: Literal["pick"]
-    box: tuple[float, float, float, float]
-    # Cross-frame pick: the box lives on this frame, not the event's — the
-    # crop is cut from here (actor undetected on the event frame).
-    frame: int | None = Field(default=None, ge=0)
-    # False = the client's mask arbitration ruled that NO stored detection is
-    # this player — embed the box as drawn, never IoU-snap onto an occluder.
-    snap: bool = True
-
-
-class OccludedActorRequest(ActorFixBase):
-    mode: Literal["occluded"]
-
-
-class AutoActorRequest(ActorFixBase):
-    mode: Literal["auto"]
-
-
-ActorFixRequest = Annotated[
-    PickActorRequest | OccludedActorRequest | AutoActorRequest,
-    Field(discriminator="mode"),
-]
-
-
-@router.post("/actor-fix/{name}")
-def actor_fix(
-    name: str, req: ActorFixRequest, background_tasks: BackgroundTasks
-) -> dict:
-    """Re-point one event at the person the user clicked (or nobody / auto).
-
-    The fix lands in the players file (the durable human record, replayed on
-    re-extraction) and is applied to the extraction jsonl immediately: the
-    chosen box is cropped and re-embedded, so clusters/centroids follow.
-    """
-    video_path = find_cut(unquote(name))
-    if video_path is None:
-        raise HTTPException(404, f"Video not found: {name}")
-    stem = video_path.stem
-    if not store.reid_path(stem).exists():
-        raise HTTPException(404, f"No ReID results for {stem}")
-    try:
-        if isinstance(req, PickActorRequest):
-            command: actor_fixes.ActorFixCommand = actor_fixes.PickActor(
-                mode="pick",
-                event_id=req.event_id,
-                box=req.box,
-                frame=req.frame,
-                snap=req.snap,
-            )
-        elif isinstance(req, OccludedActorRequest):
-            command = actor_fixes.MarkOccluded(
-                mode="occluded", event_id=req.event_id
-            )
-        else:
-            command = actor_fixes.RevertActor(mode="auto", event_id=req.event_id)
-        result = actor_fixes.apply(
-            video_path, command, active_model=_validated_model(req.model)
-        )
-    except FileNotFoundError as e:
-        raise HTTPException(404, str(e)) from e
-    except KeyError as e:
-        raise HTTPException(404, str(e)) from e
-    except ValueError as e:
-        raise HTTPException(400, str(e)) from e
-    record = result.record
-    for d in record.get("detections") or []:
-        d.pop("keypoints", None)
-    track_link = None
-    if store.tracks_path(stem).exists():
-        track_link = tracking.link_events(stem).get(req.event_id)
-    background_tasks.add_task(
-        actor_fixes.refresh_deferred,
-        stem,
-        req.event_id,
-        models=result.refreshing_models,
-        expected_revision=result.actor_revision,
-    )
-    return {
-        "record": record,
-        "track_link": track_link,
-        "refreshing_models": result.refreshing_models,
-    }

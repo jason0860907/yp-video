@@ -1,7 +1,13 @@
-/** Video player whose overlay mirrors the ReID results: the event box draws
- *  on its exact annotated frame, tracklets follow the previous/next action,
- *  and pick mode turns every stored detection into a clickable actor choice.
- *  Ships with the rally sidebar (same interaction as the Action Label list). */
+/** Video player whose overlay mirrors the extraction records: the event box
+ *  draws on its exact annotated frame, tracklets follow the previous/next
+ *  action, and pick mode turns every stored detection into a clickable actor
+ *  choice. Ships with the rally sidebar (same interaction as Action Label).
+ *
+ *  Shared by both labeling pages, and the ONLY difference between them is
+ *  ``onFixActor``: Association Label passes it and gets the picker, ReID
+ *  Label omits it and gets a read-only view. Leaving it out removes the
+ *  entry point entirely rather than disabling a visible control, so there is
+ *  no path from that page to an actor write. */
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -13,13 +19,12 @@ import { Card } from '@/components/ui/Card';
 import { RallyTimeline } from '@/components/editor/RallyTimeline';
 import type { EditorAnnotation } from '@/components/editor/AnnotationEditor';
 import type { ReidPlayers, ReidRecord } from '@/types/api';
-import { OUTSIDE, ReidRallySidebar } from './ReidRallySidebar';
-import { fmtTime, trackColor, trackKeyOf, type ActorFix, type Rally, type SidebarAction, type TrackData, type TrackMasks } from './shared';
+import { OUTSIDE, RallySidebar } from './RallySidebar';
+import { canConfirm, fmtTime, rallyOf, trackColor, trackKeyOf, verdictOf, VERDICT, type ActorFix, type ActorVerdict, type Rally, type SidebarAction, type TrackData, type TrackMasks } from './shared';
 import {
   buildFrameRows,
   buildFrameSilhouettes,
   buildTrackBoxes,
-  maskRowNear,
   nearestFrame,
   pickableAt as resolvePickable,
   resolveActorFix,
@@ -27,7 +32,6 @@ import {
   trackBoxNearEvent,
   decodeMaskData,
   type Box,
-  type Silhouette,
 } from './masks';
 
 // Detections below this score never win automatic association — they exist
@@ -40,7 +44,7 @@ export interface PlayerHandle {
   jumpToEvent: (a: { id: string; frame: number; time: number | null }) => void;
 }
 
-export interface ReidVideoPlayerProps {
+export interface EventVideoPlayerProps {
   src: string;
   /** The picked video's name — track-mask lookups key on it. */
   videoName: string;
@@ -56,17 +60,29 @@ export interface ReidVideoPlayerProps {
   rallies: Rally[];
   selectedRally: number | 'all';
   onSelectRally: (rally: number | 'all') => void;
-  onFixActor: (eventId: string, fix: ActorFix) => void;
+  /** Omit for a read-only player: no Pick Player button, no picker at all. */
+  onFixActor?: (eventId: string, fix: ActorFix) => void;
+  /** Endorse the automatic pick for the parked event. Omitted alongside
+   *  onFixActor; when present the button stays visible and goes disabled
+   *  once there is nothing left to endorse. */
+  onConfirmActor?: (eventId: string) => void;
+  /** Events still open to endorsement, and the whole-rally action for them —
+   *  rendered as a per-rally button in the sidebar so a rally can be signed
+   *  off without leaving the video. */
+  confirmableIds?: ReadonlySet<string>;
+  onConfirmRally?: (eventIds: string[]) => void;
   /** An actor fix is in flight (re-crop + re-embed server-side) — the picker
    *  dims and ignores clicks so it can't fire twice. */
   fixing?: boolean;
-  onJumpToCrop: (eventId: string) => void;
+  /** Jump an event to its crop on the identities board; omitted when
+   *  the page has no board (Association Label). */
+  onJumpToCrop?: (eventId: string) => void;
   /** Which tracklet each event's actor sits on (empty = no tracking run). */
   trackLinks: TrackData['links'];
 }
 
-export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(function ReidVideoPlayer(
-  { src, videoName, tracklets, fps, frameSize, records, actionEvents, matches, rallies, selectedRally, onSelectRally, onFixActor, fixing = false, onJumpToCrop, trackLinks },
+export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(function EventVideoPlayer(
+  { src, videoName, tracklets, fps, frameSize, records, actionEvents, matches, rallies, selectedRally, onSelectRally, onFixActor, onConfirmActor, confirmableIds, onConfirmRally, fixing = false, onJumpToCrop, trackLinks },
   ref,
 ) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -193,15 +209,17 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
     [records, frame],
   );
   const time = frame / fps;
+  // Read-only when the page did not hand us a way to write.
+  const canFix = Boolean(onFixActor);
   // The event whose actor is being picked: always the record NEAREST the
   // playhead (actions split the timeline at their midpoints), on every
   // frame — parking just before an action aims at that action, never the
   // previous one. The banner names the target and switches live as the
   // playhead crosses a midpoint.
   const pickTarget = useMemo(() => {
-    if (!pickMode || !records.length) return null;
+    if (!canFix || !pickMode || !records.length) return null;
     return records.reduce((a, b) => (Math.abs(a.frame - frame) <= Math.abs(b.frame - frame) ? a : b));
-  }, [pickMode, records, frame]);
+  }, [canFix, pickMode, records, frame]);
   // Near the action frame the record's stored detections are ALSO offered
   // (they cover people without a tracklet, down to the score slider).
   const nearEvent = pickTarget != null && Math.abs(pickTarget.frame - frame) <= 2;
@@ -257,11 +275,10 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
     return [...rows].sort((a, b) => a.frame - b.frame);
   }, [actionEvents, records]);
 
-  // Events the user marked occluded (manual verdict, no crop) — the sidebar
-  // shows the verdict where a player name would sit, so the column reads as
-  // "resolved" rather than "forgotten".
-  const occludedIds = useMemo(
-    () => new Set(records.filter((r) => r.resolution === 'occluded').map((r) => r.id)),
+  // Every event's verdict — the sidebar shows it where a player name would
+  // sit, so a reviewed event reads as resolved rather than forgotten.
+  const verdicts = useMemo<ReadonlyMap<string, ActorVerdict>>(
+    () => new Map(records.map((r) => [r.id, verdictOf(r)])),
     [records],
   );
 
@@ -313,28 +330,18 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
     [maskData, frameRows, trackBoxes, frame, activeTracks, renderer],
   );
 
-  /** Resolve a clicked player into an actor fix for the pinned event, then
-   *  apply it (see masks.resolveActorFix for the arbitration). */
+  /** Send the clicked player as an actor fix for the pinned event.
+   *  Which stored detection that tracklet IS gets decided server-side. */
   const pickFromTrack = (key: string, clickedBox: Box) => {
     const target = pickTarget;
     if (!target) return;
-    // The clicked tracklet's box AND mask at (or next to) the event frame —
-    // the mask's pixels belong to the clicked player even under heavy
-    // overlap, so it arbitrates which stored detection is that player.
-    const at = trackBoxNearEvent(trackBoxes, key, target.frame);
-    const row = at && maskData ? maskRowNear(maskData, frameRows, key, at.frame) : null;
-    const silhouette: Silhouette | null =
-      at && row && maskData
-        ? { key, box: at.box, bits: row.bits, mw: maskData.mw, mh: maskData.mh, row: row.row }
-        : null;
-    onFixActor(
+    onFixActor?.(
       target.id,
       resolveActorFix({
-        detections: target.detections ?? [],
-        trackBox: at?.box ?? null,
-        silhouette,
+        trackKey: key,
         clickedBox,
         clickedFrame: frame,
+        reachesEvent: trackBoxNearEvent(trackBoxes, key, target.frame) !== null,
       }),
     );
   };
@@ -416,8 +423,7 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
     const map = new Map<number, SidebarAction[]>(rallies.map((r) => [r.rally_id, []]));
     const out: SidebarAction[] = [];
     for (const a of sidebarActions) {
-      const t = a.time != null ? a.time : a.frame / fps;
-      const rally = rallies.find((x) => t >= x.start && t <= x.end);
+      const rally = rallyOf(rallies, a, fps);
       if (rally) map.get(rally.rally_id)!.push(a);
       else out.push(a);
     }
@@ -672,7 +678,8 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
                       className={fixing ? 'pointer-events-none opacity-40' : 'pointer-events-auto cursor-pointer hover:fill-white/20'}
                       onClick={(e) => {
                         e.stopPropagation();
-                        onFixActor(pickTarget.id, { mode: 'pick', box: d.box });
+                        // A bare detection, no tracklet behind it.
+                        onFixActor?.(pickTarget.id, { mode: 'pick', box: d.box });
                       }}
                     >
                       <title>{`person · score ${d.score.toFixed(2)} — click to set as the actor`}</title>
@@ -756,14 +763,16 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
                 Tracks
               </label>
             )}
-            <Button
-              size="sm"
-              intent={pickMode ? 'primary' : 'default'}
-              onClick={() => setPickMode((m) => !m)}
-              title="Pick Player: park on an action's frame, then click the person who performed it"
-            >
-              Pick Player
-            </Button>
+            {canFix && (
+              <Button
+                size="sm"
+                intent={pickMode ? 'primary' : 'default'}
+                onClick={() => setPickMode((m) => !m)}
+                title="Pick Player: park on an action's frame, then click the person who performed it"
+              >
+                Pick Player
+              </Button>
+            )}
           </div>
           {pickMode && (
             <div className="mt-3 flex flex-wrap items-center gap-2.5 rounded-xl border border-primary/20 bg-primary/10 p-3 text-xs">
@@ -777,6 +786,19 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
                       : detectionFallback
                         ? ' — no tracking on this frame; click one of the stored detections'
                         : ' — click the right player; the pick follows their track back to the action'}
+                  </span>
+                  {/* What this event already says, so the buttons below read
+                      as a change of state rather than a guess. */}
+                  <span
+                    title={VERDICT[verdictOf(pickTarget)].title}
+                    className={cn(
+                      'flex-shrink-0 rounded-full px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider ring-1',
+                      verdictOf(pickTarget) === 'unreviewed'
+                        ? 'bg-surface-200/40 text-text-muted ring-border'
+                        : 'bg-primary/15 text-primary-light ring-primary/30',
+                    )}
+                  >
+                    {VERDICT[verdictOf(pickTarget)].glyph} {VERDICT[verdictOf(pickTarget)].label}
                   </span>
                   <span className="ml-auto flex items-center gap-3">
                     {detectionFallback && nearEvent && (
@@ -799,11 +821,31 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
                         </span>
                       </label>
                     )}
-                    <Button size="sm" disabled={fixing} onClick={() => onFixActor(pickTarget.id, { mode: 'occluded' })} title="The player is occluded or otherwise unidentifiable — clears this event's crop and drops it from the labeling count">
+                    {/* Stays put once confirmed, disabled with the reason —
+                        a button that vanishes leaves you wondering whether
+                        the action exists at all. */}
+                    {onConfirmActor && (
+                      <Button
+                        size="sm"
+                        intent="primary"
+                        disabled={fixing || !canConfirm(pickTarget)}
+                        onClick={() => onConfirmActor(pickTarget.id)}
+                        title={
+                          verdictOf(pickTarget) === 'confirmed_auto'
+                            ? 'Already confirmed'
+                            : pickTarget.resolution !== 'auto'
+                              ? 'No automatic pick to confirm — this event already has a human verdict'
+                              : 'The automatic pick is the right person — record that verdict and move on'
+                        }
+                      >
+                        Confirm
+                      </Button>
+                    )}
+                    <Button size="sm" disabled={fixing} onClick={() => onFixActor?.(pickTarget.id, { mode: 'occluded' })} title="The player is occluded or otherwise unidentifiable — clears this event's crop and drops it from the labeling count">
                       Occluded
                     </Button>
                     {(pickTarget.resolution === 'manual' || pickTarget.resolution === 'occluded') && (
-                      <Button size="sm" disabled={fixing} onClick={() => onFixActor(pickTarget.id, { mode: 'auto' })} title="Discard the manual fix and re-run the automatic pick">
+                      <Button size="sm" disabled={fixing} onClick={() => onFixActor?.(pickTarget.id, { mode: 'auto' })} title="Discard the manual fix and re-run the automatic pick">
                         Revert to auto
                       </Button>
                     )}
@@ -821,14 +863,14 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
           Memoized against the frame clock: it takes the playhead pre-reduced
           to activeRallyId / activeActionIds, not the raw frame. */}
       {rallies.length > 0 && (
-        <ReidRallySidebar
+        <RallySidebar
           rallies={rallies}
           byRally={byRally}
           outside={outside}
           totalActions={sidebarActions.length}
           fps={fps}
           matches={matches}
-          occludedIds={occludedIds}
+          verdicts={verdicts}
           activeRallyId={currentRallyId}
           activeActionIds={activeActionIds}
           expanded={expanded}
@@ -840,6 +882,8 @@ export const ReidVideoPlayer = forwardRef<PlayerHandle, ReidVideoPlayerProps>(fu
           onSetExpanded={setExpanded}
           onJumpEvent={seekEvent}
           onJumpToCrop={onJumpToCrop}
+          confirmableIds={confirmableIds}
+          onConfirmRally={onConfirmRally}
         />
       )}
     </div>

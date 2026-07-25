@@ -2,7 +2,7 @@
  *  Action Label sidebars: rallies expand into their action rows, clicking a
  *  row parks the video there.
  *
- *  Split out of ReidVideoPlayer and memoized for one reason: the player's
+ *  Split out of EventVideoPlayer and memoized for one reason: the player's
  *  frame clock sets state on EVERY presented frame (30–60/s), and this list
  *  is its largest subtree (~40 rally rows + an expanded action panel, several
  *  hundred elements on a real video). Almost none of it is frame-dependent —
@@ -22,28 +22,49 @@ import { actionColor } from '@/lib/actionColors';
 import { Card } from '@/components/ui/Card';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import type { ReidPlayers } from '@/types/api';
-import { fmtTime, type Rally, type SidebarAction } from './shared';
+import { fmtTime, VERDICT, type ActorVerdict, type Rally, type SidebarAction } from './shared';
 
 /** Sentinel key for the "outside any rally" section. */
 export const OUTSIDE = '__outside__';
+
+/** The verdict where a player name would sit. Unreviewed stays blank on
+ *  purpose — the work is what carries no mark. */
+function VerdictPill({ verdict }: { verdict?: ActorVerdict }) {
+  if (!verdict || verdict === 'unreviewed') return <span />;
+  const { label, title } = VERDICT[verdict];
+  return (
+    <span
+      title={title}
+      className={cn(
+        'max-w-full justify-self-end truncate rounded-full px-2 py-0.5 text-[11px] ring-1',
+        verdict === 'confirmed_auto' && 'bg-primary/10 text-primary-light ring-primary/25',
+        verdict === 'manual' && 'bg-accent/15 text-accent ring-accent/25',
+        verdict === 'occluded' && 'bg-surface-200/40 italic text-text-muted ring-border',
+      )}
+    >
+      {label}
+    </span>
+  );
+}
 
 interface ReidEventPanelProps {
   entries: SidebarAction[];
   empty: string;
   matches: ReidPlayers['matches'];
-  /** Events marked occluded (no player to identify) — shown as a verdict pill. */
-  occludedIds: Set<string>;
+  /** Every event's actor verdict — shown as a pill where no player name
+   *  applies, so "reviewed" is visible without opening the picker. */
+  verdicts: ReadonlyMap<string, ActorVerdict>;
   selectedEventId: string | null;
   fps: number;
   /** Actions within ±½ s of the playhead — those rows light up. */
   activeActionIds: Set<string>;
   onJump: (a: SidebarAction) => void;
-  onJumpToCrop: (eventId: string) => void;
+  onJumpToCrop?: (eventId: string) => void;
 }
 
 /** Read-only twin of the Action Label event panel: action dot + label,
  *  matched player, frame and time — click a row to park the video there. */
-function ReidEventPanel({ entries, empty, matches, occludedIds, selectedEventId, fps, activeActionIds, onJump, onJumpToCrop }: ReidEventPanelProps) {
+function ReidEventPanel({ entries, empty, matches, verdicts, selectedEventId, fps, activeActionIds, onJump, onJumpToCrop }: ReidEventPanelProps) {
   if (!entries.length) return <div className="ml-6 rounded-xl border border-border bg-surface-100 px-3 py-2 text-xs text-text-muted">{empty}</div>;
   return (
     <div className="ml-6 space-y-1.5 rounded-xl border border-border bg-surface-100 p-2">
@@ -77,7 +98,7 @@ function ReidEventPanel({ entries, empty, matches, occludedIds, selectedEventId,
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  onJumpToCrop(a.id);
+                  onJumpToCrop?.(a.id);
                 }}
                 title={
                   m.assigned
@@ -93,15 +114,8 @@ function ReidEventPanel({ entries, empty, matches, occludedIds, selectedEventId,
               >
                 {m.assigned ? m.player : `~${m.player}`}
               </button>
-            ) : occludedIds.has(a.id) ? (
-              <span
-                className="max-w-full justify-self-end truncate rounded-full bg-surface-200/40 px-2 py-0.5 text-[11px] italic text-text-muted ring-1 ring-border"
-                title="Marked occluded — no player to identify"
-              >
-                Occluded
-              </span>
             ) : (
-              <span />
+              <VerdictPill verdict={verdicts.get(a.id)} />
             )}
             <span className="text-center font-heading text-[11px] tabular-nums text-text-primary">f{a.frame}</span>
             <span className="text-center font-heading text-[10px] tabular-nums text-text-muted">{fmtTime(a.time != null ? a.time : a.frame / (fps || 30))}</span>
@@ -112,14 +126,14 @@ function ReidEventPanel({ entries, empty, matches, occludedIds, selectedEventId,
   );
 }
 
-export interface ReidRallySidebarProps {
+export interface RallySidebarProps {
   rallies: Rally[];
   byRally: Map<number, SidebarAction[]>;
   outside: SidebarAction[];
   totalActions: number;
   fps: number;
   matches: ReidPlayers['matches'];
-  occludedIds: Set<string>;
+  verdicts: ReadonlyMap<string, ActorVerdict>;
   /** The rally under the playhead — the list's only frame-derived scalar. */
   activeRallyId: number | null;
   /** Actions within ±½ s of the playhead; identity-stable between changes. */
@@ -133,14 +147,44 @@ export interface ReidRallySidebarProps {
   onJumpRally: (rally: Rally) => void;
   onSetExpanded: (key: string | null) => void;
   onJumpEvent: (a: SidebarAction) => void;
-  onJumpToCrop: (eventId: string) => void;
+  onJumpToCrop?: (eventId: string) => void;
+  /** Events the page says can still be endorsed. The sidebar decides nothing
+   *  about what "confirmable" means — it only intersects this with each
+   *  rally, so the policy stays on the page that owns it. */
+  confirmableIds?: ReadonlySet<string>;
+  /** Endorse a whole rally at once; omitted on read-only pages. */
+  onConfirmRally?: (eventIds: string[]) => void;
 }
 
-export const ReidRallySidebar = memo(function ReidRallySidebar({
-  rallies, byRally, outside, totalActions, fps, matches, occludedIds,
+/** The rally's still-endorsable events, in list order. */
+function pendingIn(entries: SidebarAction[], confirmable?: ReadonlySet<string>) {
+  return confirmable ? entries.filter((a) => confirmable.has(a.id)).map((a) => a.id) : [];
+}
+
+export const RallySidebar = memo(function RallySidebar({
+  rallies, byRally, outside, totalActions, fps, matches, verdicts,
   activeRallyId, activeActionIds, expanded, selectedRally, selectedEventId,
   listRef, onSelectAll, onJumpRally, onSetExpanded, onJumpEvent, onJumpToCrop,
-}: ReidRallySidebarProps) {
+  confirmableIds, onConfirmRally,
+}: RallySidebarProps) {
+  /** Sits inside a clickable row, so it must not also seek the video. */
+  const confirmButton = (entries: SidebarAction[]) => {
+    const pending = pendingIn(entries, confirmableIds);
+    if (!onConfirmRally || !pending.length) return null;
+    return (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onConfirmRally(pending);
+        }}
+        title={`Confirm this rally's ${pending.length} automatic picks — the crops and embeddings do not change`}
+        className="flex items-center gap-1 rounded-full bg-primary/15 px-2 py-0.5 text-[11px] font-medium text-primary-light ring-1 ring-primary/30 transition-colors hover:bg-primary/30"
+      >
+        ✓ <span className="opacity-80">{pending.length}</span>
+      </button>
+    );
+  };
   return (
     <div className="min-w-0 lg:w-[420px] lg:flex-shrink-0">
       <Card>
@@ -189,6 +233,7 @@ export const ReidRallySidebar = memo(function ReidRallySidebar({
                   >
                     <span className={cn('transition-transform', isOpen && 'rotate-90')}>▸</span> actions <span className="opacity-70">{entries.length}</span>
                   </button>
+                  {confirmButton(entries)}
                   <span className="ml-auto font-mono text-[11px] tabular-nums text-text-muted">
                     {fmtTime(rally.start)} → {fmtTime(rally.end)}
                   </span>
@@ -201,7 +246,7 @@ export const ReidRallySidebar = memo(function ReidRallySidebar({
                     entries={entries}
                     empty="No actions in this rally"
                     matches={matches}
-                    occludedIds={occludedIds}
+                    verdicts={verdicts}
                     selectedEventId={selectedEventId}
                     fps={fps}
                     activeActionIds={activeActionIds}
@@ -230,6 +275,7 @@ export const ReidRallySidebar = memo(function ReidRallySidebar({
                 >
                   <span className={cn('transition-transform', expanded === OUTSIDE && 'rotate-90')}>▸</span> outside <span className="opacity-70">{outside.length}</span>
                 </button>
+                {confirmButton(outside)}
                 <span className="ml-auto font-heading text-[11px] text-text-muted">outside rally</span>
               </div>
               {expanded === OUTSIDE && (
@@ -237,7 +283,7 @@ export const ReidRallySidebar = memo(function ReidRallySidebar({
                   entries={outside}
                   empty="No outside actions"
                   matches={matches}
-                  occludedIds={occludedIds}
+                  verdicts={verdicts}
                   selectedEventId={selectedEventId}
                   fps={fps}
                   activeActionIds={activeActionIds}

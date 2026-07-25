@@ -4,12 +4,14 @@ import { useNavigate } from 'react-router-dom';
 import { API, ApiError, apiFetch } from '@/lib/api';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { PipelineChips, STAGE_HINT } from '@/components/video/PipelineChips';
 import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { StatTile } from '@/components/ui/StatTile';
 import { VideoMultiSelectList } from '@/components/video/VideoMultiSelectList';
 import { LiveJob } from '@/components/job/LiveJob';
+import { useRallyTracking } from '@/lib/useRallyTracking';
 import { toast } from '@/components/feedback/toast';
 import type { Job, ReidOptions, ReidVideo } from '@/types/api';
 
@@ -82,13 +84,31 @@ export function ReidPredictPage() {
     }
   };
 
+  // Gate each button on what its job actually needs, so a prerequisite is a
+  // disabled button with a reason rather than a 400 after the click.
+  // Extraction needs actions AND tracklets (association resolves to a
+  // tracklet); tracking needs only rally spans.
+  const chosen = videos.filter((v) => selected.has(v.name));
+  const blocking = (unmet: (p: ReidVideo['pipeline']) => string | null) => {
+    const stages = new Set(chosen.map((v) => unmet(v.pipeline)).filter(Boolean) as string[]);
+    if (!stages.size) return null;
+    return [...stages].map((k) => STAGE_HINT[k as keyof typeof STAGE_HINT]).join('; ');
+  };
+  const extractBlocked = blocking((p) =>
+    !p.has_action ? 'action' : !p.has_tracks ? 'tracks' : null,
+  );
+  const tracking = useRallyTracking({ videos, selected, onJob: upsertJob, overwrite, stopVllm });
+  const trackBlocked = tracking.blocked;
+
   const run = () => startJob(API.reid.start, 'ReID Predict', { keypoints, checkpoint: checkpoint || null });
-  const runTracking = () => startJob(API.reid.track, 'Rally Tracking');
+  const runTracking = tracking.run;
   const runEmbed = () => startJob(API.reid.embed, 'embedding backfill', { checkpoint: checkpoint || null });
   // Both jobs queue immediately; the inference lock runs them back to back
   // (one GPU — parallel would just thrash VRAM).
   const runBoth = async () => {
-    if (await run()) await runTracking();
+    // Tracking first: extraction now requires tracklets, so the old order
+    // would have the second job reject what the first just enabled.
+    if (await runTracking()) await run();
   };
 
   return (
@@ -174,22 +194,45 @@ export function ReidPredictPage() {
           <Button
             intent="primary"
             onClick={runBoth}
+            disabled={Boolean(trackBlocked)}
             className="mt-4 w-full"
-            title="Queue both jobs at once — extraction runs first, tracking follows automatically (one GPU, jobs run back to back)"
+            title={
+              trackBlocked
+                ? `Cannot start: ${trackBlocked}`
+                : 'Queue both jobs at once — tracking first, then extraction (one GPU, jobs run back to back)'
+            }
           >
-            Run ReID + Tracking
+            Run Tracking + ReID
           </Button>
           <div className="mt-2 grid grid-cols-2 gap-2">
-            <Button onClick={run} title="Extraction only: detect → associate → crop → embed per action event">
-              Run ReID
-            </Button>
             <Button
               onClick={runTracking}
-              title="Dense RF-DETR + ByteTrack over every rally span (~80 ms/frame) — the Label page can then propagate one labeled crop along its whole track"
+              disabled={Boolean(trackBlocked)}
+              title={
+                trackBlocked
+                  ? `Cannot start: ${trackBlocked}`
+                  : 'Dense RF-DETR + ByteTrack over every rally span. Needs rally spans only — it can run while actions are still being labeled.'
+              }
             >
               Run Rally Tracking
             </Button>
+            <Button
+              onClick={run}
+              disabled={Boolean(extractBlocked)}
+              title={
+                extractBlocked
+                  ? `Cannot start: ${extractBlocked}`
+                  : 'Extraction: detect → associate → crop → embed per action event'
+              }
+            >
+              Run ReID
+            </Button>
           </div>
+          {(trackBlocked || extractBlocked) && (
+            <p className="mt-2 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-1.5 text-[11px] text-amber-400">
+              {trackBlocked || extractBlocked}
+            </p>
+          )}
           <Button
             onClick={runEmbed}
             className="mt-2 w-full"
@@ -225,6 +268,7 @@ export function ReidPredictPage() {
                       <Badge tone="warning">missing: {missing.join(', ')}</Badge>
                     </span>
                   )}
+                  <PipelineChips pipeline={v.pipeline} />
                 </>
               );
             }}

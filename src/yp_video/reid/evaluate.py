@@ -29,7 +29,7 @@ from dataclasses import asdict, dataclass
 import numpy as np
 
 from yp_video.reid.metrics import cmc, mean_ap
-from yp_video.reid.identity import cluster_sweep, load_assignments, load_embeddings
+from yp_video.reid.identity import LinksFor, cluster_sweep, load_assignments, load_embeddings
 from yp_video.reid.sessions import SessionGroup
 
 # A fully-merged corpus would make the NxN distance matrix and the pairwise
@@ -309,7 +309,7 @@ def _nice_step(span: float) -> float:
 # ── evaluation ───────────────────────────────────────────────────────────
 
 
-def gather(stems: Sequence[str], model: str):
+def gather(stems: Sequence[str], model: str, links_for: LinksFor | None = None):
     """(matrix, pids, names, stem_idx, drops) for these videos under one model.
 
     load_embeddings already filters to embedded, non-SKIP records and
@@ -323,7 +323,7 @@ def gather(stems: Sequence[str], model: str):
     embedded_ids: set[str] = set()
 
     for i, stem in enumerate(stems):
-        assignments = load_assignments(stem)
+        assignments = load_assignments(stem, links_for(stem) if links_for else None)
         n_assigned += len(assignments)
         records, matrix = load_embeddings(stem, model=model)
         for row, record in enumerate(records):
@@ -353,10 +353,12 @@ def gather(stems: Sequence[str], model: str):
     return matrix, pids, kept_names, np.array([stem_idx[i] for i in keep], dtype=int), drops
 
 
-def evaluate_video(stem: str, model: str) -> tuple[VideoEval, np.ndarray, np.ndarray] | None:
+def evaluate_video(
+    stem: str, model: str, links_for: LinksFor | None = None
+) -> tuple[VideoEval, np.ndarray, np.ndarray] | None:
     """One video's evaluation, plus its (matrix, pids) so a caller pooling
     across videos doesn't have to gather them a second time."""
-    matrix, pids, _names, _stem_idx, drops = gather([stem], model)
+    matrix, pids, _names, _stem_idx, drops = gather([stem], model, links_for)
     if len(matrix) < 2:
         return None
     if len(matrix) > MAX_GROUP_CROPS:
@@ -380,7 +382,9 @@ def evaluate_video(stem: str, model: str) -> tuple[VideoEval, np.ndarray, np.nda
     return ev, matrix, pids
 
 
-def cross_video_eval(group: SessionGroup, model: str) -> dict | None:
+def cross_video_eval(
+    group: SessionGroup, model: str, links_for: LinksFor | None = None
+) -> dict | None:
     """Does an identity survive into another recording of the same session?
 
     Query is the session's first video, gallery the rest. Only players named
@@ -391,7 +395,7 @@ def cross_video_eval(group: SessionGroup, model: str) -> dict | None:
     """
     if len(group.stems) < 2:
         return None
-    matrix, pids, _names, stem_idx, _drops = gather(group.stems, model)
+    matrix, pids, _names, stem_idx, _drops = gather(group.stems, model, links_for)
     if len(matrix) < 2:
         return None
     q = stem_idx == 0
@@ -435,7 +439,11 @@ def _pooled_threshold(collected: list[tuple[np.ndarray, np.ndarray]]) -> Thresho
     return build_suggestion(dist, same, grid, ari, sizes, n_ids)
 
 
-def evaluate_models(groups: Sequence[SessionGroup], models: Sequence[str]) -> dict:
+def evaluate_models(
+    groups: Sequence[SessionGroup],
+    models: Sequence[str],
+    links_for: LinksFor | None = None,
+) -> dict:
     """The /performance payload: per-VIDEO scores plus a cross-video section.
 
     The video is the unit because that is the labeling unit. Sessions still
@@ -456,7 +464,7 @@ def evaluate_models(groups: Sequence[SessionGroup], models: Sequence[str]) -> di
             if model not in embedded_models(stem):
                 skipped.append(stem)
                 continue
-            result = evaluate_video(stem, model)
+            result = evaluate_video(stem, model, links_for)
             if result is None:
                 skipped.append(stem)
                 continue

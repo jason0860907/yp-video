@@ -1,19 +1,16 @@
-"""Where ReID data lives on disk — paths, IO and record-level policy.
+"""Where ReID data lives on disk — paths, IO and freshness policy.
 
-The lowest layer of the reid package: pipeline (orchestration), identity
-(matching), tracking (tracklets) and the web router all depend on this
-module, never on each other, for where files live and which records count.
+The lowest layer of the reid package: identity (matching) and the web router
+depend on this module, never on each other, for where files live. The two
+things it does NOT own are deliberate — event records and crops belong to
+extraction (extraction/store.py), tracklets to their own package
+(tracklets/store.py) — because both are read by actor as well as reid.
 
 Layout under videos/reid/ — annotations/ is the hand-made part, the rest is
 recomputable derived data:
-    annotations/<stem>_players.json  assignments + actor fixes
-    embeddings/<stem>_reid.jsonl     per-event extraction records
+    annotations/<stem>_players.json  player assignments + the done flag
     embeddings/<stem>.<model>.npy    float32 (n_records, dim) embedding
                                      matrix, row i ↔ record i, NaN = none
-    crops/<stem>/<event>.jpg         actor crops (display box)
-    tracks/<stem>_tracks.jsonl       per-rally ByteTrack tracklets
-    tracks/<stem>_masks.npz          packed per-frame instance masks, one
-                                     entry per tracklet ("rally:track")
 
 Embeddings are a pure numeric matrix, so they live as npy sidecars, not JSON:
 records stay small enough to serve raw, matrices load in milliseconds, and a
@@ -33,31 +30,17 @@ from tempfile import NamedTemporaryFile
 
 import numpy as np
 
-from yp_video.config import (
-    ACTION_ANNOTATIONS_DIR,
-    ACTION_PRE_ANNOTATIONS_DIR,
-    REID_ANNOTATIONS_DIR,
-    REID_DIR,
-)
+from yp_video.config import REID_ANNOTATIONS_DIR, REID_DIR
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import atomic_write
+from yp_video.extraction.store import records_path
 
 EMBEDDINGS_DIR = REID_DIR / "embeddings"
-CROPS_DIR = REID_DIR / "crops"
-# What the masked embedders actually saw (background-suppressed variants of
-# crops/, same filenames) — persisted so the UI can show them. Regenerated on
-# every masked embed run; recomputable like everything outside annotations/.
-MASKED_CROPS_DIR = REID_DIR / "crops-masked"
-TRACKS_DIR = REID_DIR / "tracks"
 
-# Action labels with nobody to re-identify: "score" marks where the ball
-# lands, not a person. Applied at extraction AND at read time, so old
-# extractions that predate the rule stay filtered too.
-SKIP_LABELS = frozenset({"score"})
-
-
-def reid_path(stem: str) -> Path:
-    return EMBEDDINGS_DIR / f"{stem}_reid.jsonl"
+#: The name this package owns inside the shared annotations directory, where
+#: actor labels live under a suffix of their own. Public so a caller can count
+#: or list player-labelled videos without re-spelling it.
+PLAYERS_SUFFIX = "_players.json"
 
 
 def embedding_path(stem: str, model: str) -> Path:
@@ -159,7 +142,7 @@ def stale_embedding_models(stem: str) -> list[str]:
     recognizes stale matrices created before that sidecar was introduced and
     also keeps a crashed partial write safely unavailable.
     """
-    source = reid_path(stem)
+    source = records_path(stem)
     if not source.exists():
         return []
     source_mtime = source.stat().st_mtime_ns
@@ -175,7 +158,7 @@ def stale_embedding_models(stem: str) -> list[str]:
 
 def embedding_is_fresh(stem: str, model: str) -> bool:
     path = embedding_path(stem, model)
-    source = reid_path(stem)
+    source = records_path(stem)
     return (
         path.exists()
         and source.exists()
@@ -224,59 +207,6 @@ def save_embedding_matrix(stem: str, model: str, matrix: np.ndarray) -> None:
         os.replace(f.name, path)
 
 
-def crop_dir(stem: str) -> Path:
-    return CROPS_DIR / stem
-
-
-def masked_crop_dir(stem: str) -> Path:
-    return MASKED_CROPS_DIR / stem
-
-
 def players_path(stem: str) -> Path:
-    return REID_ANNOTATIONS_DIR / f"{stem}_players.json"
+    return REID_ANNOTATIONS_DIR / f"{stem}{PLAYERS_SUFFIX}"
 
-
-def tracks_masks_path(stem: str) -> Path:
-    return TRACKS_DIR / f"{stem}_masks.npz"
-
-
-def save_track_masks(stem: str, mask_hw: tuple[int, int], masks: dict[str, np.ndarray]) -> None:
-    """Per-tracklet packed instance masks, atomically replaced.
-
-    ``masks`` maps ``"{rally_id}:{track_id}"`` to a (n_frames, H*W/8) uint8
-    packbits array, rows aligned with the tracklet's frames in the tracks
-    jsonl; ``mask_hw`` rides along as ``_shape`` so readers can unpack.
-    """
-    path = tracks_masks_path(stem)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with NamedTemporaryFile(dir=path.parent, prefix=f"{path.name}.", suffix=".tmp", delete=False) as f:
-        try:
-            np.savez_compressed(f, _shape=np.array(mask_hw), **masks)
-        except BaseException:
-            os.unlink(f.name)
-            raise
-    os.replace(f.name, path)
-
-
-def load_track_masks(stem: str, rally_id: int, track_id: int) -> np.ndarray:
-    """One tracklet's masks as (n_frames, H, W) bool, aligned with its frames."""
-    path = tracks_masks_path(stem)
-    if not path.exists():
-        raise FileNotFoundError(f"No track masks for {stem} — re-run tracking")
-    with np.load(path) as z:
-        h, w = (int(v) for v in z["_shape"])
-        packed = z[f"{rally_id}:{track_id}"]
-    return np.unpackbits(packed, axis=1)[:, : h * w].reshape(-1, h, w).astype(bool)
-
-
-def tracks_path(stem: str) -> Path:
-    return TRACKS_DIR / f"{stem}_tracks.jsonl"
-
-
-def action_annotation_path(stem: str) -> Path | None:
-    """Manual action annotations win over pre-annotations."""
-    for directory in (ACTION_ANNOTATIONS_DIR, ACTION_PRE_ANNOTATIONS_DIR):
-        path = directory / f"{stem}_actions.jsonl"
-        if path.exists():
-            return path
-    return None

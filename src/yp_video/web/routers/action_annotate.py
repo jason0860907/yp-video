@@ -18,9 +18,7 @@ from pydantic import BaseModel, Field, field_validator
 from yp_video.config import (
     ACTION_ANNOTATIONS_DIR,
     ACTION_PRE_ANNOTATIONS_DIR,
-    RALLY_ANNOTATIONS_DIR,
     CUT_R2_CATEGORIES,
-    RALLY_PRE_ANNOTATIONS_DIR,
     SPOT_DIR,
     cut_kind_of,
     find_cut,
@@ -37,6 +35,7 @@ from yp_video.contracts.action import (
 from yp_video.core.annotation_ids import action_id, rally_id
 from yp_video.core.ffmpeg import parse_optional_float as _parse_optional_float
 from yp_video.core.jsonl import read_jsonl
+from yp_video.core.rallies import load_rallies, rally_sources
 from yp_video.web.job_helpers import (
     TERMINAL_ITEM_STATUSES,
     ProgressParser,
@@ -143,26 +142,6 @@ def _active_annotation_path(video_name: str) -> Path:
     return pre_path if pre_path.exists() else final_path
 
 
-def _rally_annotation_path(video_name: str) -> Path | None:
-    # Priority: manual rally annotations, then rally pre-annotations.
-    filename = f"{Path(video_name).stem}_annotations.jsonl"
-    for directory in (RALLY_ANNOTATIONS_DIR, RALLY_PRE_ANNOTATIONS_DIR):
-        path = directory / filename
-        if path.exists():
-            return path
-    return None
-
-
-def _rally_sources(video_name: str) -> list[str]:
-    filename = f"{Path(video_name).stem}_annotations.jsonl"
-    sources = []
-    if (RALLY_ANNOTATIONS_DIR / filename).exists():
-        sources.append("annotation")
-    if (RALLY_PRE_ANNOTATIONS_DIR / filename).exists():
-        sources.append("pre-annotation")
-    return sources
-
-
 def _load_annotation(path: Path) -> dict | None:
     if not path.exists():
         return None
@@ -187,27 +166,8 @@ def _annotation_reviewed(data: dict | None) -> bool:
 
 
 def _load_rallies(video: Path) -> list[dict]:
-    path = _rally_annotation_path(video.name)
-    if path is None:
-        return []
-    meta, records = read_jsonl(path)
-    source_video = str(meta.get("video") or video.name)
-    parsed_records = []
-    for record in records:
-        start = float(record.get("start", record.get("start_time", 0)) or 0)
-        end = float(record.get("end", record.get("end_time", 0)) or 0)
-        parsed_records.append((start, end, record.get("label", "rally"), record))
-    parsed_records.sort(key=lambda r: (r[0], r[1], str(r[2])))
-
-    rallies: list[dict] = []
-    for i, (start, end, label, record) in enumerate(parsed_records):
-        rallies.append({
-            "rally_id": rally_id(source_video, record, i),
-            "start": start,
-            "end": end,
-            "label": label,
-        })
-    return rallies
+    """This video's rally spans (see core/rallies.py for the source priority)."""
+    return load_rallies(video.stem)
 
 
 def _rally_for_event(event: dict, fps: float, rallies: list[dict]) -> dict | None:
@@ -454,7 +414,7 @@ def list_videos() -> list[dict]:
         results.append({
             "name": video.name,
             "kind": cut_kind_of(video),
-            "rally_sources": _rally_sources(video.name),
+            "rally_sources": rally_sources(video.stem),
             "has_action_annotation": has_active,
             "has_action_pre_annotation": has_active and not reviewed,
             "has_action_final_annotation": has_active and reviewed,

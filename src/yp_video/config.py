@@ -100,8 +100,9 @@ RALLY_SPOT_CHECKPOINTS_DIR = VIDEOS_DIR / "rally-spot" / "checkpoints"
 # SPOT rally predictions live apart from the VLM pre-annotations so the two
 # model families never overwrite each other; Rally Label can load either.
 RALLY_SPOT_PRE_ANNOTATIONS_DIR = VIDEOS_DIR / "rally-spot" / "pre-annotations"
-# Player ReID. reid/annotations holds the human labels (player assignments +
-# actor fixes); everything else under reid/ is recomputable derived data.
+# Player ReID. reid/annotations holds the two kinds of human label —
+# <stem>_players.json (who each crop depicts) and <stem>_actors.json (who
+# performed the action); everything else under reid/ is derived data.
 REID_DIR = VIDEOS_DIR / "reid"
 REID_ANNOTATIONS_DIR = REID_DIR / "annotations"
 # Exported training datasets (yp-reid Contract A: manifest.json +

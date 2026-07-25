@@ -8,7 +8,6 @@ import shutil
 import tempfile
 import zipfile
 from pathlib import Path
-from typing import NamedTuple
 from urllib.parse import unquote
 
 from fastapi import APIRouter, HTTPException
@@ -19,8 +18,6 @@ from starlette.background import BackgroundTask
 from yp_video.config import (
     RALLY_ANNOTATIONS_DIR,
     CUT_R2_CATEGORIES,
-    RALLY_PRE_ANNOTATIONS_DIR,
-    RALLY_SPOT_PRE_ANNOTATIONS_DIR,
     RAW_VIDEOS_DIR,
     VIDEOS_DIR,
     cut_kind_of,
@@ -30,26 +27,17 @@ from yp_video.app_export import AppExportError, export_one_match
 from yp_video.core.annotation_ids import rally_id
 from yp_video.core.ffmpeg import FFmpegError, export_segment
 from yp_video.core.jsonl import read_jsonl
+from yp_video.core.rallies import RALLY_SOURCES, SOURCE_BY_TAG
 from yp_video.web.r2_client import r2_client, serve_video_or_r2_redirect, sync_to_r2
 
 router = APIRouter()
 
 
-class _Source(NamedTuple):
-    tag: str
-    directory: Path
-    r2_category: str
-
-
-# Where a result file may live. Order is the default load priority: reviewed
-# truth first, then the newest ML pass (SPOT), then the VLM pass. The Load UI
-# can force one via the ``source`` query param (by tag).
-_SOURCES = (
-    _Source("annotation", RALLY_ANNOTATIONS_DIR, "rally-spot/annotations"),
-    _Source("spot-pre-annotation", RALLY_SPOT_PRE_ANNOTATIONS_DIR, "rally-spot/pre-annotations"),
-    _Source("pre-annotation", RALLY_PRE_ANNOTATIONS_DIR, "rally/pre-annotations"),
-)
-_SOURCE_BY_TAG = {s.tag: s for s in _SOURCES}
+# Where a result file may live, and in what priority — see core/rallies.py.
+# This editor writes the top-priority location; everything downstream reads
+# the same table, so "which file counts" has one answer.
+_SOURCES = RALLY_SOURCES
+_SOURCE_BY_TAG = SOURCE_BY_TAG
 
 
 class Annotation(BaseModel):

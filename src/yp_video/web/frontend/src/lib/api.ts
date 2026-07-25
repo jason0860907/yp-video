@@ -151,7 +151,6 @@ export const API = {
       `/reid/crop/${encodeURIComponent(name)}/${encodeURIComponent(cropFile)}${masked ? '?masked=1' : ''}`,
     clusters: (name: string, threshold: number, model = 'clip-reid') => `/reid/clusters/${encodeURIComponent(name)}?threshold=${threshold}&model=${encodeURIComponent(model)}`,
     players: (name: string, model = 'clip-reid') => `/reid/players/${encodeURIComponent(name)}?model=${encodeURIComponent(model)}`,
-    actorFix: (name: string) => `/reid/actor-fix/${encodeURIComponent(name)}`,
     done: (name: string) => `/reid/done/${encodeURIComponent(name)}`,
     options: '/reid/options',
     seedCluster: (name: string) => `/reid/seed-cluster/${encodeURIComponent(name)}`,
@@ -169,5 +168,15 @@ export const API = {
       `/reid-train/performance${model ? `?model=${encodeURIComponent(model)}` : ''}`,
     exportPlan: (p: { split_mode: string; test_ratio: number; seed: number; masked: boolean }) =>
       `/reid-train/export?split_mode=${p.split_mode}&test_ratio=${p.test_ratio}&seed=${p.seed}&masked=${p.masked}`,
+  },
+  association: {
+    videos: '/actor-association/videos',
+    fix: (name: string) => `/actor-association/fix/${encodeURIComponent(name)}`,
+    confirm: (name: string) => `/actor-association/confirm/${encodeURIComponent(name)}`,
+    status: '/actor-association/status',
+    performance: '/actor-association/performance',
+    train: '/actor-association/train',
+    predict: '/actor-association/predict',
+    shadow: '/actor-association/shadow',
   },
 } as const;

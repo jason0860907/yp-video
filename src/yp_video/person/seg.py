@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from yp_video.reid.detector import iou
+from yp_video.person.detector import iou
 
 # COCO class id for person in the RF-DETR Seg heads.
 PERSON_CLASS_ID = 1

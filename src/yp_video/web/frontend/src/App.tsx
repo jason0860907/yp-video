@@ -15,6 +15,9 @@ import { UploadPage } from '@/pages/UploadPage';
 import { CutPage } from '@/pages/CutPage';
 import { AnnotatePage } from '@/pages/AnnotatePage';
 import { ReidPredictPage } from '@/pages/ReidPredictPage';
+import { AssociationLabelPage } from '@/pages/AssociationLabelPage';
+import { AssociationPredictPage } from '@/pages/AssociationPredictPage';
+import { AssociationTrainPage } from '@/pages/AssociationTrainPage';
 import { ReidLabelPage } from '@/pages/ReidLabelPage';
 import { ReidTrainPage } from '@/pages/ReidTrainPage';
 
@@ -22,7 +25,7 @@ import { ReidTrainPage } from '@/pages/ReidTrainPage';
 const PAGES: Record<string, ReactElement> = {
   '/download': <DownloadPage />,
   '/cut': <CutPage />,
-  '/detect': <DetectPage />,
+  '/rally-vlm-predict': <DetectPage />,
   '/annotate': <AnnotatePage />,
   '/spot-train': <SpotTrainPage />,
   '/spot-predict': <SpotPredictPage />,
@@ -30,6 +33,9 @@ const PAGES: Record<string, ReactElement> = {
   '/action-train': <ActionTrainPage />,
   '/action-annotate': <ActionAnnotatePage />,
   '/reid-predict': <ReidPredictPage />,
+  '/association-predict': <AssociationPredictPage />,
+  '/association-label': <AssociationLabelPage />,
+  '/association-train': <AssociationTrainPage />,
   '/reid-label': <ReidLabelPage />,
   '/reid-train': <ReidTrainPage />,
   '/upload': <UploadPage />,

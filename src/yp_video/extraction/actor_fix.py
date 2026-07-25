@@ -1,9 +1,10 @@
 """Application service for the actor-fix use case.
 
-The durable human verdict, player assignment, derived ReID record and every
-embedding sidecar form one logical change. This module is their sole
-coordinator; transport validation stays in the router and store-specific work
-stays in identity/pipeline.
+Re-pointing one event at a different person touches four stores at once: the
+durable actor label, the identity assignment it invalidates, the derived
+extraction record, and every embedding sidecar. This module is their sole
+coordinator — it owns the ordering, the locks and the rollback. Transport
+validation stays in the router; each store keeps its own writes.
 """
 
 from __future__ import annotations
@@ -17,7 +18,11 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Literal
 
-from yp_video.reid import identity, pipeline, store
+from yp_video.actor import labels as actor_labels
+from yp_video.actor.labels import ActorLabel, ActorVerdict
+from yp_video.tracklets.geometry import TrackRef
+from yp_video.extraction import pipeline, store as extraction_store
+from yp_video.reid import identity, store
 from yp_video.reid.embedder import base_embedder_name
 
 log = logging.getLogger(__name__)
@@ -28,8 +33,21 @@ class PickActor:
     mode: Literal["pick"]
     event_id: str
     box: tuple[float, float, float, float]
+    #: The tracklet the user clicked, when they clicked one. Then the box is
+    #: only the anchor that can re-derive it (see actor/labels.py).
+    track: TrackRef | None = None
     frame: int | None = None
     snap: bool = True
+
+    @property
+    def label(self) -> ActorLabel:
+        return ActorLabel(
+            ActorVerdict.MANUAL,
+            track=self.track,
+            box=self.box,
+            frame=self.frame,
+            snap=self.snap,
+        )
 
 
 @dataclass(frozen=True)
@@ -37,13 +55,24 @@ class MarkOccluded:
     mode: Literal["occluded"]
     event_id: str
 
+    @property
+    def label(self) -> ActorLabel:
+        return ActorLabel(ActorVerdict.OCCLUDED)
+
 
 @dataclass(frozen=True)
 class RevertActor:
     mode: Literal["auto"]
     event_id: str
 
+    @property
+    def label(self) -> None:
+        """Reverting states nothing about the actor — it withdraws the claim."""
+        return None
 
+
+#: Each command carries the label it stands for, so applying one is the same
+#: three writes regardless of which it is.
 ActorFixCommand = PickActor | MarkOccluded | RevertActor
 
 
@@ -107,13 +136,14 @@ def apply(
     """Apply one actor fix and synchronously refresh the active weight family."""
     _validate(command)
     stem = video_path.stem
-    reid_file = store.reid_path(stem)
-    if not reid_file.exists():
-        raise FileNotFoundError(f"No ReID results for {stem}")
+    record_file = extraction_store.records_path(stem)
+    if not record_file.exists():
+        raise FileNotFoundError(f"No extraction records for {stem}")
 
     with (
         _transaction_lock,
         store.embedding_write_transaction(),
+        actor_labels.write_transaction(),
         identity.players_write_transaction(),
     ):
         embedded_models = store.embedded_models(stem)
@@ -137,55 +167,33 @@ def apply(
         ]
         snapshots = _snapshot(
             [
-                reid_file,
+                record_file,
+                actor_labels.actors_path(stem),
                 store.players_path(stem),
                 store.embedding_refresh_path(stem),
                 *model_files,
             ]
         )
-        crop_dirs = (store.crop_dir(stem), store.masked_crop_dir(stem))
+        crop_dirs = (
+            extraction_store.crop_dir(stem),
+            extraction_store.masked_crop_dir(stem),
+        )
         existing_crops = {
             directory: _directory_files(directory) for directory in crop_dirs
         }
         try:
-            if isinstance(command, PickActor):
-                record = pipeline.apply_actor_fix(
-                    video_path,
-                    command.event_id,
-                    list(command.box),
-                    models=synchronous_models,
-                    frame=command.frame,
-                    snap=command.snap,
-                )
-                identity.apply_actor_fix_annotation(
-                    stem,
-                    command.event_id,
-                    mode="pick",
-                    box=list(command.box),
-                    frame=command.frame,
-                    snap=command.snap,
-                )
-            elif isinstance(command, MarkOccluded):
-                record = pipeline.apply_actor_fix(
-                    video_path,
-                    command.event_id,
-                    None,
-                    models=synchronous_models,
-                    none=True,
-                )
-                identity.apply_actor_fix_annotation(
-                    stem, command.event_id, mode="occluded"
-                )
-            else:
-                record = pipeline.apply_actor_fix(
-                    video_path,
-                    command.event_id,
-                    None,
-                    models=synchronous_models,
-                )
-                identity.apply_actor_fix_annotation(
-                    stem, command.event_id, mode="auto"
-                )
+            # Derived record first: it is the only step that can fail on the
+            # video itself, and a failed fix must not leave a label behind.
+            record = pipeline.apply_actor_fix(
+                video_path,
+                command.event_id,
+                command.label,
+                models=synchronous_models,
+            )
+            actor_labels.save(stem, command.event_id, command.label)
+            # The crop now shows a different person (or nobody), so whatever
+            # name was attached to the old one is no longer evidence.
+            identity.drop_assignment(stem, command.event_id)
             return ActorFixResult(
                 record=record,
                 refreshing_models=deferred_models,

@@ -7,13 +7,13 @@
  *  (GroupBoard) only renders and calls these actions.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { API, apiFetch } from '@/lib/api';
 import { toast } from '@/components/feedback/toast';
 import { confirm } from '@/components/feedback/confirm';
-import type { ReidCluster, ReidRecord } from '@/types/api';
-import { errMsg, trackKeyOf, type TrackData } from './shared';
+import type { ReidCluster } from '@/types/api';
+import { errMsg } from '@/components/labeling/shared';
 
 /** One editable identity group: named = a player, unnamed = an auto cluster.
  *  Locked groups survive re-clustering (threshold/model changes); any group
@@ -21,7 +21,9 @@ import { errMsg, trackKeyOf, type TrackData } from './shared';
 export interface Group {
   key: string;
   name: string;
-  eventIds: string[];
+  /** UNIT keys, not event ids — a name belongs to the person a tracklet
+   *  follows, not to one frame of them (see reid/identity.py). */
+  unitKeys: string[];
   locked: boolean;
 }
 
@@ -29,26 +31,18 @@ export interface Group {
 // shared "unsorted" row instead of each getting its own.
 export const MIN_CLUSTER_SIZE = 3;
 
-// Holding pen for a just-re-picked event: its crop is a different person now,
-// so it is pulled out of its old row and parked here as unassigned. Unlike an
-// auto-cluster it survives the rebuild (see below), so a pick always lands the
-// event in a distinct "unassigned" row until the user assigns it by hand — it
-// never silently re-clusters back into its old group.
-const REPICK_POOL = 'repick-pool';
-
 export interface GroupBoardOptions {
   picked: string;
   embedder: string;
   threshold: number;
-  records: ReidRecord[];
-  recordById: Map<string, ReidRecord>;
   clusters: ReidCluster[];
-  assignments: Record<string, string>;
-  /** undefined = still loading, null = no tracking run yet (404). */
-  tracks: TrackData | null | undefined;
+  /** unit key → the events it covers, for rendering crops. */
+  units: Record<string, { event_ids: string[] }>;
+  /** unit key → saved player name. */
+  unitNames: Record<string, string>;
 }
 
-export function useGroupBoard({ picked, embedder, threshold, records, recordById, clusters, assignments, tracks }: GroupBoardOptions) {
+export function useGroupBoard({ picked, embedder, threshold, clusters, units, unitNames }: GroupBoardOptions) {
   const qc = useQueryClient();
   const [groups, setGroups] = useState<Group[]>([]);
   const [dirty, setDirty] = useState(false);
@@ -61,89 +55,74 @@ export function useGroupBoard({ picked, embedder, threshold, records, recordById
   };
   const newGroupSeq = useRef(0);
 
+  /** The crops a unit covers, and the reverse — the board holds units, the
+   *  tiles it draws are still one per crop. */
+  const eventsOf = (unitKey: string): string[] => units[unitKey]?.event_ids ?? [];
+  const unitOf = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const [key, u] of Object.entries(units)) {
+      for (const id of u.event_ids) map.set(id, key);
+    }
+    return map;
+  }, [units]);
+
   // (Re)build the board whenever the clustering or saved players change:
-  // locked rows carry over untouched, the re-pick pool carries over as a
-  // sticky unassigned row, saved players fill in what those don't already
-  // hold, fresh clusters cover the rest. Other unlocked rows are disposable
-  // by design — edits lock their row automatically.
+  // locked rows carry over untouched, saved players fill in what those don't
+  // already hold, fresh clusters cover the rest. Other unlocked rows are
+  // disposable by design — edits lock their row automatically.
   useEffect(() => {
     if (!picked) return;
     setGroups((prev) => {
-      // Locked rows and the (non-empty) re-pick pool survive. The pool keeps a
-      // just-picked event parked as unassigned instead of letting re-clustering
-      // re-home it; its events count as covered below so neither saved players
-      // nor fresh clusters can pull them back into a group.
       const out: Group[] = prev
-        .filter((g) => g.locked || (g.key === REPICK_POOL && g.eventIds.length > 0))
-        .map((g) => ({ ...g, eventIds: [...g.eventIds] }));
-      const covered = new Set(out.flatMap((g) => g.eventIds));
+        .filter((g) => g.locked)
+        .map((g) => ({ ...g, unitKeys: [...g.unitKeys] }));
+      const covered = new Set(out.flatMap((g) => g.unitKeys));
 
       const byPlayer = new Map<string, string[]>();
-      for (const [id, name] of Object.entries(assignments)) {
-        if (!covered.has(id) && recordById.has(id)) byPlayer.set(name, [...(byPlayer.get(name) ?? []), id]);
+      for (const [key, name] of Object.entries(unitNames)) {
+        if (!covered.has(key) && units[key]) byPlayer.set(name, [...(byPlayer.get(name) ?? []), key]);
       }
       for (const [name, ids] of [...byPlayer.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
         const lockedSame = out.find((g) => g.name.trim() === name);
         if (lockedSame) {
-          lockedSame.eventIds.push(...ids);
+          lockedSame.unitKeys.push(...ids);
         } else {
           // Saved players are confirmed human work — they come back
           // locked, so a reload looks identical to the pre-save board
           // and re-clustering can never dissolve them.
-          out.push({ key: `p:${name}`, name, eventIds: ids, locked: true });
+          out.push({ key: `p:${name}`, name, unitKeys: ids, locked: true });
         }
         ids.forEach((id) => covered.add(id));
       }
 
       const tiny: string[] = [];
       for (const c of clusters) {
-        const rest = c.event_ids.filter((id) => !covered.has(id));
+        const rest = c.unit_keys.filter((key: string) => !covered.has(key));
         if (!rest.length) continue;
         if (rest.length < MIN_CLUSTER_SIZE) tiny.push(...rest);
-        else out.push({ key: `c:${embedder}:${threshold}:${c.id}`, name: '', eventIds: rest, locked: false });
+        else out.push({ key: `c:${embedder}:${threshold}:${c.id}`, name: '', unitKeys: rest, locked: false });
       }
-      if (tiny.length) out.push({ key: `pool:${embedder}:${threshold}`, name: '', eventIds: tiny, locked: false });
+      if (tiny.length) out.push({ key: `pool:${embedder}:${threshold}`, name: '', unitKeys: tiny, locked: false });
       return out;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [picked, assignments, clusters, recordById]);
+  }, [picked, unitNames, clusters, units]);
 
   /** Move one or many events into ``toKey``, wherever they currently live —
    *  the selection may span multiple source groups. */
-  const moveEvents = (eventIds: string[], toKey: string) => {
-    const moving = new Set(eventIds);
+  const moveUnits = (unitKeys: string[], toKey: string) => {
+    const moving = new Set(unitKeys);
     if (!moving.size) return;
     setGroups((prev) =>
       prev
         .map((g) => {
           // Receiving an edit locks the row so re-clustering can't undo it.
-          if (g.key === toKey) return { ...g, eventIds: [...g.eventIds.filter((i) => !moving.has(i)), ...eventIds], locked: true };
-          return { ...g, eventIds: g.eventIds.filter((i) => !moving.has(i)) };
+          if (g.key === toKey) return { ...g, unitKeys: [...g.unitKeys.filter((i) => !moving.has(i)), ...unitKeys], locked: true };
+          return { ...g, unitKeys: g.unitKeys.filter((i) => !moving.has(i)) };
         })
         // An emptied auto-cluster group is noise; an emptied named player stays.
-        .filter((g) => g.eventIds.length > 0 || g.name.trim()),
+        .filter((g) => g.unitKeys.length > 0 || g.name.trim()),
     );
-    markDirty();
-  };
-
-  /** Pull one event out of every row — a re-picked actor is a different
-   *  person, so the old player row no longer applies — and park it in the
-   *  unassigned re-pick pool. Locked rows included: that is the point. The
-   *  pool survives the rebuild, so the event stays unassigned until the user
-   *  moves it, never silently re-clustering back into its old group. */
-  const removeEvent = (eventId: string) => {
-    setGroups((prev) => {
-      const stripped = prev
-        .map((g) => (g.key === REPICK_POOL ? g : { ...g, eventIds: g.eventIds.filter((i) => i !== eventId) }))
-        // An emptied auto-cluster group is noise; an emptied named player stays.
-        .filter((g) => g.eventIds.length > 0 || g.name.trim() || g.key === REPICK_POOL);
-      const pool = stripped.find((g) => g.key === REPICK_POOL);
-      if (pool) {
-        pool.eventIds = [...pool.eventIds.filter((i) => i !== eventId), eventId];
-        return [...stripped];
-      }
-      return [...stripped, { key: REPICK_POOL, name: '', eventIds: [eventId], locked: false }];
-    });
     markDirty();
   };
 
@@ -158,7 +137,7 @@ export function useGroupBoard({ picked, embedder, threshold, records, recordById
         .filter((g) => g.key !== fromKey)
         .map((g) =>
           g.key === toKey
-            ? { ...g, name: g.name.trim() || from.name, eventIds: [...g.eventIds, ...from.eventIds], locked: true }
+            ? { ...g, name: g.name.trim() || from.name, unitKeys: [...g.unitKeys, ...from.unitKeys], locked: true }
             : g,
         );
     });
@@ -170,9 +149,9 @@ export function useGroupBoard({ picked, embedder, threshold, records, recordById
   const newGroupBelow = (anchorId: string | undefined) => {
     const key = `n:${newGroupSeq.current++}`;
     setGroups((prev) => {
-      const at = anchorId ? prev.findIndex((g) => g.eventIds.includes(anchorId)) : -1;
+      const at = anchorId ? prev.findIndex((g) => g.unitKeys.includes(anchorId)) : -1;
       const out = [...prev];
-      out.splice(at >= 0 ? at + 1 : out.length, 0, { key, name: '', eventIds: [], locked: true });
+      out.splice(at >= 0 ? at + 1 : out.length, 0, { key, name: '', unitKeys: [], locked: true });
       return out;
     });
     return key;
@@ -239,13 +218,22 @@ export function useGroupBoard({ picked, embedder, threshold, records, recordById
         return { ...g, name };
       });
 
-      const next: Record<string, string> = {};
+      // A unit key says where its name belongs: a tracklet name covers every
+      // action on the track, an event name covers just that event.
+      const nextTracks: Record<string, string> = {};
+      const nextAssignments: Record<string, string> = {};
       for (const g of named) {
         const name = g.name.trim();
         if (!name) continue;
-        for (const id of g.eventIds) next[id] = name;
+        for (const key of g.unitKeys) {
+          if (key.startsWith('t:')) nextTracks[key.slice(2)] = name;
+          else nextAssignments[key.slice(2)] = name;
+        }
       }
-      await apiFetch(API.reid.players(picked, embedder), { method: 'PUT', body: { assignments: next } });
+      await apiFetch(API.reid.players(picked, embedder), {
+        method: 'PUT',
+        body: { tracks: nextTracks, assignments: nextAssignments },
+      });
       // Patch the minted placeholders into whatever the board looks like NOW —
       // never replace the array wholesale, edits may have landed mid-PUT and a
       // snapshot would silently revert them.
@@ -255,7 +243,14 @@ export function useGroupBoard({ picked, embedder, threshold, records, recordById
       // Mid-PUT edits keep the board dirty; the auto-save effect re-fires.
       if (editSeq.current === seq) setDirty(false);
       await qc.invalidateQueries({ queryKey: ['reid-players', picked] });
-      if (!auto) toast.success(`Saved ${new Set(Object.values(next)).size} player(s), ${Object.keys(next).length} events`);
+      if (!auto) {
+        const named = { ...nextTracks, ...nextAssignments };
+        toast.success(
+          `Saved ${new Set(Object.values(named)).size} player(s) over ` +
+            `${Object.keys(nextTracks).length} tracklet(s) and ` +
+            `${Object.keys(nextAssignments).length} event(s)`,
+        );
+      }
       return true;
     } catch (e) {
       toast.error(`Save failed: ${errMsg(e)}`);
@@ -285,7 +280,7 @@ export function useGroupBoard({ picked, embedder, threshold, records, recordById
    *  current threshold) and clusters what's left over into fresh pools. */
   const seedRegroup = async () => {
     const anchors = groups.filter((g) => g.locked || g.name.trim());
-    const seeds = anchors.filter((g) => g.eventIds.length > 0);
+    const seeds = anchors.filter((g) => g.unitKeys.length > 0);
     if (!seeds.length) {
       toast.warning('Lock or name at least one non-empty group to use as a seed');
       return;
@@ -293,19 +288,19 @@ export function useGroupBoard({ picked, embedder, threshold, records, recordById
     try {
       const res = await apiFetch<{ groups: Record<string, string[]>; leftover_clusters: string[][] }>(
         API.reid.seedCluster(picked),
-        { method: 'POST', body: { seeds: Object.fromEntries(seeds.map((g) => [g.key, g.eventIds])), threshold, model: embedder } },
+        { method: 'POST', body: { seeds: Object.fromEntries(seeds.map((g) => [g.key, g.unitKeys])), threshold, model: embedder } },
       );
       const assigned = Object.values(res.groups).reduce((s, a) => s + a.length, 0);
       setGroups(() => {
         // Anchors absorb their assignments (locked so nothing re-clusters
         // them away); leftovers become fresh unlocked pools.
-        const out = anchors.map((g) => ({ ...g, locked: true, eventIds: [...g.eventIds, ...(res.groups[g.key] ?? [])] }));
+        const out = anchors.map((g) => ({ ...g, locked: true, unitKeys: [...g.unitKeys, ...(res.groups[g.key] ?? [])] }));
         const tiny: string[] = [];
         res.leftover_clusters.forEach((ids, i) => {
           if (ids.length < MIN_CLUSTER_SIZE) tiny.push(...ids);
-          else out.push({ key: `seed:${embedder}:${threshold}:${i}`, name: '', eventIds: ids, locked: false });
+          else out.push({ key: `seed:${embedder}:${threshold}:${i}`, name: '', unitKeys: ids, locked: false });
         });
-        if (tiny.length) out.push({ key: `pool:seed:${embedder}:${threshold}`, name: '', eventIds: tiny, locked: false });
+        if (tiny.length) out.push({ key: `pool:seed:${embedder}:${threshold}`, name: '', unitKeys: tiny, locked: false });
         return out;
       });
       markDirty();
@@ -313,56 +308,6 @@ export function useGroupBoard({ picked, embedder, threshold, records, recordById
     } catch (e) {
       toast.error(`Seed regroup failed: ${errMsg(e)}`);
     }
-  };
-
-  /** Track propagate: within a rally, events whose actor boxes lie on the
-   *  same ByteTrack tracklet are the same player — every locked/named group
-   *  claims the tracklets its members sit on, and unanchored events on a
-   *  claimed tracklet follow. Tracklets claimed by two groups are skipped. */
-  const trackPropagate = () => {
-    if (tracks === null) {
-      toast.warning('No tracking for this video yet — run Rally Tracking on the ReID Predict page');
-      return;
-    }
-    if (!tracks) return; // still loading
-    const keyOf = (id: string) => trackKeyOf(tracks.links, id);
-    const anchors = groups.filter((g) => g.locked || g.name.trim());
-    const trackOwner = new Map<string, string>();
-    const conflicts = new Set<string>();
-    for (const g of anchors) {
-      for (const id of g.eventIds) {
-        const k = keyOf(id);
-        if (!k) continue;
-        const owner = trackOwner.get(k);
-        if (owner && owner !== g.key) conflicts.add(k);
-        else trackOwner.set(k, g.key);
-      }
-    }
-    conflicts.forEach((k) => trackOwner.delete(k));
-    const anchored = new Set(anchors.flatMap((g) => g.eventIds));
-    const moves = new Map<string, string[]>();
-    for (const r of records) {
-      if (anchored.has(r.id)) continue;
-      const owner = trackOwner.get(keyOf(r.id) ?? '');
-      if (owner) moves.set(owner, [...(moves.get(owner) ?? []), r.id]);
-    }
-    if (!moves.size) {
-      toast.warning(
-        trackOwner.size
-          ? 'No unassigned events share a tracklet with a locked/named group'
-          : 'Lock or name a group first — its events anchor the tracklets',
-      );
-      return;
-    }
-    let moved = 0;
-    for (const [groupKey, ids] of moves) {
-      moveEvents(ids, groupKey);
-      moved += ids.length;
-    }
-    toast.success(
-      `Propagated ${moved} event(s) along ${trackOwner.size} tracklet(s)` +
-        (conflicts.size ? ` · ${conflicts.size} conflicting tracklet(s) skipped` : ''),
-    );
   };
 
   /** Drop every lock and let the rebuild effect restore the saved state. */
@@ -394,8 +339,7 @@ export function useGroupBoard({ picked, embedder, threshold, records, recordById
   return {
     groups,
     dirty,
-    moveEvents,
-    removeEvent,
+    moveUnits,
     mergeGroups,
     newGroupBelow,
     toggleLock,
@@ -403,7 +347,8 @@ export function useGroupBoard({ picked, embedder, threshold, records, recordById
     reorderGroup,
     save,
     seedRegroup,
-    trackPropagate,
+    eventsOf,
+    unitOf,
     reset,
     clearBoard,
   };

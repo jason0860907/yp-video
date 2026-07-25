@@ -1,8 +1,12 @@
 /** ReID Label: name the players behind extracted action events.
  *
+ *  Strictly "who is this" — WHICH person performed each action is settled on
+ *  Association Label, so the video player here is read-only (no onFixActor)
+ *  and nothing on this page can write an actor verdict.
+ *
  *  This page is orchestration only — queries, top-level controls and the
  *  wiring between its two halves: the video player (components/reid/
- *  ReidVideoPlayer) and the identities board (components/reid/GroupBoard,
+ *  EventVideoPlayer) and the identities board (components/reid/GroupBoard,
  *  state machine in useGroupBoard). The two halves jump into each other
  *  through imperative handles: sidebar → board via jumpToCrop, crop →
  *  video via jumpToEvent.
@@ -22,11 +26,11 @@ import { VideoCombobox } from '@/components/video/VideoCombobox';
 import { toast } from '@/components/feedback/toast';
 import { confirm } from '@/components/feedback/confirm';
 import { GroupBoard, type BoardHandle } from '@/components/reid/GroupBoard';
-import { ReidVideoPlayer, type PlayerHandle } from '@/components/reid/ReidVideoPlayer';
+import { EventVideoPlayer, type PlayerHandle } from '@/components/labeling/EventVideoPlayer';
 import { useGroupBoard } from '@/components/reid/useGroupBoard';
-import { errMsg, type ActorFix, type Rally, type SidebarAction, type TrackData } from '@/components/reid/shared';
+import { errMsg, type Rally, type SidebarAction, type TrackData } from '@/components/labeling/shared';
 import { LiveJob } from '@/components/job/LiveJob';
-import type { ActionAnnotationData, Job, ReidActorFixResponse, ReidCluster, ReidOptions, ReidPlayers, ReidRecord, ReidVideo } from '@/types/api';
+import type { ActionAnnotationData, Job, ReidClusters, ReidOptions, ReidPlayers, ReidRecord, ReidVideo } from '@/types/api';
 
 // Embedders and their threshold-slider calibration both come from
 // /reid/options (types/api.ts ReidOptions) — cosine-distance scales differ
@@ -179,12 +183,13 @@ export function ReidLabelPage() {
 
   const clustersQuery = useQuery({
     queryKey: ['reid-clusters', picked, threshold, embedder],
-    queryFn: () => apiFetch<{ clusters: ReidCluster[] }>(API.reid.clusters(picked, threshold, embedder)),
+    queryFn: () => apiFetch<ReidClusters>(API.reid.clusters(picked, threshold, embedder)),
     enabled: Boolean(picked),
     retry: retryEmbeddingRefresh,
     retryDelay: embeddingRetryDelay,
   });
   const clusters = useMemo(() => clustersQuery.data?.clusters ?? [], [clustersQuery.data]);
+  const units = useMemo(() => clustersQuery.data?.units ?? {}, [clustersQuery.data]);
 
   const playersQuery = useQuery({
     queryKey: ['reid-players', picked, embedder],
@@ -193,7 +198,7 @@ export function ReidLabelPage() {
     retry: retryEmbeddingRefresh,
     retryDelay: embeddingRetryDelay,
   });
-  const assignments = useMemo(() => playersQuery.data?.assignments ?? {}, [playersQuery.data]);
+  const unitNames = useMemo(() => playersQuery.data?.unit_names ?? {}, [playersQuery.data]);
   const matches = playersQuery.data?.matches ?? {};
 
   // A clusters 404 for a model the video list confirms is missing means "the
@@ -223,85 +228,15 @@ export function ReidLabelPage() {
     picked,
     embedder,
     threshold,
-    records,
-    recordById,
     clusters,
-    assignments,
-    tracks: tracksQuery.data,
+    units,
+    unitNames,
   });
 
   const seekToEvent = (r?: ReidRecord) => {
     // The player owns the whole jump: rally selection, panel expansion,
     // sidebar pinning and the actual seek.
     if (r) playerRef.current?.jumpToEvent({ id: r.id, frame: r.frame, time: r.time ?? null });
-  };
-
-  // Actor fix: persists into the players file server-side, re-crops and
-  // re-embeds the event, then refreshes everything derived from embeddings.
-  // The re-embed takes seconds — fixingEvent gates the picker so a double
-  // click can't fire two overlapping fixes.
-  const [fixingEvent, setFixingEvent] = useState<string | null>(null);
-  const fixActor = async (eventId: string, fix: ActorFix) => {
-    if (fixingEvent) return;
-    setFixingEvent(eventId);
-    try {
-      const result = await apiFetch<ReidActorFixResponse>(API.reid.actorFix(picked), {
-        method: 'POST',
-        body: { event_id: eventId, model: embedder, ...fix },
-      });
-      // The POST already returns the changed record and its one track link.
-      // Patch the two large payloads locally instead of downloading them again.
-      qc.setQueryData<{ meta: Record<string, unknown>; records: ReidRecord[] }>(
-        ['reid-results', picked],
-        (current) =>
-          current
-            ? {
-                ...current,
-                records: current.records.map((record) =>
-                  record.id === eventId ? result.record : record,
-                ),
-              }
-            : current,
-      );
-      qc.setQueryData<TrackData | null>(['reid-tracks', picked], (current) => {
-        if (!current) return current;
-        const links = { ...current.links };
-        if (result.track_link) links[eventId] = result.track_link;
-        else delete links[eventId];
-        return { ...current, links };
-      });
-      // The crop is a different person now — the server dropped the event's
-      // assignment; mirror it locally so a locked row's auto-save can't
-      // resurrect the stale identity.
-      board.removeEvent(eventId);
-      toast.success(fix.mode === 'occluded' ? 'Marked as occluded' : fix.mode === 'pick' ? 'Player updated' : 'Reverted to the auto pick');
-      // Cached inactive models must not look current while their background
-      // rows are refreshing. Only the visible model blocks this interaction.
-      await Promise.all([
-        qc.invalidateQueries({
-          queryKey: ['reid-clusters', picked],
-          refetchType: 'none',
-        }),
-        qc.invalidateQueries({
-          queryKey: ['reid-players', picked],
-          refetchType: 'none',
-        }),
-      ]);
-      await Promise.all([
-        qc.refetchQueries({
-          queryKey: ['reid-clusters', picked, threshold, embedder],
-          exact: true,
-        }),
-        qc.refetchQueries({
-          queryKey: ['reid-players', picked, embedder],
-          exact: true,
-        }),
-      ]);
-    } catch (e) {
-      toast.error(`Actor fix failed: ${errMsg(e)}`);
-    } finally {
-      setFixingEvent(null);
-    }
   };
 
   const pickVideo = async (name: string) => {
@@ -328,7 +263,9 @@ export function ReidLabelPage() {
     : records.length;
   // Events that already carry an identity: member of a named group on the
   // live board (unsaved edits count — the board is the source of truth).
-  const assignedCount = new Set(board.groups.filter((g) => g.name.trim()).flatMap((g) => g.eventIds)).size;
+  const assignedCount = new Set(
+    board.groups.filter((g) => g.name.trim()).flatMap((g) => g.unitKeys.flatMap(board.eventsOf)),
+  ).size;
   // Occluded verdicts count as handled — the user looked and decided. They
   // are crop-less, so they never overlap the assigned (crop-bearing) set.
   const occludedCount = records.filter((r) => r.resolution === 'occluded').length;
@@ -344,16 +281,34 @@ export function ReidLabelPage() {
     if (!isDone && resolvedCount < actionableCount) {
       const ok = await confirm({
         title: 'Mark as done?',
-        body: `${actionableCount - resolvedCount} of ${actionableCount} actions have no player assigned (or occluded verdict) yet.`,
+        body: `${actionableCount - resolvedCount} of ${actionableCount} actions have no player assigned (or occluded verdict) yet. Assigned automatic actor selections will be recorded as human-confirmed association labels.`,
+        confirmText: 'Mark done',
+      });
+      if (!ok) return;
+    } else if (!isDone) {
+      const ok = await confirm({
+        title: 'Mark as done?',
+        body: 'Assigned automatic actor selections will be recorded as human-confirmed association labels.',
         confirmText: 'Mark done',
       });
       if (!ok) return;
     }
     if (board.dirty && !(await board.save())) return;
     try {
-      await apiFetch(API.reid.done(picked), { method: 'PUT', body: { done: !isDone } });
+      await apiFetch(API.reid.done(picked), {
+        method: 'PUT',
+        body: {
+          done: !isDone,
+          confirm_auto_actors: !isDone,
+        },
+      });
       toast.success(isDone ? 'Done mark removed' : 'Marked done');
       void qc.invalidateQueries({ queryKey: ['reid-videos'] });
+      if (!isDone) {
+        void qc.invalidateQueries({
+          queryKey: ['reid-results', picked],
+        });
+      }
     } catch (e) {
       toast.error(`Done failed: ${errMsg(e)}`);
     }
@@ -400,7 +355,7 @@ export function ReidLabelPage() {
       </Card>
 
       {picked && showVideo && meta.fps && meta.frame_size && (
-        <ReidVideoPlayer
+        <EventVideoPlayer
           ref={playerRef}
           src={apiUrl(API.actionAnnotate.video(picked))}
           fps={meta.fps}
@@ -413,8 +368,6 @@ export function ReidLabelPage() {
           onSelectRally={setSelectedRally}
           videoName={picked}
           tracklets={tracksQuery.data?.tracklets ?? []}
-          onFixActor={fixActor}
-          fixing={Boolean(fixingEvent)}
           onJumpToCrop={(id) => boardRef.current?.jumpToCrop(id)}
           trackLinks={trackLinks}
         />
@@ -534,18 +487,10 @@ export function ReidLabelPage() {
             <Button
               size="sm"
               onClick={board.seedRegroup}
-              disabled={!picked || !board.groups.some((g) => (g.locked || g.name.trim()) && g.eventIds.length > 0)}
+              disabled={!picked || !board.groups.some((g) => (g.locked || g.name.trim()) && g.unitKeys.length > 0)}
               title="Use every locked/named group as a player anchor: all other events join the nearest anchor (within the threshold); the rest re-cluster into leftover pools"
             >
               Seed regroup
-            </Button>
-            <Button
-              size="sm"
-              onClick={board.trackPropagate}
-              disabled={!picked || !board.groups.some((g) => (g.locked || g.name.trim()) && g.eventIds.length > 0)}
-              title="Within a rally, events on the same ByteTrack tracklet are the same player — unassigned events follow the locked/named group their tracklet belongs to (needs Rally Tracking, see ReID Predict)"
-            >
-              Track propagate
             </Button>
             <Button size="sm" onClick={board.reset} disabled={!board.dirty}>
               Reset

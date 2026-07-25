@@ -37,9 +37,9 @@ from yp_video.contracts.reid import (
     DatasetManifest,
 )
 from yp_video.core.jsonl import read_jsonl_cached
-from yp_video.reid.identity import load_assignments
+from yp_video.reid.identity import LinksFor, load_assignments
 from yp_video.reid.sessions import SessionGroup
-from yp_video.reid.store import crop_dir, masked_crop_dir, reid_path
+from yp_video.extraction.store import crop_dir, masked_crop_dir, records_path
 
 DATASETS_DIR = REID_DATASETS_DIR
 
@@ -48,6 +48,11 @@ SPLIT_MODES = ("auto", "session", "crops", "all_train")
 #: A player split across train and test needs >= 2 train crops and >= 1 of
 #: each test role.
 MIN_SPLIT_CROPS = 4
+#: ...and, in ``crops`` mode, two independent views of them. A unit is one
+#: tracklet: consecutive frames of one person in one rally, which are not
+#: independent evidence of anything. A player seen on a single tracklet
+#: cannot be split honestly, however many crops that tracklet has.
+MIN_SPLIT_UNITS = 2
 
 
 @dataclass(frozen=True)
@@ -77,7 +82,7 @@ class ExportPlan:
     groups: dict[str, list[str]] = field(default_factory=dict)
 
 
-def _candidates(groups: Sequence[SessionGroup], masked: bool):
+def _candidates(groups: Sequence[SessionGroup], masked: bool, links_for: LinksFor | None = None):
     """(crops-by-player, dropped) — one entry per labeled crop."""
     by_player: dict[tuple[str, str], list[dict]] = {}
     dropped: dict[str, list[str]] = {}
@@ -85,8 +90,9 @@ def _candidates(groups: Sequence[SessionGroup], masked: bool):
 
     for group in groups:
         for stem in group.stems:
-            assignments = load_assignments(stem)
-            _meta, records = read_jsonl_cached(reid_path(stem))
+            links = links_for(stem) if links_for else {}
+            assignments = load_assignments(stem, links or None)
+            _meta, records = read_jsonl_cached(records_path(stem))
             source_dir = masked_crop_dir(stem) if masked else crop_dir(stem)
             for record in records:
                 name = assignments.get(record["id"])
@@ -107,6 +113,9 @@ def _candidates(groups: Sequence[SessionGroup], masked: bool):
                     "id": record["id"],
                     "path": str(src.relative_to(REID_DIR)),
                     "frame": record.get("frame") or 0,
+                    # Which tracklet this crop came from — the grain the split
+                    # has to respect. Crops with no tracklet are their own.
+                    "unit": f"{stem}/{links.get(record['id']) or record['id']}",
                 })
     return by_player, dropped
 
@@ -118,6 +127,7 @@ def plan_export(
     test_ratio: float = 0.25,
     seed: int = 42,
     masked: bool = False,
+    links_for: LinksFor | None = None,
 ) -> ExportPlan:
     """Decide every sample without writing anything.
 
@@ -133,7 +143,7 @@ def plan_export(
     """
     if split_mode not in SPLIT_MODES:
         raise ValueError(f"Unknown split_mode {split_mode!r} (have: {', '.join(SPLIT_MODES)})")
-    by_player, dropped = _candidates(groups, masked)
+    by_player, dropped = _candidates(groups, masked, links_for)
     resolved = "session" if (split_mode == "auto" and len(groups) >= 2) else (
         "crops" if split_mode == "auto" else split_mode
     )
@@ -169,13 +179,33 @@ def plan_export(
         elif resolved == "all_train":
             train, test = crops, []
         else:  # crops
-            if len(crops) < MIN_SPLIT_CROPS:
-                train, test = crops, []  # too small to split; still useful to train on
+            # Split whole tracklets, never individual crops. Two frames of one
+            # tracklet on opposite sides of the split make rank-1 retrieval a
+            # near-duplicate lookup, and the resulting mAP measures nothing.
+            units: dict[str, list[dict]] = {}
+            for c in crops:
+                units.setdefault(c["unit"], []).append(c)
+            if len(crops) < MIN_SPLIT_CROPS or len(units) < MIN_SPLIT_UNITS:
+                if len(units) < MIN_SPLIT_UNITS and len(crops) >= MIN_SPLIT_CROPS:
+                    dropped.setdefault("single_unit", []).append(f"{gid}/{name}")
+                train, test = crops, []  # still useful to train on
             else:
-                shuffled = crops[:]
-                rng.shuffle(shuffled)
-                n_test = max(2, round(len(shuffled) * test_ratio))
-                test, train = shuffled[:n_test], shuffled[n_test:]
+                keys = sorted(units)
+                rng.shuffle(keys)
+                wanted = max(1, round(len(crops) * test_ratio))
+                # Whole units go to test until the crop budget is met, and at
+                # least two when there are units to spare — query and gallery
+                # have to come from different tracklets to mean anything.
+                spare = len(keys) - 1  # train always keeps one
+                test_keys: list[str] = []
+                for key in keys[:spare]:
+                    enough = sum(len(units[k]) for k in test_keys) >= wanted
+                    if enough and len(test_keys) >= min(2, spare):
+                        break
+                    test_keys.append(key)
+                chosen = set(test_keys)
+                test = [c for k in test_keys for c in units[k]]
+                train = [c for k in keys if k not in chosen for c in units[k]]
 
         if train and len(train) < MIN_TRAIN_CROPS_PER_PLAYER:
             dropped.setdefault("train_singleton", []).append(f"{gid}/{name}")
@@ -187,11 +217,17 @@ def plan_export(
             dropped.setdefault("no_usable_split", []).append(f"{gid}/{name}")
             continue
 
+        # Query and gallery must come from DIFFERENT tracklets, or rank-1 is
+        # "find the adjacent frame of this crop" and the score is fiction.
+        query_unit = test[0]["unit"] if test else None
+        if test and all(c["unit"] == query_unit for c in test):
+            dropped.setdefault("test_single_unit", []).append(f"{gid}/{name}")
+            train, test = train + test, []
         for c in train:
             samples.append(Sample(c["id"], c["path"], pid, SPLIT_TRAIN, None, gid, fold))
-        for i, c in enumerate(test):
-            # First crop per player is the query, the rest gallery.
-            samples.append(Sample(c["id"], c["path"], pid, SPLIT_TEST, ROLE_QUERY if i == 0 else ROLE_GALLERY, gid, fold))
+        for c in test:
+            role = ROLE_QUERY if c["unit"] == query_unit else ROLE_GALLERY
+            samples.append(Sample(c["id"], c["path"], pid, SPLIT_TEST, role, gid, fold))
         players[pid] = {"group": gid, "name": name, "n_train": len(train), "n_test": len(test)}
 
     counts = {
@@ -202,6 +238,8 @@ def plan_export(
         "n_query": sum(1 for s in samples if s.role == ROLE_QUERY),
         "n_gallery": sum(1 for s in samples if s.role == ROLE_GALLERY),
         "n_dropped": sum(len(v) for v in dropped.values()),
+        # Tracklets, not crops: the honest size of the evidence.
+        "n_units": len({c["unit"] for crops_ in by_player.values() for c in crops_}),
     }
     return ExportPlan(
         samples=tuple(samples),

@@ -72,6 +72,22 @@ def read_jsonl(path: Path) -> tuple[dict, list[dict]]:
 # video's tracks. Parsed objects run ~9x their source bytes, so the ceiling is
 # high in a pathological all-tracks run; in practice annotations dominate.
 _READ_CACHE_BYTES = 64 * 1024 * 1024
+def read_jsonl_header(path: Path) -> dict:
+    """Just the _meta line.
+
+    A tracks jsonl runs to several megabytes and a video list asks every one
+    of them for a header field — parsing the records to reach line 1 turns a
+    page load into hundreds of megabytes of JSON.
+    """
+    with open(path, "r", encoding="utf-8") as f:
+        first = f.readline()
+    if not first.strip():
+        return {}
+    meta = json.loads(first)
+    meta.pop("_meta", None)
+    return meta
+
+
 _read_cache: OrderedDict[Path, tuple[tuple[int, int], dict, list[dict]]] = OrderedDict()
 _read_cache_bytes = 0
 _read_cache_lock = threading.Lock()

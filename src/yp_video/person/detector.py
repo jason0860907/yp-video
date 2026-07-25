@@ -1,10 +1,11 @@
-"""RF-DETR keypoint detection + contact-point → player association.
+"""RF-DETR keypoint detection: every person on a frame, with their skeleton.
 
 The keypoint model (GroupPose-style DETR head) predicts boxes and 17 COCO
 keypoints for every person in one pass, at constant cost regardless of player
-count (~29 ms/frame on a 4090). The keypoints buy a far more physical
-association than box geometry: a volleyball contact happens at a hand, so the
-annotated xy should sit next to somebody's wrist.
+count (~29 ms/frame on a 4090). The keypoints exist because a volleyball
+contact happens at a hand — but what to DO with that fact is actor
+association's business (see yp_video/actor/ranking.py), not the detector's.
+This module knows only what is on the frame.
 """
 
 from __future__ import annotations
@@ -16,12 +17,9 @@ import numpy as np
 
 # Detection floor. Deliberately low: every box above it is stored on the
 # record and offered in the UI's actor picker (which has its own score
-# slider), so even a barely-detected player can still be clicked. The
-# automatic pick applies its own stricter floor below.
+# slider), so even a barely-detected player can still be clicked. Consumers
+# that want a stricter floor own that threshold themselves.
 PERSON_SCORE_THRESHOLD = 0.1
-# Automatic contact-point association only trusts confident detections — the
-# 0.1–0.5 band exists solely to give the human picker more boxes.
-AUTO_PICK_MIN_SCORE = 0.5
 
 # Detection (boxes + scores) is ALWAYS RF-DETR; what's selectable is who
 # estimates the 17 COCO keypoints on those boxes. name → weights identifier,
@@ -33,20 +31,9 @@ KEYPOINT_SOURCES = {
 }
 DEFAULT_KEYPOINT_SOURCE = "rf-detr"
 
-# COCO keypoint indices for left/right wrist.
+# COCO keypoint indices for left/right wrist — a property of the skeleton
+# format, so it belongs to whoever produces skeletons.
 WRIST_IDXS = (9, 10)
-# A wrist match counts when the contact point is within this fraction of the
-# person's box height from the wrist — roughly ball-diameter reach at contact.
-WRIST_REACH_FRAC = 0.6
-
-# Box-geometry fallback for people whose wrists weren't found: the contact
-# point may sit up to 35% of box height above the top (ball above the raised
-# hand) and 20% of box width outside the horizontal span. Validated on
-# annotated sideline footage.
-X_PAD_FRAC = 0.20
-Y_ABOVE_FRAC = 0.35
-# Fallback candidates always rank below any wrist match.
-FALLBACK_PENALTY = 10.0
 
 
 @dataclass(frozen=True)
@@ -55,6 +42,35 @@ class PersonBox:
     score: float
     keypoints: np.ndarray | None = None  # (17, 2) pixel coords
     keypoint_conf: np.ndarray | None = None  # (17,)
+
+
+def person_from_detection(detection: dict) -> PersonBox:
+    """Rebuild a PersonBox from the form extraction stores it in.
+
+    Lives with the type rather than with any one reader: the dataset builder,
+    the association policies and the fix path all need the same three lines,
+    and had each grown their own copy.
+    """
+    keypoints = detection.get("keypoints")
+    return PersonBox(
+        xyxy=(
+            float(detection["box"][0]),
+            float(detection["box"][1]),
+            float(detection["box"][2]),
+            float(detection["box"][3]),
+        ),
+        score=float(detection.get("score") or 0.0),
+        keypoints=(
+            np.asarray([[p[0], p[1]] for p in keypoints], dtype=np.float32)
+            if keypoints
+            else None
+        ),
+        keypoint_conf=(
+            np.asarray([p[2] for p in keypoints], dtype=np.float32)
+            if keypoints
+            else None
+        ),
+    )
 
 
 class KeypointSource(Protocol):
@@ -137,50 +153,6 @@ class PersonDetector:
         ]
 
 
-def associate(boxes: list[PersonBox], x: float, y: float) -> list[PersonBox]:
-    """Rank persons by how plausibly they own the contact point (x, y).
-
-    Wrist distance first — the contact IS at a hand — with the old box-top
-    geometry as a fallback for players with no predicted wrists, or whose
-    wrists sit too far from the contact to be plausible. Scores are normalized by box height so near and far players
-    compare fairly. Returns candidates best-first; empty when nobody is
-    geometrically compatible. Pixel coordinates.
-
-    Low-confidence detections (< AUTO_PICK_MIN_SCORE) never compete here —
-    they exist only as manual-picker choices.
-    """
-    scored: list[tuple[float, PersonBox]] = []
-    for box in boxes:
-        if box.score < AUTO_PICK_MIN_SCORE:
-            continue
-        x0, y0, x1, y1 = box.xyxy
-        w, h = max(x1 - x0, 1.0), max(y1 - y0, 1.0)
-
-        # Every predicted wrist counts, whatever its confidence: the reach
-        # gate below already rejects a wrist that lands nowhere near the
-        # contact, and a low-confidence wrist in the right place is a better
-        # signal than falling back to box geometry. Measured on 549
-        # human-reviewed associations: gating at conf 0.3 changed 13 of them,
-        # net -3 — noise, and one magic number less.
-        wrist_d = None
-        if box.keypoints is not None:
-            wrist_d = min(
-                float(np.hypot(box.keypoints[i][0] - x, box.keypoints[i][1] - y)) for i in WRIST_IDXS
-            )
-
-        if wrist_d is not None and wrist_d <= WRIST_REACH_FRAC * h:
-            scored.append((wrist_d / h, box))
-            continue
-
-        in_x = x0 - X_PAD_FRAC * w <= x <= x1 + X_PAD_FRAC * w
-        in_y = y0 - Y_ABOVE_FRAC * h <= y <= y1
-        if in_x and in_y:
-            d = float(np.hypot(x - (x0 + x1) / 2, y - y0))
-            scored.append((d / h + FALLBACK_PENALTY, box))
-
-    return [box for _, box in sorted(scored, key=lambda t: t[0])]
-
-
 # Constructed sources — instances persist so loaded models stay resident;
 # availability is re-checked on every build_keypoint_sources call.
 _rf: PersonDetector | None = None
@@ -192,11 +164,11 @@ def build_keypoint_sources() -> dict[str, KeypointSource]:
     exist (re-checked per call, so a download while the server runs appears
     without a restart). Both entries share ONE RF-DETR instance —
     "sam-3d-body" wraps it for boxes and replaces only the keypoints
-    (see reid/sam3d.py).
+    (see person/sam3d.py).
     """
     global _rf, _sam3d
 
-    from yp_video.reid.sam3d import Sam3dBodyDetector, sam3d_available
+    from yp_video.person.sam3d import Sam3dBodyDetector, sam3d_available
 
     if _rf is None:
         _rf = PersonDetector()

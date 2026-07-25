@@ -20,7 +20,7 @@ from __future__ import annotations
 import numpy as np
 
 from yp_video.config import SAM3D_DIR
-from yp_video.reid.detector import PersonBox, PersonDetector
+from yp_video.person.detector import PersonBox, PersonDetector
 
 CHECKPOINT = SAM3D_DIR / "checkpoints" / "sam-3d-body-dinov3" / "model.ckpt"
 MHR_MODEL = SAM3D_DIR / "checkpoints" / "sam-3d-body-dinov3" / "assets" / "mhr_model.pt"
@@ -31,11 +31,16 @@ def sam3d_available() -> bool:
 
 
 # Only people whose box (expanded by this fraction of its height) contains the
-# contact point get 3DB keypoints — matches associate()'s reach: a wrist match
-# needs the contact within WRIST_REACH_FRAC (0.6) of a wrist, and wrists live
-# inside the box. Everyone else keeps RF-DETR keypoints; they only ever appear
-# in the manual picker.
+# contact point get 3DB keypoints — the reach of a plausible actor: a contact
+# lands at a wrist, and wrists live inside the box. Everyone else keeps
+# RF-DETR keypoints; they only ever appear in the manual picker.
 FOCUS_PAD_FRAC = 0.7
+
+# 3DB inference costs ~10x a detection, so it is spent only on people the
+# frame actually shows. An inference-budget floor, deliberately independent
+# of any association threshold: this module must not follow a policy change
+# made two layers up.
+REFINE_MIN_SCORE = 0.5
 
 
 class Sam3dBodyDetector:
@@ -79,8 +84,6 @@ class Sam3dBodyDetector:
     def detect(self, frame_bgr: np.ndarray, focus: tuple[float, float] | None = None) -> list[PersonBox]:
         import cv2
 
-        from yp_video.reid.detector import AUTO_PICK_MIN_SCORE
-
         people = self._boxes.detect(frame_bgr)
         if not people:
             return []
@@ -93,7 +96,7 @@ class Sam3dBodyDetector:
             return x0 - pad <= focus[0] <= x1 + pad and y0 - pad <= focus[1] <= y1 + pad
 
         # 3DB only for plausible actors; the rest keep RF-DETR keypoints.
-        targets = [i for i, p in enumerate(people) if p.score >= AUTO_PICK_MIN_SCORE and near_focus(p)]
+        targets = [i for i, p in enumerate(people) if p.score >= REFINE_MIN_SCORE and near_focus(p)]
         if not targets:
             return people
         self._ensure()

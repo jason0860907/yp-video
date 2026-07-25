@@ -34,6 +34,7 @@ import numpy as np
 
 from yp_video.config import REID_EMBED_MODULE, REID_PKG_DIR, REID_PYTHON
 from yp_video.contracts.reid import REID_CONTRACT_VERSION, REID_CONTRACT_VERSION_ENV, REID_PROGRESS_PREFIX
+from yp_video.core.progress import ProgressFn
 from yp_video.reid.checkpoints import default_checkpoint, read_manifest, reid_engine_available
 
 CLIP_REID_HF_REPO = "occurra/person_vit_clip_reid"
@@ -41,9 +42,6 @@ CLIP_REID_ONNX = "person_vit_clip_reid.onnx"
 # ReID-standard input aspect (h, w) the checkpoint was trained at.
 INPUT_H, INPUT_W = 256, 128
 CLIP_REID_DIM = 512
-
-ProgressFn = Callable[[int, int, str], None]
-
 
 class ReidInferenceError(RuntimeError):
     """yp-reid subprocess embedding failed; callers wanting graceful

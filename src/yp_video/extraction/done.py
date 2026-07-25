@@ -1,0 +1,68 @@
+"""Marking a video's labeling finished, and what that implies about actors.
+
+"Done" is a ReID verdict: the user says the player names on this video are
+settled. But a user who named every crop has also, implicitly, agreed with
+every automatic actor pick behind those crops — they looked at the person and
+called them by name. Turning that implication into an explicit
+``confirmed_auto`` label is what gives the association model positive
+training truth without ever inventing it (see actor/labels.py).
+
+Implicit, so it stays opt-in: ``confirm_auto`` is a parameter, and only
+events that actually carry an assignment are confirmed. An unassigned auto
+pick is output nobody has looked at.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+
+from yp_video.actor import labels as actor_labels
+from yp_video.actor.labels import ActorLabel
+from yp_video.core.jsonl import read_jsonl_cached
+from yp_video.extraction.links import track_keys
+from yp_video.extraction.store import records_path
+from yp_video.reid import identity
+
+
+def confirmable_actors(
+    stem: str, records: Sequence[dict]
+) -> dict[str, ActorLabel]:
+    """Automatic picks this page is entitled to confirm.
+
+    Here the endorsement is the player name: naming an identity means the
+    user looked at that crop and called the person by name, which is also a
+    statement that the right person was cropped. A name given to the whole
+    tracklet counts — it was given while looking at these crops. An unnamed
+    auto pick is output nobody has looked at, so Done leaves it alone; the
+    Association Label page confirms those, on its own evidence.
+    """
+    assignments = identity.load_assignments(stem, track_keys(stem))
+    return {
+        event_id: label
+        for event_id, label in actor_labels.confirmations_for(records).items()
+        if event_id in assignments
+    }
+
+
+def mark_done(stem: str, done: bool, *, confirm_auto: bool) -> int:
+    """Persist the Done verdict; return how many actors it confirmed."""
+    confirmed = 0
+    if done and confirm_auto:
+        _meta, records = read_jsonl_cached(records_path(stem))
+        confirmed = len(
+            actor_labels.confirm_auto(stem, confirmable_actors(stem, records))
+        )
+    identity.save_done(stem, done)
+    return confirmed
+
+
+def backfill_confirmed_done(stems: Sequence[str]) -> dict[str, int]:
+    """Explicit migration for videos marked Done before confirmation existed."""
+    counts: dict[str, int] = {}
+    for stem in stems:
+        if not identity.load_done(stem):
+            raise ValueError(f"{stem} is not marked Done")
+        if not records_path(stem).exists():
+            raise FileNotFoundError(f"No extraction records for {stem}")
+        counts[stem] = mark_done(stem, True, confirm_auto=True)
+    return counts

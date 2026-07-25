@@ -20,6 +20,7 @@ from yp_video.web.routers import (
     detect,
     download,
     jobs,
+    actor_association,
     reid,
     reid_train,
     spot_predict,
@@ -114,6 +115,11 @@ app.include_router(spot_train.router, prefix="/api/spot-train", tags=["spot-trai
 app.include_router(spot_predict.router, prefix="/api/spot-predict", tags=["spot-predict"])
 app.include_router(reid.router, prefix="/api/reid", tags=["reid"])
 app.include_router(reid_train.router, prefix="/api/reid-train", tags=["reid-train"])
+app.include_router(
+    actor_association.router,
+    prefix="/api/actor-association",
+    tags=["actor-association"],
+)
 app.include_router(jobs.router, prefix="/api/jobs", tags=["jobs"])
 app.include_router(system.router, prefix="/api/system", tags=["system"])
 app.include_router(upload.router, prefix="/api/upload", tags=["upload"])
