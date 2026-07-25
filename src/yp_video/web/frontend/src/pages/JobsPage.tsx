@@ -12,21 +12,13 @@ import { ProgressBar } from '@/components/job/ProgressBar';
 import { JobItems } from '@/components/job/JobItems';
 import { formatClock } from '@/lib/format';
 import { statusLabel, statusTheme } from '@/lib/job';
+import { STAT_ROWS } from '@/lib/stats';
 import { toast } from '@/components/feedback/toast';
 import type { Job, SystemStats, VllmStatus } from '@/types/api';
 
 const POLL_MS = 15_000;
 
 const errMsg = (e: unknown) => (e instanceof ApiError ? e.body : e instanceof Error ? e.message : String(e));
-
-const STAT_ROWS: Array<[label: string, key: keyof SystemStats]> = [
-  ['Videos', 'videos'],
-  ['Cuts', 'cuts'],
-  ['Rally-Pred', 'pre_annotations'],
-  ['Rally Labels', 'annotations'],
-  ['Action-Pred', 'action_pre_annotations'],
-  ['Action Labels', 'actions'],
-];
 
 export function JobsPage() {
   const qc = useQueryClient();

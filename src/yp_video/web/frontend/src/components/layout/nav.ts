@@ -10,6 +10,11 @@ export interface NavItem {
 export interface NavSection {
   title: string;
   items: NavItem[];
+  /** Whether the sidebar may fold this section away. A model stage owns a
+   *  Predict / Label / Train triple; showing every stage's triple at once is
+   *  the whole list. Always-visible sections (Video, System) are single
+   *  actions with nowhere to fold to. */
+  collapsible?: boolean;
 }
 
 // Categories mirror the VolleyIQ prototype's Pipeline sidebar.
@@ -33,6 +38,9 @@ const ICON = {
   jobs: [
     'M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z',
   ],
+  actor: [
+    'M15.042 21.672L13.684 16.6m0 0l-2.51 2.225.569-9.47 5.227 7.917-3.286-.672zm-7.518-.267A8.25 8.25 0 1120.25 10.5M8.288 14.212A5.25 5.25 0 1117.25 10.5',
+  ],
   players: [
     'M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z',
   ],
@@ -40,16 +48,20 @@ const ICON = {
 
 export const NAV: NavSection[] = [
   {
+    // The VLM rally pass is video preparation, not a trainable stage: it has
+    // no labels and no checkpoint of its own, so it belongs beside the cut it
+    // reads rather than above the SPOT model it feeds.
     title: 'Video',
     items: [
       { path: '/download', label: 'Download', icon: ICON.download },
       { path: '/cut', label: 'Cut', icon: ICON.cut },
+      { path: '/rally-vlm-predict', label: 'Rally VLM Predict', icon: ICON.detect },
     ],
   },
   {
     title: 'Rally',
+    collapsible: true,
     items: [
-      { path: '/detect', label: 'Rally Predict', icon: ICON.detect },
       { path: '/annotate', label: 'Rally Label', icon: ICON.annotate },
       { path: '/spot-train', label: 'Rally SPOT Train', icon: ICON.train },
       { path: '/spot-predict', label: 'Rally SPOT Predict', icon: ICON.predict },
@@ -57,6 +69,7 @@ export const NAV: NavSection[] = [
   },
   {
     title: 'Action',
+    collapsible: true,
     items: [
       { path: '/action-predict', label: 'Action Predict', icon: ICON.predict },
       { path: '/action-annotate', label: 'Action Label', icon: ICON.pin },
@@ -64,7 +77,17 @@ export const NAV: NavSection[] = [
     ],
   },
   {
-    title: 'Player',
+    title: 'Association',
+    collapsible: true,
+    items: [
+      { path: '/association-predict', label: 'Association Predict', icon: ICON.predict },
+      { path: '/association-label', label: 'Association Label', icon: ICON.actor },
+      { path: '/association-train', label: 'Association Train', icon: ICON.train },
+    ],
+  },
+  {
+    title: 'ReID',
+    collapsible: true,
     items: [
       { path: '/reid-predict', label: 'ReID Predict', icon: ICON.predict },
       { path: '/reid-label', label: 'ReID Label', icon: ICON.players },
@@ -90,20 +113,14 @@ export const PATH_SECTION: Record<string, string> = Object.fromEntries(
 
 export const DEFAULT_PATH = '/download';
 
-/** Per-route page title shown in the top bar. */
-export const PAGE_TITLES: Record<string, string> = {
-  '/download': 'Download',
+/** Routes whose page heading reads longer than the sidebar has room for.
+ *  Everything else takes its sidebar label, so a rename lands in one place. */
+const TITLE_OVERRIDES: Record<string, string> = {
   '/cut': 'Cut into sets',
-  '/detect': 'Rally Predict',
-  '/annotate': 'Rally Label',
-  '/spot-train': 'Rally SPOT Train',
-  '/spot-predict': 'Rally SPOT Predict',
-  '/action-train': 'Action Train',
-  '/action-predict': 'Action Predict',
-  '/action-annotate': 'Action Label',
-  '/reid-predict': 'ReID Predict',
-  '/reid-label': 'ReID Label',
-  '/reid-train': 'ReID Train',
-  '/upload': 'Cloud Storage',
   '/jobs': 'Jobs & System',
 };
+
+/** Per-route page title shown in the top bar. */
+export const PAGE_TITLES: Record<string, string> = Object.fromEntries(
+  NAV_ITEMS.map((item) => [item.path, TITLE_OVERRIDES[item.path] ?? item.label]),
+);
