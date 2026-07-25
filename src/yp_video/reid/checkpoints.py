@@ -18,6 +18,12 @@ from pathlib import Path
 from yp_video.config import REID_CHECKPOINTS_DIR, REID_PYTHON, VIDEOS_DIR
 from yp_video.contracts.reid import CHECKPOINT_MANIFEST_NAME, CHECKPOINT_TYPE, REID_CONTRACT_VERSION
 
+# The paper release is the stable production baseline. Training runs are
+# candidates until an explicit promotion workflow is introduced; their
+# metrics may come from different datasets/splits and are not comparable
+# enough to choose production weights automatically.
+DEFAULT_CHECKPOINT_PACKAGE = "clip-reident-paper"
+
 
 def read_manifest(package: Path) -> dict:
     """Load and validate a package manifest; raise on anything off."""
@@ -36,9 +42,12 @@ def read_manifest(package: Path) -> dict:
 
 
 def list_checkpoints() -> list[dict]:
-    """Every readable package, best-metric first (imported packages without
-    metrics sort last — a run fine-tuned on our own crops outranks generic
-    released weights until its numbers say otherwise)."""
+    """Every readable package, stable default first then newest candidates.
+
+    ``best_value`` is display-only here. It must not control activation:
+    train loss and mAP have opposite directions, and values from different
+    datasets or splits do not form a fair cross-run comparison.
+    """
     rows = []
     if not REID_CHECKPOINTS_DIR.exists():
         return rows
@@ -52,6 +61,7 @@ def list_checkpoints() -> list[dict]:
         rows.append({
             "path": checkpoint_ref(package),
             "run_name": manifest.get("run_name", package.name),
+            "active": package.name == DEFAULT_CHECKPOINT_PACKAGE,
             "source": manifest.get("source"),
             "architecture": manifest.get("model", {}).get("architecture"),
             "embedding_dim": manifest.get("model", {}).get("embedding_dim"),
@@ -63,16 +73,20 @@ def list_checkpoints() -> list[dict]:
             "mtime": manifest_path.stat().st_mtime,
         })
     rows.sort(
-        key=lambda r: (r["best_value"] if r["best_value"] is not None else float("-inf"), r["mtime"]),
+        key=lambda r: (r["active"], r["mtime"]),
         reverse=True,
     )
     return rows
 
 
 def default_checkpoint() -> Path | None:
-    """The package the clip-reident embedder binds to; None when none exist."""
-    rows = list_checkpoints()
-    return resolve_checkpoint(rows[0]["path"]) if rows else None
+    """The fixed official package; training never changes this implicitly."""
+    package = REID_CHECKPOINTS_DIR / DEFAULT_CHECKPOINT_PACKAGE
+    try:
+        read_manifest(package)
+    except (OSError, ValueError, KeyError, json.JSONDecodeError):
+        return None
+    return package.resolve()
 
 
 def resolve_checkpoint(value: str | Path | None) -> Path:
@@ -109,5 +123,5 @@ def checkpoint_ref(package: Path) -> str:
 
 
 def reid_engine_available() -> bool:
-    """Whether the clip-reident embedder can run: yp-reid venv + a package."""
+    """Whether the default clip-reident embedder can run."""
     return REID_PYTHON.exists() and default_checkpoint() is not None
