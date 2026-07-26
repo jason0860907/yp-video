@@ -38,6 +38,16 @@ import {
 // only as manual-picker choices (mirrors reid/detector.AUTO_PICK_MIN_SCORE).
 const AUTO_PICK_MIN_SCORE = 0.5;
 
+/** One keycap. Action Label spells these inline; naming it here keeps the
+ *  keys in this bar from drifting apart. */
+function Key({ children }: { children: React.ReactNode }) {
+  return (
+    <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">
+      {children}
+    </kbd>
+  );
+}
+
 export interface PlayerHandle {
   /** Park the video on an event's frame, select + expand its rally, and pin
    *  that rally to the top of the sidebar list. */
@@ -165,10 +175,16 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
     };
   }, [fps, src]);
 
-  // Space = play/pause, ←/→ = step one frame (Shift: ten) — the same
-  // contract as Action Label: text fields keep their keys for typing, the
-  // seek slider hands space back so scrubbing → space "just works", and
-  // range inputs keep the arrows for their native nudge.
+  // Association Label passes onFixActor and gets the picker; ReID Label omits
+  // it and gets a read-only player. Derived before the key handler so P can
+  // stay inert on the read-only side.
+  const canFix = Boolean(onFixActor);
+
+  // Space = play/pause, ←/→ = step one frame (Shift: ten), P = the picking
+  // mode — the same contract as Action Label, down to the letter: text fields
+  // keep their keys for typing, the seek slider hands space back so scrubbing
+  // → space "just works", and range inputs keep the arrows for their native
+  // nudge.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
@@ -178,6 +194,13 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
         if (tag === 'INPUT' && (target as HTMLInputElement).type !== 'range') return;
         e.preventDefault();
         togglePlay();
+        return;
+      }
+      if (e.key === 'p' || e.key === 'P') {
+        if (tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'SELECT') return;
+        if (!canFix) return;
+        e.preventDefault();
+        setPickMode((m) => !m);
         return;
       }
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
@@ -194,7 +217,7 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [fps]);
+  }, [fps, canFix]);
 
   // frame → ByteTrack boxes for the overlay and the picker (measured ~286k
   // boxes on a real cut, ~30 ms to build — rebuilt only per tracking run).
@@ -210,7 +233,6 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
   );
   const time = frame / fps;
   // Read-only when the page did not hand us a way to write.
-  const canFix = Boolean(onFixActor);
   // The event whose actor is being picked: always the record NEAREST the
   // playhead (actions split the timeline at their midpoints), on every
   // frame — parking just before an action aims at that action, never the
@@ -778,9 +800,13 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
                 size="sm"
                 intent={pickMode ? 'primary' : 'default'}
                 onClick={() => setPickMode((m) => !m)}
-                title="Pick Player: park on an action's frame, then click the person who performed it"
+                title={
+                  pickMode
+                    ? 'Pick mode: park on an action, then click who performed it. Press P to go back to reviewing.'
+                    : 'Review mode: the video plays and nothing you click changes a verdict. Press P to start picking.'
+                }
               >
-                Pick Player
+                {pickMode ? 'Pick mode' : 'Review mode'}
               </Button>
             )}
           </div>
@@ -867,6 +893,16 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
             </div>
           )}
         </Card>
+        {/* Same place, same vocabulary as Action Label: a reviewer moving
+            between the two pages should not have to relearn the keys. */}
+        <p className="px-1 text-[11px] text-text-muted">
+          <Key>Space</Key> play · <Key>← →</Key> frame · <Key>Shift ← →</Key> 10 frames
+          {canFix && (
+            <>
+              {' '}· <Key>P</Key> pick mode
+            </>
+          )}
+        </p>
       </div>
 
       {/* Rally list — same sidebar as the Rally Label / Action Label editors.
