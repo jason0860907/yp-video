@@ -18,16 +18,16 @@ from unittest.mock import patch
 
 import numpy as np
 
+from yp_video.actor.labels import ActorLabel, ActorVerdict
 from yp_video.core.jsonl import write_jsonl
 from yp_video.extraction import links
 from yp_video.tracklets.geometry import (
     LINK_MIN_CONTAINMENT,
     BoxQuery,
     TrackRef,
+    TrackletIndex,
     containment,
-    frame_index,
     link_boxes,
-    tracks_near,
 )
 
 
@@ -67,16 +67,30 @@ class ContainmentTests(unittest.TestCase):
         self.assertEqual(containment([0, 0, 10, 10], [50, 50, 60, 60]), 0.0)
 
 
-class TracksNearTests(unittest.TestCase):
+class TrackletIndexTests(unittest.TestCase):
+    INDEX = TrackletIndex(
+        [_tracklet(1, 1, [10], [0, 0, 10, 10]), _tracklet(1, 2, [12], [50, 0, 60, 10])]
+    )
+
     def test_nearest_detected_frame_wins_and_is_not_pooled(self) -> None:
-        index = frame_index(
-            [_tracklet(1, 1, [10], [0, 0, 10, 10]), _tracklet(1, 2, [12], [50, 0, 60, 10])]
-        )
         # frame 11 is undetected; -1 is searched before +1.
-        near = tracks_near(index, 11, window=3)
+        near = self.INDEX.nearest(11, window=3)
         self.assertEqual([ref for ref, _ in near], [TrackRef(1, 1)])
-        self.assertEqual(tracks_near(index, 10, window=1), index[10])
-        self.assertEqual(tracks_near(index, 99, window=3), [])
+        self.assertEqual(self.INDEX.nearest(10, window=1), self.INDEX.at(10))
+        self.assertEqual(self.INDEX.nearest(99, window=3), [])
+
+    def test_near_pools_the_window_and_keeps_tracklet_order(self) -> None:
+        """The candidate-set question, as against nearest()'s snapshot one."""
+        found = self.INDEX.near(11, window=3)
+        self.assertEqual([w.ref for w in found], [TrackRef(1, 1), TrackRef(1, 2)])
+        self.assertEqual([w.rows for w in found], [[0], [0]])
+        self.assertEqual(self.INDEX.near(99, window=3), [])
+
+    def test_identity_lookup_is_absent_not_an_error(self) -> None:
+        """Re-tracking renumbers track_id, so a stale label names nobody."""
+        self.assertEqual(self.INDEX.tracklet(TrackRef(1, 1))["frames"], [10])
+        self.assertIsNone(self.INDEX.tracklet(TrackRef(9, 9)))
+        self.assertEqual(len(self.INDEX), 2)
 
 
 class LinkBoxesTests(unittest.TestCase):
@@ -88,7 +102,7 @@ class LinkBoxesTests(unittest.TestCase):
         display = [90, 90, 220, 210]  # a padded union containing both
 
         resolved = link_boxes(
-            [actor, bystander],
+            TrackletIndex([actor, bystander]),
             [BoxQuery(key="e1", frame=100, anchor=[100, 100, 140, 200], gate=display)],
         )
         self.assertEqual(resolved["e1"], TrackRef(1, 1))
@@ -97,7 +111,7 @@ class LinkBoxesTests(unittest.TestCase):
         """max() always names a winner; the gate is what can say "none"."""
         far = _tracklet(1, 1, [100], [900, 900, 940, 1000])
         resolved = link_boxes(
-            [far],
+            TrackletIndex([far]),
             [BoxQuery(key="e1", frame=100, anchor=[0, 0, 40, 100], gate=[0, 0, 50, 110])],
         )
         self.assertNotIn("e1", resolved)
@@ -109,15 +123,15 @@ class LinkBoxesTests(unittest.TestCase):
         gate = [50, 0, 150, 100]
         self.assertEqual(containment(box, gate), LINK_MIN_CONTAINMENT)
         resolved = link_boxes(
-            [half], [BoxQuery(key="e1", frame=5, anchor=box, gate=gate)]
+            TrackletIndex([half]), [BoxQuery(key="e1", frame=5, anchor=box, gate=gate)]
         )
         self.assertIn("e1", resolved)
 
     def test_stride_widens_the_frame_search(self) -> None:
         track = _tracklet(1, 1, [10], [0, 0, 10, 10])
         query = BoxQuery(key="e1", frame=12, anchor=[0, 0, 10, 10], gate=[0, 0, 10, 10])
-        self.assertNotIn("e1", link_boxes([track], [query], stride=1))
-        self.assertIn("e1", link_boxes([track], [query], stride=3))
+        self.assertNotIn("e1", link_boxes(TrackletIndex([track]), [query], stride=1))
+        self.assertIn("e1", link_boxes(TrackletIndex([track]), [query], stride=3))
 
 
 class ResolveTrackTests(unittest.TestCase):
@@ -152,8 +166,12 @@ class ResolveTrackTests(unittest.TestCase):
             masks_path = root / "match_masks.npz"
             if mask is not None:
                 np.savez_compressed(masks_path, _shape=np.array(mask.shape[1:]), **{"1:1": _pack(mask)})
+            index = TrackletIndex(
+                [_tracklet(1, 1, list(frames), [98, 98, 142, 202])]
+            )
             with (
                 patch.object(links, "tracks_path", return_value=tracks),
+                patch.object(links, "tracklet_index", return_value=index),
                 patch.object(links, "tracks_masks_path", return_value=masks_path),
                 patch.object(links, "load_track_masks", return_value=mask),
             ):
@@ -201,6 +219,87 @@ class ResolveTrackTests(unittest.TestCase):
         """Re-tracking renumbers every id — that must be absent, not wrong."""
         with self._video(mask=None):
             self.assertIsNone(links.resolve_track("match", self.RECORD, TrackRef(9, 9)))
+
+    def test_an_injected_archive_is_used_instead_of_reopening_the_file(self) -> None:
+        """Re-deciding a video resolves ~300 tracklet picks; opening the 12 MB
+        silhouette archive once per pick was most of what that cost."""
+        mask = np.ones((1, 8, 4), dtype=bool)
+        with self._video(mask=mask):
+            with patch.object(links, "load_track_masks") as reopen:
+                pick = links.resolve_track(
+                    "match", self.RECORD, TrackRef(1, 1), masks={"1:1": mask}
+                )
+
+        reopen.assert_not_called()
+        self.assertEqual(list(pick.box), [100, 100, 140, 200])
+        self.assertTrue(pick.snap)
+
+
+class EventTrackPrecedenceTests(unittest.TestCase):
+    """A named tracklet outranks the one the box happens to sit on.
+
+    Geometry is the fallback for a policy that answered with a BOX. Running it
+    over an answer that already named a tracklet is what made a deliberate
+    pick look like it did nothing: two overlapping players each resolve to a
+    box matching the other's tracklet, so the board kept showing the one you
+    had just clicked away from. Measured at 6.7% of picks on real data.
+    """
+
+    #: Two players standing on top of each other. The record's box matches
+    #: ACTOR geometrically; the human named the BYSTANDER.
+    ACTOR = _tracklet(1, 1, [100], [100, 100, 140, 200])
+    BYSTANDER = _tracklet(1, 2, [100], [104, 100, 148, 200])
+    RECORD = {
+        "id": "e1",
+        "frame": 100,
+        "box": [90, 90, 160, 210],
+        "actor_box": [100, 100, 140, 200],
+    }
+
+    @contextmanager
+    def _video(self, labels):
+        with tempfile.TemporaryDirectory() as raw_dir:
+            root = Path(raw_dir)
+            tracks, records = root / "t.jsonl", root / "r.jsonl"
+            write_jsonl(tracks, {"stride": 1}, [self.ACTOR, self.BYSTANDER])
+            write_jsonl(records, {"video": "match"}, [self.RECORD])
+            with (
+                patch.object(links, "tracks_path", return_value=tracks),
+                patch.object(links, "records_path", return_value=records),
+                patch.object(
+                    links,
+                    "tracklet_index",
+                    return_value=TrackletIndex([self.ACTOR, self.BYSTANDER]),
+                ),
+                patch.object(links.actor_labels, "load", return_value=labels),
+            ):
+                yield
+
+    def test_geometry_decides_when_nobody_named_a_tracklet(self) -> None:
+        with self._video({}):
+            self.assertEqual(links._event_tracks("match")["e1"], TrackRef(1, 1))
+
+    def test_a_human_pick_beats_the_box_it_resolved_to(self) -> None:
+        label = ActorLabel(ActorVerdict.MANUAL, track=TrackRef(1, 2), box=(104, 100, 148, 200))
+        with self._video({"e1": label}):
+            self.assertEqual(links._event_tracks("match")["e1"], TrackRef(1, 2))
+
+    def test_a_policy_pick_beats_geometry_too(self) -> None:
+        record = {**self.RECORD, "track": "1:2"}
+        with self._video({}), patch.object(links, "read_jsonl_cached") as read:
+            read.side_effect = lambda p: (
+                ({"stride": 1}, [self.ACTOR, self.BYSTANDER])
+                if p.name == "t.jsonl"
+                else ({}, [record])
+            )
+            self.assertEqual(links._event_tracks("match")["e1"], TrackRef(1, 2))
+
+    def test_a_named_tracklet_that_no_longer_exists_falls_back(self) -> None:
+        """Re-tracking renumbers every id — honouring a stale name would point
+        at whoever inherited the number."""
+        label = ActorLabel(ActorVerdict.MANUAL, track=TrackRef(9, 9), box=(104, 100, 148, 200))
+        with self._video({"e1": label}):
+            self.assertEqual(links._event_tracks("match")["e1"], TrackRef(1, 1))
 
 
 if __name__ == "__main__":

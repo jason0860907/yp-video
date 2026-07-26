@@ -15,7 +15,7 @@ from yp_video.actor.labels import ActorLabel, ActorVerdict
 from yp_video.actor.policy import ActorPick, EventContext, SpotActorPolicy
 from yp_video.actor.review import ReviewedEvent
 from yp_video.actor.spot_predictions import SpotAnswer
-from yp_video.tracklets.geometry import TrackRef
+from yp_video.tracklets.geometry import TrackletIndex, TrackRef
 
 FRAME = 100
 
@@ -41,7 +41,7 @@ def _event(label, tracklets=(), contact=(150.0, 150.0), event_id="a"):
             contact=contact,
             visible=True,
             event_id=event_id,
-            tracklets=list(tracklets),
+            tracks=TrackletIndex(list(tracklets)),
         ),
     )
 

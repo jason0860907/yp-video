@@ -25,7 +25,7 @@ from yp_video.actor.track_features import (
     candidates_near,
     extract_track_features,
 )
-from yp_video.tracklets.geometry import TrackRef
+from yp_video.tracklets.geometry import TrackletIndex, TrackRef
 
 
 def _tracklet(rally, track, frames, box, score=0.9):
@@ -69,7 +69,7 @@ class CandidateSetTests(unittest.TestCase):
             _tracklet(1, 1, range(95, 106), [0, 0, 40, 100]),
             _tracklet(1, 2, range(500, 511), [0, 0, 40, 100]),  # another rally moment
         ]
-        near = candidates_near(tracklets, 100)
+        near = candidates_near(TrackletIndex(tracklets), 100)
         self.assertEqual([c.ref for c in near], [TrackRef(1, 1)])
 
     def test_no_tracklet_alive_is_stated_not_implied(self) -> None:
@@ -83,7 +83,7 @@ class CandidateSetTests(unittest.TestCase):
 
 class FeatureTests(unittest.TestCase):
     def _row(self, tracklets, x, y, frame=100, **kw):
-        f = extract_track_features(candidates_near(tracklets, frame), x, y, frame, **kw)
+        f = extract_track_features(candidates_near(TrackletIndex(tracklets), frame), x, y, frame, **kw)
         return dict(zip(TRACK_CANDIDATE_FEATURE_NAMES, f.candidates[0]))
 
     def test_presence_at_the_event_frame_is_distinguishable(self) -> None:
@@ -101,7 +101,7 @@ class FeatureTests(unittest.TestCase):
             "boxes": [[300, 0, 340, 100], [0, 0, 40, 100]], "scores": [0.9, 0.9],
         }
         still = _tracklet(1, 2, [96, 100], [0, 0, 40, 100])
-        f = extract_track_features(candidates_near([closing, still], 100), 20, 50, 100)
+        f = extract_track_features(candidates_near(TrackletIndex([closing, still]), 100), 20, 50, 100)
         rows = dict(zip([c.key for c in f.refs], f.candidates))
         speed = TRACK_CANDIDATE_FEATURE_NAMES.index("approach_speed")
         self.assertGreater(rows["1:1"][speed], 0.0)
@@ -125,7 +125,7 @@ class FeatureTests(unittest.TestCase):
             "1:2": np.tile(_half_mask(fill="right"), (1, 1, 1)),
         }
         features = extract_track_features(
-            candidates_near([left, right], 100, masks=masks), 45.0, 50.0, 100
+            candidates_near(TrackletIndex([left, right]), 100, masks=masks), 45.0, 50.0, 100
         )
         rows = dict(zip([c.key for c in features.refs], features.candidates))
         in_box = TRACK_CANDIDATE_FEATURE_NAMES.index("contact_in_box")
@@ -146,10 +146,10 @@ class FeatureTests(unittest.TestCase):
         are from the ball; a centre distance cannot say that, and the NONE
         head used to see nothing else."""
         near = extract_track_features(
-            candidates_near([_tracklet(1, 1, [100], [0, 0, 40, 100])], 100), 20.0, 50.0, 100
+            candidates_near(TrackletIndex([_tracklet(1, 1, [100], [0, 0, 40, 100])]), 100), 20.0, 50.0, 100
         )
         far = extract_track_features(
-            candidates_near([_tracklet(1, 1, [100], [0, 0, 40, 100])], 100), 300.0, 50.0, 100
+            candidates_near(TrackletIndex([_tracklet(1, 1, [100], [0, 0, 40, 100])]), 100), 300.0, 50.0, 100
         )
         mask_d = TRACK_CONTEXT_FEATURE_NAMES.index("top_mask_distance")
         wrist = TRACK_CONTEXT_FEATURE_NAMES.index("top_wrist_distance")

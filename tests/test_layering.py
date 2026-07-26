@@ -119,5 +119,42 @@ class LayeringTests(unittest.TestCase):
         )
 
 
+#: What each HTTP surface is allowed to answer. The rule is the same one the
+#: package layering enforces, applied to the routes: a stage's endpoints live
+#: under its own prefix, not under whichever page happened to host the button.
+#:
+#: /reid used to carry all four — extraction, tracking, actor review and
+#: grouping — because every one of them fed ReID. Feeding a stage is not being
+#: it, and the name made the stage everything else depends ON look like the
+#: one that depends on everything else.
+ROUTER_SURFACES = {
+    # Grouping the same person, and nothing else.
+    "/api/reid": {
+        "/videos", "/options", "/embed", "/clusters/{name}",
+        "/players/{name}", "/seed-cluster/{name}", "/done/{name}",
+    },
+    # Finding the people. Choosing who acted is /api/actor-association.
+    "/api/extraction": {
+        "/videos", "/options", "/detect", "/records/{name}",
+        "/crop/{name}/{crop_file}",
+    },
+    # Who is on court over time. Depends on rally spans and nothing else.
+    "/api/tracklets": {"/run", "/{name}", "/masks/{name}"},
+}
+
+
+class RouterSurfaceTests(unittest.TestCase):
+    def test_each_router_answers_only_its_own_question(self) -> None:
+        from yp_video.web.app import app
+
+        actual: dict[str, set[str]] = {prefix: set() for prefix in ROUTER_SURFACES}
+        for route in app.routes:
+            path = getattr(route, "path", "")
+            for prefix in ROUTER_SURFACES:
+                if path == prefix or path.startswith(prefix + "/"):
+                    actual[prefix].add(path[len(prefix):] or "/")
+        self.assertEqual(actual, ROUTER_SURFACES)
+
+
 if __name__ == "__main__":
     unittest.main()

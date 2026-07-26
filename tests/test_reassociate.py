@@ -157,7 +157,7 @@ class ReassociationTests(unittest.TestCase):
     def test_a_tracklet_pick_that_resolves_nowhere_is_not_forced(self) -> None:
         """No tracklets on disk → resolve_track finds nothing. The event must
         end unresolved, not cropped from the tracklet's own box."""
-        with patch.object(reassociate, "resolve_track", return_value=None):
+        with patch("yp_video.extraction.cropping.resolve_track", return_value=None):
             counts = self._run(
                 _StubPolicy(
                     {"auto": ActorPick(track=TrackRef(3, 7))},

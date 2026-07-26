@@ -10,6 +10,7 @@ from unittest.mock import patch
 import numpy as np
 from pydantic import TypeAdapter, ValidationError
 
+from yp_video.actor import labels as actor_labels
 from yp_video.actor.labels import ActorLabel, ActorVerdict
 from yp_video.actor.resolution import ActorResolution, actor_resolution
 from yp_video.contracts.reid import (
@@ -17,7 +18,7 @@ from yp_video.contracts.reid import (
     CHECKPOINT_TYPE,
     REID_CONTRACT_VERSION,
 )
-from yp_video.extraction import actor_fix, pipeline
+from yp_video.extraction import actor_fix, cropping, pipeline
 from yp_video.reid import checkpoints, store
 from yp_video.web.jobs import MAX_LOG_LINES, Job, JobManager, JobStatus
 from yp_video.web.routers.action_train import (
@@ -237,7 +238,7 @@ class ActorFixTransactionTests(unittest.TestCase):
                     return_value={"id": "event-1", "actor_revision": 7},
                 ) as apply_actor_fix,
                 patch.object(actor_fix.actor_labels, "save"),
-                patch.object(actor_fix.identity, "drop_assignment"),
+                patch.object(actor_fix.store, "drop_assignment"),
             ):
                 result = actor_fix.apply(
                     root / "match.mp4",
@@ -398,6 +399,313 @@ class ActorFixTransactionTests(unittest.TestCase):
             self.assertEqual(embedding_file.read_bytes(), b"embedding-before")
             self.assertFalse((root / "embedding-refresh.json").exists())
             self.assertFalse((crop_dir / "new.jpg").exists())
+
+
+class CroppingTests(unittest.TestCase):
+    """The rules the four crop callers used to each keep a copy of.
+
+    Extraction's automatic pick, a replayed label, the fix endpoint and
+    reassociation all cut pixels the same way; the copies had drifted on
+    exactly the two questions below.
+    """
+
+    DETECTION = {"box": [100, 100, 140, 200], "score": 1.6}
+
+    def _record(self, **extra):
+        return {"id": "e1", "frame": 500, "detections": [self.DETECTION], **extra}
+
+    def _cut(self, record, target, contact):
+        frame = np.zeros((400, 400, 3), dtype=np.uint8)
+        with tempfile.TemporaryDirectory() as raw_dir:
+            return cropping.cut(
+                record,
+                frame,
+                cropping.person_for(record, target),
+                source_frame=target.frame,
+                contact=contact,
+                frame_size=(400, 400),
+                out_dir=Path(raw_dir),
+            )
+
+    def test_a_same_frame_crop_is_anchored_on_the_contact_point(self) -> None:
+        record = self._record()
+        target = cropping.CropTarget((100, 100, 140, 200), 500, snap=True)
+        self.assertIsNotNone(self._cut(record, target, (300.0, 150.0)))
+        # The display box unions the ball, so it reaches out to it.
+        self.assertGreaterEqual(record["box"][2], 300)
+        self.assertNotIn("crop_frame", record)
+
+    def test_a_cross_frame_crop_ignores_the_contact_point(self) -> None:
+        """The point belongs to the event frame, where the player is not —
+        unioning it there would drag the crop across the court."""
+        record = self._record()
+        target = cropping.CropTarget((100, 100, 140, 200), 812, snap=True)
+        self.assertIsNotNone(self._cut(record, target, (300.0, 150.0)))
+        self.assertLess(record["box"][2], 300)
+        self.assertEqual(record["crop_frame"], 812)
+
+    def test_crop_frame_is_cleared_when_the_pick_comes_home(self) -> None:
+        """A stale crop_frame sends the tracklet link and the next re-crop to
+        a frame the actor is no longer cropped from."""
+        record = self._record(crop_frame=812)
+        target = cropping.CropTarget((100, 100, 140, 200), 500, snap=True)
+        self.assertIsNotNone(self._cut(record, target, (110.0, 150.0)))
+        self.assertNotIn("crop_frame", record)
+
+    def test_snapping_is_vetoed_across_frames(self) -> None:
+        """Stored detections belong to the event frame; on another one the
+        nearest is somebody else standing there."""
+        record = self._record()
+        same = cropping.person_for(
+            record, cropping.CropTarget((102, 102, 138, 198), 500, snap=True)
+        )
+        across = cropping.person_for(
+            record, cropping.CropTarget((102, 102, 138, 198), 812, snap=True)
+        )
+        self.assertEqual(list(same.xyxy), self.DETECTION["box"])
+        self.assertEqual(same.score, self.DETECTION["score"])
+        self.assertEqual(across.xyxy, (102, 102, 138, 198))
+        self.assertEqual(across.score, 0.0)
+
+    def test_a_vetoed_snap_embeds_the_box_as_drawn(self) -> None:
+        """snap=False means no stored detection IS this player, so anything
+        close enough to snap to would be the occluder in front of them."""
+        record = self._record()
+        person = cropping.person_for(
+            record, cropping.CropTarget((102, 102, 138, 198), 500, snap=False)
+        )
+        self.assertEqual(person.xyxy, (102, 102, 138, 198))
+
+
+class StagesStopWhereTheyShouldTests(unittest.TestCase):
+    """Detection, association and embedding are three jobs, in that order.
+
+    Detection is perception and decides nothing; association picks and crops;
+    an embedding answers "who is this person" about a crop, so it can only be
+    asked once somebody has agreed the right person was cropped. Folding any
+    pair together is what made the first association pass a different code
+    path from every later one, and made every actor fix re-embed a crop it was
+    about to replace.
+    """
+
+    def test_detection_neither_associates_nor_embeds(self) -> None:
+        """The signature is the contract: it takes no policy and no weights."""
+        import inspect
+
+        params = inspect.signature(pipeline.detect_video).parameters
+        self.assertEqual(
+            sorted(params), ["keypoints", "on_progress", "video_path"]
+        )
+        source = inspect.getsource(pipeline.detect_video)
+        for forbidden in ("cut(", "ActorAssociationService", "embed_video"):
+            self.assertNotIn(forbidden, source, f"detection must not {forbidden}")
+
+    def test_a_re_detect_keeps_the_association_already_made(self) -> None:
+        """Refreshing the candidate list is not an opinion about the answer —
+        and one of those answers may be a human verdict."""
+        self.assertLessEqual(
+            {"status", "resolution", "crop", "actor_box", "track", "actor_revision"},
+            pipeline._ASSOCIATION_FIELDS,
+        )
+
+    def test_a_fix_before_any_embedding_is_allowed(self) -> None:
+        """Actor review runs BEFORE embedding, so the fix endpoint must not
+        require the stage that depends on it."""
+        with tempfile.TemporaryDirectory() as raw_dir:
+            root = Path(raw_dir)
+            (root / "match_reid.jsonl").write_bytes(b"reid")
+
+            with (
+                patch.object(
+                    actor_fix.extraction_store,
+                    "records_path",
+                    return_value=root / "match_reid.jsonl",
+                ),
+                patch.object(
+                    actor_fix.actor_labels,
+                    "actors_path",
+                    return_value=root / "actors.json",
+                ),
+                patch.object(
+                    actor_fix.store, "players_path", return_value=root / "players.json"
+                ),
+                patch.object(
+                    actor_fix.store,
+                    "embedding_refresh_path",
+                    return_value=root / "refresh.json",
+                ),
+                # Nothing embedded yet — the ordinary state during review.
+                patch.object(actor_fix.store, "embedded_models", return_value=[]),
+                patch.object(
+                    actor_fix.extraction_store, "crop_dir", return_value=root / "crops"
+                ),
+                patch.object(
+                    actor_fix.extraction_store,
+                    "masked_crop_dir",
+                    return_value=root / "masked",
+                ),
+                patch.object(
+                    actor_fix.pipeline,
+                    "apply_actor_fix",
+                    return_value={"id": "e1", "actor_revision": 1},
+                ) as applied,
+                patch.object(actor_fix.actor_labels, "save"),
+                patch.object(actor_fix.store, "drop_assignment"),
+            ):
+                result = actor_fix.apply(
+                    root / "match.mp4",
+                    actor_fix.MarkOccluded(mode="occluded", event_id="e1"),
+                    active_model=None,
+                )
+
+        self.assertEqual(applied.call_args.kwargs["models"], [])
+        self.assertEqual(result.refreshing_models, ())
+
+    def test_a_named_model_must_still_actually_exist(self) -> None:
+        """None means "nothing is embedded"; a NAME that is not there is a
+        caller bug, and silently embedding nothing would hide it."""
+        with tempfile.TemporaryDirectory() as raw_dir:
+            root = Path(raw_dir)
+            (root / "match_reid.jsonl").write_bytes(b"reid")
+            with (
+                patch.object(
+                    actor_fix.extraction_store,
+                    "records_path",
+                    return_value=root / "match_reid.jsonl",
+                ),
+                patch.object(
+                    actor_fix.store, "embedded_models", return_value=["clip-reid"]
+                ),
+                self.assertRaises(FileNotFoundError),
+            ):
+                actor_fix.apply(
+                    root / "match.mp4",
+                    actor_fix.MarkOccluded(mode="occluded", event_id="e1"),
+                    active_model="clip-reident",
+                )
+
+
+class ConfirmableAnswerTests(unittest.TestCase):
+    """What a human is allowed to endorse, and what endorsing it records."""
+
+    def test_a_pick_becomes_confirmed_auto(self) -> None:
+        out = actor_labels.confirmations_for([
+            {"id": "e1", "frame": 10, "resolution": "auto", "actor_box": [1, 2, 3, 4]},
+        ])
+        self.assertEqual(out["e1"].verdict, ActorVerdict.CONFIRMED_AUTO)
+        self.assertEqual(out["e1"].box, (1.0, 2.0, 3.0, 4.0))
+
+    def test_an_explicit_occlusion_becomes_the_occluded_verdict(self) -> None:
+        """The model said nobody is visible; agreeing with that IS a verdict,
+        and it is the training truth the NONE head is scored on."""
+        out = actor_labels.confirmations_for([
+            {
+                "id": "e1", "frame": 10, "resolution": "unresolved",
+                "association": {"decision": "abstained", "kind": "occluded"},
+            },
+        ])
+        self.assertEqual(out["e1"].verdict, ActorVerdict.OCCLUDED)
+        self.assertIsNone(out["e1"].box)
+
+    def test_untracked_is_not_endorsable(self) -> None:
+        """It says somebody DID act and tracking lost them — re-running
+        tracking may fix it, and a verdict would bury it."""
+        self.assertEqual(
+            actor_labels.confirmations_for([
+                {
+                    "id": "e1", "frame": 10, "resolution": "unresolved",
+                    "association": {"decision": "abstained", "kind": "untracked"},
+                },
+            ]),
+            {},
+        )
+
+    def test_a_bare_abstention_is_not_endorsable(self) -> None:
+        """No `kind` at all — the geometry simply found nobody, which is not
+        the same claim as "nobody is visible"."""
+        self.assertEqual(
+            actor_labels.confirmations_for([
+                {"id": "e1", "frame": 10, "resolution": "unresolved"},
+            ]),
+            {},
+        )
+
+    def test_a_human_verdict_is_never_re_endorsed(self) -> None:
+        for resolution in ("manual", "occluded"):
+            self.assertEqual(
+                actor_labels.confirmations_for([
+                    {
+                        "id": "e1", "frame": 10, "resolution": resolution,
+                        "actor_box": [1, 2, 3, 4],
+                        "association": {"kind": "occluded"},
+                    },
+                ]),
+                {},
+                resolution,
+            )
+
+
+class MaskedCropReuseTests(unittest.TestCase):
+    """Masking is a segmentation pass over every crop in the video. Paying it
+    again to reproduce files that are already on disk is what made registering
+    a second masked embedder cost a full re-mask."""
+
+    RECORDS = [{"id": "e1", "crop": "e1.jpg"}]
+
+    def _run(self, root: Path):
+        crops, masked = root / "crops", root / "masked"
+        with (
+            patch("yp_video.person.seg.crop_masker"),
+            patch("cv2.imread", return_value=object()),
+            patch("yp_video.extraction.store.masked_crop_dir", return_value=masked),
+            patch.object(pipeline, "_masked_record_crop") as mask_one,
+        ):
+            out = pipeline._mask_crops(
+                "match", [crops / "e1.jpg"], [0], self.RECORDS, None
+            )
+        return out, mask_one.call_count
+
+    def test_an_up_to_date_masked_crop_is_not_recut(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_dir:
+            root = Path(raw_dir)
+            (root / "crops").mkdir()
+            (root / "masked").mkdir()
+            (root / "crops" / "e1.jpg").write_bytes(b"source")
+            (root / "masked" / "e1.jpg").write_bytes(b"masked")
+
+            out, calls = self._run(root)
+
+        self.assertEqual(calls, 0)
+        self.assertEqual(out, [root / "masked" / "e1.jpg"])
+
+    def test_a_masked_crop_older_than_its_source_is_recut(self) -> None:
+        """An automatic pick keeps its crop FILENAME across a re-extraction,
+        so existence alone would serve a mask of the previous pick's pixels."""
+        with tempfile.TemporaryDirectory() as raw_dir:
+            root = Path(raw_dir)
+            (root / "crops").mkdir()
+            (root / "masked").mkdir()
+            stale = root / "masked" / "e1.jpg"
+            stale.write_bytes(b"masked")
+            os.utime(stale, ns=(0, 0))
+            (root / "crops" / "e1.jpg").write_bytes(b"re-extracted")
+
+            _out, calls = self._run(root)
+
+        self.assertEqual(calls, 1)
+
+    def test_a_missing_masked_crop_is_cut(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_dir:
+            root = Path(raw_dir)
+            (root / "crops").mkdir()
+            (root / "crops" / "e1.jpg").write_bytes(b"source")
+
+            out, calls = self._run(root)
+
+        self.assertEqual(calls, 1)
+        # Aligned with the input either way — the embedder turns a path that
+        # does not exist into a NaN row.
+        self.assertEqual(out, [root / "masked" / "e1.jpg"])
 
 
 class ActorEmbeddingRefreshTests(unittest.TestCase):

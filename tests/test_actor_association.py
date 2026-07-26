@@ -345,6 +345,12 @@ class ConfirmEndpointTests(unittest.TestCase):
         {"id": "auto-b", "resolution": "auto", "actor_box": [5, 6, 7, 8], "frame": 2},
         {"id": "fixed", "resolution": "manual", "actor_box": [9, 10, 11, 12], "frame": 3},
         {"id": "miss", "resolution": "unresolved", "frame": 4},
+        {
+            "id": "model-occluded",
+            "resolution": "unresolved",
+            "frame": 5,
+            "association": {"decision": "abstained", "kind": "occluded"},
+        },
     ]
 
     @contextmanager
@@ -373,10 +379,17 @@ class ConfirmEndpointTests(unittest.TestCase):
             response = router.confirm("match.mp4", router.ConfirmRequest())
             labels = actor_labels.load("match")
 
-        self.assertEqual(response["confirmed"], ["auto-a"])
+        self.assertEqual(
+            response["confirmed"],
+            {"auto-a": "confirmed_auto", "model-occluded": "occluded"},
+        )
         self.assertEqual(labels["auto-a"].verdict, ActorVerdict.CONFIRMED_AUTO)
         self.assertEqual(labels["auto-a"].box, (1.0, 2.0, 3.0, 4.0))
         self.assertEqual(labels["auto-b"].verdict, ActorVerdict.OCCLUDED)
+        self.assertEqual(
+            labels["model-occluded"].verdict, ActorVerdict.OCCLUDED
+        )
+        self.assertIsNone(labels["model-occluded"].box)
         # A manual fix already had a label; a miss has no box to agree with.
         self.assertNotIn("miss", labels)
 
@@ -385,8 +398,29 @@ class ConfirmEndpointTests(unittest.TestCase):
             first = router.confirm("match.mp4", router.ConfirmRequest())
             second = router.confirm("match.mp4", router.ConfirmRequest())
 
-        self.assertEqual(first["confirmed"], ["auto-a", "auto-b"])
-        self.assertEqual(second["confirmed"], [])
+        self.assertEqual(
+            first["confirmed"],
+            {
+                "auto-a": "confirmed_auto",
+                "auto-b": "confirmed_auto",
+                "model-occluded": "occluded",
+            },
+        )
+        self.assertEqual(second["confirmed"], {})
+
+    def test_confirming_model_occluded_returns_the_occluded_verdict(self) -> None:
+        """The UI must not turn its `Model: occluded?` hint into Confirmed."""
+        with self._video():
+            response = router.confirm(
+                "match.mp4",
+                router.ConfirmRequest(event_ids=["model-occluded"]),
+            )
+            label = actor_labels.load("match")["model-occluded"]
+
+        self.assertEqual(
+            response["confirmed"], {"model-occluded": "occluded"}
+        )
+        self.assertEqual(label.verdict, ActorVerdict.OCCLUDED)
 
     def test_a_miss_cannot_be_confirmed(self) -> None:
         """It needs a real verdict; reporting success would be a lie."""
