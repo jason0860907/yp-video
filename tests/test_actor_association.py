@@ -234,6 +234,51 @@ class DoneConfirmationTests(unittest.TestCase):
         )
 
 
+class AssociationTrainingSelectionTests(unittest.TestCase):
+    def test_training_request_requires_an_explicit_video_selection(self) -> None:
+        adapter = TypeAdapter(router.AssociationTrainRequest)
+        with self.assertRaises(ValueError):
+            adapter.validate_python({})
+        with self.assertRaises(ValueError):
+            adapter.validate_python({"videos": ["only-one.mp4"]})
+
+    def test_only_the_selected_stems_build_the_dataset(self) -> None:
+        selected_dataset = type(
+            "Dataset",
+            (),
+            {"stems": ("a", "b")},
+        )()
+        paths = {
+            "a.mp4": Path("/cuts/a.mp4"),
+            "b.mp4": Path("/cuts/b.mp4"),
+        }
+        with (
+            patch.object(router, "find_cut", side_effect=paths.get),
+            patch.object(
+                router.actor_dataset,
+                "load_dataset",
+                return_value=selected_dataset,
+            ) as load,
+        ):
+            result, resolved = router._selected_training_dataset(
+                ["b.mp4", "a.mp4"]
+            )
+
+        self.assertIs(result, selected_dataset)
+        self.assertEqual(resolved, [paths["b.mp4"], paths["a.mp4"]])
+        load.assert_called_once_with(["b", "a"])
+
+    def test_duplicate_video_names_do_not_fake_grouped_validation(self) -> None:
+        with patch.object(
+            router, "find_cut", return_value=Path("/cuts/a.mp4")
+        ):
+            with self.assertRaises(HTTPException) as caught:
+                router._selected_training_dataset(["a.mp4", "a.mp4"])
+
+        self.assertEqual(caught.exception.status_code, 400)
+        self.assertIn("distinct", str(caught.exception.detail))
+
+
 class FixEndpointTests(unittest.TestCase):
     """The Association Label page's one write, wired end to end.
 

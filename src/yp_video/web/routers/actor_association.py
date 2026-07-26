@@ -184,6 +184,10 @@ async def performance() -> dict:
 
 
 class AssociationTrainRequest(BaseModel):
+    # Training is an explicit experiment over this exact corpus. The UI
+    # defaults to completed reviews, but may deliberately include a partial
+    # video; silently sweeping every actors file made that impossible to see.
+    videos: list[str] = Field(min_length=2)
     run_name: str | None = None
     seed: int = 42
     folds: int = Field(default=5, ge=2, le=10)
@@ -192,15 +196,43 @@ class AssociationTrainRequest(BaseModel):
     min_occluded_rejection: float = Field(default=0.5, ge=0, le=1)
 
 
-@router.post("/train")
-async def train(req: AssociationTrainRequest) -> dict:
-    dataset = actor_dataset.load_dataset()
+def _selected_training_dataset(
+    names: list[str],
+) -> tuple[actor_dataset.AssociationDataset, list[Path]]:
+    """Resolve the requested videos and build exactly their dataset."""
+    paths: list[Path] = []
+    seen: set[str] = set()
+    for name in names:
+        path = find_cut(name)
+        if path is None:
+            raise HTTPException(404, f"Video not found: {name}")
+        if path.stem in seen:
+            continue
+        seen.add(path.stem)
+        paths.append(path)
+    if len(paths) < 2:
+        raise HTTPException(
+            400, "Association training needs at least two distinct videos"
+        )
+
+    dataset = actor_dataset.load_dataset([path.stem for path in paths])
     if len(dataset.stems) < 2:
+        absent = sorted(set(seen) - set(dataset.stems))
+        detail = (
+            f" No usable examples from: {', '.join(absent)}."
+            if absent else ""
+        )
         raise HTTPException(
             400,
-            "Association training needs completed reviews from at least "
-            "two videos",
+            "Association training needs usable explicit reviews from at "
+            f"least two selected videos.{detail}",
         )
+    return dataset, paths
+
+
+@router.post("/train")
+async def train(req: AssociationTrainRequest) -> dict:
+    dataset, video_paths = _selected_training_dataset(req.videos)
     name = req.run_name or f"association_{time.strftime('%Y%m%d-%H%M%S')}"
     try:
         root = actor_checkpoints.checkpoint_dir(name)
@@ -222,6 +254,7 @@ async def train(req: AssociationTrainRequest) -> dict:
         TRAIN_JOB_TYPE,
         {
             "run_name": name,
+            "videos": [path.name for path in video_paths],
             "dataset": dataset.payload(),
             "config": {
                 "seed": req.seed,
