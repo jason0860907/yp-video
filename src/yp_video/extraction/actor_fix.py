@@ -5,6 +5,23 @@ durable actor label, the identity assignment it invalidates, the derived
 extraction record, and every embedding sidecar. This module is their sole
 coordinator — it owns the ordering, the locks and the rollback. Transport
 validation stays in the router; each store keeps its own writes.
+
+LOCK ORDER. One fix acquires six locks across four modules, and nested in
+this order every time:
+
+    1. actor_fix._transaction_lock        one fix at a time
+    2. reid.store._embedding_write_lock   any matrix or sidecar commit
+    3. actor.labels._lock                 the actor verdict file
+    4. reid.store._players_lock           the player-name file
+    5. pipeline._embedding_locks[stem, m] one model's matrix
+    6. pipeline._actor_fix_lock           the extraction record jsonl
+
+A path may skip levels — the background refresh enters at 2 — but must never
+invert them. Two of these are taken in modules that know nothing of each
+other (the fix endpoint holds 2 while pipeline takes 5 and 6), so the order
+is not visible from any single file; ``tests/test_actor_fix_locking.py``
+is what makes a new lock, or a new caller, fail loudly instead of deadlocking
+under a second concurrent click.
 """
 
 from __future__ import annotations
@@ -22,7 +39,7 @@ from yp_video.actor import labels as actor_labels
 from yp_video.actor.labels import ActorLabel, ActorVerdict
 from yp_video.tracklets.geometry import TrackRef
 from yp_video.extraction import pipeline, store as extraction_store
-from yp_video.reid import identity, store
+from yp_video.reid import store
 from yp_video.reid.embedder import base_embedder_name
 
 log = logging.getLogger(__name__)
@@ -131,9 +148,16 @@ def _directory_files(path: Path) -> set[Path]:
 
 
 def apply(
-    video_path: Path, command: ActorFixCommand, *, active_model: str
+    video_path: Path, command: ActorFixCommand, *, active_model: str | None
 ) -> ActorFixResult:
-    """Apply one actor fix and synchronously refresh the active weight family."""
+    """Apply one actor fix and synchronously refresh the active weight family.
+
+    ``active_model`` is None when the video has not been embedded yet, which
+    is the normal case: actor review comes BEFORE embedding (see
+    extraction/pipeline.py). Then there is no matrix to keep in step and the
+    fix is three writes and a crop. A fix that arrives later — spotted on the
+    ReID board, after the vectors exist — still refreshes them.
+    """
     _validate(command)
     stem = video_path.stem
     record_file = extraction_store.records_path(stem)
@@ -144,14 +168,16 @@ def apply(
         _transaction_lock,
         store.embedding_write_transaction(),
         actor_labels.write_transaction(),
-        identity.players_write_transaction(),
+        store.players_write_transaction(),
     ):
         embedded_models = store.embedded_models(stem)
-        if active_model not in embedded_models:
+        if active_model is not None and active_model not in embedded_models:
             raise FileNotFoundError(
                 f"No {active_model} embeddings for {stem} — backfill the model first"
             )
-        active_family = base_embedder_name(active_model)
+        active_family = (
+            base_embedder_name(active_model) if active_model is not None else None
+        )
         synchronous_models = [
             model
             for model in embedded_models
@@ -162,16 +188,18 @@ def apply(
             for model in embedded_models
             if model not in synchronous_models
         )
-        model_files = [
-            store.embedding_path(stem, model) for model in embedded_models
-        ]
+        # Only the matrices this transaction WRITES are snapshotted. A
+        # deferred model's matrix is untouched until the background refresh,
+        # and each matrix is ~1 MB — snapshotting every registered model on
+        # every click was several MB of pure read per fix. What protects the
+        # deferred ones is the refresh sidecar, which is snapshotted here.
         snapshots = _snapshot(
             [
                 record_file,
                 actor_labels.actors_path(stem),
                 store.players_path(stem),
                 store.embedding_refresh_path(stem),
-                *model_files,
+                *(store.embedding_path(stem, m) for m in synchronous_models),
             ]
         )
         crop_dirs = (
@@ -193,7 +221,7 @@ def apply(
             actor_labels.save(stem, command.event_id, command.label)
             # The crop now shows a different person (or nobody), so whatever
             # name was attached to the old one is no longer evidence.
-            identity.drop_assignment(stem, command.event_id)
+            store.drop_assignment(stem, command.event_id)
             return ActorFixResult(
                 record=record,
                 refreshing_models=deferred_models,

@@ -62,11 +62,11 @@ def read_jsonl(path: Path) -> tuple[dict, list[dict]]:
 #
 # Budgeted in SOURCE bytes, not entries. The working set is wildly uneven: a
 # few hundred action annotations of ~60 KB each (/reid/videos parses EVERY cut
-# per page load) alongside a handful of reid/tracks jsonls at ~10 MB. An
+# per page load) alongside a handful of tracks jsonls at ~10 MB. An
 # entry-count limit could not serve both — 592 annotation files into 256 slots
 # meant /reid/videos re-parsed most of them on every load (measured 386 ms of
 # pure re-parsing per request), and it evicted the open video's tracks file
-# too, which /reid/track-masks re-reads on every rally change.
+# too, which /tracklets/masks re-reads on every rally change.
 #
 # 64 MB of source comfortably holds all annotations (~20 MB) plus the open
 # video's tracks. Parsed objects run ~9x their source bytes, so the ceiling is

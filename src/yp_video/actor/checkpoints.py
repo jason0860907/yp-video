@@ -8,12 +8,11 @@ import shutil
 import uuid
 from pathlib import Path
 
-from yp_video.config import REID_DIR
+from yp_video.config import ASSOCIATION_DIR
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import atomic_write
 from yp_video.actor.model import AssociationModel
 
-ASSOCIATION_DIR = REID_DIR / "association"
 CHECKPOINTS_DIR = ASSOCIATION_DIR / "checkpoints"
 SHADOW_CONFIG = ASSOCIATION_DIR / "shadow.json"
 MODEL_FILE = "model.json"

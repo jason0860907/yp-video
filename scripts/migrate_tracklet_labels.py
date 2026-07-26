@@ -1,6 +1,7 @@
 """One-off migration of the human labels onto tracklets.
 
-Two files change, both under ``videos/reid/annotations/``:
+Two files change — ``videos/association/annotations/`` and
+``videos/reid/annotations/``:
 
 1. ``<stem>_actors.json`` — every verdict that names a box gets the tracklet
    that box sits on. The box stays as the ANCHOR: ``track_id`` restarts in
@@ -33,15 +34,22 @@ from pathlib import Path
 
 from yp_video.actor import labels as actor_labels
 from yp_video.actor.labels import ActorLabel
-from yp_video.config import REID_ANNOTATIONS_DIR
+from yp_video.config import ASSOCIATION_ANNOTATIONS_DIR, REID_ANNOTATIONS_DIR
 from yp_video.core.jsonl import read_jsonl_cached
 from yp_video.extraction.links import track_keys
 from yp_video.extraction.store import records_path
-from yp_video.reid import identity
+from yp_video.reid import store as reid_store
 from yp_video.tracklets.geometry import BoxQuery, TrackRef, link_boxes
-from yp_video.tracklets.store import tracks_path
+from yp_video.tracklets.store import tracklet_index, tracks_path
 
-BACKUP = REID_ANNOTATIONS_DIR.with_name(REID_ANNOTATIONS_DIR.name + ".pre-tracklet")
+#: Both label directories, because this migration writes to both — the actor
+#: verdict lives under association/ and the player name under reid/ since the
+#: stage split.
+LABEL_DIRS = (ASSOCIATION_ANNOTATIONS_DIR, REID_ANNOTATIONS_DIR)
+
+
+def _backup(directory):
+    return directory.with_name(directory.name + ".pre-tracklet")
 
 
 @dataclass
@@ -90,7 +98,9 @@ def _labels_to_tracks(
                 gate=record.get("box") or list(label.box),
             )
         )
-    resolved = link_boxes(tracklets, queries, stride=int(tmeta.get("stride") or 1))
+    resolved = link_boxes(
+        tracklet_index(stem), queries, stride=int(tmeta.get("stride") or 1)
+    )
     unresolved = sorted(
         {q.key for q in queries} - set(resolved) | set(skipped)
     )
@@ -109,7 +119,7 @@ def plan_stem(stem: str, *, only_stale: bool = False) -> StemPlan:
     # automatic picks and carry no actor label at all. Using a different
     # source here would make the migration something other than the
     # normalization it claims to be.
-    players = identity.load_players(stem)
+    players = reid_store.load_players(stem)
     units = track_keys(stem)
     by_unit: dict[str, set[str]] = {}
     events_of: dict[str, list[str]] = {}
@@ -162,7 +172,7 @@ def _write(stem: str, plan: StemPlan) -> None:
     if before is not None:
         # A migration is not a labeling edit; downstream caches key on mtime.
         os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
-    identity.save_players(stem, tracks=plan.tracks, assignments=plan.overrides)
+    reid_store.save_players(stem, tracks=plan.tracks, assignments=plan.overrides)
 
 
 def main() -> None:
@@ -176,9 +186,13 @@ def main() -> None:
     args = parser.parse_args()
 
     stems = actor_labels.labeled_stems()
-    if args.apply and not BACKUP.exists():
-        shutil.copytree(REID_ANNOTATIONS_DIR, BACKUP)
-        print(f"backed up annotations → {BACKUP}\n")
+    if args.apply:
+        for directory in LABEL_DIRS:
+            backup = _backup(directory)
+            if directory.exists() and not backup.exists():
+                shutil.copytree(directory, backup)
+                print(f"backed up → {backup}")
+        print()
 
     totals: Counter[str] = Counter()
     print(f"{'video':26} {'labels':>7} {'→track':>7} {'box only':>9} {'occluded':>9} {'tracks':>7} {'conflict':>9}")

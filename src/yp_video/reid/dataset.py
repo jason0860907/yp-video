@@ -25,7 +25,7 @@ from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from yp_video.config import REID_DATASETS_DIR, REID_DIR
+from yp_video.config import EXTRACTION_DIR, REID_DATASETS_DIR
 from yp_video.contracts.reid import (
     DATASET_MANIFEST_NAME,
     DATASET_SAMPLES_NAME,
@@ -111,7 +111,7 @@ def _candidates(groups: Sequence[SessionGroup], masked: bool, links_for: LinksFo
                 seen.add(record["id"])
                 by_player.setdefault((group.id, name), []).append({
                     "id": record["id"],
-                    "path": str(src.relative_to(REID_DIR)),
+                    "path": str(src.relative_to(EXTRACTION_DIR)),
                     "frame": record.get("frame") or 0,
                     # Which tracklet this crop came from — the grain the split
                     # has to respect. Crops with no tracklet are their own.
@@ -257,7 +257,7 @@ def _manifest(plan: ExportPlan, name: str) -> dict:
     return DatasetManifest.model_validate({
         "created_at": time.time(),
         "name": name,
-        "crops_root": str(REID_DIR),
+        "crops_root": str(EXTRACTION_DIR),
         "config": plan.config,
         "players": {str(k): v for k, v in plan.players.items()},
         "groups": plan.groups,
@@ -291,7 +291,7 @@ def export_manifest_jsonl(plan: ExportPlan) -> str:
     head = {
         "_meta": True,
         "type": "reid_dataset_plan",
-        "crops_root": str(REID_DIR),
+        "crops_root": str(EXTRACTION_DIR),
         "config": plan.config,
         "counts": plan.counts,
         "groups": plan.groups,

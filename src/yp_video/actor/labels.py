@@ -1,6 +1,6 @@
 """The durable human verdict on who performed each action event.
 
-One event, one label — ``videos/reid/annotations/<stem>_actors.json``:
+One event, one label — ``videos/association/annotations/<stem>_actors.json``:
 
     {"version": 2,
      "actors": {
@@ -46,9 +46,10 @@ Only the first two override the automatic pick (``ActorLabel.overrides_auto``)
 — a confirmation agrees with it by definition. All three are training truth
 for the learned ranker (see actor/dataset.py).
 
-Player identity is a different label with a different lifetime; it lives in
-``<stem>_players.json`` (see reid/identity.py). The two files are written
-under separate locks, so naming a player never blocks fixing an actor.
+Player identity is a different label with a different lifetime, and now a
+different directory: ``videos/reid/annotations/<stem>_players.json`` (see
+reid/store.py). The two are written under separate locks, so naming a player
+never blocks fixing an actor.
 """
 
 from __future__ import annotations
@@ -62,7 +63,7 @@ from enum import Enum
 from pathlib import Path
 
 from yp_video.actor.resolution import ActorResolution, actor_resolution
-from yp_video.config import REID_ANNOTATIONS_DIR
+from yp_video.config import ASSOCIATION_ANNOTATIONS_DIR
 from yp_video.tracklets.geometry import TrackRef
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import atomic_write
@@ -160,16 +161,16 @@ def box_from(value: object) -> tuple[float, float, float, float] | None:
 
 
 def actors_path(stem: str) -> Path:
-    return REID_ANNOTATIONS_DIR / f"{stem}{LABEL_SUFFIX}"
+    return ASSOCIATION_ANNOTATIONS_DIR / f"{stem}{LABEL_SUFFIX}"
 
 
 def labeled_stems() -> list[str]:
     """Every video carrying actor labels, sorted."""
-    if not REID_ANNOTATIONS_DIR.exists():
+    if not ASSOCIATION_ANNOTATIONS_DIR.exists():
         return []
     return sorted(
         path.name[: -len(LABEL_SUFFIX)]
-        for path in REID_ANNOTATIONS_DIR.glob(f"*{LABEL_SUFFIX}")
+        for path in ASSOCIATION_ANNOTATIONS_DIR.glob(f"*{LABEL_SUFFIX}")
     )
 
 
@@ -242,12 +243,21 @@ def save(stem: str, event_id: str, label: ActorLabel | None) -> None:
 def confirmations_for(
     records: Iterable[Mapping[str, object]],
 ) -> dict[str, ActorLabel]:
-    """Every automatic pick a human could endorse, as the label it would be.
+    """Every automatic answer a human could endorse, as the label it would be.
 
-    Only picks the policy actually resolved: a miss has no box, so there is
-    nothing to agree with — those need a real verdict, not a confirmation.
-    The box is snapshotted here so a later re-extraction cannot quietly
-    reinterpret what was endorsed.
+    A policy gives two kinds of answer worth agreeing with, and agreeing with
+    each means a different verdict:
+
+    - it PICKED somebody → ``confirmed_auto``. The box is snapshotted so a
+      later re-extraction cannot quietly reinterpret what was endorsed.
+    - it said NOBODY IS VISIBLE → ``occluded``. That is a real verdict, not a
+      confirmation of a pick, because there is no pick to confirm — and it is
+      the training truth the NONE head is scored on.
+
+    Only an explicit occlusion counts, never a mere abstention: ``untracked``
+    means the model believes somebody acted and tracking has no box for them,
+    which re-running tracking may fix and a verdict would bury. A rule policy
+    that never abstains produces neither.
 
     WHO may endorse them is the caller's question, and the two labeling pages
     answer it differently: naming the crop (ReID Label) and reviewing the
@@ -255,21 +265,31 @@ def confirmations_for(
     """
     out: dict[str, ActorLabel] = {}
     for record in records:
-        box = box_from(record.get("actor_box"))
-        if box is None:
-            continue
         try:
-            if actor_resolution(record) is not ActorResolution.AUTO:
-                continue
+            resolution = actor_resolution(record)
         except ValueError:
             continue  # unmigrated record; never guess what it was
-        frame = record.get("frame")
-        out[str(record["id"])] = ActorLabel(
-            verdict=ActorVerdict.CONFIRMED_AUTO,
-            box=box,
-            frame=frame if isinstance(frame, int) else None,
-        )
+        if resolution is ActorResolution.AUTO:
+            box = box_from(record.get("actor_box"))
+            if box is None:
+                continue
+            frame = record.get("frame")
+            out[str(record["id"])] = ActorLabel(
+                verdict=ActorVerdict.CONFIRMED_AUTO,
+                box=box,
+                frame=frame if isinstance(frame, int) else None,
+            )
+        elif resolution is ActorResolution.UNRESOLVED and _says_occluded(record):
+            out[str(record["id"])] = ActorLabel(ActorVerdict.OCCLUDED)
     return out
+
+
+def _says_occluded(record: Mapping[str, object]) -> bool:
+    """Whether the policy's own answer was "nobody is visible here"."""
+    diagnostic = record.get("association")
+    return (
+        isinstance(diagnostic, Mapping) and diagnostic.get("kind") == "occluded"
+    )
 
 
 def confirm_auto(stem: str, confirmations: dict[str, ActorLabel]) -> list[str]:

@@ -22,9 +22,10 @@ from tempfile import NamedTemporaryFile
 
 import numpy as np
 
-from yp_video.config import REID_DIR
-
-TRACKS_DIR = REID_DIR / "tracks"
+from yp_video.config import TRACKS_DIR
+from yp_video.core.cache import StatCache
+from yp_video.core.jsonl import read_jsonl_cached
+from yp_video.tracklets.geometry import TrackletIndex
 
 
 def track_key(rally_id: int, track_id: int) -> str:
@@ -38,6 +39,24 @@ def tracks_path(stem: str) -> Path:
 
 def tracks_masks_path(stem: str) -> Path:
     return TRACKS_DIR / f"{stem}_masks.npz"
+
+
+# One index per video, rebuilt when the jsonl changes. Shared — read-only,
+# like everything StatCache hands out.
+_index_cache: StatCache = StatCache()
+
+
+def tracklet_index(stem: str) -> TrackletIndex:
+    """This video's tracklets, indexed by frame and identity.
+
+    The single accessor every consumer reads tracklets through, so building
+    the index is paid once per video instead of once per event — and so the
+    four modules that each used to scan the raw list ask one object instead.
+    """
+    path = tracks_path(stem)
+    return _index_cache.get(
+        stem, [path], lambda: TrackletIndex(read_jsonl_cached(path)[1])
+    )
 
 
 def save_track_masks(stem: str, mask_hw: tuple[int, int], masks: dict[str, np.ndarray]) -> None:

@@ -25,9 +25,9 @@ from typing import Sequence
 
 import numpy as np
 
-from yp_video.actor.ranking import WRIST_REACH_FRAC, X_PAD_FRAC, Y_ABOVE_FRAC
+from yp_video.actor.ranking import X_PAD_FRAC, Y_ABOVE_FRAC
 from yp_video.person.detector import WRIST_IDXS, iou
-from yp_video.tracklets.geometry import TrackRef
+from yp_video.tracklets.geometry import TrackletIndex, TrackRef
 
 #: Frames either side of the event a tracklet may be sampled over. Wide
 #: enough to see a spiker's approach, short enough to stay the same rally.
@@ -117,7 +117,7 @@ class TrackFeatures:
 
 
 def candidates_near(
-    tracklets: Sequence[dict],
+    index: TrackletIndex,
     frame: int,
     *,
     window: int = WINDOW,
@@ -129,24 +129,23 @@ def candidates_near(
     box ranker had to choose from, and without the spectators — a tracklet
     only exists inside a rally span.
 
+    Takes the video's ``TrackletIndex`` rather than its tracklet list: this
+    runs once per event, and finding ~9 live tracklets by scanning ~180k
+    stored detections is the difference between seconds and minutes per video.
+
     ``masks`` maps a tracklet key to its silhouettes for the WHOLE video, rows
     aligned with that tracklet's frames; the window's rows are sliced out here
     so nothing downstream has to know that alignment.
     """
-    lo, hi = frame - window, frame + window
     out: list[TrackCandidate] = []
-    for t in tracklets:
-        rows = [i for i, f in enumerate(t["frames"]) if lo <= f <= hi]
-        if not rows:
-            continue
-        key = f"{t['rally_id']}:{t['track_id']}"
-        silhouettes = masks.get(key) if masks is not None else None
+    for ref, tracklet, rows in index.near(frame, window=window):
+        silhouettes = masks.get(ref.key) if masks is not None else None
         out.append(
             TrackCandidate(
-                ref=TrackRef(t["rally_id"], t["track_id"]),
-                frames=[t["frames"][i] for i in rows],
-                boxes=[t["boxes"][i] for i in rows],
-                scores=[t["scores"][i] for i in rows],
+                ref=ref,
+                frames=[tracklet["frames"][i] for i in rows],
+                boxes=[tracklet["boxes"][i] for i in rows],
+                scores=[tracklet["scores"][i] for i in rows],
                 masks=(
                     tuple(silhouettes[i] for i in rows if i < len(silhouettes))
                     if silhouettes is not None

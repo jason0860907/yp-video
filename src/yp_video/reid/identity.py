@@ -9,11 +9,8 @@ Two consumers, one data source (the per-video extraction records):
   matched to its nearest centroid with a cosine similarity score. The UI
   decides how to render low-similarity matches.
 
-Assignments persist in reid/annotations/<stem>_players.json as a flat
-``{event_id: player_name}`` map — the smallest thing that can express both
-cluster-level and single-event corrections. A ``done: true`` flag marks a
-video's labeling as finished (the Label page's Done button) — a human verdict
-the counts can't derive.
+Both persist in reid/annotations/<stem>_players.json, which reid/store.py
+owns end to end — this module is the algorithms, not the file.
 
 Who each crop DEPICTS is this module's question; which person performed the
 action the crop was cut from is not, and its labels live in their own file
@@ -23,25 +20,21 @@ an actor no longer contend for the same lock.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Iterator, Mapping
-from contextlib import contextmanager
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-import json
-import threading
 
 import numpy as np
 
 from yp_video.core.cache import StatCache
-from yp_video.core.jsonl import atomic_write, read_jsonl_cached
-from yp_video.extraction.store import SKIP_LABELS, records_path
+from yp_video.core.jsonl import read_jsonl_cached
+from yp_video.extraction.store import labelable, records_path
 from yp_video.reid.embedder import DEFAULT_EMBEDDER
-from yp_video.reid.store import load_embedding_matrix, players_path, require_embedding_path
-
-PLAYERS_SCHEMA_VERSION = 2
-
-# Serializes read-modify-write of the players file: the UI auto-saves
-# assignments while a Done verdict lands, and interleaving would drop one edit.
-_players_lock = threading.RLock()
+from yp_video.reid.store import (
+    PlayersFile,
+    load_embedding_matrix,
+    load_players,
+    require_embedding_path,
+)
 
 # Average-linkage cosine-distance cutoff on CLIP-ReID's scale — its ViT
 # features sit in a tight cone (pairwise distances p5–p95 ≈ 0.12–0.32), so
@@ -72,16 +65,21 @@ def load_embeddings(stem: str, model: str = DEFAULT_EMBEDDER) -> tuple[list[dict
 
 
 def _load_embeddings(stem: str, model: str, path) -> tuple[list[dict], np.ndarray]:
-    _meta, records = read_jsonl_cached(path)  # read-only from here on
+    meta, records = read_jsonl_cached(path)  # read-only from here on
     matrix = load_embedding_matrix(stem, model)
     if len(matrix) != len(records):
         raise ValueError(
             f"{model} embeddings for {stem} have {len(matrix)} rows for {len(records)} records — re-run embedding"
         )
 
-    embedded = [bool(v) for v in np.asarray(np.isfinite(matrix).all(axis=1))]
-    # SKIP_LABELS guards extractions that predate the skip rule.
-    keep = [i for i, r in enumerate(records) if embedded[i] and r.get("label") not in SKIP_LABELS]
+    embedded = np.isfinite(matrix).all(axis=1)
+    # Same rule the labeling pages apply: a crop nobody can be identified in
+    # is not evidence about a player, and letting a warm-up hit into the
+    # clustering moves a centroid nobody meant to move.
+    identifiable = {
+        id(r) for r in labelable(records, stem, float(meta.get("fps") or 0))
+    }
+    keep = [i for i, r in enumerate(records) if embedded[i] and id(r) in identifiable]
     matrix = matrix[keep]
     if len(keep):
         matrix /= np.linalg.norm(matrix, axis=1, keepdims=True) + 1e-12
@@ -150,41 +148,18 @@ def _cut(links, matrix: np.ndarray, threshold: float) -> np.ndarray:
     if n == 1:
         return np.zeros(1, dtype=int)
     raw = fcluster(links, t=threshold, criterion="distance")
-    order = sorted(set(raw), key=lambda c: -(raw == c).sum())
-    remap = {c: i for i, c in enumerate(order)}
-    return np.array([remap[c] for c in raw], dtype=int)
-
-
-# Readers go through the cache; writers (under _players_lock) read fresh via
-# _read_players_file — they mutate the loaded dict before saving.
-_players_cache: StatCache = StatCache()
-
-
-def _read_players_file(stem: str) -> dict:
-    path = players_path(stem)
-    if not path.exists():
-        return {}
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def _load_players_file(stem: str) -> dict:
-    path = players_path(stem)
-    if not path.exists():
-        return {}
-    return _players_cache.get(stem, [path], lambda: _read_players_file(stem))
-
-
-def _save_players_file(stem: str, data: dict) -> None:
-    # Atomic replace — assignment auto-save and the Done button can race.
-    with atomic_write(players_path(stem)) as f:
-        json.dump(data, f, ensure_ascii=False, indent=1)
-
-
-@contextmanager
-def players_write_transaction() -> Iterator[None]:
-    """Hold the players file across a multi-file transaction."""
-    with _players_lock:
-        yield
+    # One pass for the sizes and one lookup for the renumbering. Counting by
+    # comparing the whole label array per cluster made the threshold slider
+    # — and the calibration sweep, which cuts at every stop — quadratic in
+    # the number of clusters for no reason. Stable sort on ascending labels,
+    # so equal-sized clusters number deterministically.
+    labels, inverse, counts = np.unique(
+        raw, return_inverse=True, return_counts=True
+    )
+    order = np.argsort(-counts, kind="stable")
+    rank = np.empty(len(labels), dtype=int)
+    rank[order] = np.arange(len(labels))
+    return rank[inverse]
 
 
 # ── Units: what identity is actually about ───────────────────────
@@ -286,70 +261,16 @@ def seeded_groups(
     if not keys:
         return out, [u.key for u in units if u.key not in seed_members]
     sims = matrix @ np.stack(centroids).T  # (N, S)
+    nearest = np.argmax(sims, axis=1)
     for i, unit in enumerate(units):
         if unit.key in seed_members:
             continue
-        best = int(np.argmax(sims[i]))
-        if 1.0 - float(sims[i][best]) <= cutoff:
+        best = int(nearest[i])
+        if 1.0 - float(sims[i, best]) <= cutoff:
             out[keys[best]].append(unit.key)
         else:
             leftover.append(unit.key)
     return out, leftover
-
-
-@dataclass(frozen=True)
-class PlayersFile:
-    """``<stem>_players.json`` — who each unit depicts.
-
-        {"version": 2,
-         "tracks":      {"12:3": "王小明"},
-         "assignments": {"<event_id>": "王小明"},
-         "done": true}
-
-    ``tracks`` is the unit: name a tracklet once and every action it performed
-    carries the name. ``assignments`` exists for the two things a tracklet
-    cannot say — an event no tracklet reaches, and an event that contradicts
-    its tracklet, which is what a ByteTrack identity switch looks like from
-    the outside. An event override therefore WINS; a tracklet that gets
-    contradicted is evidence, not an error.
-    """
-
-    tracks: dict[str, str]
-    assignments: dict[str, str]
-    done: bool
-
-
-def _clean(names: Mapping[str, str]) -> dict[str, str]:
-    return {str(k): v.strip() for k, v in names.items() if v and v.strip()}
-
-
-def load_players(stem: str) -> PlayersFile:
-    data = _load_players_file(stem)
-    return PlayersFile(
-        tracks=_clean(data.get("tracks") or {}),
-        assignments=_clean(data.get("assignments") or {}),
-        done=bool(data.get("done")),
-    )
-
-
-def save_players(
-    stem: str,
-    *,
-    tracks: Mapping[str, str] | None = None,
-    assignments: Mapping[str, str] | None = None,
-) -> None:
-    """Replace the naming maps. Omitted maps are left as they are."""
-    with _players_lock:
-        data = _read_players_file(stem)
-        data["version"] = PLAYERS_SCHEMA_VERSION
-        if tracks is not None:
-            data["tracks"] = _clean(tracks)
-        if assignments is not None:
-            data["assignments"] = _clean(assignments)
-        for key in ("tracks", "assignments"):
-            if not data.get(key):
-                data.pop(key, None)
-        _save_players_file(stem, data)
 
 
 def unit_names(units: Iterable[Unit], players: PlayersFile) -> dict[str, str]:
@@ -414,41 +335,6 @@ def load_assignments(stem: str, links: Mapping[str, str] | None = None) -> dict[
     return resolve_names(ids, links, players)
 
 
-def load_done(stem: str) -> bool:
-    """Whether the user marked this video's labeling as finished."""
-    return bool(_load_players_file(stem).get("done"))
-
-
-def save_done(stem: str, done: bool) -> None:
-    """Persist the human "labeling finished" verdict.
-
-    A judgment call, not derived state: assigned/actionable counts can't tell
-    "done" from "gave up halfway", so the mark means what the user says it
-    means. Absent rather than false when unset.
-    """
-    with _players_lock:
-        data = _read_players_file(stem)
-        if done:
-            data["done"] = True
-        else:
-            data.pop("done", None)
-        _save_players_file(stem, data)
-
-
-def drop_assignment(stem: str, event_id: str) -> None:
-    """Forget who one event depicts.
-
-    Called when its actor changes: the crop now shows a different person, so
-    the name attached to the old crop is not evidence about the new one. Only
-    the event's own override is dropped — its old tracklet keeps its name,
-    because that name was never a claim about this one event.
-    """
-    with _players_lock:
-        data = _read_players_file(stem)
-        if data.get("assignments", {}).pop(event_id, None) is not None:
-            _save_players_file(stem, data)
-
-
 def match(
     units: list[Unit], matrix: np.ndarray, names: dict[str, str]
 ) -> dict[str, dict]:
@@ -472,12 +358,13 @@ def match(
     centroids = np.stack([matrix[rows].mean(axis=0) for rows in (by_player[p] for p in players)])
     centroids /= np.linalg.norm(centroids, axis=1, keepdims=True) + 1e-12
     sims = matrix @ centroids.T  # (N, P)
+    nearest = np.argmax(sims, axis=1)
 
     out: dict[str, dict] = {}
     for i, unit in enumerate(units):
         if unit.key in names:
             out[unit.key] = {"player": names[unit.key], "sim": 1.0, "assigned": True}
         else:
-            best = int(np.argmax(sims[i]))
-            out[unit.key] = {"player": players[best], "sim": round(float(sims[i][best]), 4), "assigned": False}
+            best = int(nearest[i])
+            out[unit.key] = {"player": players[best], "sim": round(float(sims[i, best]), 4), "assigned": False}
     return out

@@ -18,24 +18,58 @@ Two rules make the job safe to run on a labeled video:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from yp_video.actor import labels as actor_labels
 from yp_video.actor.policy import ActorPick, ActorPolicy, EventContext
+from yp_video.actor.labels import ActorVerdict
 from yp_video.actor.resolution import ActorResolution
-from yp_video.core.jsonl import read_jsonl, read_jsonl_cached, write_jsonl
+from yp_video.core.jsonl import read_jsonl, write_jsonl
 from yp_video.core.progress import ProgressFn
-from yp_video.extraction.links import resolve_track
+from yp_video.extraction.cropping import (
+    CropTarget,
+    clamp_box,
+    crop_target,
+    cut,
+    label_target,
+    person_for,
+)
 from yp_video.extraction.store import crop_dir, masked_crop_dir, records_path
-from yp_video.person.detector import PersonBox
-from yp_video.tracklets.store import open_track_masks, tracks_path
+from yp_video.tracklets.store import (
+    TrackMasks,
+    open_track_masks,
+    tracklet_index,
+    tracks_path,
+)
 
 log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
+class _Pending:
+    """One crop still to cut, and what the record should say once it is.
+
+    An automatic pick and a materialized human verdict both land here, and
+    they mean different things afterwards — ``multi`` is "more than one
+    candidate was plausible", which is never true of a person pointing.
+    """
+
+    row: int
+    record: dict
+    target: CropTarget
+    resolution: ActorResolution
+    #: How many candidates the policy weighed. 1 for a human verdict.
+    candidates: int
+
+
+@dataclass
 class ReassociationCounts:
-    """What the run did, in the terms the job card reports."""
+    """What the run did, in the terms the job card reports.
+
+    Tallied straight onto the fields. Counting into a plain dict first meant
+    a mistyped key surfaced as a TypeError when the dataclass was finally
+    built — at the END of a job that had already spent minutes re-cropping.
+    """
 
     events: int = 0
     #: Left alone because a human had already ruled on them.
@@ -48,14 +82,7 @@ class ReassociationCounts:
     unresolvable: int = 0
 
     def payload(self) -> dict:
-        return {
-            "events": self.events,
-            "labeled": self.labeled,
-            "changed": self.changed,
-            "unchanged": self.unchanged,
-            "abstained": self.abstained,
-            "unresolvable": self.unresolvable,
-        }
+        return asdict(self)
 
 
 def _update(record: dict, **fields) -> bool:
@@ -91,24 +118,24 @@ _ABSENT = _Absent()
 
 
 def _target(
-    stem: str, record: dict, pick: ActorPick
-) -> tuple[tuple[float, float, float, float], int, bool] | None:
-    """Where the pick says to crop: (box, frame, may-snap).
+    stem: str, record: dict, pick: ActorPick, masks: TrackMasks | None
+) -> CropTarget | None:
+    """Where the pick says to crop.
 
-    A tracklet is re-resolved through the masks exactly as a tracklet LABEL
-    is — same function, so an automatic tracklet pick and a hand-placed one
-    cannot drift into cropping different pixels for the same tracklet.
+    A box answer never snaps: it already IS one of the stored detections (the
+    rule chooses among them), so there is nothing to snap onto. An unresolvable
+    tracklet answers nothing at all — unlike a human's label, a policy is free
+    to abstain and be asked again.
     """
-    if pick.track is not None:
-        resolved = resolve_track(stem, record, pick.track)
-        return (
-            (resolved.box, resolved.frame, resolved.snap)
-            if resolved is not None
-            else None
-        )
-    if pick.box is None:
-        return None
-    return pick.box, record["frame"], False
+    return crop_target(
+        stem,
+        record,
+        pick.track,
+        CropTarget(pick.box, record["frame"], snap=False)
+        if pick.box is not None
+        else None,
+        masks=masks,
+    )
 
 
 def reassociate_video(
@@ -125,7 +152,7 @@ def reassociate_video(
     if not path.exists():
         raise FileNotFoundError(f"No extraction records for {stem}")
 
-    tracklets: list[dict] = []
+    tracks_index = None
     masks = None
     if policy.needs_tracklets:
         tracks = tracks_path(stem)
@@ -133,7 +160,7 @@ def reassociate_video(
             raise FileNotFoundError(
                 f"{policy.name} needs tracklets; {stem} has not been tracked"
             )
-        _tmeta, tracklets = read_jsonl_cached(tracks)
+        tracks_index = tracklet_index(stem)
         # Held open for the whole video: every event reads the same archive,
         # and a policy that ignores outlines never unpacks a single entry.
         masks = open_track_masks(stem)
@@ -144,17 +171,42 @@ def reassociate_video(
 
     # Pass one: decide. No video is opened until it is known which frames are
     # actually needed.
-    pending: list[tuple[int, dict, tuple, int, bool]] = []
-    counts = {"events": 0, "labeled": 0, "unchanged": 0, "abstained": 0, "unresolvable": 0}
+    pending: list[_Pending] = []
+    counts = ReassociationCounts()
     dirty = False
     # The archive is only needed while deciding; pass two re-crops from
     # the video, so it is closed as soon as the last event is scored.
     try:
         for row, record in enumerate(records):
-            counts["events"] += 1
-            if str(record.get("id")) in verdicts:
-                counts["labeled"] += 1
+            counts.events += 1
+            label = verdicts.get(str(record.get("id")))
+            if label is not None and _is_materialized(record, label):
+                # A human verdict already turned into pixels is never
+                # re-decided — that is the whole point of having ruled on it.
+                counts.labeled += 1
                 continue
+            if label is not None and label.verdict is ActorVerdict.OCCLUDED:
+                counts.labeled += 1
+                dirty |= _update(
+                    record, resolution=ActorResolution.OCCLUDED.value
+                )
+                continue
+            if label is not None and label.overrides_auto:
+                # A manual pick with nothing cut for it yet: detection stores
+                # no crop, so a freshly detected video arrives here with the
+                # verdict on file and no pixels behind it.
+                target = label_target(stem, record, label, masks)
+                if target is not None:
+                    pending.append(
+                        _Pending(row, record, target, ActorResolution.MANUAL, 1)
+                    )
+                    continue
+                counts.labeled += 1
+                continue
+            # Everything else runs the policy — INCLUDING a confirmed_auto
+            # event with no crop. That verdict says "the automatic answer was
+            # right", so computing it is what honouring the label means;
+            # skipping it would leave the video's endorsed picks blank.
 
             xy = record.get("xy")
             context = EventContext(
@@ -167,7 +219,7 @@ def reassociate_video(
                 ),
                 visible=bool(record.get("visible", True)),
                 detections=record.get("detections") or [],
-                tracklets=tracklets,
+                tracks=tracks_index,
                 masks=masks,
             )
             pick = policy.decide(context)
@@ -179,20 +231,19 @@ def reassociate_video(
 
             if not pick.decided:
                 if record.get("box") is not None:
-                    counts["abstained"] += 1
+                    counts.abstained += 1
                     dirty |= _clear(record)
                 else:
-                    counts["unchanged"] += 1
+                    counts.unchanged += 1
                 continue
 
-            target = _target(stem, record, pick)
+            target = _target(stem, record, pick, masks)
             if target is None:
-                counts["unresolvable"] += 1
+                counts.unresolvable += 1
                 dirty |= _clear(record)
                 continue
 
-            box, src_frame, may_snap = target
-            settled = _same_pick(record, box, src_frame, pick, frame_w, frame_h)
+            settled = _same_pick(record, target, pick, frame_w, frame_h)
             # The tracklet reference is the pick; the box is only where it lands
             # today. Written after the comparison, which reads the old one.
             dirty |= _update(
@@ -200,9 +251,11 @@ def reassociate_video(
                 track=pick.track.key if pick.track is not None else _ABSENT,
             )
             if settled:
-                counts["unchanged"] += 1
+                counts.unchanged += 1
                 continue
-            pending.append((row, record, box, src_frame, may_snap))
+            pending.append(
+                _Pending(row, record, target, ActorResolution.AUTO, pick.candidates)
+            )
 
     finally:
         if masks is not None:
@@ -219,28 +272,19 @@ def reassociate_video(
     if pending:
         capture = cv2.VideoCapture(str(video_path))
         try:
-            for index, (row, record, box, src_frame, may_snap) in enumerate(
-                sorted(pending, key=lambda item: item[3])
+            for index, item in enumerate(
+                sorted(pending, key=lambda p: p.target.frame)
             ):
-                capture.set(cv2.CAP_PROP_POS_FRAMES, src_frame)
+                capture.set(cv2.CAP_PROP_POS_FRAMES, item.target.frame)
                 ok, frame_img = capture.read()
                 if not ok:
                     log.warning(
                         "Could not decode frame %s of %s; leaving the previous pick",
-                        src_frame,
+                        item.target.frame,
                         video_path.name,
                     )
                     continue
-                if _recrop(
-                    stem,
-                    record,
-                    frame_img,
-                    box,
-                    src_frame,
-                    may_snap,
-                    frame_w,
-                    frame_h,
-                ):
+                if _recrop(stem, item, frame_w, frame_h, frame_img):
                     changed += 1
                 if on_progress is not None:
                     on_progress(
@@ -252,10 +296,36 @@ def reassociate_video(
             capture.release()
 
     if dirty or changed:
-        write_jsonl(path, {**meta, "association_policy": policy.name}, records)
-    counts["changed"] = changed
-    counts["unchanged"] += len(pending) - changed
-    return ReassociationCounts(**counts).payload()
+        # The outcome counts belong to whoever decided them. Detection writes
+        # how many people it found; this writes how many events ended up with
+        # an actor, which is what the work lists read off the header instead
+        # of parsing every record.
+        write_jsonl(
+            path,
+            {
+                **meta,
+                "association_policy": policy.name,
+                **{
+                    key: sum(1 for r in records if r.get("status") == key)
+                    for key in ("ok", "multi", "miss")
+                },
+            },
+            records,
+        )
+    counts.changed = changed
+    counts.unchanged += len(pending) - changed
+    return counts.payload()
+
+
+def _is_materialized(record: dict, label) -> bool:
+    """Whether this verdict already has the pixels it asks for.
+
+    Occlusion asks for none — "nobody is the actor" is complete the moment
+    the resolution says so.
+    """
+    if label.verdict is ActorVerdict.OCCLUDED:
+        return record.get("resolution") == ActorResolution.OCCLUDED.value
+    return record.get("crop") is not None
 
 
 def _clear(record: dict) -> bool:
@@ -279,8 +349,7 @@ def _clear(record: dict) -> bool:
 
 def _same_pick(
     record: dict,
-    box,
-    src_frame: int,
+    target: CropTarget,
     pick: ActorPick,
     frame_w: int,
     frame_h: int,
@@ -292,68 +361,43 @@ def _same_pick(
     comparing the raw box to the clamped one made every such event look like
     it had moved — re-cropping the same pixels on every run, forever.
     """
-    from yp_video.extraction.pipeline import _clamp_box
-
     current = record.get("actor_box")
-    if current is None or int(record.get("crop_frame") or record["frame"]) != src_frame:
+    if (
+        current is None
+        or int(record.get("crop_frame") or record["frame"]) != target.frame
+    ):
         return False
     if pick.track is not None and record.get("track") != pick.track.key:
         return False
-    stored = _clamp_box(box, frame_w, frame_h)
+    stored = clamp_box(target.box, frame_w, frame_h)
     return all(int(a) == int(b) for a, b in zip(current, stored))
 
 
-def _recrop(
-    stem: str,
-    record: dict,
-    frame_img,
-    box,
-    src_frame: int,
-    may_snap: bool,
-    frame_w: int,
-    frame_h: int,
-) -> bool:
-    from yp_video.extraction.pipeline import _attach_person, _snap_to_detection
-
+def _recrop(stem: str, item: _Pending, frame_w: int, frame_h: int, frame_img) -> bool:
+    record = item.record
     previous = record.get("crop")
-    cross_frame = src_frame != record["frame"]
-    # Snapping recovers the detector's own score and keypoints. Where it is
-    # vetoed the box goes through bare, and that is the point: the veto means
-    # the masks found no stored detection that IS this player, so any box
-    # close enough to snap to would be the occluder.
-    person = (
-        _snap_to_detection(record.get("detections") or [], list(box))
-        if may_snap and not cross_frame
-        else None
-    ) or PersonBox(xyxy=box, score=0.0)
-
     xy = record.get("xy")
-    anchor = (
-        (float(xy[0]) * frame_w, float(xy[1]) * frame_h)
-        if xy and not cross_frame
-        else ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2)
-    )
     record["actor_revision"] = int(record.get("actor_revision") or 0) + 1
-    crop = _attach_person(
+    crop = cut(
         record,
         frame_img,
-        person,
-        anchor[0],
-        anchor[1],
-        frame_w,
-        frame_h,
-        crop_dir(stem),
+        person_for(record, item.target),
+        source_frame=item.target.frame,
+        contact=(
+            (float(xy[0]) * frame_w, float(xy[1]) * frame_h) if xy else None
+        ),
+        frame_size=(frame_w, frame_h),
+        out_dir=crop_dir(stem),
         suffix=f"_p{record['actor_revision']}",
     )
     if crop is None:
         _clear(record)
         return False
-    record["status"] = "ok"
-    record["resolution"] = ActorResolution.AUTO.value
-    if cross_frame:
-        record["crop_frame"] = src_frame
-    else:
-        record.pop("crop_frame", None)
+    # "multi" is what the board's amber ring reads: the policy had more than
+    # one plausible answer here. Flattening it to "ok" hid every ambiguous
+    # pick from the person reviewing them.
+    record["status"] = "ok" if item.candidates <= 1 else "multi"
+    record["resolution"] = item.resolution.value
     # The crop filename carries the revision so the browser cannot serve a
     # stale image; the superseded file is derived data with no reader left.
     if previous and previous != record.get("crop"):

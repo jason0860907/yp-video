@@ -15,11 +15,13 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Protocol, Sequence
 
 import numpy as np
 
 from yp_video.actor.features import extract_features
+from yp_video.core.progress import ProgressFn
 from yp_video.actor.model import FEATURE_SET_TRACK, AssociationModel
 from yp_video.actor.ranking import DecisionReason, RULE_BASED, rule_decision
 from yp_video.actor.track_features import (
@@ -27,7 +29,7 @@ from yp_video.actor.track_features import (
     extract_track_features,
 )
 from yp_video.person.detector import person_from_detection
-from yp_video.tracklets.geometry import TrackRef
+from yp_video.tracklets.geometry import TrackletIndex, TrackRef
 
 Box = tuple[float, float, float, float]
 
@@ -45,7 +47,10 @@ class EventContext:
     #: can share one.
     event_id: str | None = None
     detections: Sequence[dict] = ()
-    tracklets: Sequence[dict] = ()
+    #: The video's tracklets, indexed (see tracklets/geometry.TrackletIndex).
+    #: Built once per video by the caller — a policy asks it per event, and
+    #: the raw list answers "who is near frame N" only by scanning all of it.
+    tracks: TrackletIndex | None = None
     #: Tracklet key → that tracklet's silhouettes for the whole video. Absent
     #: on a video tracked before masks existed; a policy that wants outlines
     #: degrades rather than refuses, since the boxes still say where everyone
@@ -88,7 +93,7 @@ class ActorPolicy(Protocol):
     @property
     def name(self) -> str: ...
 
-    #: Whether decide() needs EventContext.tracklets filled. The caller uses
+    #: Whether decide() needs EventContext.tracks filled. The caller uses
     #: this to refuse the job up front instead of silently abstaining on every
     #: event of a video that was never tracked.
     @property
@@ -97,7 +102,40 @@ class ActorPolicy(Protocol):
     def decide(self, context: EventContext) -> ActorPick: ...
 
 
-class RulePolicy:
+class PolicyPlan(Protocol):
+    """A policy a caller can name and refuse before it exists.
+
+    Some policies decide per VIDEO before they can decide per event — the
+    yp-spot head runs one subprocess over the frames and only then has an
+    answer for anything. A caller still has to name the job and reject an
+    untracked video BEFORE that runs, so those two facts are the plan, and
+    ``build`` is where the expensive part happens.
+
+    Every ordinary policy is its own plan (see ImmediatePolicy), so a caller
+    holds one kind of thing rather than branching on which it got.
+    """
+
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def needs_tracklets(self) -> bool: ...
+
+    def build(
+        self, video: Path, on_progress: ProgressFn | None = None
+    ) -> ActorPolicy: ...
+
+
+class ImmediatePolicy:
+    """A policy that needs nothing from the video, so it is its own plan."""
+
+    def build(
+        self, video: Path, on_progress: ProgressFn | None = None
+    ) -> ActorPolicy:
+        return self  # type: ignore[return-value]
+
+
+class RulePolicy(ImmediatePolicy):
     """The geometric rule production has always run on."""
 
     name = RULE_BASED
@@ -117,7 +155,7 @@ class RulePolicy:
         )
 
 
-class TrackletPolicy:
+class TrackletPolicy(ImmediatePolicy):
     """A learned ranker choosing among the tracklets alive near the event.
 
     Answers with a tracklet, never a box: which pixels that tracklet means for
@@ -139,12 +177,12 @@ class TrackletPolicy:
         return f"learned:{self._model.name}"
 
     def decide(self, context: EventContext) -> ActorPick:
-        if not context.attributable:
+        if not context.attributable or context.tracks is None:
             return ActorPick()
         assert context.contact is not None
         x, y = context.contact
         candidates = candidates_near(
-            context.tracklets, context.frame, masks=context.masks
+            context.tracks, context.frame, masks=context.masks
         )
         features = extract_track_features(
             candidates,
@@ -194,13 +232,12 @@ class TrackletPolicy:
         )
 
 
-class SpotActorPolicy:
+class SpotActorPolicy(ImmediatePolicy):
     """The yp-spot actor head's choice, read back per event.
 
     The model does not run here. It needs the frame pixels and a GPU, both of
     which live behind a subprocess in the other repo, so association reads the
-    answers it already produced — the same shape as every other policy, which
-    is the point of the Protocol.
+    answers it already produced — running that subprocess is SpotPlan's job.
 
     ``needs_tracklets`` is True even though this policy never inspects them:
     the answer NAMES a tracklet, so a video without tracking cannot receive
@@ -226,13 +263,13 @@ class SpotActorPolicy:
             return ActorPick()
         return ActorPick(
             track=answer.track,
-            candidates=len(context.tracklets),
+            candidates=len(context.tracks) if context.tracks is not None else 0,
             diagnostic={
                 "version": self.name,
                 "decision": (
                     DecisionReason.SELECTED.value
                     if answer.track is not None
-                    else DecisionReason.AMBIGUOUS.value
+                    else DecisionReason.ABSTAINED.value
                 ),
                 "kind": answer.kind,
                 "confidence": round(answer.confidence, 4),
@@ -240,7 +277,39 @@ class SpotActorPolicy:
         )
 
 
-def build_policy(checkpoint: str | None) -> ActorPolicy:
+class SpotPlan:
+    """The yp-spot actor head, which cannot answer until it has seen the video.
+
+    Scoring is one subprocess over the frames per VIDEO, so the per-event
+    policy does not exist until that has run. What a caller needs beforehand
+    is here: a name for the job card, and the fact that the answer NAMES a
+    tracklet — so an untracked video is refused up front instead of abstaining
+    on every event of it.
+    """
+
+    needs_tracklets = True
+
+    def __init__(self, checkpoint: Path):
+        self._checkpoint = checkpoint
+
+    @property
+    def name(self) -> str:
+        return f"spot:{self._checkpoint.parent.name}"
+
+    def build(
+        self, video: Path, on_progress: ProgressFn | None = None
+    ) -> ActorPolicy:
+        # Deferred: scoring pulls in the action package and its checkpoint
+        # plumbing, which nothing else in this module needs at import time.
+        from yp_video.actor import spot_associate  # noqa: PLC0415
+
+        answers = spot_associate.run(
+            video, self._checkpoint, on_progress=on_progress
+        )
+        return SpotActorPolicy(answers, name=self._checkpoint.parent.name)
+
+
+def build_policy(checkpoint: str | None) -> PolicyPlan:
     """``None`` is the rule; anything else names a trained checkpoint."""
     from yp_video.actor import checkpoints
 
@@ -252,7 +321,7 @@ def build_policy(checkpoint: str | None) -> ActorPolicy:
     return _BoxModelPolicy(model)
 
 
-class _BoxModelPolicy:
+class _BoxModelPolicy(ImmediatePolicy):
     """A learned ranker over detection boxes — the box contract's twin of
     TrackletPolicy. No checkpoint uses it today; it exists so ``build_policy``
     has no unreachable branch and no silent wrong answer if one is trained."""

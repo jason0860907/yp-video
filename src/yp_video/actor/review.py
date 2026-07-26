@@ -22,7 +22,7 @@ from yp_video.actor.policy import EventContext
 from yp_video.core.jsonl import read_jsonl_cached
 from yp_video.extraction.store import records_path
 from yp_video.tracklets.geometry import TrackRef
-from yp_video.tracklets.store import open_track_masks, tracks_path
+from yp_video.tracklets.store import open_track_masks, tracklet_index, tracks_path
 
 
 @dataclass(frozen=True)
@@ -46,7 +46,7 @@ class ReviewedEvent:
 
     @property
     def candidate_count(self) -> int:
-        return len(self.context.tracklets)
+        return len(self.context.tracks) if self.context.tracks is not None else 0
 
 
 def iter_reviewed(stems: Sequence[str] | None = None) -> Iterator[ReviewedEvent]:
@@ -62,7 +62,7 @@ def iter_reviewed(stems: Sequence[str] | None = None) -> Iterator[ReviewedEvent]
         if not (record_file.exists() and track_file.exists()):
             continue
         meta, records = read_jsonl_cached(record_file)
-        _tmeta, tracklets = read_jsonl_cached(track_file)
+        tracks = tracklet_index(stem)
         width, height = meta.get("frame_size") or [0, 0]
         verdicts = actor_labels.load(stem)
         if not verdicts:
@@ -90,7 +90,7 @@ def iter_reviewed(stems: Sequence[str] | None = None) -> Iterator[ReviewedEvent]
                         ),
                         visible=bool(record.get("visible", True)),
                         detections=record.get("detections") or [],
-                        tracklets=tracklets,
+                        tracks=tracks,
                         masks=masks,
                     ),
                 )

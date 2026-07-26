@@ -31,6 +31,7 @@ from yp_video.person.detector import (
 )
 from yp_video.tracklets.store import (
     open_track_masks,
+    tracklet_index,
     tracks_masks_path,
     tracks_path,
 )
@@ -267,7 +268,7 @@ def build_track_dataset(stems: Sequence[str] | None = None) -> TrackDataset:
         if mask_file.exists():
             sources.append(mask_file)
         meta, records = read_jsonl_cached(record_file)
-        _tmeta, tracklets = read_jsonl_cached(track_file)
+        tracks = tracklet_index(stem)
         width, height = meta.get("frame_size") or [0, 0]
         truth = actor_labels.load(stem)
 
@@ -286,7 +287,7 @@ def build_track_dataset(stems: Sequence[str] | None = None) -> TrackDataset:
                 xy = record["xy"]
                 x, y = float(xy[0]) * width, float(xy[1]) * height
                 candidates = candidates_near(
-                    tracklets, record["frame"], masks=masks
+                    tracks, record["frame"], masks=masks
                 )
                 features = extract_track_features(
                     candidates,

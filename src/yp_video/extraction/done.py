@@ -21,7 +21,7 @@ from yp_video.actor.labels import ActorLabel
 from yp_video.core.jsonl import read_jsonl_cached
 from yp_video.extraction.links import track_keys
 from yp_video.extraction.store import records_path
-from yp_video.reid import identity
+from yp_video.reid import identity, store as reid_store
 
 
 def confirmable_actors(
@@ -52,7 +52,7 @@ def mark_done(stem: str, done: bool, *, confirm_auto: bool) -> int:
         confirmed = len(
             actor_labels.confirm_auto(stem, confirmable_actors(stem, records))
         )
-    identity.save_done(stem, done)
+    reid_store.save_done(stem, done)
     return confirmed
 
 
@@ -60,7 +60,7 @@ def backfill_confirmed_done(stems: Sequence[str]) -> dict[str, int]:
     """Explicit migration for videos marked Done before confirmation existed."""
     counts: dict[str, int] = {}
     for stem in stems:
-        if not identity.load_done(stem):
+        if not reid_store.load_done(stem):
             raise ValueError(f"{stem} is not marked Done")
         if not records_path(stem).exists():
             raise FileNotFoundError(f"No extraction records for {stem}")

@@ -69,8 +69,14 @@ class CandidateSource(str, Enum):
 
 class DecisionReason(str, Enum):
     SELECTED = "selected"
+    #: Candidates existed and none was confident enough to pick.
     AMBIGUOUS = "ambiguous"
     NO_CANDIDATE = "no_candidate"
+    #: The policy looked and answered "nobody". Distinct from AMBIGUOUS: a
+    #: model that abstains on purpose is not the same event as one that could
+    #: not separate two players, and the diagnostics are read to tell them
+    #: apart.
+    ABSTAINED = "abstained"
 
 
 @dataclass(frozen=True)

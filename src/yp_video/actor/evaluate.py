@@ -17,7 +17,6 @@ from yp_video.actor.labels import ActorVerdict
 from yp_video.actor.model import AssociationModel
 from yp_video.actor.ranking import AssociationDecision
 from yp_video.actor.review import iter_reviewed
-from yp_video.tracklets.geometry import TrackRef
 
 
 class _Metrics:
@@ -223,17 +222,13 @@ def as_track(pick, event):
 
     if pick.track is not None or pick.box is None:
         return pick.track
-    frame = event.context.frame
+    if event.context.tracks is None:
+        return None
     best, best_overlap = None, TRACK_MATCH_IOU
-    for tracklet in event.context.tracklets:
-        for index, at in enumerate(tracklet["frames"]):
-            if at != frame:
-                continue
-            overlap = iou(list(pick.box), list(tracklet["boxes"][index]))
-            if overlap >= best_overlap:
-                best = TrackRef(tracklet["rally_id"], tracklet["track_id"])
-                best_overlap = overlap
-            break
+    for ref, box in event.context.tracks.at(event.context.frame):
+        overlap = iou(list(pick.box), list(box))
+        if overlap >= best_overlap:
+            best, best_overlap = ref, overlap
     return best
 
 
@@ -257,17 +252,12 @@ def is_hard(event) -> bool:
     same player two or three times and would give a quite different number
     for the same idea.
     """
-    if event.context.contact is None:
+    if event.context.contact is None or event.context.tracks is None:
         return False
-    frame = event.context.frame
-    hits = 0
-    for tracklet in event.context.tracklets:
-        for index, at in enumerate(tracklet["frames"]):
-            if at != frame:
-                continue
-            if _contains_contact(tracklet["boxes"][index], event.context.contact):
-                hits += 1
-            break
+    hits = sum(
+        _contains_contact(box, event.context.contact)
+        for _ref, box in event.context.tracks.at(event.context.frame)
+    )
     return hits > 1
 
 

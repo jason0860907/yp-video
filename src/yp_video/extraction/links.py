@@ -1,15 +1,27 @@
-"""Which tracklet each extracted event's actor sits on.
+"""Which tracklet each extracted event's actor IS.
 
 Tracklets know nothing about events and extraction records know nothing about
 tracklets — joining them needs both, so it happens here, in the one layer
-allowed to see both. The join is geometric and derived: it is recomputed from
-the two files rather than stored, so re-running tracking can never leave a
-stale pointer behind.
+allowed to see both.
 
-Deliberately NOT written into the record jsonl. Embedding freshness is an
-mtime comparison against that file (reid/store.stale_embedding_models), so a
-pass that rewrote records to add a link would mark every matrix of every
-video stale. The link is ~250 entries per video and free to recompute.
+Three answers, in this order, and the order is the whole point:
+
+1. the tracklet a HUMAN named (actor/labels.py), when it still exists
+2. the tracklet a POLICY named (``record["track"]``)
+3. failing both, the tracklet the stored box geometrically sits on
+
+Geometry is the FALLBACK — it exists because the rule policy answers with a
+box and somebody still has to say which player that box is. Running it over
+an answer that already named a tracklet is how a deliberate pick got
+overwritten: two overlapping players resolve to boxes that each match the
+other's tracklet, so clicking the right one changed nothing on screen.
+Measured at 6.7% of picks, concentrated on exactly the overlapping players
+that get picked by hand in the first place.
+
+Nothing is stored. The answer is recomputed from the label file, the records
+and the tracklets, so re-running tracking can never leave a stale pointer
+behind — a named tracklet that no longer exists falls through to geometry
+rather than pointing at whoever inherited its id.
 """
 
 from __future__ import annotations
@@ -17,25 +29,29 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Sequence
 
+from yp_video.actor import labels as actor_labels
+from yp_video.actor.labels import ActorLabel
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import read_jsonl_cached
 from yp_video.extraction.store import records_path
 from yp_video.person.detector import iou
 from yp_video.tracklets.geometry import BoxQuery, TrackRef, link_boxes
 from yp_video.tracklets.store import (
+    TrackMasks,
     load_track_masks,
+    tracklet_index,
     tracks_masks_path,
     tracks_path,
 )
 
-# Keyed by stem on both source files. Tiny values (one small dict per video).
+# Keyed by stem on its source files. Tiny values (one small dict per video).
 _links_cache: StatCache = StatCache()
 
 
 def event_tracks(stem: str) -> dict[str, TrackRef]:
-    """event_id → the tracklet its actor box lands on.
+    """event_id → the tracklet its actor is (see the module docstring).
 
-    Events with no actor box (a miss, or an occluded verdict) never link —
+    Events with no actor at all (a miss, or an occluded verdict) never link —
     there is nothing to resolve, which is an absent entry rather than an
     error.
     """
@@ -43,25 +59,63 @@ def event_tracks(stem: str) -> dict[str, TrackRef]:
     records = records_path(stem)
     if not tracks.exists() or not records.exists():
         return {}
-    return _links_cache.get(stem, [tracks, records], lambda: _event_tracks(stem))
+    sources = [tracks, records]
+    # The label file joins the cache key only once it exists. Before that
+    # there are no human answers to honour, and the write that creates it
+    # rewrites the records too (extraction/actor_fix.py), so the entry is
+    # invalidated either way.
+    labels = actor_labels.actors_path(stem)
+    if labels.exists():
+        sources.append(labels)
+    return _links_cache.get(stem, sources, lambda: _event_tracks(stem))
+
+
+def _named_track(label: ActorLabel | None, record: dict) -> TrackRef | None:
+    """The tracklet somebody NAMED for this event, human before policy.
+
+    A human's pick outranks a policy's for the same reason it does everywhere
+    else: they looked. Neither is checked for existence here — the caller does
+    that, because "named a tracklet that is gone" and "named nothing" lead to
+    the same place but are not the same fact.
+    """
+    if label is not None and label.track is not None:
+        return label.track
+    stored = record.get("track")
+    return TrackRef.parse(stored) if stored else None
 
 
 def _event_tracks(stem: str) -> dict[str, TrackRef]:
-    tmeta, tracklets = read_jsonl_cached(tracks_path(stem))  # read-only
+    tmeta, _tracklets = read_jsonl_cached(tracks_path(stem))  # read-only
     _rmeta, records = read_jsonl_cached(records_path(stem))  # read-only
-    queries = [
-        BoxQuery(
-            key=record["id"],
-            # A cross-frame pick's box lives on crop_frame, not the event
-            # frame (the actor was not trackable there) — look it up THERE.
-            frame=record.get("crop_frame") or record["frame"],
-            anchor=record.get("actor_box") or record["box"],
-            gate=record["box"],
+    index = tracklet_index(stem)
+    verdicts = actor_labels.load(stem)
+
+    out: dict[str, TrackRef] = {}
+    queries: list[BoxQuery] = []
+    for record in records:
+        if not record.get("box"):
+            continue
+        event_id = record["id"]
+        named = _named_track(verdicts.get(str(event_id)), record)
+        # A named tracklet that no longer exists is not an answer: re-tracking
+        # renumbers every id, so honouring it would point at whoever inherited
+        # the number. Those fall through to geometry, which re-derives from
+        # pixels that did not move.
+        if named is not None and index.tracklet(named) is not None:
+            out[event_id] = named
+            continue
+        queries.append(
+            BoxQuery(
+                key=event_id,
+                # A cross-frame pick's box lives on crop_frame, not the event
+                # frame (the actor was not trackable there) — look it up THERE.
+                frame=record.get("crop_frame") or record["frame"],
+                anchor=record.get("actor_box") or record["box"],
+                gate=record["box"],
+            )
         )
-        for record in records
-        if record.get("box")
-    ]
-    return link_boxes(tracklets, queries, stride=int(tmeta.get("stride") or 1))
+    out.update(link_boxes(index, queries, stride=int(tmeta.get("stride") or 1)))
+    return out
 
 
 def track_keys(stem: str) -> dict[str, str]:
@@ -148,23 +202,46 @@ def _mask_coverage(mask, track_box: Sequence[float], det_box: Sequence[float]) -
     return float(inside.sum()) / len(rows)
 
 
-def _mask_at(stem: str, tracklet: dict, ref: TrackRef, frame: int):
-    """The tracklet's mask row nearest ``frame``, or None when it has none."""
+def _silhouettes(stem: str, ref: TrackRef, masks: TrackMasks | None):
+    """One tracklet's mask rows, from the caller's open archive if it has one.
+
+    A whole-video archive is ~12 MB compressed, and opening it per event was
+    most of what re-deciding a video cost. Callers that already hold one
+    (tracklets/store.open_track_masks) pass it in; a one-off resolve still
+    reads the file for itself.
+    """
+    if masks is not None:
+        return masks.get(ref.key)
     if not tracks_masks_path(stem).exists():
         return None
-    row_of = {f: i for i, f in enumerate(tracklet["frames"])}
     try:
-        masks = load_track_masks(stem, ref.rally_id, ref.track_id)
+        return load_track_masks(stem, ref.rally_id, ref.track_id)
     except (FileNotFoundError, KeyError):
         return None
+
+
+def _mask_at(
+    stem: str, tracklet: dict, ref: TrackRef, frame: int, masks: TrackMasks | None
+):
+    """The tracklet's mask row nearest ``frame``, or None when it has none."""
+    silhouettes = _silhouettes(stem, ref, masks)
+    if silhouettes is None:
+        return None
+    row_of = {f: i for i, f in enumerate(tracklet["frames"])}
     for offset in MASK_NEAR_OFFSETS:
         row = row_of.get(frame + offset)
-        if row is not None and row < len(masks):
-            return masks[row]
+        if row is not None and row < len(silhouettes):
+            return silhouettes[row]
     return None
 
 
-def resolve_track(stem: str, record: dict, ref: TrackRef) -> TrackPick | None:
+def resolve_track(
+    stem: str,
+    record: dict,
+    ref: TrackRef,
+    *,
+    masks: TrackMasks | None = None,
+) -> TrackPick | None:
     """Where to crop the person this tracklet follows, for one event.
 
     Prefers a stored detection — the extraction detector's box is what every
@@ -172,20 +249,15 @@ def resolve_track(stem: str, record: dict, ref: TrackRef) -> TrackPick | None:
     so cropping it directly would give manual crops different statistics than
     automatic ones and quietly poison the embedder.
 
+    ``masks`` is the caller's already-open silhouette archive, when it has
+    one; without it this opens the file itself, which is only affordable for
+    a single event.
+
     Returns None only when the tracklet has no box anywhere near the event.
     """
-    tracks = tracks_path(stem)
-    if not tracks.exists():
+    if not tracks_path(stem).exists():
         return None
-    _meta, tracklets = read_jsonl_cached(tracks)  # read-only
-    tracklet = next(
-        (
-            t
-            for t in tracklets
-            if t["rally_id"] == ref.rally_id and t["track_id"] == ref.track_id
-        ),
-        None,
-    )
+    tracklet = tracklet_index(stem).tracklet(ref)
     if tracklet is None or not tracklet["frames"]:
         return None
 
@@ -203,7 +275,7 @@ def resolve_track(stem: str, record: dict, ref: TrackRef) -> TrackPick | None:
 
     track_box, at = found
     detections = record.get("detections") or []
-    mask = _mask_at(stem, tracklet, ref, at)
+    mask = _mask_at(stem, tracklet, ref, at, masks)
 
     if mask is not None:
         covered = [

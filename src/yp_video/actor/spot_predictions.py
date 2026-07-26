@@ -12,11 +12,11 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from yp_video.config import REID_DIR
+from yp_video.config import ASSOCIATION_DIR
 from yp_video.core.cache import StatCache
 from yp_video.tracklets.geometry import TrackRef
 
-ACTOR_PREDICTIONS_DIR = REID_DIR / "association" / "spot"
+ACTOR_PREDICTIONS_DIR = ASSOCIATION_DIR / "spot"
 _cache: StatCache = StatCache()
 
 

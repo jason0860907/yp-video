@@ -1,4 +1,9 @@
-"""SAM 3D Body (Meta) as a keypoint upgrade over RF-DETR detections.
+"""SAM 3D Body (Meta) as an alternative keypoint source for RF-DETR boxes.
+
+NOT measured against the RF-DETR head on this corpus — every extraction to
+date used ``rf-detr``, so "which estimates wrists better here" has no answer
+yet. Kept as a registered option; the ~10x cost below is the only number
+about it that has been established.
 
 3DB is a promptable single-image human mesh recovery model, not a detector —
 it wants person boxes as prompts. So this "detector" composes the two:
