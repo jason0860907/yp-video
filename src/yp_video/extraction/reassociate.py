@@ -34,7 +34,12 @@ from yp_video.extraction.cropping import (
     label_target,
     person_for,
 )
-from yp_video.extraction.store import crop_dir, masked_crop_dir, records_path
+from yp_video.extraction.store import (
+    crop_dir,
+    labelable,
+    masked_crop_dir,
+    records_path,
+)
 from yp_video.tracklets.store import (
     TrackMasks,
     open_track_masks,
@@ -166,6 +171,10 @@ def reassociate_video(
         masks = open_track_masks(stem)
 
     meta, records = read_jsonl(path)
+    current = {
+        str(record["id"]): record
+        for record in labelable(records, stem, float(meta.get("fps") or 0))
+    }
     frame_w, frame_h = meta.get("frame_size") or [0, 0]
     verdicts = actor_labels.load(stem)
 
@@ -178,6 +187,9 @@ def reassociate_video(
     # the video, so it is closed as soon as the last event is scored.
     try:
         for row, record in enumerate(records):
+            action = current.get(str(record.get("id")))
+            if action is None:
+                continue
             counts.events += 1
             label = verdicts.get(str(record.get("id")))
             if label is not None and _is_materialized(record, label):
@@ -208,16 +220,16 @@ def reassociate_video(
             # right", so computing it is what honouring the label means;
             # skipping it would leave the video's endorsed picks blank.
 
-            xy = record.get("xy")
+            xy = action.get("xy")
             context = EventContext(
-                frame=int(record["frame"]),
+                frame=int(action["frame"]),
                 event_id=str(record.get("id")),
                 contact=(
                     (float(xy[0]) * frame_w, float(xy[1]) * frame_h)
                     if xy and frame_w and frame_h
                     else None
                 ),
-                visible=bool(record.get("visible", True)),
+                visible=bool(action.get("visible", True)),
                 detections=record.get("detections") or [],
                 tracks=tracks_index,
                 masks=masks,
@@ -306,7 +318,11 @@ def reassociate_video(
                 **meta,
                 "association_policy": policy.name,
                 **{
-                    key: sum(1 for r in records if r.get("status") == key)
+                    key: sum(
+                        1 for r in records
+                        if str(r.get("id")) in current
+                        and r.get("status") == key
+                    )
                     for key in ("ok", "multi", "miss")
                 },
             },

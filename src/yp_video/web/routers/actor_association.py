@@ -28,7 +28,7 @@ from yp_video.actor.ranking import RULE_BASED
 from yp_video.actor.service import shadow_rejection
 from yp_video.config import cut_kind_of, find_cut, iter_all_cuts
 from yp_video.core.cache import StatCache
-from yp_video.core.jsonl import read_jsonl_cached
+from yp_video.core.jsonl import read_jsonl_cached, read_jsonl_header
 from yp_video.action import prelabel
 from yp_video.actor import spot_associate
 from yp_video.extraction import actor_fix, links, reassociate
@@ -57,32 +57,43 @@ _evaluation_cache: StatCache = StatCache()
 def list_videos() -> list[dict]:
     """Extracted videos and how much of their actor review is left.
 
-    Counts come from the record header and the label file — never from
-    parsing every record — so this stays cheap enough for a page load.
+    Action annotations own event membership and labels. Extraction records
+    only say which of those events have detector output, and actor labels say
+    which current, labelable ids a human reviewed.
     """
     results = []
     for path in sorted(iter_all_cuts(), key=lambda p: p.name):
         records = extraction_store.records_path(path.stem)
         if not records.exists():
             continue
-        header = read_jsonl_cached(records)[0] or {}
+        header = read_jsonl_header(records)
+        current = extraction_store.labelable_actions(
+            path.stem, float(header.get("fps") or 0)
+        )
+        current_ids = {str(record["id"]) for record in current}
         labels = actor_labels.load(path.stem)
         verdicts: dict[str, int] = {}
-        for label in labels.values():
+        for event_id, label in labels.items():
+            if event_id not in current_ids:
+                continue
             verdicts[label.verdict.value] = verdicts.get(label.verdict.value, 0) + 1
-        event_count = int(header.get("events") or 0)
+        reviewed_ids = current_ids & set(labels)
+        event_count = len(current_ids)
         results.append(
             {
                 "name": path.name,
                 "kind": cut_kind_of(path),
                 "event_count": event_count,
-                "reviewed": len(labels),
-                "unreviewed": max(event_count - len(labels), 0),
+                "reviewed": len(reviewed_ids),
+                "unreviewed": len(current_ids - reviewed_ids),
                 "verdicts": verdicts,
                 # The automatic policy's own outcome, for context on how much
-                # of the remainder is likely to just need confirming.
+                # of the remainder is likely to just need confirming. These
+                # are detector-run diagnostics; unlike progress above they
+                # deliberately describe that immutable run.
                 "auto_counts": {
-                    key: int(header.get(key) or 0) for key in ("ok", "multi", "miss")
+                    key: int(header.get(key) or 0)
+                    for key in ("ok", "multi", "miss")
                 },
                 "pipeline": prerequisites(path.stem).payload(),
             }
@@ -401,7 +412,10 @@ def confirm(name: str, req: ConfirmRequest) -> dict:
     if not path.exists():
         raise HTTPException(404, f"No extraction records for {stem}")
 
-    _meta, records = read_jsonl_cached(path)
+    meta, records = read_jsonl_cached(path)
+    records = extraction_store.labelable(
+        records, stem, float(meta.get("fps") or 0)
+    )
     confirmable = actor_labels.confirmations_for(records)
     if req.event_ids is not None:
         wanted = set(req.event_ids)
@@ -534,7 +548,8 @@ def fix(
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 
-    record = result.record
+    current = extraction_store.with_current_actions([result.record], stem)
+    record = current[0] if current else result.record
     label = command.label
     record["actor_review"] = label.verdict.value if label else "unreviewed"
     for detection in record.get("detections") or []:

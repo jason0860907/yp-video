@@ -19,7 +19,12 @@ from yp_video.actor.ranking import AssociationDecision, rule_decision
 from yp_video.config import REID_ANNOTATIONS_DIR
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import read_jsonl_cached
-from yp_video.extraction.store import RECORDS_DIR, records_path
+from yp_video.extraction.store import (
+    RECORDS_DIR,
+    action_source_paths,
+    labelable,
+    records_path,
+)
 from yp_video.actor.track_features import (
     TrackFeatures,
     candidates_near,
@@ -81,6 +86,7 @@ def _source_paths(stems: Sequence[str]) -> list[Path]:
             for path in (
                 actor_labels.actors_path(stem),
                 records_path(stem),
+                *action_source_paths(stem),
             )
             if path.exists()
         ],
@@ -121,6 +127,7 @@ def build_dataset(
             continue
         sources.extend((label_file, record_file))
         meta, records = read_jsonl_cached(record_file)
+        records = labelable(records, stem, float(meta.get("fps") or 0))
         width, height = meta.get("frame_size") or [0, 0]
         truth = actor_labels.load(stem)
 
@@ -265,9 +272,11 @@ def build_track_dataset(stems: Sequence[str] | None = None) -> TrackDataset:
             continue
         mask_file = tracks_masks_path(stem)
         sources.extend((label_file, record_file, track_file))
+        sources.extend(action_source_paths(stem))
         if mask_file.exists():
             sources.append(mask_file)
         meta, records = read_jsonl_cached(record_file)
+        records = labelable(records, stem, float(meta.get("fps") or 0))
         tracks = tracklet_index(stem)
         width, height = meta.get("frame_size") or [0, 0]
         truth = actor_labels.load(stem)

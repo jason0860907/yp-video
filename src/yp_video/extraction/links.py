@@ -33,7 +33,11 @@ from yp_video.actor import labels as actor_labels
 from yp_video.actor.labels import ActorLabel
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import read_jsonl_cached
-from yp_video.extraction.store import records_path
+from yp_video.extraction.store import (
+    action_source_paths,
+    labelable,
+    records_path,
+)
 from yp_video.person.detector import iou
 from yp_video.tracklets.geometry import BoxQuery, TrackRef, link_boxes
 from yp_video.tracklets.store import (
@@ -59,7 +63,7 @@ def event_tracks(stem: str) -> dict[str, TrackRef]:
     records = records_path(stem)
     if not tracks.exists() or not records.exists():
         return {}
-    sources = [tracks, records]
+    sources = [tracks, records, *action_source_paths(stem)]
     # The label file joins the cache key only once it exists. Before that
     # there are no human answers to honour, and the write that creates it
     # rewrites the records too (extraction/actor_fix.py), so the entry is
@@ -86,7 +90,8 @@ def _named_track(label: ActorLabel | None, record: dict) -> TrackRef | None:
 
 def _event_tracks(stem: str) -> dict[str, TrackRef]:
     tmeta, _tracklets = read_jsonl_cached(tracks_path(stem))  # read-only
-    _rmeta, records = read_jsonl_cached(records_path(stem))  # read-only
+    rmeta, records = read_jsonl_cached(records_path(stem))  # read-only
+    records = labelable(records, stem, float(rmeta.get("fps") or 0))
     index = tracklet_index(stem)
     verdicts = actor_labels.load(stem)
 

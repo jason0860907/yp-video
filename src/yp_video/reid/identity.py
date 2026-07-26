@@ -27,7 +27,11 @@ import numpy as np
 
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import read_jsonl_cached
-from yp_video.extraction.store import labelable, records_path
+from yp_video.extraction.store import (
+    action_source_paths,
+    labelable,
+    records_path,
+)
 from yp_video.reid.embedder import DEFAULT_EMBEDDER
 from yp_video.reid.store import (
     PlayersFile,
@@ -60,7 +64,9 @@ def load_embeddings(stem: str, model: str = DEFAULT_EMBEDDER) -> tuple[list[dict
     if not path.exists():
         raise FileNotFoundError(f"No extraction records for {stem}")
     return _emb_cache.get(
-        (stem, model), [path, require_embedding_path(stem, model)], lambda: _load_embeddings(stem, model, path)
+        (stem, model),
+        [path, require_embedding_path(stem, model), *action_source_paths(stem)],
+        lambda: _load_embeddings(stem, model, path),
     )
 
 
@@ -76,14 +82,18 @@ def _load_embeddings(stem: str, model: str, path) -> tuple[list[dict], np.ndarra
     # Same rule the labeling pages apply: a crop nobody can be identified in
     # is not evidence about a player, and letting a warm-up hit into the
     # clustering moves a centroid nobody meant to move.
-    identifiable = {
-        id(r) for r in labelable(records, stem, float(meta.get("fps") or 0))
+    current = {
+        str(record["id"]): record
+        for record in labelable(records, stem, float(meta.get("fps") or 0))
     }
-    keep = [i for i, r in enumerate(records) if embedded[i] and id(r) in identifiable]
+    keep = [
+        i for i, record in enumerate(records)
+        if embedded[i] and str(record.get("id")) in current
+    ]
     matrix = matrix[keep]
     if len(keep):
         matrix /= np.linalg.norm(matrix, axis=1, keepdims=True) + 1e-12
-    return [records[i] for i in keep], matrix
+    return [current[str(records[i]["id"])] for i in keep], matrix
 
 
 def cluster(matrix: np.ndarray, threshold: float = DEFAULT_CLUSTER_THRESHOLD) -> np.ndarray:

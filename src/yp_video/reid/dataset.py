@@ -39,7 +39,12 @@ from yp_video.contracts.reid import (
 from yp_video.core.jsonl import read_jsonl_cached
 from yp_video.reid.identity import LinksFor, load_assignments
 from yp_video.reid.sessions import SessionGroup
-from yp_video.extraction.store import crop_dir, masked_crop_dir, records_path
+from yp_video.extraction.store import (
+    crop_dir,
+    labelable,
+    masked_crop_dir,
+    records_path,
+)
 
 DATASETS_DIR = REID_DATASETS_DIR
 
@@ -92,7 +97,8 @@ def _candidates(groups: Sequence[SessionGroup], masked: bool, links_for: LinksFo
         for stem in group.stems:
             links = links_for(stem) if links_for else {}
             assignments = load_assignments(stem, links or None)
-            _meta, records = read_jsonl_cached(records_path(stem))
+            meta, records = read_jsonl_cached(records_path(stem))
+            records = labelable(records, stem, float(meta.get("fps") or 0))
             source_dir = masked_crop_dir(stem) if masked else crop_dir(stem)
             for record in records:
                 name = assignments.get(record["id"])

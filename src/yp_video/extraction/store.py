@@ -26,7 +26,11 @@ from yp_video.config import (
     ACTION_PRE_ANNOTATIONS_DIR,
     EXTRACTION_DIR,
 )
-from yp_video.core.rallies import load_rallies
+from yp_video.core.jsonl import read_jsonl_cached
+from yp_video.core.rallies import (
+    load_rallies,
+    rally_annotation_path,
+)
 
 RECORDS_DIR = EXTRACTION_DIR / "records"
 CROPS_DIR = EXTRACTION_DIR / "crops"
@@ -40,17 +44,107 @@ MASKED_CROPS_DIR = EXTRACTION_DIR / "crops-masked"
 # extractions that predate the rule stay filtered too.
 SKIP_LABELS = frozenset({"score"})
 
+# These describe the ACTION, not the detector output.  Old extraction files
+# contain snapshots of them, but action annotations are the sole authority:
+# changing "spike" to "score" must not require another expensive detection
+# pass merely to make every downstream reader see the edit.
+ACTION_FIELDS = frozenset({
+    "frame", "time", "label", "xy", "visible", "rally_id", "relative_frame",
+})
+
+
+def action_source_paths(stem: str) -> list[Path]:
+    """Files whose edits can change which extraction records are current.
+
+    Consumers with their own ``StatCache`` include these alongside the
+    extraction file, otherwise the merge below would be correct only after a
+    server restart.
+    """
+    return [
+        path
+        for path in (action_annotation_path(stem), rally_annotation_path(stem))
+        if path is not None
+    ]
+
+
+def labelable_actions(stem: str, fps: float = 0) -> list[dict]:
+    """Current action-source events that call for identifying a player.
+
+    Unlike ``labelable``, this does not require detector output to exist. It is
+    the cheap, authoritative denominator for work-list progress.
+    """
+    source = action_annotation_path(stem)
+    if source is None:
+        return []
+    meta, rows = read_jsonl_cached(source)
+    spans = load_rallies(stem)
+    source_fps = fps or float(meta.get("fps") or 0)
+    return [
+        event
+        for event in rows
+        if event.get("frame") is not None
+        and event.get("label") not in SKIP_LABELS
+        and _within(event, spans, source_fps)
+    ]
+
+
+def with_current_actions(records: Iterable[dict], stem: str) -> list[dict]:
+    """Join derived extraction rows to their current action event by id.
+
+    The action annotation is the source of truth for event metadata. Extraction
+    records are derived detector output joined to it by event id. This matters
+    when an action is relabeled after detection: the stale copied ``label`` in
+    an old record must not keep a current ``score`` on the Association board.
+    Deleted action ids have no current event and are omitted.
+    """
+    records = list(records)
+    source = action_annotation_path(stem)
+    if source is None:
+        # Compatibility for isolated imports/tests and legacy data whose
+        # annotation source is unavailable. This is explicitly the fallback,
+        # never the normal authority.
+        events = {str(r.get("id")): r for r in records}
+    else:
+        _meta, rows = read_jsonl_cached(source)
+        events = {
+            str(event.get("id") or f"f{event['frame']}"): event
+            for event in rows
+            if event.get("frame") is not None
+        }
+
+    out = []
+    for stored in records:
+        event = events.get(str(stored.get("id")))
+        if event is None:
+            continue
+        # Remove every old action-owned field before applying the current
+        # source. Absence in the source is meaningful too (e.g. no xy).
+        record = {
+            key: value for key, value in stored.items()
+            if key not in ACTION_FIELDS
+        }
+        record.update({
+            key: event[key] for key in ACTION_FIELDS
+            if key in event
+        })
+        # The join key belongs to both sides and must always survive.
+        record["id"] = str(stored.get("id"))
+        out.append(record)
+    return out
+
 
 def labelable(records: Iterable[dict], stem: str, fps: float) -> list[dict]:
-    """The events a person can actually be identified in.
+    """Current action events a person can actually be identified in.
 
-    Two exclusions, one reason — there is nobody to name:
+    Three exclusions, one reason — there is nobody/current event to name:
 
     - SKIP_LABELS: a "score" marks where the ball landed, not a player.
     - Outside every rally span: nobody is TRACKED between rallies (see
       tracklets/tracking.py, which scans rally spans and nothing else), so
       there is no tracklet for an actor to be, and in practice these are
       warm-up hits and mis-timed annotations.
+    - Deleted action ids: derived detector output does not keep a removed
+      annotation alive.
 
     Applied at read time by both labeling pages and by the identity layer, so
     the boards, the clusters and the counts agree about what is on the table.
@@ -60,7 +154,7 @@ def labelable(records: Iterable[dict], stem: str, fps: float) -> list[dict]:
     spans = load_rallies(stem)
     return [
         record
-        for record in records
+        for record in with_current_actions(records, stem)
         if record.get("label") not in SKIP_LABELS
         and _within(record, spans, fps)
     ]

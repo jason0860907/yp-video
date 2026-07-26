@@ -20,7 +20,7 @@ from yp_video.actor import labels as actor_labels
 from yp_video.actor.labels import ActorLabel
 from yp_video.core.jsonl import read_jsonl_cached
 from yp_video.extraction.links import track_keys
-from yp_video.extraction.store import records_path
+from yp_video.extraction.store import labelable, records_path
 from yp_video.reid import identity, store as reid_store
 
 
@@ -48,7 +48,8 @@ def mark_done(stem: str, done: bool, *, confirm_auto: bool) -> int:
     """Persist the Done verdict; return how many actors it confirmed."""
     confirmed = 0
     if done and confirm_auto:
-        _meta, records = read_jsonl_cached(records_path(stem))
+        meta, records = read_jsonl_cached(records_path(stem))
+        records = labelable(records, stem, float(meta.get("fps") or 0))
         confirmed = len(
             actor_labels.confirm_auto(stem, confirmable_actors(stem, records))
         )

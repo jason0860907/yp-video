@@ -216,8 +216,6 @@ def detect_video(
             record = {
                 "id": event_id,
                 "frame": event["frame"],
-                "time": event.get("time"),
-                "label": event.get("label"),
                 "xy": xy,
                 # An event nobody has associated yet, which is what every
                 # event is until the association stage runs.
@@ -228,8 +226,6 @@ def detect_video(
                 "candidates": 0,
                 "crop": None,
             }
-            if not event.get("visible", True):
-                record["visible"] = False
             # A pick already made survives a re-detect. Dropping it would
             # discard a human verdict that this stage has no opinion about.
             record.update(

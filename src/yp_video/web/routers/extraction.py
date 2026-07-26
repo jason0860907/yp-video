@@ -165,7 +165,10 @@ def records(name: str) -> dict:
         if not meta.get("fps") and ann_meta.get("fps"):
             meta["fps"] = ann_meta["fps"]
         meta["rallies"] = ann_meta.get("rallies") or []
-    rows = _slim_records_cache.get(stem, [path], lambda: _slim_records(path, stem))
+    sources = [path, *extraction_store.action_source_paths(stem)]
+    rows = _slim_records_cache.get(
+        stem, sources, lambda: _slim_records(path, stem)
+    )
     labels = actor_labels.load(stem)
     return {
         "meta": meta,
