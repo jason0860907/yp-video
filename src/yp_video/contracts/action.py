@@ -22,7 +22,7 @@ from enum import Enum
 from pydantic import BaseModel, Field
 
 # Bump on ANY breaking change to the label record, frame layout, or label set.
-ACTION_CONTRACT_VERSION = "1.1.0"
+ACTION_CONTRACT_VERSION = "1.2.0"
 
 # Env var carrying ACTION_CONTRACT_VERSION from producer to consumer.
 ACTION_CONTRACT_VERSION_ENV = "YP_ACTION_CONTRACT_VERSION"
@@ -94,6 +94,96 @@ class SegmentLabelEvent(BaseModel):
     frame: int = Field(ge=0, description="0-based first frame of the span")
     end_frame: int = Field(ge=0, description="0-based last frame of the span, inclusive")
     label: str = Field(description="Segment class, e.g. 'rally'")
+
+
+# ── Actor candidates (who performed each action) ──────────────────
+# A SEPARATE file from the action labels, and deliberately so. The action
+# labels are read by every spotting run over every video; actor supervision
+# exists for a handful of videos and carries ~11 boxes per event, so folding it
+# in would inflate the file every run reads with data almost none of them use.
+ACTOR_FILE_SUFFIX = "_actor_candidates.jsonl"
+ACTOR_FILE_GLOB = "*_actor_candidates.jsonl"
+#: Sub-directory of a training run's label snapshot.
+ACTOR_LABEL_SUBDIR = "actor-candidates"
+
+#: Frame offsets, relative to the event, at which each candidate's box is
+#: exported. The model samples its visual features at the candidate's OWN box
+#: at each offset, so this window is what lets it see a player move — the
+#: approach, the jump, the swing — rather than a single frozen pose.
+#: +/-16 frames is ~0.53 s at 30 fps, which covers a spiker's last stride and
+#: contact; every 4th frame keeps the token count sane.
+ACTOR_WINDOW_RADIUS = 16
+ACTOR_WINDOW_STRIDE = 4
+ACTOR_WINDOW_OFFSETS = tuple(
+    range(-ACTOR_WINDOW_RADIUS, ACTOR_WINDOW_RADIUS + 1, ACTOR_WINDOW_STRIDE)
+)
+
+
+class ActorTargetKind(str, Enum):
+    """Which of the three answers an event carries.
+
+    ``occluded`` is a human's verdict — they watched the event and could not
+    see who performed it. It does NOT mean the court was empty: those events
+    carry a median of ten other tracked players.
+
+    ``untracked`` is the opposite situation and is derived, not declared: a
+    human did name the actor, but no candidate on the event frame is them,
+    because tracking dropped them. Both abstain downstream; they must not
+    train identically, or a tracking failure teaches the model to answer
+    "nobody could be seen" and it keeps answering that once tracking improves.
+    """
+
+    TRACK = "track"
+    OCCLUDED = "occluded"
+    UNTRACKED = "untracked"
+
+
+class ActorCandidate(BaseModel):
+    """One tracklet's path through the window around an event."""
+
+    model_config = {"extra": "forbid"}
+
+    track: str = Field(description='Tracklet identity, "<rally_id>:<track_id>"')
+    boxes: list[list[float] | None] = Field(
+        description=(
+            "Normalized [x0, y0, x1, y1] at each ACTOR_WINDOW_OFFSETS position, "
+            "aligned with it; null where tracking has no box for that frame. "
+            "The absence is itself supervision — it says this player was not "
+            "being tracked then."
+        ),
+    )
+
+
+class ActorCandidateEvent(BaseModel):
+    """The candidate set for one action event, and which one acted."""
+
+    model_config = {"extra": "forbid"}
+
+    id: str = Field(description="Extraction event id; joins to the action label")
+    frame: int = Field(ge=0, description="0-based frame index into the frame cache")
+    candidates: list[ActorCandidate] = Field(
+        default_factory=list,
+        description=(
+            "Tracklets with a box on the EVENT frame, in a stable order. "
+            "Membership is decided at offset 0; the other offsets only add "
+            "history for a player already established as present."
+        ),
+    )
+    target_kind: ActorTargetKind
+    target: int | None = Field(
+        default=None,
+        ge=0,
+        description="Index into candidates; set only when target_kind is 'track'",
+    )
+
+
+class ActorCandidateRecord(BaseModel):
+    """One video's worth of actor supervision — a ``*_actor_candidates.jsonl``."""
+
+    model_config = {"extra": "allow"}
+
+    video: str = Field(description="Video stem; matches the action label record")
+    events: list[ActorCandidateEvent] = Field(default_factory=list)
 
 
 class ActionLabelRecord(BaseModel):

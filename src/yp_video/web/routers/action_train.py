@@ -32,7 +32,11 @@ from yp_video.config import (
 from yp_video.contracts.action import (
     ACTION_CONTRACT_VERSION,
     ACTION_CONTRACT_VERSION_ENV,
+    ACTOR_FILE_GLOB,
+    ACTOR_FILE_SUFFIX,
+    ACTOR_LABEL_SUBDIR,
 )
+from yp_video.action import actor_labels
 from yp_video.action.frames import ensure_action_frame_caches, inspect_action_frame_cache
 from yp_video.action.prelabel import resolve_checkpoint_path
 from yp_video.core.jsonl import read_jsonl, write_jsonl
@@ -94,6 +98,10 @@ class ActionTrainBase(BaseModel):
     start_val_epoch: int = Field(default=0, ge=0)
     epoch_num_frames: int | None = Field(default=None, ge=1)
     predict_location: bool = True
+    # Also learn WHICH PLAYER acted, from the actor-candidate sidecar the
+    # label snapshot carries. Silently inert on a run whose videos have no
+    # actor work.
+    predict_actor: bool = False
     stop_vllm: bool = False
 
     @model_validator(mode="after")
@@ -315,11 +323,16 @@ def _prepare_action_training_labels(
     label_dir.mkdir(parents=True, exist_ok=True)
     for stale in label_dir.glob("*_actions.jsonl"):
         stale.unlink()
+    actor_dir = save_dir / "labels" / ACTOR_LABEL_SUBDIR
+    if actor_dir.exists():
+        for stale in actor_dir.glob(ACTOR_FILE_GLOB):
+            stale.unlink()
 
     videos = 0
     events = 0
     total_frames = 0
     span_frames = 0
+    actor_targets = {"track": 0, "occluded": 0, "untracked": 0, "legacy_box": 0}
     adjusted: list[dict] = []
     for path, video_path in items:
         try:
@@ -373,6 +386,20 @@ def _prepare_action_training_labels(
         else:
             span_frames += cache_frames
 
+        # Who acted, where the video can say so. Written to its OWN file: only
+        # a handful of videos carry actor work, and the action labels are read
+        # by every spotting run over every video.
+        actor_rows, tally = actor_labels.build(stem, records)
+        if actor_rows:
+            actor_dir.mkdir(parents=True, exist_ok=True)
+            write_jsonl(
+                actor_dir / f"{stem}{ACTOR_FILE_SUFFIX}",
+                {"video": stem, "num_events": len(actor_rows)},
+                actor_rows,
+            )
+        for key in actor_targets:
+            actor_targets[key] += tally[key]
+
         write_jsonl(label_dir / path.name, training_meta, records)
         videos += 1
         events += len(records)
@@ -390,6 +417,11 @@ def _prepare_action_training_labels(
         "events": events,
         "frames": total_frames,
         "sample_frames": span_frames,
+        # How much actor supervision this run actually had. Reported so a run
+        # that silently exported none is visible on the job card rather than
+        # discovered when the actor head refuses to learn.
+        "actor_dir": str(actor_dir),
+        "actor_targets": actor_targets,
         "adjusted": adjusted,
     }
 
@@ -653,6 +685,7 @@ def _build_command(
     checkpoint_dir: Path | None = None,
     action_label_dir: Path | None = None,
     audio_dir: Path | None = None,
+    actor_dir: Path | None = None,
 ) -> tuple[list[str], Path, dict]:
     if not SPOT_DIR.exists():
         raise HTTPException(503, "SPOT is not available at ~/yp-spot")
@@ -723,6 +756,12 @@ def _build_command(
         cmd.extend(["--camera_view", req.camera_view])
     if req.predict_location:
         cmd.append("--predict_location")
+    # Only worth asking for when the snapshot actually contains actor work;
+    # a head with nothing to learn from is dead weight in the checkpoint.
+    if req.predict_actor and actor_dir is not None and any(
+        actor_dir.glob(ACTOR_FILE_GLOB)
+    ):
+        cmd.extend(["--predict_actor", "--actor_dir", str(actor_dir)])
     if req.resume:
         if last_resumable_epoch(save_dir) is None:
             raise HTTPException(
@@ -908,6 +947,7 @@ async def start(req: ActionTrainRequest) -> dict:
                 checkpoint_dir=checkpoint_dir,
                 action_label_dir=action_label_dir,
                 audio_dir=audio_dir,
+                actor_dir=save_dir / "labels" / ACTOR_LABEL_SUBDIR,
             )
             await job_manager.update_job(
                 job.id,

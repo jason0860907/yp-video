@@ -159,6 +159,7 @@ def reassociate_video(
             xy = record.get("xy")
             context = EventContext(
                 frame=int(record["frame"]),
+                event_id=str(record.get("id")),
                 contact=(
                     (float(xy[0]) * frame_w, float(xy[1]) * frame_h)
                     if xy and frame_w and frame_h

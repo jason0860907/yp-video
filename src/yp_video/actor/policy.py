@@ -40,6 +40,10 @@ class EventContext:
     #: The annotated contact point in pixels, or None when the event has none.
     contact: tuple[float, float] | None
     visible: bool
+    #: The extraction event id. A policy that reads a precomputed answer needs
+    #: to look it up by something, and the frame is not unique — two actions
+    #: can share one.
+    event_id: str | None = None
     detections: Sequence[dict] = ()
     tracklets: Sequence[dict] = ()
     #: Tracklet key → that tracklet's silhouettes for the whole video. Absent
@@ -186,6 +190,52 @@ class TrackletPolicy:
                     if top is not None
                     else None
                 ),
+            },
+        )
+
+
+class SpotActorPolicy:
+    """The yp-spot actor head's choice, read back per event.
+
+    The model does not run here. It needs the frame pixels and a GPU, both of
+    which live behind a subprocess in the other repo, so association reads the
+    answers it already produced — the same shape as every other policy, which
+    is the point of the Protocol.
+
+    ``needs_tracklets`` is True even though this policy never inspects them:
+    the answer NAMES a tracklet, so a video without tracking cannot receive
+    one, and the caller should refuse the job up front rather than abstain on
+    every event.
+    """
+
+    needs_tracklets = True
+
+    def __init__(self, stem_answers, name: str = "spot"):
+        self._answers = stem_answers
+        self._name = name
+
+    @property
+    def name(self) -> str:
+        return f"spot:{self._name}"
+
+    def decide(self, context: EventContext) -> ActorPick:
+        if not context.attributable or context.event_id is None:
+            return ActorPick()
+        answer = self._answers.get(context.event_id)
+        if answer is None:
+            return ActorPick()
+        return ActorPick(
+            track=answer.track,
+            candidates=len(context.tracklets),
+            diagnostic={
+                "version": self.name,
+                "decision": (
+                    DecisionReason.SELECTED.value
+                    if answer.track is not None
+                    else DecisionReason.AMBIGUOUS.value
+                ),
+                "kind": answer.kind,
+                "confidence": round(answer.confidence, 4),
             },
         )
 

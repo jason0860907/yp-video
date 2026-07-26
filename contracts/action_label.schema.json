@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "YP Action-Spotting Label Contract",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Source of truth for the *_actions.jsonl label records and frame cache layout exchanged between yp-video (producer) and yp-spot (consumer). Generated from yp_video/contracts/action.py via make_schema.py \u2014 do not edit by hand. yp-spot mirrors these constants in yp_spot/contract.py under the same version.",
   "x-frame-layout": {
     "height": 224,
