@@ -318,6 +318,10 @@ export interface ReidRecord {
     margin: number | null;
     confidence?: number | null;
     none_probability?: number | null;
+    /** Only a yp-spot policy sets this: which of the three answers it gave.
+     *  An abstention lands in the records as `unresolved` either way, so this
+     *  is the only place the model's REASON survives. */
+    kind?: 'track' | 'occluded' | 'untracked';
     top: {
       box: [number, number, number, number];
       cost: number;
