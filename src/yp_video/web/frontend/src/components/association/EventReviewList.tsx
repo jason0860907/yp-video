@@ -16,24 +16,13 @@ import { useMemo, useState } from 'react';
 import { cn } from '@/lib/cn';
 import { actionColor } from '@/lib/actionColors';
 import { EmptyState } from '@/components/ui/EmptyState';
-import {
-  canConfirm,
-  hintOf,
-  rallyOf,
-  verdictOf,
-  VERDICT,
-  type ActorVerdict,
-  type Rally,
-} from '@/components/labeling/shared';
+import { canConfirm, rallyOf, verdictOf, VERDICT, type ActorVerdict, type Rally } from '@/components/labeling/shared';
 import type { ReidRecord } from '@/types/api';
 
-/** `hinted` is not a verdict — it is "the model abstained and said why",
- *  which is where a reviewer gets the most done per click. */
-type Filter = 'unreviewed' | ActorVerdict | 'hinted' | 'all';
+type Filter = 'unreviewed' | ActorVerdict | 'all';
 
 const FILTERS: { key: Filter; label: string }[] = [
   { key: 'unreviewed', label: 'Unreviewed' },
-  { key: 'hinted', label: 'Model flagged' },
   { key: 'manual', label: 'Manual' },
   { key: 'occluded', label: 'Occluded' },
   { key: 'confirmed_auto', label: 'Confirmed' },
@@ -65,11 +54,10 @@ export function EventReviewList({
   const [filter, setFilter] = useState<Filter>('unreviewed');
 
   const counts = useMemo(() => {
-    const out: Partial<Record<Filter, number>> = {};
+    const out: Partial<Record<ActorVerdict, number>> = {};
     for (const r of records) {
       const v = verdictOf(r);
       out[v] = (out[v] ?? 0) + 1;
-      if (hintOf(r)) out.hinted = (out.hinted ?? 0) + 1;
     }
     return out;
   }, [records]);
@@ -98,12 +86,7 @@ export function EventReviewList({
   const visible = sections
     .map((s) => ({
       ...s,
-      shown:
-        filter === 'all'
-          ? s.records
-          : filter === 'hinted'
-            ? s.records.filter((r) => hintOf(r))
-            : s.records.filter((r) => verdictOf(r) === filter),
+      shown: filter === 'all' ? s.records : s.records.filter((r) => verdictOf(r) === filter),
       confirmable: s.records.filter(canConfirm),
     }))
     .filter((s) => s.shown.length > 0);
@@ -112,7 +95,7 @@ export function EventReviewList({
     <>
       <div className="mb-3 flex flex-wrap items-center gap-1.5">
         {FILTERS.map(({ key, label }) => {
-          const n = key === 'all' ? records.length : counts[key] ?? 0;
+          const n = key === 'all' ? records.length : counts[key as ActorVerdict] ?? 0;
           return (
             <button
               key={key}
@@ -171,25 +154,12 @@ export function EventReviewList({
               <div className="flex flex-wrap gap-1.5">
                 {section.shown.map((r) => {
                   const v = verdictOf(r);
-                  // The model's reason for abstaining, when it had one. Shown
-                  // instead of the bare "unreviewed" dot so the two kinds of
-                  // "nothing picked here" are distinguishable at a glance.
-                  const hint = hintOf(r);
                   return (
                     <button
                       key={r.id}
                       type="button"
                       onClick={() => onJump(r)}
-                      title={
-                        `${r.label ?? 'action'} · f${r.frame} — ${VERDICT[v].title}.` +
-                        (hint
-                          ? ` ${hint.label}: ${hint.title}` +
-                            (hint.confidence !== undefined
-                              ? ` (${(hint.confidence * 100).toFixed(0)}%)`
-                              : '')
-                          : '') +
-                        ' Click to park the video here.'
-                      }
+                      title={`${r.label ?? 'action'} · f${r.frame} — ${VERDICT[v].title}. Click to park the video here.`}
                       className={cn(
                         'inline-flex items-center gap-1.5 rounded-lg px-2 py-1 font-mono text-[11px] tabular-nums ring-1 transition-colors',
                         selectedId === r.id
@@ -202,16 +172,8 @@ export function EventReviewList({
                         style={{ background: actionColor(r.label) }}
                       />
                       f{r.frame}
-                      <span
-                        className={cn(
-                          'text-[10px]',
-                          v === 'unreviewed' && !hint && 'text-text-muted',
-                          // A hint is the model talking, not a verdict: dimmer
-                          // than a human's glyph, brighter than nothing.
-                          hint && 'text-amber-400/80',
-                        )}
-                      >
-                        {hint ? hint.glyph : VERDICT[v].glyph}
+                      <span className={cn('text-[10px]', v === 'unreviewed' && 'text-text-muted')}>
+                        {VERDICT[v].glyph}
                       </span>
                     </button>
                   );

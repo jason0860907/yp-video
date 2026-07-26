@@ -22,15 +22,41 @@ import { actionColor } from '@/lib/actionColors';
 import { Card } from '@/components/ui/Card';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import type { ReidPlayers } from '@/types/api';
-import { fmtTime, VERDICT, type ActorVerdict, type Rally, type SidebarAction } from './shared';
+import {
+  fmtTime,
+  VERDICT,
+  type ActorHint,
+  type ActorVerdict,
+  type Rally,
+  type SidebarAction,
+} from './shared';
 
 /** Sentinel key for the "outside any rally" section. */
 export const OUTSIDE = '__outside__';
 
-/** The verdict where a player name would sit. Unreviewed stays blank on
- *  purpose — the work is what carries no mark. */
-function VerdictPill({ verdict }: { verdict?: ActorVerdict }) {
-  if (!verdict || verdict === 'unreviewed') return <span />;
+/** The verdict where a player name would sit.
+ *
+ *  Unreviewed stays blank on purpose — the work is what carries no mark —
+ *  UNLESS the automatic policy declined and said why. That is still work, but
+ *  work with a head start, and it reads as the model's opinion rather than a
+ *  verdict: dimmer, italic, and prefixed with who is speaking. Only a human
+ *  writes a verdict. */
+function VerdictPill({ verdict, hint }: { verdict?: ActorVerdict; hint?: ActorHint | null }) {
+  if (!verdict || verdict === 'unreviewed') {
+    if (!hint) return <span />;
+    return (
+      <span
+        title={
+          hint.confidence !== undefined
+            ? `${hint.title} (${(hint.confidence * 100).toFixed(0)}% confident)`
+            : hint.title
+        }
+        className="max-w-full justify-self-end truncate rounded-full bg-amber-400/10 px-2 py-0.5 text-[11px] italic text-amber-400/90 ring-1 ring-amber-400/25"
+      >
+        {hint.label}
+      </span>
+    );
+  }
   const { label, title } = VERDICT[verdict];
   return (
     <span
@@ -54,6 +80,9 @@ interface ReidEventPanelProps {
   /** Every event's actor verdict — shown as a pill where no player name
    *  applies, so "reviewed" is visible without opening the picker. */
   verdicts: ReadonlyMap<string, ActorVerdict>;
+  /** What the automatic policy thought about the events it declined. Only
+   *  ever shown where a verdict is absent. */
+  hints: ReadonlyMap<string, ActorHint>;
   selectedEventId: string | null;
   fps: number;
   /** Actions within ±½ s of the playhead — those rows light up. */
@@ -64,7 +93,7 @@ interface ReidEventPanelProps {
 
 /** Read-only twin of the Action Label event panel: action dot + label,
  *  matched player, frame and time — click a row to park the video there. */
-function ReidEventPanel({ entries, empty, matches, verdicts, selectedEventId, fps, activeActionIds, onJump, onJumpToCrop }: ReidEventPanelProps) {
+function ReidEventPanel({ entries, empty, matches, verdicts, hints, selectedEventId, fps, activeActionIds, onJump, onJumpToCrop }: ReidEventPanelProps) {
   if (!entries.length) return <div className="ml-6 rounded-xl border border-border bg-surface-100 px-3 py-2 text-xs text-text-muted">{empty}</div>;
   return (
     <div className="ml-6 space-y-1.5 rounded-xl border border-border bg-surface-100 p-2">
@@ -115,7 +144,7 @@ function ReidEventPanel({ entries, empty, matches, verdicts, selectedEventId, fp
                 {m.assigned ? m.player : `~${m.player}`}
               </button>
             ) : (
-              <VerdictPill verdict={verdicts.get(a.id)} />
+              <VerdictPill verdict={verdicts.get(a.id)} hint={hints.get(a.id)} />
             )}
             <span className="text-center font-heading text-[11px] tabular-nums text-text-primary">f{a.frame}</span>
             <span className="text-center font-heading text-[10px] tabular-nums text-text-muted">{fmtTime(a.time != null ? a.time : a.frame / (fps || 30))}</span>
@@ -134,6 +163,7 @@ export interface RallySidebarProps {
   fps: number;
   matches: ReidPlayers['matches'];
   verdicts: ReadonlyMap<string, ActorVerdict>;
+  hints: ReadonlyMap<string, ActorHint>;
   /** The rally under the playhead — the list's only frame-derived scalar. */
   activeRallyId: number | null;
   /** Actions within ±½ s of the playhead; identity-stable between changes. */
@@ -162,7 +192,7 @@ function pendingIn(entries: SidebarAction[], confirmable?: ReadonlySet<string>) 
 }
 
 export const RallySidebar = memo(function RallySidebar({
-  rallies, byRally, outside, totalActions, fps, matches, verdicts,
+  rallies, byRally, outside, totalActions, fps, matches, verdicts, hints,
   activeRallyId, activeActionIds, expanded, selectedRally, selectedEventId,
   listRef, onSelectAll, onJumpRally, onSetExpanded, onJumpEvent, onJumpToCrop,
   confirmableIds, onConfirmRally,
@@ -247,6 +277,7 @@ export const RallySidebar = memo(function RallySidebar({
                     empty="No actions in this rally"
                     matches={matches}
                     verdicts={verdicts}
+                    hints={hints}
                     selectedEventId={selectedEventId}
                     fps={fps}
                     activeActionIds={activeActionIds}
@@ -284,6 +315,7 @@ export const RallySidebar = memo(function RallySidebar({
                   empty="No outside actions"
                   matches={matches}
                   verdicts={verdicts}
+                  hints={hints}
                   selectedEventId={selectedEventId}
                   fps={fps}
                   activeActionIds={activeActionIds}

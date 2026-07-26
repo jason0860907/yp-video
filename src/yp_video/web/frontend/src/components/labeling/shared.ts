@@ -30,24 +30,28 @@ export const VERDICT: Record<ActorVerdict, { label: string; glyph: string; title
  *  out of the diagnostic. This is that something.
  *
  *  It is a HINT: it tells the reviewer where to look, never what to record. */
-export const HINT: Record<string, { label: string; glyph: string; title: string }> = {
+export const HINT: Record<string, { label: string; title: string }> = {
   occluded: {
-    label: 'Likely occluded',
-    glyph: '⊘',
+    label: 'Model: occluded?',
     title: 'The model saw no visible player performing this — confirm or override',
   },
   untracked: {
-    label: 'Not tracked',
-    glyph: '⚇',
+    label: 'Model: not tracked',
     title:
-      'The model believes someone acted but tracking has no box for them here — ' +
-      're-running Rally Tracking may fix this, relabelling will not',
+      'The model believes someone acted but tracking has no box for them here. ' +
+      'Re-running Rally Tracking may fix this; relabelling will not.',
   },
 };
 
+export interface ActorHint {
+  label: string;
+  title: string;
+  confidence?: number;
+}
+
 export const hintOf = (
   r: Pick<ReidRecord, 'actor_review' | 'association'>,
-): { label: string; glyph: string; title: string; confidence?: number } | null => {
+): ActorHint | null => {
   if (verdictOf(r) !== 'unreviewed') return null;
   const kind = r.association?.kind;
   if (!kind || kind === 'track') return null;
