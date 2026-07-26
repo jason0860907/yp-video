@@ -40,6 +40,11 @@ const PAGE_JOB_TYPES = new Set([PREDICT_JOB_TYPE, TRACKING_JOB_TYPE]);
  *  available — it needs no checkpoint and no tracking. */
 const RULE = 'rule-based';
 
+/** yp-spot models are selected from the same dropdown but submitted through a
+ *  different field, so the option value carries which kind it is. Prefixing
+ *  beats a second piece of state that could disagree with the selection. */
+const SPOT_PREFIX = 'spot::';
+
 export function AssociationPredictPage() {
   const navigate = useNavigate();
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -62,10 +67,14 @@ export function AssociationPredictPage() {
 
   const videos = videosQuery.data ?? [];
   const checkpoints = statusQuery.data?.checkpoints ?? [];
+  const spotCheckpoints = statusQuery.data?.spot_checkpoints ?? [];
   const chosenCheckpoint = checkpoints.find((c) => c.name === policy);
-  // A tracklet ranker chooses among tracklets, so a video that was never
-  // tracked has nothing for it to choose from.
-  const needsTracks = chosenCheckpoint?.feature_set === 'track-v1';
+  const chosenSpot = policy.startsWith(SPOT_PREFIX)
+    ? spotCheckpoints.find((c) => SPOT_PREFIX + c.path === policy)
+    : undefined;
+  // Anything that chooses among tracklets has nothing to choose from on a
+  // video that was never tracked.
+  const needsTracks = chosenCheckpoint?.feature_set === 'track-v1' || !!chosenSpot;
 
   const upsertJob = (job: Job) =>
     setJobOverrides((prev) => ({ ...prev, [job.id]: job }));
@@ -118,7 +127,8 @@ export function AssociationPredictPage() {
         method: 'POST',
         body: {
           videos: names,
-          checkpoint: policy === RULE ? null : policy,
+          checkpoint: chosenSpot || policy === RULE ? null : policy,
+          spot_checkpoint: chosenSpot?.path ?? null,
           stop_vllm: stopVllm,
         },
       });
@@ -178,8 +188,46 @@ export function AssociationPredictPage() {
                   {c.name} — {c.feature_set}
                 </option>
               ))}
+              {spotCheckpoints.map((c) => (
+                <option key={c.path} value={SPOT_PREFIX + c.path}>
+                  {c.name} — yp-spot (looks at the frames)
+                </option>
+              ))}
             </select>
           </label>
+
+          {chosenSpot && (
+            <dl className="mt-3 space-y-1 rounded-lg border border-border bg-surface-50 px-3 py-2 text-[11px]">
+              {(
+                [
+                  ['Overall', 'all_top1'],
+                  ['Where geometry is ambiguous', 'hard_top1'],
+                  ['Where the rule was overruled', 'manual_top1'],
+                ] as const
+              ).map(([label, key]) => {
+                const value = chosenSpot.metrics[key];
+                return (
+                  <div key={key} className="flex justify-between">
+                    <dt className="text-text-muted">{label}</dt>
+                    <dd className="font-mono tabular-nums text-text-secondary">
+                      {value === undefined ? '—' : `${(value * 100).toFixed(1)}%`}
+                      {key === 'manual_top1' &&
+                        chosenSpot.metrics.rule_manual_top1 !== undefined && (
+                          <span className="ml-1 text-text-muted">
+                            (rule {(chosenSpot.metrics.rule_manual_top1 * 100).toFixed(1)}%)
+                          </span>
+                        )}
+                    </dd>
+                  </div>
+                );
+              })}
+              <p className="pt-1 text-[10px] leading-snug text-text-muted">
+                Held out on {chosenSpot.holdout ?? 'one video'}. Needs tracking and
+                action labels; it scores every event by looking at the frames, so
+                expect roughly a minute per video.
+              </p>
+            </dl>
+          )}
 
           {chosenCheckpoint && (
             <dl className="mt-3 space-y-1 rounded-lg border border-border bg-surface-50 px-3 py-2 text-[11px]">

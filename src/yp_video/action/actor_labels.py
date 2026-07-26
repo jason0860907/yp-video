@@ -85,6 +85,44 @@ def candidates_on(
     return sorted(key for key, boxes in paths.items() if frame in boxes)
 
 
+def candidates_only(stem: str, events: Iterable[dict]) -> list[dict]:
+    """The candidate set per event, with no answer attached.
+
+    What inference needs, and built by the same code that builds training's,
+    so the model is asked the question it was taught. A row carries no
+    ``target_kind`` at all — absent means unlabelled, and inventing one here
+    would put a guess where supervision goes.
+    """
+    size = _frame_size(stem)
+    if size is None:
+        return []
+    width, height = size
+    paths = track_paths(stem)
+    rows: list[dict] = []
+    for event in events:
+        frame = int(event.get("frame", -1))
+        keys = candidates_on(paths, frame)
+        if not keys:
+            continue
+        rows.append(
+            {
+                "id": str(event.get("id")),
+                "frame": frame,
+                "candidates": [
+                    {
+                        "track": key,
+                        "boxes": [
+                            _normalized(paths[key].get(frame + offset), width, height)
+                            for offset in ACTOR_WINDOW_OFFSETS
+                        ],
+                    }
+                    for key in keys
+                ],
+            }
+        )
+    return rows
+
+
 def build(stem: str, events: Iterable[dict]) -> tuple[list[dict], dict[str, int]]:
     """The actor-candidate rows for one video's action events, plus a tally.
 

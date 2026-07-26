@@ -567,9 +567,28 @@ export interface ReidAssociationCheckpoint {
   };
 }
 
+/** A yp-spot checkpoint carrying the actor head — it answers "who acted" by
+ *  looking at the frames, so it has holdout metrics rather than grouped-OOF
+ *  ones and is selected through `spot_checkpoint`. */
+export interface SpotActorCheckpoint {
+  path: string;
+  name: string;
+  epoch: number | null;
+  mtime: number | null;
+  holdout: string | null;
+  metrics: {
+    all_top1?: number;
+    hard_top1?: number;
+    manual_top1?: number;
+    rule_manual_top1?: number;
+  };
+  note: string | null;
+}
+
 export interface ReidAssociationStatus {
   dataset: ReidAssociationDatasetSummary;
   checkpoints: ReidAssociationCheckpoint[];
+  spot_checkpoints: SpotActorCheckpoint[];
   active_shadow: string | null;
   active_job: Job | null;
 }

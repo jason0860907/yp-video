@@ -16,7 +16,7 @@ from typing import Annotated, Literal
 from urllib.parse import unquote
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from yp_video.actor import checkpoints as actor_checkpoints
 from yp_video.actor import dataset as actor_dataset
@@ -24,10 +24,13 @@ from yp_video.actor import evaluate as actor_evaluate
 from yp_video.actor import labels as actor_labels
 from yp_video.actor import policy as actor_policy
 from yp_video.actor import train as actor_train
+from yp_video.actor.ranking import RULE_BASED
 from yp_video.actor.service import shadow_rejection
 from yp_video.config import cut_kind_of, find_cut, iter_all_cuts
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import read_jsonl_cached
+from yp_video.action import prelabel
+from yp_video.actor import spot_associate
 from yp_video.extraction import actor_fix, links, reassociate
 from yp_video.extraction.prerequisites import prerequisites
 from yp_video.extraction import store as extraction_store
@@ -128,6 +131,11 @@ def status() -> dict:
             }
             for candidate in actor_checkpoints.list_candidates()
         ],
+        # yp-spot models that answer the same question by looking at pixels.
+        # A separate list because they are a different kind of thing: no
+        # grouped-OOF metrics, no shadow activation, and they are selected
+        # through `spot_checkpoint` rather than `checkpoint`.
+        "spot_checkpoints": spot_associate.list_actor_checkpoints(),
         "active_shadow": actor_checkpoints.active_shadow_name(),
         "active_job": _active_job(),
     }
@@ -259,13 +267,40 @@ async def train(req: AssociationTrainRequest) -> dict:
     return job.to_dict()
 
 
+class _SpotPlan:
+    """Stands in for a policy until the video has actually been scored.
+
+    The spot model decides per VIDEO, so the real policy only exists after its
+    subprocess has run. This carries the two things the request handler needs
+    before then: a name for the job card, and the fact that it picks among
+    tracklets — so an untracked video is refused up front rather than
+    abstaining on every event.
+    """
+
+    needs_tracklets = True
+
+    def __init__(self, checkpoint: Path):
+        self.name = f"spot:{checkpoint.parent.name}"
+
+
 class PredictRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     videos: list[str]
     #: None (or "rule-based") is the rule; anything else names a checkpoint.
     checkpoint: str | None = None
+    #: A yp-spot checkpoint carrying the actor head, under the action
+    #: checkpoints root. Mutually exclusive with `checkpoint`: they are two
+    #: different models answering the same question, and picking both would
+    #: leave which one decided to argument order.
+    spot_checkpoint: str | None = None
     stop_vllm: bool = False
+
+    @model_validator(mode="after")
+    def one_model_only(self):
+        if self.spot_checkpoint and self.checkpoint not in (None, RULE_BASED):
+            raise ValueError("checkpoint and spot_checkpoint are mutually exclusive")
+        return self
 
 
 @router.post("/predict")
@@ -274,10 +309,21 @@ async def predict(req: PredictRequest) -> dict:
 
     Every human verdict survives untouched — see extraction/reassociate.py.
     """
-    try:
-        policy = actor_policy.build_policy(req.checkpoint)
-    except (FileNotFoundError, ValueError) as exc:
-        raise HTTPException(404, str(exc)) from exc
+    spot_checkpoint: Path | None = None
+    if req.spot_checkpoint:
+        try:
+            spot_checkpoint = prelabel.resolve_checkpoint(req.spot_checkpoint)
+        except (FileNotFoundError, ValueError) as exc:
+            raise HTTPException(404, str(exc)) from exc
+        reason = spot_associate.rejection(spot_checkpoint)
+        if reason is not None:
+            raise HTTPException(400, reason)
+        policy = _SpotPlan(spot_checkpoint)
+    else:
+        try:
+            policy = actor_policy.build_policy(req.checkpoint)
+        except (FileNotFoundError, ValueError) as exc:
+            raise HTTPException(404, str(exc)) from exc
 
     video_paths: list[Path] = []
     for name in req.videos:
@@ -307,11 +353,28 @@ async def predict(req: PredictRequest) -> dict:
         },
         name=f"Association Predict ({len(video_paths)} videos · {policy.name})",
     )
+    def decide(path: Path, on_progress) -> dict:
+        """Score the video, then rewrite the picks it changed.
+
+        The spot model runs per VIDEO — one subprocess, one pass over the
+        frames — and only then does the per-event policy exist. The rule and
+        the ranker skip straight to the second half.
+        """
+        chosen = policy
+        if spot_checkpoint is not None:
+            answers = spot_associate.run(
+                path, spot_checkpoint, on_progress=on_progress
+            )
+            chosen = actor_policy.SpotActorPolicy(
+                answers, name=spot_checkpoint.parent.name
+            )
+        return reassociate.reassociate_video(path, chosen, on_progress=on_progress)
+
     spawn_batch_video_job(
         job,
         video_paths,
         stop_vllm=req.stop_vllm,
-        work=lambda p, cb: reassociate.reassociate_video(p, policy, on_progress=cb),
+        work=decide,
         done_message=lambda c: (
             f"{c['changed']} moved · {c['unchanged']} unchanged · "
             f"{c['labeled']} labeled kept"
