@@ -100,9 +100,29 @@ RALLY_SPOT_CHECKPOINTS_DIR = VIDEOS_DIR / "rally-spot" / "checkpoints"
 # SPOT rally predictions live apart from the VLM pre-annotations so the two
 # model families never overwrite each other; Rally Label can load either.
 RALLY_SPOT_PRE_ANNOTATIONS_DIR = VIDEOS_DIR / "rally-spot" / "pre-annotations"
-# Player ReID. reid/annotations holds the two kinds of human label —
-# <stem>_players.json (who each crop depicts) and <stem>_actors.json (who
-# performed the action); everything else under reid/ is derived data.
+# One directory per STAGE, named after the question that stage answers.
+# Everything below used to live under reid/ — records, crops, tracklets,
+# association checkpoints, both kinds of human label — because ReID was the
+# stage that consumed it all. Consuming something is not owning it, and the
+# layout said otherwise for every reader that went looking.
+
+# Tracking: who is on court over time. Upstream of everything below and
+# dependent only on rally spans (see tracklets/tracking.py).
+TRACKS_DIR = VIDEOS_DIR / "tracks"
+
+# Extraction: the people found on each action frame, the actor chosen among
+# them, and the crop. All derived — deleting it costs a re-extraction, never
+# a human label.
+EXTRACTION_DIR = VIDEOS_DIR / "extraction"
+
+# Association: who performed the action. annotations/ holds the human verdict
+# (<stem>_actors.json); the rest is the learned ranker's checkpoints and the
+# yp-spot head's answers.
+ASSOCIATION_DIR = VIDEOS_DIR / "association"
+ASSOCIATION_ANNOTATIONS_DIR = ASSOCIATION_DIR / "annotations"
+
+# ReID: which player each crop depicts. annotations/ holds the human verdict
+# (<stem>_players.json); everything else under reid/ is derived data.
 REID_DIR = VIDEOS_DIR / "reid"
 REID_ANNOTATIONS_DIR = REID_DIR / "annotations"
 # Exported training datasets (yp-reid Contract A: manifest.json +
@@ -142,6 +162,10 @@ R2_CATEGORIES: dict[str, R2Category] = {
     "action/annotations": R2Category(ACTION_ANNOTATIONS_DIR, "*.jsonl", "Action Annotations"),
     "action/pre-annotations": R2Category(ACTION_PRE_ANNOTATIONS_DIR, "*.jsonl", "Action Pre-Annotations"),
     "action/checkpoints": R2Category(ACTION_CHECKPOINTS_DIR, "**/*", "Action Checkpoints"),
+    # The two kinds of human label are two categories, because they are two
+    # answers with different lifetimes — a player name survives a re-run of
+    # association, an actor verdict survives a re-run of ReID.
+    "association/annotations": R2Category(ASSOCIATION_ANNOTATIONS_DIR, "*.json", "Association Annotations"),
     "reid/annotations": R2Category(REID_ANNOTATIONS_DIR, "*.json", "ReID Annotations"),
     "reid/checkpoints": R2Category(REID_CHECKPOINTS_DIR, "**/*", "ReID Checkpoints"),
 }
