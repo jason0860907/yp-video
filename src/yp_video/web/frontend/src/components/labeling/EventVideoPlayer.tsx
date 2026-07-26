@@ -264,8 +264,8 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
   }, [playing, currentRallyId]);
 
   const masksQuery = useQuery({
-    queryKey: ['reid-track-masks', videoName, currentRallyId],
-    queryFn: () => apiFetch<TrackMasks>(API.reid.trackMasks(videoName, currentRallyId!)),
+    queryKey: ['tracklet-masks', videoName, currentRallyId],
+    queryFn: () => apiFetch<TrackMasks>(API.tracklets.masks(videoName, currentRallyId!)),
     enabled: currentRallyId != null && trackBoxes.size > 0,
     staleTime: Infinity, // immutable per tracking run; jobs invalidate the key
     // A rally's masks are ~4 MB of base64. Never re-fetched while mounted
@@ -869,6 +869,9 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
                         title={
                           verdictOf(pickTarget) === 'confirmed_auto'
                             ? 'Already confirmed'
+                            : pickTarget.resolution === 'unresolved' &&
+                                pickTarget.association?.kind === 'occluded'
+                              ? 'The model is right that no actor is visible — record Occluded'
                             : pickTarget.resolution !== 'auto'
                               ? 'No automatic pick to confirm — this event already has a human verdict'
                               : 'The automatic pick is the right person — record that verdict and move on'

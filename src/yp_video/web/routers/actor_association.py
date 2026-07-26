@@ -267,22 +267,6 @@ async def train(req: AssociationTrainRequest) -> dict:
     return job.to_dict()
 
 
-class _SpotPlan:
-    """Stands in for a policy until the video has actually been scored.
-
-    The spot model decides per VIDEO, so the real policy only exists after its
-    subprocess has run. This carries the two things the request handler needs
-    before then: a name for the job card, and the fact that it picks among
-    tracklets — so an untracked video is refused up front rather than
-    abstaining on every event.
-    """
-
-    needs_tracklets = True
-
-    def __init__(self, checkpoint: Path):
-        self.name = f"spot:{checkpoint.parent.name}"
-
-
 class PredictRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -309,7 +293,6 @@ async def predict(req: PredictRequest) -> dict:
 
     Every human verdict survives untouched — see extraction/reassociate.py.
     """
-    spot_checkpoint: Path | None = None
     if req.spot_checkpoint:
         try:
             spot_checkpoint = prelabel.resolve_checkpoint(req.spot_checkpoint)
@@ -318,10 +301,10 @@ async def predict(req: PredictRequest) -> dict:
         reason = spot_associate.rejection(spot_checkpoint)
         if reason is not None:
             raise HTTPException(400, reason)
-        policy = _SpotPlan(spot_checkpoint)
+        plan: actor_policy.PolicyPlan = actor_policy.SpotPlan(spot_checkpoint)
     else:
         try:
-            policy = actor_policy.build_policy(req.checkpoint)
+            plan = actor_policy.build_policy(req.checkpoint)
         except (FileNotFoundError, ValueError) as exc:
             raise HTTPException(404, str(exc)) from exc
 
@@ -334,10 +317,10 @@ async def predict(req: PredictRequest) -> dict:
             raise HTTPException(
                 400, f"No extraction records for: {name} — run ReID Predict first"
             )
-        if policy.needs_tracklets and not tracks_store.tracks_path(path.stem).exists():
+        if plan.needs_tracklets and not tracks_store.tracks_path(path.stem).exists():
             raise HTTPException(
                 400,
-                f"{policy.name} picks among tracklets, and {name} has not been "
+                f"{plan.name} picks among tracklets, and {name} has not been "
                 "tracked — run Rally Tracking first",
             )
         video_paths.append(path)
@@ -347,34 +330,22 @@ async def predict(req: PredictRequest) -> dict:
     job = job_manager.create_job(
         PREDICT_JOB_TYPE,
         {
-            "policy": policy.name,
+            "policy": plan.name,
             "videos": [p.name for p in video_paths],
             "items": init_batch_items([p.name for p in video_paths]),
         },
-        name=f"Association Predict ({len(video_paths)} videos · {policy.name})",
+        name=f"Association Predict ({len(video_paths)} videos · {plan.name})",
     )
-    def decide(path: Path, on_progress) -> dict:
-        """Score the video, then rewrite the picks it changed.
-
-        The spot model runs per VIDEO — one subprocess, one pass over the
-        frames — and only then does the per-event policy exist. The rule and
-        the ranker skip straight to the second half.
-        """
-        chosen = policy
-        if spot_checkpoint is not None:
-            answers = spot_associate.run(
-                path, spot_checkpoint, on_progress=on_progress
-            )
-            chosen = actor_policy.SpotActorPolicy(
-                answers, name=spot_checkpoint.parent.name
-            )
-        return reassociate.reassociate_video(path, chosen, on_progress=on_progress)
-
     spawn_batch_video_job(
         job,
         video_paths,
         stop_vllm=req.stop_vllm,
-        work=decide,
+        # Whether the policy exists yet is the plan's business: the rule and
+        # the ranker hand back themselves, the spot head scores the video
+        # first (see actor/policy.SpotPlan).
+        work=lambda path, cb: reassociate.reassociate_video(
+            path, plan.build(path, cb), on_progress=cb
+        ),
         done_message=lambda c: (
             f"{c['changed']} moved · {c['unchanged']} unchanged · "
             f"{c['labeled']} labeled kept"
@@ -411,7 +382,11 @@ class ConfirmRequest(BaseModel):
 
 @router.post("/confirm/{name}")
 def confirm(name: str, req: ConfirmRequest) -> dict:
-    """Endorse automatic picks: "the policy already got these right".
+    """Endorse the policy's answer: "it already got these right".
+
+    Two answers are endorsable and land as different verdicts — a pick
+    becomes ``confirmed_auto``, an explicit "nobody is visible" becomes
+    ``occluded`` (see actor/labels.confirmations_for).
 
     Purely an annotation write — the record, the crop and every embedding
     stay exactly as they are, because agreeing with a pick changes nothing
@@ -436,12 +411,17 @@ def confirm(name: str, req: ConfirmRequest) -> dict:
             # happen; a miss needs a real verdict, not a confirmation.
             raise HTTPException(
                 400,
-                f"Not automatic picks (nothing to confirm): {', '.join(unknown[:5])}"
+                "Nothing to endorse — the policy neither picked anybody nor "
+                f"called it occluded: {', '.join(unknown[:5])}"
                 + (f" (+{len(unknown) - 5} more)" if len(unknown) > 5 else ""),
             )
         confirmable = {k: v for k, v in confirmable.items() if k in wanted}
 
-    return {"confirmed": actor_labels.confirm_auto(stem, confirmable)}
+    # Which VERDICT each event got, not just that it landed: endorsing a
+    # pick and endorsing an occlusion are two different answers, and a caller
+    # that assumes one of them shows the wrong badge for the other.
+    landed = actor_labels.confirm_auto(stem, confirmable)
+    return {"confirmed": {event_id: confirmable[event_id].verdict.value for event_id in landed}}
 
 
 class ActorFixBase(BaseModel):
@@ -499,21 +479,24 @@ ActorFixRequest = Annotated[
 ]
 
 
-def _synchronous_model(stem: str) -> str:
+def _synchronous_model(stem: str) -> str | None:
     """The embedding family refreshed before the response returns.
 
-    A fix invalidates every matrix, but refreshing them all inline would make
-    the click feel broken. The default embedder's family goes first because
-    that is what the ReID Label page opens with; the rest follow in the
-    background. Which model that is stays server-side — reviewing an actor is
-    not a question about embeddings, so the page never has to name one.
+    None when nothing is embedded yet, which is the ordinary case: actor
+    review is what decides whether a crop is worth embedding, so it runs
+    first. Refusing the fix there would have made this page depend on the
+    stage that depends on it.
+
+    Once vectors do exist a fix invalidates every matrix, but refreshing them
+    all inline would make the click feel broken. The default embedder's family
+    goes first because that is what the ReID Label page opens with; the rest
+    follow in the background. Which model that is stays server-side —
+    reviewing an actor is not a question about embeddings, so the page never
+    has to name one.
     """
     embedded = reid_store.embedded_models(stem)
     if not embedded:
-        raise HTTPException(
-            404,
-            f"No embeddings for {stem} — run extraction or backfill first",
-        )
+        return None
     family = base_embedder_name(DEFAULT_EMBEDDER)
     return next(
         (name for name in embedded if base_embedder_name(name) == family),

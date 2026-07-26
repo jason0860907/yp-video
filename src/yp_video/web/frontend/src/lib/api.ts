@@ -143,21 +143,32 @@ export const API = {
     spot: '/spot-predict/spot',
     start: '/spot-predict/start',
   },
+  tracklets: {
+    run: '/tracklets/run',
+    get: (name: string) => `/tracklets/${encodeURIComponent(name)}`,
+    masks: (name: string, rally: number) => `/tracklets/masks/${encodeURIComponent(name)}?rally=${rally}`,
+  },
+  // Player detection — the sparse perception stage. `extraction` is where its
+  // records and crops live, shared with association, which writes the pick
+  // into the same record.
+  extraction: {
+    videos: '/extraction/videos',
+    options: '/extraction/options',
+    detect: '/extraction/detect',
+    records: (name: string) => `/extraction/records/${encodeURIComponent(name)}`,
+    crop: (name: string, cropFile: string, masked = false) =>
+      `/extraction/crop/${encodeURIComponent(name)}/${encodeURIComponent(cropFile)}${masked ? '?masked=1' : ''}`,
+  },
+  // ReID is grouping the same person, and nothing else — finding people and
+  // choosing who acted is `extraction`, who is on court is `tracklets`.
   reid: {
     videos: '/reid/videos',
-    start: '/reid/start',
-    results: (name: string) => `/reid/results/${encodeURIComponent(name)}`,
-    crop: (name: string, cropFile: string, masked = false) =>
-      `/reid/crop/${encodeURIComponent(name)}/${encodeURIComponent(cropFile)}${masked ? '?masked=1' : ''}`,
+    options: '/reid/options',
+    embed: '/reid/embed',
     clusters: (name: string, threshold: number, model = 'clip-reid') => `/reid/clusters/${encodeURIComponent(name)}?threshold=${threshold}&model=${encodeURIComponent(model)}`,
     players: (name: string, model = 'clip-reid') => `/reid/players/${encodeURIComponent(name)}?model=${encodeURIComponent(model)}`,
-    done: (name: string) => `/reid/done/${encodeURIComponent(name)}`,
-    options: '/reid/options',
     seedCluster: (name: string) => `/reid/seed-cluster/${encodeURIComponent(name)}`,
-    track: '/reid/track',
-    tracks: (name: string) => `/reid/tracks/${encodeURIComponent(name)}`,
-    trackMasks: (name: string, rally: number) => `/reid/track-masks/${encodeURIComponent(name)}?rally=${rally}`,
-    embed: '/reid/embed',
+    done: (name: string) => `/reid/done/${encodeURIComponent(name)}`,
   },
   reidTrain: {
     status: '/reid-train/status',

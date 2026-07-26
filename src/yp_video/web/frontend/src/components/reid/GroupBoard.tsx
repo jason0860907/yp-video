@@ -347,7 +347,7 @@ export const GroupBoard = forwardRef<BoardHandle, GroupBoardProps>(function Grou
     return (
       <CropImage
         key={id}
-        src={apiUrl(API.reid.crop(picked, r.crop, showMasked))}
+        src={apiUrl(API.extraction.crop(picked, r.crop, showMasked))}
         keypoints={r.keypoints}
         skeleton={showSkeleton}
         alt={id}

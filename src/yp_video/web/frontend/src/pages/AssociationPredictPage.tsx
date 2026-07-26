@@ -21,7 +21,6 @@ import { StatTile } from '@/components/ui/StatTile';
 import { PipelineChips, STAGE_HINT } from '@/components/video/PipelineChips';
 import { VideoMultiSelectList } from '@/components/video/VideoMultiSelectList';
 import { LiveJob } from '@/components/job/LiveJob';
-import { TRACKING_JOB_TYPE, useRallyTracking } from '@/lib/useRallyTracking';
 import { toast } from '@/components/feedback/toast';
 import type {
   AssociationVideo,
@@ -34,7 +33,7 @@ const errMsg = (e: unknown) =>
 
 const PREDICT_JOB_TYPE = 'actor_association_predict';
 // Tracking is offered here too, so its job card belongs here too.
-const PAGE_JOB_TYPES = new Set([PREDICT_JOB_TYPE, TRACKING_JOB_TYPE]);
+const PAGE_JOB_TYPES = new Set([PREDICT_JOB_TYPE]);
 
 /** The rule is a policy like any other, and the only one that is always
  *  available — it needs no checkpoint and no tracking. */
@@ -89,7 +88,6 @@ export function AssociationPredictPage() {
     );
   }, [jobsQuery.data, jobOverrides]);
 
-  const tracking = useRallyTracking({ videos, selected, onJob: upsertJob });
   const chosen = videos.filter((v) => selected.has(v.name));
   const blocked = useMemo(() => {
     const stages = new Set<string>();
@@ -283,19 +281,6 @@ export function AssociationPredictPage() {
               {blocked}
             </p>
           )}
-          <Button
-            onClick={tracking.run}
-            disabled={Boolean(tracking.blocked)}
-            className="mt-2 w-full"
-            title={
-              tracking.blocked
-                ? `Cannot start: ${tracking.blocked}`
-                : 'Dense RF-DETR + ByteTrack over every rally span. Needs rally spans only — it does not wait for action labeling.'
-            }
-          >
-            Run Rally Tracking
-            {tracking.missing > 0 ? ` (${tracking.missing} untracked)` : ''}
-          </Button>
           {scope.kept > 0 && (
             <p className="mt-2 text-[11px] text-text-muted">
               {scope.kept} reviewed event(s) in the selection will be left

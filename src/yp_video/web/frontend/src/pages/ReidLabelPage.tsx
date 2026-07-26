@@ -115,7 +115,7 @@ export function ReidLabelPage() {
     setShowMasked(optionsQuery.data.embedders.find((e) => e.name === model)?.masked ?? false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [optionsQuery.data]);
-  const extracted = (videosQuery.data ?? []).filter((v) => v.has_reid);
+  const extracted = (videosQuery.data ?? []).filter((v) => v.pipeline.has_records);
   // Picker filters, mirroring the Action Label / Rally Label pickers.
   const pickable = extracted.filter((v) => {
     if (kindFilter !== 'all' && v.kind !== kindFilter) return false;
@@ -126,8 +126,8 @@ export function ReidLabelPage() {
   });
 
   const resultsQuery = useQuery({
-    queryKey: ['reid-results', picked],
-    queryFn: () => apiFetch<{ meta: Record<string, unknown>; records: ReidRecord[] }>(API.reid.results(picked)),
+    queryKey: ['extraction-records', picked],
+    queryFn: () => apiFetch<{ meta: Record<string, unknown>; records: ReidRecord[] }>(API.extraction.records(picked)),
     enabled: Boolean(picked),
   });
   const records = useMemo(() => resultsQuery.data?.records ?? [], [resultsQuery.data]);
@@ -140,10 +140,10 @@ export function ReidLabelPage() {
 
   // Tracklets + event→tracklet links; null = no tracking run yet (404).
   const tracksQuery = useQuery({
-    queryKey: ['reid-tracks', picked],
+    queryKey: ['tracklets', picked],
     queryFn: async (): Promise<TrackData | null> => {
       try {
-        return await apiFetch<TrackData>(API.reid.tracks(picked));
+        return await apiFetch<TrackData>(API.tracklets.get(picked));
       } catch (e) {
         if (e instanceof ApiError && e.status === 404) return null;
         throw e;
@@ -306,7 +306,7 @@ export function ReidLabelPage() {
       void qc.invalidateQueries({ queryKey: ['reid-videos'] });
       if (!isDone) {
         void qc.invalidateQueries({
-          queryKey: ['reid-results', picked],
+          queryKey: ['extraction-records', picked],
         });
       }
     } catch (e) {

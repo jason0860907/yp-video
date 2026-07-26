@@ -77,6 +77,16 @@ export const NAV: NavSection[] = [
     ],
   },
   {
+    // The two perception stages. Neither decides anything; each has its own
+    // upstream (rally spans / action labels) and neither waits on the other.
+    title: 'Detection',
+    collapsible: true,
+    items: [
+      { path: '/tracking', label: 'Rally Tracking', icon: ICON.predict },
+      { path: '/player-detection', label: 'Player Detection', icon: ICON.predict },
+    ],
+  },
+  {
     title: 'Association',
     collapsible: true,
     items: [

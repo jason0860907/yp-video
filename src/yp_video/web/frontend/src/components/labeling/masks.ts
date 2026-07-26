@@ -19,7 +19,7 @@ export interface TrackBox {
   box: Box;
 }
 
-/** Decoded /reid/track-masks payload: key → concatenated packed rows, row i ↔
+/** Decoded /tracklets/masks payload: key → concatenated packed rows, row i ↔
  *  the tracklet's i-th frame in the tracks jsonl. */
 export interface MaskData {
   mh: number;

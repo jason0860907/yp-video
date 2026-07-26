@@ -15,6 +15,8 @@ import { UploadPage } from '@/pages/UploadPage';
 import { CutPage } from '@/pages/CutPage';
 import { AnnotatePage } from '@/pages/AnnotatePage';
 import { ReidPredictPage } from '@/pages/ReidPredictPage';
+import { PlayerDetectionPage } from '@/pages/PlayerDetectionPage';
+import { TrackingPage } from '@/pages/TrackingPage';
 import { AssociationLabelPage } from '@/pages/AssociationLabelPage';
 import { AssociationPredictPage } from '@/pages/AssociationPredictPage';
 import { AssociationTrainPage } from '@/pages/AssociationTrainPage';
@@ -32,6 +34,8 @@ const PAGES: Record<string, ReactElement> = {
   '/action-predict': <ActionPredictPage />,
   '/action-train': <ActionTrainPage />,
   '/action-annotate': <ActionAnnotatePage />,
+  '/tracking': <TrackingPage />,
+  '/player-detection': <PlayerDetectionPage />,
   '/reid-predict': <ReidPredictPage />,
   '/association-predict': <AssociationPredictPage />,
   '/association-label': <AssociationLabelPage />,

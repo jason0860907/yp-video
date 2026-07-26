@@ -99,19 +99,26 @@ export interface TrackData {
   links: Record<string, { rally_id: number; track_id: number }>;
 }
 
-/** GET /reid/track-masks — one rally's masks, whole tracklets at once.
+/** GET /tracklets/masks — one rally's masks, whole tracklets at once.
  *  Values are base64 packed bits (box-crop space, ``mask_hw`` grid), row i
- *  aligned with the tracklet's i-th frame from /reid/tracks. */
+ *  aligned with the tracklet's i-th frame from /tracklets/{name}. */
 export interface TrackMasks {
   mask_hw: [number, number];
   tracks: Record<string, string>;
 }
 
-/** Whether this event's automatic pick is still open to endorsement.
- *  A miss has no box to agree with, and a human verdict already outranks
- *  the machine — the same rule the confirm endpoint enforces server-side. */
-export const canConfirm = (r: Pick<ReidRecord, 'resolution' | 'actor_review'>) =>
-  r.resolution === 'auto' && verdictOf(r) === 'unreviewed';
+/** Whether a human could endorse the policy's answer here.
+ *
+ *  Two answers are endorsable and they land as different verdicts: a PICK
+ *  becomes `confirmed_auto`, and an explicit "nobody is visible" becomes
+ *  `occluded`. Merely abstaining is neither — `untracked` says somebody acted
+ *  and tracking lost them, which re-running tracking may fix. */
+export const canConfirm = (
+  r: Pick<ReidRecord, 'resolution' | 'actor_review' | 'association'>,
+) =>
+  verdictOf(r) === 'unreviewed' &&
+  (r.resolution === 'auto' ||
+    (r.resolution === 'unresolved' && r.association?.kind === 'occluded'));
 
 /** The rally an event falls in, or null when it sits between rallies.
  *

@@ -256,14 +256,27 @@ export interface PipelineState {
   blocked_on: 'rallies' | 'action' | 'tracks' | 'records' | null;
 }
 
-/** Video record from the reid listing. */
+/** GET /extraction/videos — the player-detection work list. */
+export interface ExtractionVideo {
+  name: string;
+  kind: CutKind;
+  event_count: number;
+  has_records: boolean;
+  /** People found across every action frame. What was DECIDED about them is
+   *  the association listing's to report. */
+  detections?: number | null;
+  /** Who estimated the skeletons these detections carry — the weights
+   *  identifier from the record header, not the registry key. */
+  keypoints?: string | null;
+  pipeline: PipelineState;
+}
+
+/** GET /reid/videos — how far a video's player naming has got. */
 export interface ReidVideo {
   name: string;
   kind: CutKind;
   event_count: number;
-  has_reid: boolean;
-  reid_counts?: { ok: number; multi: number; miss: number } | null;
-  /** Embedders whose matrix exists for this video (backfill fills gaps). */
+  /** Embedders whose matrix exists for this video. */
   embedded_models: string[];
   /** Existing matrices being refreshed after an actor fix. */
   stale_embedding_models?: string[];
@@ -274,9 +287,13 @@ export interface ReidVideo {
   pipeline: PipelineState;
 }
 
-/** GET /reid/options — the server-side model registry. */
-export interface ReidOptions {
+/** GET /extraction/options — who may estimate the skeletons. */
+export interface ExtractionOptions {
   keypoint_sources: string[];
+}
+
+/** GET /reid/options — the embedder registry. */
+export interface ReidOptions {
   default_embedder: string;
   embedders: {
     name: string;
@@ -284,8 +301,8 @@ export interface ReidOptions {
     /** Embeds background-suppressed crops — the viewer should show those. */
     masked: boolean;
   }[];
-  /** Official clip-reident default first, then candidates; Predict/Backfill
-   *  can explicitly override the active package. */
+  /** Official clip-reident default first, then candidates; the embed job can
+   *  explicitly override the active package. */
   checkpoints: { ref: string; run_name: string; active: boolean }[];
 }
 
@@ -313,7 +330,7 @@ export interface ReidRecord {
    *  shadow is activated. The rule is what produced the crop. */
   association?: {
     version: string;
-    decision: 'selected' | 'ambiguous' | 'no_candidate';
+    decision: 'selected' | 'ambiguous' | 'no_candidate' | 'abstained';
     candidate_count: number;
     margin: number | null;
     confidence?: number | null;
@@ -330,7 +347,7 @@ export interface ReidRecord {
     } | null;
     learned?: {
       version: string;
-      decision: 'selected' | 'ambiguous' | 'no_candidate';
+      decision: 'selected' | 'ambiguous' | 'no_candidate' | 'abstained';
       candidate_count: number;
       margin: number | null;
       confidence?: number | null;

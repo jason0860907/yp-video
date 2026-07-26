@@ -19,6 +19,7 @@ from yp_video.web.routers import (
     cut,
     detect,
     download,
+    extraction,
     jobs,
     actor_association,
     reid,
@@ -26,6 +27,7 @@ from yp_video.web.routers import (
     spot_predict,
     spot_train,
     system,
+    tracklets,
     upload,
 )
 from yp_video.web.vllm_manager import vllm_manager
@@ -113,6 +115,8 @@ app.include_router(annotate.router, prefix="/api/annotate", tags=["annotate"])
 app.include_router(detect.router, prefix="/api/detect", tags=["detect"])
 app.include_router(spot_train.router, prefix="/api/spot-train", tags=["spot-train"])
 app.include_router(spot_predict.router, prefix="/api/spot-predict", tags=["spot-predict"])
+app.include_router(tracklets.router, prefix="/api/tracklets", tags=["tracklets"])
+app.include_router(extraction.router, prefix="/api/extraction", tags=["extraction"])
 app.include_router(reid.router, prefix="/api/reid", tags=["reid"])
 app.include_router(reid_train.router, prefix="/api/reid-train", tags=["reid-train"])
 app.include_router(

@@ -24,7 +24,7 @@ import { PipelineChips, STAGE_HINT } from '@/components/video/PipelineChips';
 import { VideoCombobox } from '@/components/video/VideoCombobox';
 import { toast } from '@/components/feedback/toast';
 import { EventVideoPlayer, type PlayerHandle } from '@/components/labeling/EventVideoPlayer';
-import { canConfirm, errMsg, type ActorFix, type Rally, type SidebarAction, type TrackData } from '@/components/labeling/shared';
+import { canConfirm, errMsg, type ActorFix, type ActorVerdict, type Rally, type SidebarAction, type TrackData } from '@/components/labeling/shared';
 import type {
   ActionAnnotationData,
   AssociationVideo,
@@ -73,9 +73,9 @@ export function AssociationLabelPage() {
   // Records are extraction output, shared with ReID Label — same endpoint,
   // same cache key, so switching pages does not re-download them.
   const resultsQuery = useQuery({
-    queryKey: ['reid-results', picked],
+    queryKey: ['extraction-records', picked],
     queryFn: () =>
-      apiFetch<{ meta: Record<string, unknown>; records: ReidRecord[] }>(API.reid.results(picked)),
+      apiFetch<{ meta: Record<string, unknown>; records: ReidRecord[] }>(API.extraction.records(picked)),
     enabled: Boolean(picked),
   });
   const records = useMemo(() => resultsQuery.data?.records ?? [], [resultsQuery.data]);
@@ -87,10 +87,10 @@ export function AssociationLabelPage() {
   const rallies = useMemo(() => meta.rallies ?? [], [meta.rallies]);
 
   const tracksQuery = useQuery({
-    queryKey: ['reid-tracks', picked],
+    queryKey: ['tracklets', picked],
     queryFn: async (): Promise<TrackData | null> => {
       try {
-        return await apiFetch<TrackData>(API.reid.tracks(picked));
+        return await apiFetch<TrackData>(API.tracklets.get(picked));
       } catch (e) {
         if (e instanceof ApiError && e.status === 404) return null;
         throw e;
@@ -141,7 +141,7 @@ export function AssociationLabelPage() {
       // The POST returns the changed record and its one track link — patch
       // the two large payloads locally instead of downloading them again.
       qc.setQueryData<{ meta: Record<string, unknown>; records: ReidRecord[] }>(
-        ['reid-results', picked],
+        ['extraction-records', picked],
         (current) =>
           current
             ? {
@@ -150,7 +150,7 @@ export function AssociationLabelPage() {
               }
             : current,
       );
-      qc.setQueryData<TrackData | null>(['reid-tracks', picked], (current) => {
+      qc.setQueryData<TrackData | null>(['tracklets', picked], (current) => {
         if (!current) return current;
         const links = { ...current.links };
         if (result.track_link) links[eventId] = result.track_link;
@@ -196,25 +196,33 @@ export function AssociationLabelPage() {
   const confirmAuto = async (ids: string[]) => {
     if (!ids.length) return;
     try {
-      const { confirmed } = await apiFetch<{ confirmed: string[] }>(
+      // The response says which VERDICT each event got — endorsing a pick
+      // lands as `confirmed_auto`, endorsing "nobody is visible" lands as
+      // `occluded`. Assuming the first showed the wrong badge for the second.
+      const { confirmed } = await apiFetch<{ confirmed: Record<string, ActorVerdict> }>(
         API.association.confirm(picked),
         { method: 'POST', body: { event_ids: ids } },
       );
-      const done = new Set(confirmed);
       qc.setQueryData<{ meta: Record<string, unknown>; records: ReidRecord[] }>(
-        ['reid-results', picked],
+        ['extraction-records', picked],
         (current) =>
           current
             ? {
                 ...current,
                 records: current.records.map((r) =>
-                  done.has(r.id) ? { ...r, actor_review: 'confirmed_auto' as const } : r,
+                  confirmed[r.id] ? { ...r, actor_review: confirmed[r.id] } : r,
                 ),
               }
             : current,
       );
       void qc.invalidateQueries({ queryKey: ['association-videos'] });
-      toast.success(`Confirmed ${confirmed.length} automatic ${confirmed.length === 1 ? 'pick' : 'picks'}`);
+      const n = Object.keys(confirmed).length;
+      const occluded = Object.values(confirmed).filter((v) => v === 'occluded').length;
+      toast.success(
+        occluded
+          ? `Confirmed ${n} — ${n - occluded} pick(s), ${occluded} occluded`
+          : `Confirmed ${n} automatic ${n === 1 ? 'pick' : 'picks'}`,
+      );
     } catch (e) {
       toast.error(`Confirm failed: ${errMsg(e)}`);
     }

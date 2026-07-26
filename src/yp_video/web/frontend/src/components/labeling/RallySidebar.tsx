@@ -208,7 +208,7 @@ export const RallySidebar = memo(function RallySidebar({
           e.stopPropagation();
           onConfirmRally(pending);
         }}
-        title={`Confirm this rally's ${pending.length} automatic picks — the crops and embeddings do not change`}
+        title={`Confirm this rally's ${pending.length} model answers — picks stay confirmed and "Model: occluded?" becomes Occluded`}
         className="flex items-center gap-1 rounded-full bg-primary/15 px-2 py-0.5 text-[11px] font-medium text-primary-light ring-1 ring-primary/30 transition-colors hover:bg-primary/30"
       >
         ✓ <span className="opacity-80">{pending.length}</span>
