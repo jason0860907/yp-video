@@ -13,6 +13,7 @@ lets a policy be evaluated on a laptop with no video file in sight.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Protocol, Sequence
 
@@ -41,6 +42,11 @@ class EventContext:
     visible: bool
     detections: Sequence[dict] = ()
     tracklets: Sequence[dict] = ()
+    #: Tracklet key → that tracklet's silhouettes for the whole video. Absent
+    #: on a video tracked before masks existed; a policy that wants outlines
+    #: degrades rather than refuses, since the boxes still say where everyone
+    #: is.
+    masks: Mapping[str, np.ndarray | None] | None = None
 
     @property
     def attributable(self) -> bool:
@@ -133,7 +139,9 @@ class TrackletPolicy:
             return ActorPick()
         assert context.contact is not None
         x, y = context.contact
-        candidates = candidates_near(context.tracklets, context.frame)
+        candidates = candidates_near(
+            context.tracklets, context.frame, masks=context.masks
+        )
         features = extract_track_features(
             candidates,
             x,

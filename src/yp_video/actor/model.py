@@ -40,23 +40,30 @@ MODEL_SCHEMA_VERSION = 3
 #: those names came from — so a loader could not tell a box model from a
 #: tracklet one. Now it must say.
 FEATURE_SET_BOX = "box-v2"
-FEATURE_SET_TRACK = "track-v1"
+FEATURE_SET_TRACK = "track-v2"
+
+#: The only contracts that exist, and the column names each one means. A
+#: lookup and not an ``if track else box``: that fallback answered for any
+#: string at all, so a checkpoint naming a retired contract would be validated
+#: against the BOX names — the mismatch reported as a box problem, on a model
+#: that had never seen a box.
+FEATURE_SETS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
+    FEATURE_SET_BOX: (CANDIDATE_FEATURE_NAMES, CONTEXT_FEATURE_NAMES),
+    FEATURE_SET_TRACK: (
+        TRACK_CANDIDATE_FEATURE_NAMES,
+        TRACK_CONTEXT_FEATURE_NAMES,
+    ),
+}
 
 
-def _candidate_names(feature_set: str) -> tuple[str, ...]:
-    return (
-        TRACK_CANDIDATE_FEATURE_NAMES
-        if feature_set == FEATURE_SET_TRACK
-        else CANDIDATE_FEATURE_NAMES
-    )
-
-
-def _context_names(feature_set: str) -> tuple[str, ...]:
-    return (
-        TRACK_CONTEXT_FEATURE_NAMES
-        if feature_set == FEATURE_SET_TRACK
-        else CONTEXT_FEATURE_NAMES
-    )
+def _names(feature_set: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    try:
+        return FEATURE_SETS[feature_set]
+    except KeyError:
+        raise ValueError(
+            f"Unknown association feature set {feature_set!r} "
+            f"(have: {', '.join(sorted(FEATURE_SETS))})"
+        ) from None
 
 
 def _softmax(logits: np.ndarray) -> np.ndarray:
@@ -163,8 +170,8 @@ class AssociationModel:
             "name": self.name,
             "feature_set": self.feature_set,
             "feature_contract": {
-                "candidate": list(_candidate_names(self.feature_set)),
-                "context": list(_context_names(self.feature_set)),
+                "candidate": list(_names(self.feature_set)[0]),
+                "context": list(_names(self.feature_set)[1]),
             },
             "candidate_mean": self.candidate_mean.tolist(),
             "candidate_scale": self.candidate_scale.tolist(),
@@ -184,8 +191,7 @@ class AssociationModel:
                 f"{payload.get('schema_version')!r}"
             )
         feature_set = str(payload.get("feature_set") or FEATURE_SET_BOX)
-        expected_candidate = _candidate_names(feature_set)
-        expected_context = _context_names(feature_set)
+        expected_candidate, expected_context = _names(feature_set)
         contract = payload.get("feature_contract") or {}
         if tuple(contract.get("candidate") or ()) != expected_candidate:
             raise ValueError(

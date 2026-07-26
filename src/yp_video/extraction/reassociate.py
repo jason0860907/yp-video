@@ -28,7 +28,7 @@ from yp_video.core.progress import ProgressFn
 from yp_video.extraction.links import resolve_track
 from yp_video.extraction.store import crop_dir, masked_crop_dir, records_path
 from yp_video.person.detector import PersonBox
-from yp_video.tracklets.store import tracks_path
+from yp_video.tracklets.store import open_track_masks, tracks_path
 
 log = logging.getLogger(__name__)
 
@@ -126,6 +126,7 @@ def reassociate_video(
         raise FileNotFoundError(f"No extraction records for {stem}")
 
     tracklets: list[dict] = []
+    masks = None
     if policy.needs_tracklets:
         tracks = tracks_path(stem)
         if not tracks.exists():
@@ -133,6 +134,9 @@ def reassociate_video(
                 f"{policy.name} needs tracklets; {stem} has not been tracked"
             )
         _tmeta, tracklets = read_jsonl_cached(tracks)
+        # Held open for the whole video: every event reads the same archive,
+        # and a policy that ignores outlines never unpacks a single entry.
+        masks = open_track_masks(stem)
 
     meta, records = read_jsonl(path)
     frame_w, frame_h = meta.get("frame_size") or [0, 0]
@@ -143,57 +147,65 @@ def reassociate_video(
     pending: list[tuple[int, dict, tuple, int, bool]] = []
     counts = {"events": 0, "labeled": 0, "unchanged": 0, "abstained": 0, "unresolvable": 0}
     dirty = False
-    for row, record in enumerate(records):
-        counts["events"] += 1
-        if str(record.get("id")) in verdicts:
-            counts["labeled"] += 1
-            continue
+    # The archive is only needed while deciding; pass two re-crops from
+    # the video, so it is closed as soon as the last event is scored.
+    try:
+        for row, record in enumerate(records):
+            counts["events"] += 1
+            if str(record.get("id")) in verdicts:
+                counts["labeled"] += 1
+                continue
 
-        xy = record.get("xy")
-        context = EventContext(
-            frame=int(record["frame"]),
-            contact=(
-                (float(xy[0]) * frame_w, float(xy[1]) * frame_h)
-                if xy and frame_w and frame_h
-                else None
-            ),
-            visible=bool(record.get("visible", True)),
-            detections=record.get("detections") or [],
-            tracklets=tracklets,
-        )
-        pick = policy.decide(context)
-        dirty |= _update(
-            record,
-            association=pick.diagnostic or _ABSENT,
-            candidates=pick.candidates,
-        )
+            xy = record.get("xy")
+            context = EventContext(
+                frame=int(record["frame"]),
+                contact=(
+                    (float(xy[0]) * frame_w, float(xy[1]) * frame_h)
+                    if xy and frame_w and frame_h
+                    else None
+                ),
+                visible=bool(record.get("visible", True)),
+                detections=record.get("detections") or [],
+                tracklets=tracklets,
+                masks=masks,
+            )
+            pick = policy.decide(context)
+            dirty |= _update(
+                record,
+                association=pick.diagnostic or _ABSENT,
+                candidates=pick.candidates,
+            )
 
-        if not pick.decided:
-            if record.get("box") is not None:
-                counts["abstained"] += 1
+            if not pick.decided:
+                if record.get("box") is not None:
+                    counts["abstained"] += 1
+                    dirty |= _clear(record)
+                else:
+                    counts["unchanged"] += 1
+                continue
+
+            target = _target(stem, record, pick)
+            if target is None:
+                counts["unresolvable"] += 1
                 dirty |= _clear(record)
-            else:
+                continue
+
+            box, src_frame, may_snap = target
+            settled = _same_pick(record, box, src_frame, pick, frame_w, frame_h)
+            # The tracklet reference is the pick; the box is only where it lands
+            # today. Written after the comparison, which reads the old one.
+            dirty |= _update(
+                record,
+                track=pick.track.key if pick.track is not None else _ABSENT,
+            )
+            if settled:
                 counts["unchanged"] += 1
-            continue
+                continue
+            pending.append((row, record, box, src_frame, may_snap))
 
-        target = _target(stem, record, pick)
-        if target is None:
-            counts["unresolvable"] += 1
-            dirty |= _clear(record)
-            continue
-
-        box, src_frame, may_snap = target
-        settled = _same_pick(record, box, src_frame, pick, frame_w, frame_h)
-        # The tracklet reference is the pick; the box is only where it lands
-        # today. Written after the comparison, which reads the old one.
-        dirty |= _update(
-            record,
-            track=pick.track.key if pick.track is not None else _ABSENT,
-        )
-        if settled:
-            counts["unchanged"] += 1
-            continue
-        pending.append((row, record, box, src_frame, may_snap))
+    finally:
+        if masks is not None:
+            masks.close()
 
     # Pass one is pure bookkeeping over records already in memory; the crops
     # are the minutes. So the re-crop pass IS the progress, and this is its

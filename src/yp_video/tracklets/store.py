@@ -16,6 +16,7 @@ A leaf: paths and IO only, nothing here imports a domain package.
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
@@ -65,4 +66,54 @@ def load_track_masks(stem: str, rally_id: int, track_id: int) -> np.ndarray:
     with np.load(path) as z:
         h, w = (int(v) for v in z["_shape"])
         packed = z[track_key(rally_id, track_id)]
+    return _unpack(packed, h, w)
+
+
+def _unpack(packed: np.ndarray, h: int, w: int) -> np.ndarray:
     return np.unpackbits(packed, axis=1)[:, : h * w].reshape(-1, h, w).astype(bool)
+
+
+class TrackMasks(Mapping):
+    """Every tracklet's silhouettes for one video, unpacked on first use.
+
+    A whole video's masks decompress to ~100 MB of bool, and a consumer that
+    scores events touches only the tracklets alive near one — so this stays a
+    lazy view over the open archive rather than a dict comprehension. Missing
+    keys read as ``None`` (tracked before masks existed, or a tracklet the
+    segmenter never produced) so callers branch on data, not on exceptions.
+    """
+
+    def __init__(self, path: Path):
+        self._archive = np.load(path)
+        self._h, self._w = (int(v) for v in self._archive["_shape"])
+        self._keys = tuple(k for k in self._archive.files if k != "_shape")
+        self._cache: dict[str, np.ndarray] = {}
+
+    def __getitem__(self, key: str) -> np.ndarray | None:
+        if key not in self._cache:
+            if key not in self._keys:
+                return None
+            self._cache[key] = _unpack(self._archive[key], self._h, self._w)
+        return self._cache[key]
+
+    def __iter__(self):
+        return iter(self._keys)
+
+    def __len__(self) -> int:
+        return len(self._keys)
+
+    def close(self) -> None:
+        self._archive.close()
+        self._cache.clear()
+
+    def __enter__(self) -> "TrackMasks":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
+
+def open_track_masks(stem: str) -> TrackMasks | None:
+    """This video's silhouettes, or None when it was tracked without them."""
+    path = tracks_masks_path(stem)
+    return TrackMasks(path) if path.exists() else None

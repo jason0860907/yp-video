@@ -29,7 +29,11 @@ from yp_video.person.detector import (
     iou,
     person_from_detection as _person,
 )
-from yp_video.tracklets.store import tracks_path
+from yp_video.tracklets.store import (
+    open_track_masks,
+    tracks_masks_path,
+    tracks_path,
+)
 
 MATCH_IOU = 0.5
 _dataset_cache: StatCache = StatCache()
@@ -258,52 +262,67 @@ def build_track_dataset(stems: Sequence[str] | None = None) -> TrackDataset:
         if not (record_file.exists() and label_file.exists() and track_file.exists()):
             skipped["no_tracking"] += 1
             continue
+        mask_file = tracks_masks_path(stem)
         sources.extend((label_file, record_file, track_file))
+        if mask_file.exists():
+            sources.append(mask_file)
         meta, records = read_jsonl_cached(record_file)
         _tmeta, tracklets = read_jsonl_cached(track_file)
         width, height = meta.get("frame_size") or [0, 0]
         truth = actor_labels.load(stem)
 
-        for record in records:
-            event_id = str(record.get("id"))
-            label = truth.get(event_id)
-            if label is None:
-                continue
-            verdicts[label.verdict.value] += 1
-            if not width or not height or not record.get("xy"):
-                skipped["missing_contact_geometry"] += 1
-                continue
-            xy = record["xy"]
-            x, y = float(xy[0]) * width, float(xy[1]) * height
-            candidates = candidates_near(tracklets, record["frame"])
-            features = extract_track_features(
-                candidates,
-                x,
-                y,
-                record["frame"],
-                detections=record.get("detections") or [],
-                visible=record.get("visible", True),
-            )
-
-            if label.verdict is ActorVerdict.OCCLUDED:
-                target = None
-            elif label.track is None:
-                # A box verdict names no tracklet — it is truth about a
-                # person, not about a candidate in this list.
-                skipped["no_tracklet_label"] += 1
-                continue
-            else:
-                target = next(
-                    (i for i, ref in enumerate(features.refs) if ref == label.track),
-                    None,
-                )
-                if target is None:
-                    skipped["target_not_alive"] += 1
+        # One open archive per video; every event reads the same silhouettes.
+        masks = open_track_masks(stem)
+        try:
+            for record in records:
+                event_id = str(record.get("id"))
+                label = truth.get(event_id)
+                if label is None:
                     continue
+                verdicts[label.verdict.value] += 1
+                if not width or not height or not record.get("xy"):
+                    skipped["missing_contact_geometry"] += 1
+                    continue
+                xy = record["xy"]
+                x, y = float(xy[0]) * width, float(xy[1]) * height
+                candidates = candidates_near(
+                    tracklets, record["frame"], masks=masks
+                )
+                features = extract_track_features(
+                    candidates,
+                    x,
+                    y,
+                    record["frame"],
+                    detections=record.get("detections") or [],
+                    visible=record.get("visible", True),
+                )
 
-            examples.append(
-                TrackExample(stem, event_id, features, target, label.verdict)
-            )
+                if label.verdict is ActorVerdict.OCCLUDED:
+                    target = None
+                elif label.track is None:
+                    # A box verdict names no tracklet — it is truth about a
+                    # person, not about a candidate in this list.
+                    skipped["no_tracklet_label"] += 1
+                    continue
+                else:
+                    target = next(
+                        (
+                            i
+                            for i, ref in enumerate(features.refs)
+                            if ref == label.track
+                        ),
+                        None,
+                    )
+                    if target is None:
+                        skipped["target_not_alive"] += 1
+                        continue
+
+                examples.append(
+                    TrackExample(stem, event_id, features, target, label.verdict)
+                )
+        finally:
+            if masks is not None:
+                masks.close()
 
     return TrackDataset(
         examples=tuple(examples),

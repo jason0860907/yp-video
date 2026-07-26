@@ -38,6 +38,16 @@ def _tracklet(rally, track, frames, box, score=0.9):
     }
 
 
+def _half_mask(*, fill: str, shape=(96, 48)) -> np.ndarray:
+    """A silhouette occupying one half of its box, in mask-grid space."""
+    mask = np.zeros(shape, dtype=bool)
+    if fill == "left":
+        mask[:, : shape[1] // 2] = True
+    else:
+        mask[:, shape[1] // 2 :] = True
+    return mask
+
+
 def _model(feature_set: str, n_candidate: int, n_context: int) -> AssociationModel:
     return AssociationModel(
         name="m",
@@ -103,6 +113,50 @@ class FeatureTests(unittest.TestCase):
         self.assertEqual(row["score_at_event"], 1.0)
         self.assertEqual(row["score_median"], 1.0)
 
+    def test_the_silhouette_separates_two_players_one_box_contains(self) -> None:
+        """The box test says yes to both when they overlap; the outline knows
+        which of the two bodies the pixel under the ball belongs to."""
+        left = _tracklet(1, 1, [100], [0, 0, 40, 100])
+        right = _tracklet(1, 2, [100], [20, 0, 60, 100])
+        # Left fills its left half, right fills its right half, so the point
+        # at x=30 is inside BOTH boxes but only on the right player.
+        masks = {
+            "1:1": np.tile(_half_mask(fill="left"), (1, 1, 1)),
+            "1:2": np.tile(_half_mask(fill="right"), (1, 1, 1)),
+        }
+        features = extract_track_features(
+            candidates_near([left, right], 100, masks=masks), 45.0, 50.0, 100
+        )
+        rows = dict(zip([c.key for c in features.refs], features.candidates))
+        in_box = TRACK_CANDIDATE_FEATURE_NAMES.index("contact_in_box")
+        mask_d = TRACK_CANDIDATE_FEATURE_NAMES.index("mask_distance_height")
+        self.assertEqual(rows["1:1"][in_box], rows["1:2"][in_box])
+        self.assertEqual(rows["1:2"][mask_d], 0.0)
+        self.assertGreater(rows["1:1"][mask_d], 0.0)
+
+    def test_a_video_without_masks_falls_back_to_the_box(self) -> None:
+        """Tracked before masks existed. The column keeps measuring the same
+        thing, crudely — a sentinel would need a has_mask companion that is
+        constant on every corpus tracked since, which this contract refuses."""
+        row = self._row([_tracklet(1, 1, [100], [0, 0, 40, 100])], 200.0, 50.0)
+        self.assertEqual(row["mask_distance_height"], row["center_distance_height"])
+
+    def test_abstention_sees_the_best_candidate_s_own_distances(self) -> None:
+        """Occluded events are decided by how far the nearest player's HANDS
+        are from the ball; a centre distance cannot say that, and the NONE
+        head used to see nothing else."""
+        near = extract_track_features(
+            candidates_near([_tracklet(1, 1, [100], [0, 0, 40, 100])], 100), 20.0, 50.0, 100
+        )
+        far = extract_track_features(
+            candidates_near([_tracklet(1, 1, [100], [0, 0, 40, 100])], 100), 300.0, 50.0, 100
+        )
+        mask_d = TRACK_CONTEXT_FEATURE_NAMES.index("top_mask_distance")
+        wrist = TRACK_CONTEXT_FEATURE_NAMES.index("top_wrist_distance")
+        self.assertLess(near.context[mask_d], far.context[mask_d])
+        self.assertIn("top_wrist_distance", TRACK_CONTEXT_FEATURE_NAMES)
+        self.assertEqual(near.context[wrist], 4.0)  # no detections given
+
     def test_no_feature_is_constant_by_construction(self) -> None:
         """`has_wrist` in the box contract had std 0 and a weight that could
         never move; nothing here may be born that way."""
@@ -133,6 +187,20 @@ class ContractTests(unittest.TestCase):
         ).payload()
         payload["feature_set"] = FEATURE_SET_BOX
         with self.assertRaisesRegex(ValueError, "contract mismatch"):
+            AssociationModel.from_payload(payload)
+
+    def test_a_retired_contract_name_is_rejected_not_reinterpreted(self) -> None:
+        """A checkpoint naming a contract that no longer exists must say so.
+        The old ``track if ... else box`` fallback answered for any string, so
+        a track-v1 model was validated against the BOX names and reported as a
+        box mismatch — on a model that had never seen a box."""
+        payload = _model(
+            FEATURE_SET_TRACK,
+            len(TRACK_CANDIDATE_FEATURE_NAMES),
+            len(TRACK_CONTEXT_FEATURE_NAMES),
+        ).payload()
+        payload["feature_set"] = "track-v1"
+        with self.assertRaisesRegex(ValueError, "Unknown association feature set"):
             AssociationModel.from_payload(payload)
 
     def test_an_old_checkpoint_fails_loudly(self) -> None:
