@@ -8,27 +8,23 @@
  *  matrix to refresh after a fix (see routers/actor_association.py).
  *
  *  Orchestration only — the video player and its actor picker live in
- *  components/labeling/EventVideoPlayer, the work list in
- *  components/association/EventReviewList.
+ *  components/labeling/EventVideoPlayer, which is also where the work is
+ *  done: the rally sidebar shows what each event still needs and confirming
+ *  happens next to the video you are watching.
  */
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { API, ApiError, apiFetch, apiUrl } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { Badge } from '@/components/ui/Badge';
-import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
-import { EmptyState } from '@/components/ui/EmptyState';
-import { SectionLabel } from '@/components/ui/SectionLabel';
 import { KindBadge } from '@/components/video/KindBadge';
 import { PipelineChips, STAGE_HINT } from '@/components/video/PipelineChips';
 import { VideoCombobox } from '@/components/video/VideoCombobox';
-import { confirm } from '@/components/feedback/confirm';
 import { toast } from '@/components/feedback/toast';
-import { EventReviewList } from '@/components/association/EventReviewList';
 import { EventVideoPlayer, type PlayerHandle } from '@/components/labeling/EventVideoPlayer';
-import { canConfirm, errMsg, rallyOf, type ActorFix, type Rally, type SidebarAction, type TrackData } from '@/components/labeling/shared';
+import { canConfirm, errMsg, type ActorFix, type Rally, type SidebarAction, type TrackData } from '@/components/labeling/shared';
 import type {
   ActionAnnotationData,
   AssociationVideo,
@@ -58,7 +54,6 @@ export function AssociationLabelPage() {
   // unreviewed, so this one is computed rather than stored.
   const [pickStatus, setPickStatus] = useState<'all' | 'unlabeled' | 'labeled' | 'done'>('all');
   const [selectedRally, setSelectedRally] = useState<number | 'all'>('all');
-  const [selectedId, setSelectedId] = useState<string | null>(null);
   const playerRef = useRef<PlayerHandle>(null);
 
   const videosQuery = useQuery({
@@ -90,7 +85,6 @@ export function AssociationLabelPage() {
     rallies?: Rally[];
   };
   const rallies = useMemo(() => meta.rallies ?? [], [meta.rallies]);
-  const fps = meta.fps ?? 0;
 
   const tracksQuery = useQuery({
     queryKey: ['reid-tracks', picked],
@@ -132,13 +126,6 @@ export function AssociationLabelPage() {
       }),
     [actionsQuery.data],
   );
-
-  useEffect(() => setSelectedId(null), [picked]);
-
-  const jumpTo = (r: ReidRecord) => {
-    setSelectedId(r.id);
-    playerRef.current?.jumpToEvent({ id: r.id, frame: r.frame, time: r.time ?? null });
-  };
 
   // A fix re-crops and re-embeds the event server-side; fixingEvent gates the
   // picker so a double click cannot fire two overlapping writes.
@@ -202,37 +189,12 @@ export function AssociationLabelPage() {
     [confirmable],
   );
 
-  // The whole-video button deliberately stops at the rally boundaries. An
-  // action outside every rally is usually a warm-up hit or a mis-timed
-  // annotation, and sweeping those into training truth is exactly the kind
-  // of thing nobody notices until the model has learned it. They stay
-  // confirmable one rally row (the "outside" one) at a time.
-  // With no rally annotation at all there is no boundary to respect.
-  const bulkConfirmable = useMemo(
-    () =>
-      rallies.length
-        ? confirmable.filter((r) => rallyOf(rallies, r, fps) !== null)
-        : confirmable,
-    [confirmable, rallies, fps],
-  );
-  const outsideCount = confirmable.length - bulkConfirmable.length;
-
-  const confirmAuto = async (ids: string[], { ask }: { ask: boolean }) => {
+  // Confirming is per event or per rally, from the sidebar. There is no
+  // whole-video sweep: an action outside every rally is usually a warm-up hit
+  // or a mis-timed annotation, and sweeping those into training truth is
+  // exactly the kind of thing nobody notices until the model has learned it.
+  const confirmAuto = async (ids: string[]) => {
     if (!ids.length) return;
-    if (ask) {
-      const ok = await confirm({
-        title: `Confirm ${ids.length} automatic picks?`,
-        body:
-          `They become human-confirmed association labels — training truth, ` +
-          `not machine output. Events you already fixed are untouched.` +
-          (outsideCount
-            ? ` ${outsideCount} action${outsideCount === 1 ? '' : 's'} outside every rally ` +
-              `${outsideCount === 1 ? 'is' : 'are'} left out — confirm those from the sidebar's outside row.`
-            : ''),
-        confirmText: 'Confirm',
-      });
-      if (!ok) return;
-    }
     try {
       const { confirmed } = await apiFetch<{ confirmed: string[] }>(
         API.association.confirm(picked),
@@ -259,7 +221,6 @@ export function AssociationLabelPage() {
   };
 
   const pickedVideo = videos.find((v) => v.name === picked);
-  const reviewed = records.filter((r) => (r.actor_review ?? 'unreviewed') !== 'unreviewed').length;
 
   return (
     <div className="mx-auto max-w-screen-2xl space-y-5">
@@ -349,87 +310,14 @@ export function AssociationLabelPage() {
           videoName={picked}
           tracklets={tracksQuery.data?.tracklets ?? []}
           onFixActor={fixActor}
-          onConfirmActor={(id) => void confirmAuto([id], { ask: false })}
+          onConfirmActor={(id) => void confirmAuto([id])}
           confirmableIds={confirmableIds}
-          onConfirmRally={(ids) => void confirmAuto(ids, { ask: false })}
+          onConfirmRally={(ids) => void confirmAuto(ids)}
           fixing={Boolean(fixingEvent)}
           trackLinks={tracksQuery.data?.links ?? {}}
         />
       )}
 
-      <Card>
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-3">
-            <SectionLabel className="mb-0 leading-none">Actor review</SectionLabel>
-            {picked && (
-              <span
-                className="font-mono text-[11px] leading-none tabular-nums text-text-muted"
-                title="Events carrying a human verdict / events extraction produced"
-              >
-                <span className={reviewed >= records.length ? 'text-primary-light' : undefined}>
-                  {reviewed}
-                </span>
-                /{records.length} actions
-              </span>
-            )}
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {picked && pickedVideo && (
-              <div className="flex flex-wrap gap-2 text-[11px]">
-                <Badge tone="success">ok {pickedVideo.auto_counts.ok}</Badge>
-                <Badge tone="warning">multi {pickedVideo.auto_counts.multi}</Badge>
-                <Badge tone="danger">miss {pickedVideo.auto_counts.miss}</Badge>
-              </div>
-            )}
-            {picked && (
-              <Button
-                size="sm"
-                intent="primary"
-                disabled={!bulkConfirmable.length}
-                onClick={() => void confirmAuto(bulkConfirmable.map((r) => r.id), { ask: true })}
-                title={
-                  bulkConfirmable.length
-                    ? 'Endorse every automatic pick inside a rally that has no verdict yet — the crop and its embedding do not change' +
-                      (outsideCount ? `. ${outsideCount} outside every rally stay out; confirm those per rally.` : '')
-                    : 'Nothing left to confirm inside a rally; whatever remains needs a real verdict (pick or occluded)'
-                }
-              >
-                Confirm {bulkConfirmable.length} in rallies
-              </Button>
-            )}
-          </div>
-        </div>
-
-        {!picked ? (
-          <EmptyState
-            icon={
-              <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M15.042 21.672L13.684 16.6m0 0l-2.51 2.225.569-9.47 5.227 7.917-3.286-.672zm-7.518-.267A8.25 8.25 0 1120.25 10.5M8.288 14.212A5.25 5.25 0 1117.25 10.5"
-                />
-              </svg>
-            }
-            title="Pick an extracted video"
-            subtitle="Turn on Pick Player, park on an action, then click who performed it"
-          />
-        ) : resultsQuery.isPending ? (
-          <div className="py-8 text-center text-xs text-text-muted">Loading records…</div>
-        ) : resultsQuery.isError ? (
-          <p className="rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-1.5 text-[11px] text-red-400">
-            {errMsg(resultsQuery.error)}
-          </p>
-        ) : (
-          <EventReviewList
-            records={records}
-            rallies={rallies}
-            fps={fps}
-            selectedId={selectedId}
-            onJump={jumpTo}
-          />
-        )}
-      </Card>
     </div>
   );
 }
