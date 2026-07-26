@@ -83,7 +83,6 @@ export function ReidLabelPage() {
     const t = setTimeout(() => setThreshold(thresholdDraft), 350);
     return () => clearTimeout(t);
   }, [thresholdDraft]);
-  const [showSkeleton, setShowSkeleton] = useState(false);
   const [showMasked, setShowMasked] = useState(false);
   const [showVideo, setShowVideo] = useState(true);
   const [statusFilter, setStatusFilter] = useState<'all' | ReidRecord['status']>('all');
@@ -419,15 +418,6 @@ export function ReidLabelPage() {
               />
               Video
             </label>
-            <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-text-secondary">
-              <input
-                type="checkbox"
-                checked={showSkeleton}
-                onChange={(e) => setShowSkeleton(e.target.checked)}
-                className="h-3.5 w-3.5 accent-primary"
-              />
-              Skeleton
-            </label>
             <label
               className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-text-secondary"
               title="Show the background-suppressed crops the masked embedders embed (original shown where a video's masked embed hasn't run yet)"
@@ -565,7 +555,6 @@ export function ReidLabelPage() {
             board={board}
             lockedDock={lockedDock}
             statusFilter={statusFilter}
-            showSkeleton={showSkeleton}
             showMasked={showMasked}
             trackLinks={trackLinks}
             onSeekToEvent={seekToEvent}

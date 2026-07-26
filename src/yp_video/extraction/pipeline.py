@@ -65,10 +65,8 @@ from yp_video.extraction.store import (
     records_path,
 )
 from yp_video.person.detector import (
-    DEFAULT_KEYPOINT_SOURCE,
     DETECTOR_NAME,
-    KEYPOINT_SOURCES,
-    build_keypoint_sources,
+    person_detector,
     person_from_detection,
 )
 from yp_video.reid.embedder import base_embedder_name, build_embedders
@@ -113,20 +111,13 @@ def _serialize_detections(boxes, w: int, h: int) -> list[dict]:
     out = []
     for b in sorted(boxes, key=lambda b: -b.score):
         x0, y0, x1, y1 = clamp_box(b.xyxy, w, h)
-        d: dict = {"box": [x0, y0, x1, y1], "score": round(float(b.score), 3)}
-        if b.keypoints is not None and b.keypoint_conf is not None:
-            d["keypoints"] = [
-                [round(float(px), 1), round(float(py), 1), round(float(c), 2)]
-                for (px, py), c in zip(b.keypoints, b.keypoint_conf)
-            ]
-        out.append(d)
+        out.append({"box": [x0, y0, x1, y1], "score": round(float(b.score), 3)})
     return out
 
 
 def detect_video(
     video_path: Path,
     *,
-    keypoints: str = DEFAULT_KEYPOINT_SOURCE,
     on_progress: ProgressFn | None = None,
 ) -> dict:
     """Find every person on each annotated action frame. Decides nothing.
@@ -134,7 +125,7 @@ def detect_video(
     Perception, not judgement: this is the sparse sibling of rally tracking —
     tracking detects every frame of every rally and links the results, this
     detects the ~300 frames an action actually happened on and keeps ALL the
-    boxes, with keypoints. Which of those people acted is the association
+    segmentation boxes. Which of those people acted is the association
     stage's answer (extraction/reassociate.py), and it re-decides among these
     boxes without ever needing the video again.
 
@@ -165,12 +156,12 @@ def detect_video(
     fps = float(cap.get(cv2.CAP_PROP_FPS)) or 30.0
     cap.release()
 
-    source = build_keypoint_sources()[keypoints]
+    detector = person_detector()
     records: list[dict] = []
     total = len(events)
     if on_progress:
         # The first detect() loads the detector — announce the stall.
-        on_progress(0, total, f"loading detector ({keypoints})...")
+        on_progress(0, total, f"loading detector ({DETECTOR_NAME})...")
 
     # A random seek costs more than detection (~55 vs ~27 ms/event), so a
     # decoder thread stays a few events ahead and the GPU never waits on
@@ -241,7 +232,7 @@ def detect_video(
                 # association training set both need the ones a policy would
                 # reject.
                 record["detections"] = _serialize_detections(
-                    source.detect(frame, focus=pt), frame_w, frame_h
+                    detector.detect(frame, focus=pt), frame_w, frame_h
                 )
             records.append(record)
             if on_progress:
@@ -257,7 +248,7 @@ def detect_video(
     }
     header = {
         "video": stem,
-        "source": {"detector": DETECTOR_NAME, "keypoints": KEYPOINT_SOURCES[keypoints]},
+        "source": {"detector": DETECTOR_NAME},
         "frame_size": [frame_w, frame_h],
         "fps": fps,
         "created_at": time.time(),
@@ -271,7 +262,7 @@ def detect_video(
 #: Written by the association stage, not this one — carried across a
 #: re-detect so refreshing the candidate list never erases an answer.
 _ASSOCIATION_FIELDS = frozenset({
-    "status", "resolution", "box", "actor_box", "score", "crop", "keypoints",
+    "status", "resolution", "box", "actor_box", "score", "crop", "crop_schema",
     "candidates", "association", "auto_box", "track", "crop_frame",
     "actor_revision",
 })
@@ -427,7 +418,7 @@ def apply_actor_fix(
     """Re-point one extracted event at the person a human named, in place.
 
     The verdict drives everything: ``MANUAL`` crops the labeled box (snapped
-    by IoU onto a stored detection when possible, so keypoints carry over);
+    by IoU onto a stored segmentation detection when possible);
     ``OCCLUDED`` clears the crop and embedding, dropping the event out of
     clustering and matching; ``None`` reverts to the automatic pick, re-run
     from the stored detections. Persisting the label is the caller's job —
@@ -498,7 +489,9 @@ def _apply_actor_fix(
         )
 
     # Clear the previous pick; each branch below re-fills what applies.
-    record.update(status="miss", box=None, actor_box=None, score=None, crop=None, keypoints=None)
+    record.update(status="miss", box=None, actor_box=None, score=None, crop=None)
+    record.pop("crop_schema", None)
+    record.pop("keypoints", None)
     record.pop("crop_frame", None)
 
     target = label_target(stem, record, label) if label is not None else None

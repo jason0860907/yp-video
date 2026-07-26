@@ -73,7 +73,7 @@ export function AssociationPredictPage() {
     : undefined;
   // Anything that chooses among tracklets has nothing to choose from on a
   // video that was never tracked.
-  const needsTracks = chosenCheckpoint?.feature_set === 'track-v1' || !!chosenSpot;
+  const needsTracks = chosenCheckpoint?.feature_set.startsWith('track-') || !!chosenSpot;
 
   const upsertJob = (job: Job) =>
     setJobOverrides((prev) => ({ ...prev, [job.id]: job }));

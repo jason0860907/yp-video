@@ -83,7 +83,7 @@ def _pack_mask(mask: np.ndarray, box) -> np.ndarray:
 class _BatchDetector:
     """fp16 batch-compiled RF-DETR Seg for the dense pass — person boxes,
     scores and instance masks in one forward (3.7 ms/frame at res 432,
-    faster than the keypoint model this replaced).
+    fast enough for the dense pass).
 
     Separate from PersonDetector on purpose: optimize_for_inference() halves
     latency, and the compiled graph only accepts exactly BATCH_SIZE

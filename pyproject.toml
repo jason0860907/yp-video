@@ -31,19 +31,6 @@ dependencies = [
     "rfdetr>=1.8.3",
     "scipy>=1.11",
     "onnxruntime>=1.20",
-    # SAM 3D Body — optional third_party keypoints (see docs/third_party.md),
-    # runs inside THIS venv: the checkout brings code only, its Python deps
-    # are declared here so a fresh `uv sync` can serve it. (The ReID model
-    # lives in the sibling yp-reid package with its OWN venv — its deps do
-    # not belong here.)
-    "timm>=1.0",
-    "yacs>=0.1.8",
-    "wandb>=0.17",
-    "omegaconf>=2.3",
-    "pytorch-lightning>=2.4",
-    "roma>=1.5",
-    "termcolor>=2",
-    "braceexpand>=0.1",
     "orjson>=3.11.9",
 ]
 

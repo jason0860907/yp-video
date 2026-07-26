@@ -22,7 +22,7 @@ from yp_video.person.detector import iou
 
 #: A candidate must lie this far inside the display box to count as the same
 #: person. Deliberately containment and not IoU: the display box is a union of
-#: the detector box, every keypoint and the contact point, so it is a superset
+#: the segmentation detector box and contact point, so it is a superset
 #: of the track box and IoU would punish it for being big.
 LINK_MIN_CONTAINMENT = 0.5
 

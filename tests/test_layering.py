@@ -135,7 +135,7 @@ ROUTER_SURFACES = {
     },
     # Finding the people. Choosing who acted is /api/actor-association.
     "/api/extraction": {
-        "/videos", "/options", "/detect", "/records/{name}",
+        "/videos", "/detect", "/records/{name}",
         "/crop/{name}/{crop_file}",
     },
     # Who is on court over time. Depends on rally spans and nothing else.

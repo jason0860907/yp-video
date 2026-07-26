@@ -265,9 +265,8 @@ export interface ExtractionVideo {
   /** People found across every action frame. What was DECIDED about them is
    *  the association listing's to report. */
   detections?: number | null;
-  /** Who estimated the skeletons these detections carry — the weights
-   *  identifier from the record header, not the registry key. */
-  keypoints?: string | null;
+  /** Detector identifier persisted in the record header. */
+  detector?: string | null;
   pipeline: PipelineState;
 }
 
@@ -285,11 +284,6 @@ export interface ReidVideo {
   /** Labeling marked finished by the user (the Label page's Done button). */
   done?: boolean;
   pipeline: PipelineState;
-}
-
-/** GET /extraction/options — who may estimate the skeletons. */
-export interface ExtractionOptions {
-  keypoint_sources: string[];
 }
 
 /** GET /reid/options — the embedder registry. */
@@ -342,7 +336,7 @@ export interface ReidRecord {
     top: {
       box: [number, number, number, number];
       cost: number;
-      source: 'wrist' | 'box' | 'other';
+      source: 'box' | 'other';
       detection_score: number;
     } | null;
     learned?: {
@@ -355,7 +349,7 @@ export interface ReidRecord {
       top: {
         box: [number, number, number, number];
         cost: number;
-        source: 'wrist' | 'box' | 'other';
+        source: 'box' | 'other';
         detection_score: number;
       } | null;
     } | null;
@@ -364,8 +358,6 @@ export interface ReidRecord {
   score?: number | null;
   candidates: number;
   crop?: string | null;
-  /** 17 COCO keypoints of the matched player, crop-relative [x, y, conf]. */
-  keypoints?: [number, number, number][] | null;
   /** ALL person detections on the event frame — the actor picker's choices. */
   detections?: { box: [number, number, number, number]; score: number }[];
   /** The automatic pick, kept when a manual fix overrides it. */
@@ -573,7 +565,7 @@ export interface ReidAssociationDatasetSummary {
 export interface ReidAssociationCheckpoint {
   name: string;
   active_shadow: boolean;
-  /** Which feature contract it was trained on: 'box-v2' | 'track-v1'. */
+  /** Which feature contract it was trained on, such as box-v3 or track-v3. */
   feature_set: string;
   /** Why it cannot be the extraction shadow, or null when it can. */
   shadow_blocked_on: string | null;

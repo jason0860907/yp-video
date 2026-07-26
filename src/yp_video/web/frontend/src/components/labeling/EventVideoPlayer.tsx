@@ -224,7 +224,7 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
   const trackBoxes = useMemo(() => buildTrackBoxes(tracklets), [tracklets]);
 
   const [w, h] = frameSize;
-  // The event box (person ∪ keypoints ∪ ball, +4% margin) belongs to its
+  // The event box (segmentation person box ∪ ball, +4% margin) belongs to its
   // action frame, and draws only there — an event's box on any other frame
   // is a stale rectangle over unrelated footage.
   const visible = useMemo(

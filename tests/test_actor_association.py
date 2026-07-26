@@ -46,18 +46,9 @@ from yp_video.web.routers import actor_association as router
 def _person(
     *,
     score: float,
-    wrist: tuple[float, float],
     box: tuple[float, float, float, float],
 ) -> PersonBox:
-    keypoints = np.zeros((17, 2), dtype=np.float32)
-    keypoints[9] = wrist
-    keypoints[10] = wrist
-    return PersonBox(
-        xyxy=box,
-        score=score,
-        keypoints=keypoints,
-        keypoint_conf=np.ones(17, dtype=np.float32),
-    )
+    return PersonBox(xyxy=box, score=score)
 
 
 class RulePolicyTests(unittest.TestCase):
@@ -68,7 +59,7 @@ class RulePolicyTests(unittest.TestCase):
     """
 
     def test_the_rule_takes_the_best_confident_candidate(self) -> None:
-        actor = _person(score=0.9, wrist=(50, 20), box=(30, 20, 70, 120))
+        actor = _person(score=0.9, box=(30, 20, 70, 120))
 
         decision = rule_decision([actor], 50, 20)
 
@@ -78,7 +69,7 @@ class RulePolicyTests(unittest.TestCase):
 
     def test_the_rule_ignores_a_low_confidence_person(self) -> None:
         """The 0.1-0.5 band exists to give the human picker more boxes."""
-        faint = _person(score=0.2, wrist=(50, 20), box=(30, 20, 70, 120))
+        faint = _person(score=0.2, box=(30, 20, 70, 120))
 
         self.assertEqual(rule_decision([faint], 50, 20).ranked, ())
         # ...but it stays a candidate the learned ranker may choose.
@@ -87,7 +78,7 @@ class RulePolicyTests(unittest.TestCase):
     def test_the_candidate_set_never_drops_a_detected_person(self) -> None:
         """Candidate recall has to be 1.0 or a labeled truth can be
         unreachable — geometry is a negative feature, not a gate."""
-        far = _person(score=0.2, wrist=(500, 500), box=(400, 400, 450, 550))
+        far = _person(score=0.2, box=(400, 400, 450, 550))
 
         self.assertEqual(rule_decision([far], 10, 10).ranked, ())
         ranked = rank_candidates([far], 10, 10)
@@ -95,8 +86,8 @@ class RulePolicyTests(unittest.TestCase):
         self.assertIs(ranked[0].source, CandidateSource.OTHER)
 
     def test_candidates_are_ordered_best_first(self) -> None:
-        near = _person(score=0.8, wrist=(50, 20), box=(30, 20, 70, 120))
-        far = _person(score=0.8, wrist=(500, 500), box=(400, 400, 450, 550))
+        near = _person(score=0.8, box=(30, 20, 70, 120))
+        far = _person(score=0.8, box=(400, 400, 450, 550))
 
         ranked = rank_candidates([far, near], 50, 20)
 
@@ -486,12 +477,10 @@ class LearnedAssociationTests(unittest.TestCase):
     ) -> tuple[AssociationModel, PersonBox, AssociationFeatures]:
         actor = _person(
             score=0.9,
-            wrist=(50, 20),
             box=(30, 20, 70, 120),
         )
         other = _person(
             score=0.8,
-            wrist=(80, 20),
             box=(60, 20, 100, 120),
         )
         features = extract_features([actor, other], 50, 20)
@@ -586,7 +575,6 @@ class LearnedAssociationTests(unittest.TestCase):
     def test_broken_shadow_cannot_block_production_rule(self) -> None:
         actor = _person(
             score=0.9,
-            wrist=(50, 20),
             box=(30, 20, 70, 120),
         )
         with (
@@ -606,7 +594,7 @@ class LearnedAssociationTests(unittest.TestCase):
         self.assertIsNone(result.learned_shadow)
 
     def test_tracklet_model_is_refused_as_the_box_shadow(self) -> None:
-        """A track-v1 checkpoint loads fine and still cannot serve here.
+        """A track checkpoint loads fine and still cannot serve here.
 
         The service supplies box features; feeding them to a tracklet model is
         a shape error, so it must be refused once at construction rather than
@@ -628,7 +616,7 @@ class LearnedAssociationTests(unittest.TestCase):
         )
         self.assertIsNotNone(shadow_rejection(track_model))
 
-        actor = _person(score=0.9, wrist=(50, 20), box=(30, 20, 70, 120))
+        actor = _person(score=0.9, box=(30, 20, 70, 120))
         with (
             self.assertLogs("yp_video.actor.service", level="WARNING"),
             patch.object(

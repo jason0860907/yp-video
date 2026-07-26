@@ -1,6 +1,6 @@
 /** Player Detection: find everyone on screen when each action happened.
  *
- *  Perception, not judgement. RF-DETR with keypoints on every annotated
+ *  Perception, not judgement. RF-DETR Seg on every annotated
  *  action frame, keeping ALL the boxes — which of those people acted is
  *  Association Predict, and it re-decides among these boxes without ever
  *  opening the video again.
@@ -24,7 +24,7 @@ import { StatTile } from '@/components/ui/StatTile';
 import { VideoMultiSelectList } from '@/components/video/VideoMultiSelectList';
 import { LiveJob } from '@/components/job/LiveJob';
 import { toast } from '@/components/feedback/toast';
-import type { ExtractionOptions, ExtractionVideo, Job } from '@/types/api';
+import type { ExtractionVideo, Job } from '@/types/api';
 
 const errMsg = (e: unknown) => (e instanceof ApiError ? e.body : e instanceof Error ? e.message : String(e));
 
@@ -35,7 +35,6 @@ export function PlayerDetectionPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [overwrite, setOverwrite] = useState(false);
   const [stopVllm, setStopVllm] = useState(false);
-  const [keypoints, setKeypoints] = useState('rf-detr');
   const [jobOverrides, setJobOverrides] = useState<Record<string, Job>>({});
 
   const jobsQuery = useQuery({
@@ -46,12 +45,6 @@ export function PlayerDetectionPage() {
     queryKey: ['extraction-videos'],
     queryFn: () => apiFetch<ExtractionVideo[]>(API.extraction.videos),
   });
-  const optionsQuery = useQuery({
-    queryKey: ['extraction-options'],
-    queryFn: () => apiFetch<ExtractionOptions>(API.extraction.options),
-    staleTime: Infinity, // static per server run
-  });
-  const keypointSources = optionsQuery.data?.keypoint_sources ?? ['rf-detr'];
   const videos = videosQuery.data ?? [];
   const detected = videos.filter((v) => v.has_records);
 
@@ -86,7 +79,7 @@ export function PlayerDetectionPage() {
     try {
       const job = await apiFetch<Job>(API.extraction.detect, {
         method: 'POST',
-        body: { videos: names, overwrite, stop_vllm: stopVllm, keypoints },
+        body: { videos: names, overwrite, stop_vllm: stopVllm },
       });
       upsertJob(job);
       toast.success(`Started Player Detection for ${names.length} video(s)`);
@@ -121,35 +114,15 @@ export function PlayerDetectionPage() {
         <Card>
           <SectionLabel>Config</SectionLabel>
           <p className="mb-3 text-xs leading-relaxed text-text-muted">
-            For every annotated action event: detect every person on that frame (RF-DETR) and keep
-            them all, with their skeletons. Decides nothing — Association Predict picks who acted
+            For every annotated action event: detect every person on that frame with RF-DETR Seg
+            and keep every box. Decides nothing — Association Predict picks who acted
             from this list, and never needs the video again.
           </p>
           <div className="space-y-2">
             <div className="flex items-center justify-between text-xs">
               <span className="text-text-secondary">Detector</span>
-              <span className="font-mono text-text-muted">rf-detr</span>
+              <span className="font-mono text-text-muted">rf-detr-seg-medium</span>
             </div>
-            <label className="block text-xs text-text-secondary">
-              <span className="mb-1 block">
-                Keypoints{' '}
-                <span className="text-text-muted">
-                  — who estimates the skeletons on RF-DETR&apos;s boxes. The rule matches a contact
-                  point to a WRIST, so this is what decides how well it picks.
-                </span>
-              </span>
-              <select
-                value={keypoints}
-                onChange={(e) => setKeypoints(e.target.value)}
-                className="w-full cursor-pointer appearance-none rounded-lg border border-border-light bg-surface-50 px-3 py-1.5 text-xs text-text-primary focus:border-primary/50 focus:outline-none"
-              >
-                {keypointSources.map((k: string) => (
-                  <option key={k} value={k}>
-                    {k === 'sam-3d-body' ? 'sam-3d-body (~10x per person near the ball)' : k}
-                  </option>
-                ))}
-              </select>
-            </label>
             <label className="flex cursor-pointer items-center gap-2 text-xs text-text-secondary">
               <input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} className="h-3.5 w-3.5 accent-primary" />
               Re-detect videos that already have detections
@@ -200,13 +173,7 @@ export function PlayerDetectionPage() {
               <>
                 <span className="font-mono text-[11px] tabular-nums text-text-muted">{v.event_count}</span>
                 {v.detections ? <Badge tone="success">{v.detections} people</Badge> : null}
-                {v.keypoints && (
-                  <span title={`Skeletons estimated by ${v.keypoints}`}>
-                    <Badge tone={v.keypoints.startsWith('sam-3d-body') ? 'success' : 'neutral'}>
-                      {v.keypoints.split(' ')[0]}
-                    </Badge>
-                  </span>
-                )}
+                {v.detector && <Badge tone="neutral">{v.detector}</Badge>}
                 <PipelineChips pipeline={v.pipeline} />
               </>
             )}

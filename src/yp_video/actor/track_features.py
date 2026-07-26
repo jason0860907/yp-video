@@ -5,8 +5,7 @@ different domain object: it exists over time, so it has features a single box
 cannot have (how long it lived, whether it was even detected at the event
 frame, whether it was moving toward the ball), and several box features have
 no tracklet meaning at all. Overloading one name list would force every
-feature to invent a reading for the other side — which is exactly how
-``has_wrist`` ended up in the box contract as a constant that never moved.
+feature to invent a reading for the other side.
 
 Two things the box contract got wrong are fixed here rather than inherited:
 
@@ -26,14 +25,14 @@ from typing import Sequence
 import numpy as np
 
 from yp_video.actor.ranking import X_PAD_FRAC, Y_ABOVE_FRAC
-from yp_video.person.detector import WRIST_IDXS, iou
+from yp_video.person.detector import iou
 from yp_video.tracklets.geometry import TrackletIndex, TrackRef
 
 #: Frames either side of the event a tracklet may be sampled over. Wide
 #: enough to see a spiker's approach, short enough to stay the same rally.
 WINDOW = 5
 #: A stored detection must overlap the track box this much to be treated as
-#: the same person (and lend its keypoints).
+#: the same person.
 DET_MATCH_IOU = 0.3
 
 #: A contact point this far outside every silhouette is "nowhere near anyone";
@@ -64,7 +63,6 @@ TRACK_CANDIDATE_FEATURE_NAMES = (
     "score_median",
     # What the extraction detector saw at the same place.
     "det_iou",
-    "wrist_distance_height",
 )
 
 TRACK_CONTEXT_FEATURE_NAMES = (
@@ -77,11 +75,7 @@ TRACK_CONTEXT_FEATURE_NAMES = (
     "event_visible",
     "no_track_alive",
     # Abstention is a question about the BEST candidate, so it has to see the
-    # measurements that actually separate an actor from a bystander. Centre
-    # distance alone cannot: it moves with height and stance, and on occluded
-    # events the nearest player's centre looks unremarkable while their hands
-    # sit a body-height away from the ball.
-    "top_wrist_distance",
+    # measurements that actually separate an actor from a bystander.
     "top_mask_distance",
 )
 
@@ -204,28 +198,14 @@ def _mask_distance(
     return min(nearest / max(height, 1.0), MASK_DISTANCE_CAP)
 
 
-def _wrist_distance(detections: Sequence[dict], box: Sequence[float], x: float, y: float):
-    """(IoU, wrist distance) of the stored detection that IS this tracklet.
-
-    The tracklet knows where the player is; only the extraction detector
-    knows where their hands are, so the two are joined here.
-    """
-    best, best_iou = None, DET_MATCH_IOU
+def _detection_iou(detections: Sequence[dict], box: Sequence[float]) -> float:
+    """IoU with the stored segmentation detection that is this tracklet."""
+    best_iou = 0.0
     for d in detections:
         overlap = iou(d["box"], list(box))
-        if overlap >= best_iou:
-            best, best_iou = d, overlap
-    if best is None:
-        return 0.0, 4.0
-    keypoints = best.get("keypoints")
-    if not keypoints:
-        return best_iou, 4.0
-    height = max(float(box[3] - box[1]), 1.0)
-    distance = min(
-        float(np.hypot(keypoints[i][0] - x, keypoints[i][1] - y)) / height
-        for i in WRIST_IDXS
-    )
-    return best_iou, min(distance, 4.0)
+        if overlap >= DET_MATCH_IOU:
+            best_iou = max(best_iou, overlap)
+    return best_iou
 
 
 def _candidate_row(
@@ -255,7 +235,7 @@ def _candidate_row(
     approach = (distances[0] - distances[-1]) / span * WINDOW if len(frames) > 1 else 0.0
 
     scores = [min(max(float(s), 0.0), 1.0) for s in candidate.scores]
-    det_iou, wrist = _wrist_distance(detections, box, x, y)
+    det_iou = _detection_iou(detections, box)
     centre = min(_centre_distance(box, x, y), 6.0)
     mask = (
         candidate.masks[nearest] if nearest < len(candidate.masks) else None
@@ -276,7 +256,6 @@ def _candidate_row(
         scores[nearest],
         float(np.median(scores)),
         det_iou,
-        wrist,
     ]
 
 
@@ -315,14 +294,13 @@ def extract_track_features(
             float(matrix[:, column("present_at_event")].mean()),
             float(visible),
             0.0,
-            float(matrix[top, column("wrist_distance_height")]),
             float(matrix[top, column("mask_distance_height")]),
         ]
     else:
         # No tracklet alive at all — the ~7% of events where the answer is
         # very likely "nobody". The model is given the fact explicitly so it
         # can learn to abstain rather than infer it from an empty list.
-        context = [1.0, 0.0, 6.0, 0.0, 0.0, 0.0, float(visible), 1.0, 4.0, 6.0]
+        context = [1.0, 0.0, 6.0, 0.0, 0.0, 0.0, float(visible), 1.0, 6.0]
 
     return TrackFeatures(
         refs=tuple(c.ref for c in candidates),

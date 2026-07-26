@@ -31,8 +31,13 @@ from yp_video.tracklets.store import TrackMasks
 
 Box = tuple[float, float, float, float]
 
-# A fix box must overlap a stored detection this much to snap onto it (and
-# inherit its keypoints); below that the box is embedded as drawn.
+# Version of the crop geometry contract persisted on each materialized
+# record. Version 2 is segmentation person box ∪ ball; records without it
+# were cut by the retired pose-hull contract and are rebuilt on association.
+CROP_SCHEMA_VERSION = 2
+
+# A fix box must overlap a stored segmentation detection this much to snap
+# onto it; below that the box is embedded as drawn.
 FIX_SNAP_IOU = 0.5
 
 # Breathing room around the display box, so the crop isn't flush against the
@@ -50,20 +55,9 @@ def clamp_box(box: Box, w: int, h: int) -> tuple[int, int, int, int]:
 
 
 def display_box(person: PersonBox, x: float, y: float, w: int, h: int) -> tuple[int, int, int, int]:
-    """The union of the person box, ALL predicted keypoints (regardless of
-    confidence), and the contact point (the ball), plus a margin.
-
-    Keypoints join the union so a fully extended limb (spike, jump serve) is
-    never cropped off; the detector box stays in it because keypoints mark
-    joints, not extremities — eyes/ankles alone would cut the scalp and feet.
-    The saved crop and the video overlay both use this box.
-    """
+    """The union of the segmentation person box and ball, plus a margin."""
     x0, y0, x1, y1 = person.xyxy
     ux0, uy0, ux1, uy1 = min(x0, x), min(y0, y), max(x1, x), max(y1, y)
-    if person.keypoints is not None:
-        for px, py in person.keypoints:
-            ux0, uy0 = min(ux0, float(px)), min(uy0, float(py))
-            ux1, uy1 = max(ux1, float(px)), max(uy1, float(py))
     mx = DISPLAY_MARGIN_FRAC * (ux1 - ux0) + DISPLAY_MARGIN_MIN_PX
     my = DISPLAY_MARGIN_FRAC * (uy1 - uy0) + DISPLAY_MARGIN_MIN_PX
     return clamp_box((ux0 - mx, uy0 - my, ux1 + mx, uy1 + my), w, h)
@@ -202,16 +196,6 @@ def cut(
     out_dir.mkdir(parents=True, exist_ok=True)
     crop_file = out_dir / f"{record['id']}{suffix}.jpg"
     cv2.imwrite(str(crop_file), crop)
-    # Keypoints ship as crop-relative data; the UI draws the skeleton as a
-    # toggleable overlay, so the jpg stays raw — identical to what the
-    # embedder sees.
-    keypoints = None
-    if person.keypoints is not None and person.keypoint_conf is not None:
-        cw, ch = max(dx1 - dx0, 1), max(dy1 - dy0, 1)
-        keypoints = [
-            [round(float(px - dx0) / cw, 4), round(float(py - dy0) / ch, 4), round(float(c), 2)]
-            for (px, py), c in zip(person.keypoints, person.keypoint_conf)
-        ]
     record.update(
         box=[dx0, dy0, dx1, dy1],
         # The raw detector box (the display box is a padded superset): the
@@ -219,8 +203,10 @@ def cut(
         actor_box=[x0, y0, x1, y1],
         score=person.score,
         crop=crop_file.name,
-        keypoints=keypoints,
+        crop_schema=CROP_SCHEMA_VERSION,
     )
+    # Re-cropping also migrates records produced before pose data was removed.
+    record.pop("keypoints", None)
     # Which frame the pixels came from is part of pointing at them: absent
     # means "the event's own", and a stale value would send every later
     # reader — the tracklet link, the next re-crop — to the wrong frame.

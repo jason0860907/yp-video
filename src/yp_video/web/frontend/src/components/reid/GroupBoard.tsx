@@ -45,7 +45,6 @@ export interface GroupBoardProps {
    *  sticky right rail showing just 3 crops per group. */
   lockedDock: 'top' | 'right';
   statusFilter: 'all' | ReidRecord['status'];
-  showSkeleton: boolean;
   /** Show the background-suppressed crops the masked embedders saw. */
   showMasked: boolean;
   trackLinks: TrackData['links'];
@@ -78,7 +77,7 @@ function NameInput({ value, onCommit, placeholder, className }: { value: string;
 }
 
 export const GroupBoard = forwardRef<BoardHandle, GroupBoardProps>(function GroupBoard(
-  { picked, records, recordById, board, lockedDock, statusFilter, showSkeleton, showMasked, trackLinks, onSeekToEvent },
+  { picked, records, recordById, board, lockedDock, statusFilter, showMasked, trackLinks, onSeekToEvent },
   ref,
 ) {
   const { groups } = board;
@@ -348,8 +347,6 @@ export const GroupBoard = forwardRef<BoardHandle, GroupBoardProps>(function Grou
       <CropImage
         key={id}
         src={apiUrl(API.extraction.crop(picked, r.crop, showMasked))}
-        keypoints={r.keypoints}
-        skeleton={showSkeleton}
         alt={id}
         dataId={id}
         {...cropTileProps(id, r)}

@@ -33,14 +33,14 @@ class FeatureVectors(Protocol):
     def context(self) -> np.ndarray: ...
 
 
-MODEL_SCHEMA_VERSION = 3
+MODEL_SCHEMA_VERSION = 4
 
 #: Which feature contract a checkpoint was trained against. The contract is
-#: validated by NAME, and a v2 checkpoint carried no statement of WHICH list
+#: validated by NAME, and an early checkpoint carried no statement of WHICH list
 #: those names came from — so a loader could not tell a box model from a
 #: tracklet one. Now it must say.
-FEATURE_SET_BOX = "box-v2"
-FEATURE_SET_TRACK = "track-v2"
+FEATURE_SET_BOX = "box-v3"
+FEATURE_SET_TRACK = "track-v3"
 
 #: The only contracts that exist, and the column names each one means. A
 #: lookup and not an ``if track else box``: that fallback answered for any

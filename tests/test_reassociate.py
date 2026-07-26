@@ -18,14 +18,8 @@ from yp_video.extraction import reassociate
 from yp_video.tracklets.geometry import TrackRef
 
 
-def _detection(box, score=0.9, wrist=None):
-    detection = {"box": list(box), "score": score}
-    if wrist is not None:
-        keypoints = [[0.0, 0.0, 0.0] for _ in range(17)]
-        keypoints[9] = [wrist[0], wrist[1], 0.9]
-        keypoints[10] = [wrist[0], wrist[1], 0.9]
-        detection["keypoints"] = keypoints
-    return detection
+def _detection(box, score=0.9):
+    return {"box": list(box), "score": score}
 
 
 class _StubPolicy:
@@ -61,8 +55,9 @@ class ReassociationTests(unittest.TestCase):
                 "box": [900, 500, 990, 700],
                 "actor_box": [910, 510, 980, 690],
                 "crop": "human.jpg",
+                "crop_schema": reassociate.CROP_SCHEMA_VERSION,
                 "score": 0.8,
-                "detections": [_detection([910, 510, 980, 690], wrist=(960, 540))],
+                "detections": [_detection([910, 510, 980, 690])],
             },
             {
                 "id": "auto",
@@ -72,9 +67,10 @@ class ReassociationTests(unittest.TestCase):
                 "box": [400, 500, 520, 700],
                 "actor_box": [410, 510, 510, 690],
                 "crop": "auto.jpg",
+                "crop_schema": reassociate.CROP_SCHEMA_VERSION,
                 "score": 0.7,
                 "detections": [
-                    _detection([410, 510, 510, 690], wrist=(480, 540)),
+                    _detection([410, 510, 510, 690]),
                     _detection([100, 100, 200, 300], score=0.6),
                 ],
             },
@@ -125,6 +121,18 @@ class ReassociationTests(unittest.TestCase):
         self.assertEqual(counts["labeled"], 1)
         self.assertEqual(before, after)
         self.assertEqual((self.crops / "human.jpg").read_bytes(), b"human")
+
+    def test_a_crop_from_the_retired_geometry_is_not_materialized(self) -> None:
+        """A saved verdict stays authoritative but its old pixels are rebuilt."""
+        record = dict(self.rows[0])
+        record.pop("crop_schema")
+        label = ActorLabel(
+            ActorVerdict.MANUAL,
+            box=(910, 510, 980, 690),
+        )
+        self.assertFalse(reassociate._is_materialized(record, label))
+        record["crop_schema"] = reassociate.CROP_SCHEMA_VERSION
+        self.assertTrue(reassociate._is_materialized(record, label))
 
     def test_an_unchanged_pick_costs_no_re_crop(self) -> None:
         """Re-running the same policy is idempotent: the crop file on disk is
@@ -218,7 +226,7 @@ class RulePolicyContractTests(unittest.TestCase):
         point on an INVISIBLE event — where the nearest player is provably not
         the actor. Extraction has always refused both, and a policy that
         answered anyway would invent picks on re-association."""
-        detections = [_detection([0, 0, 40, 100], wrist=(20, 10))]
+        detections = [_detection([0, 0, 40, 100])]
         for contact, visible in (((20.0, 10.0), False), (None, True), (None, False)):
             with self.subTest(contact=contact, visible=visible):
                 pick = RulePolicy().decide(
@@ -237,7 +245,7 @@ class RulePolicyContractTests(unittest.TestCase):
                 frame=1,
                 contact=(20.0, 10.0),
                 visible=True,
-                detections=[_detection([0, 0, 40, 100], wrist=(20, 10))],
+                detections=[_detection([0, 0, 40, 100])],
             )
         )
         self.assertIsNone(pick.track)

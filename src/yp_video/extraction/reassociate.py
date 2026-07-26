@@ -8,8 +8,8 @@ being revisited. This module revisits it.
 
 Two rules make the job safe to run on a labeled video:
 
-- A human verdict is never touched. Not overwritten, not re-derived, not
-  "refreshed" — an event a person has ruled on leaves this module unread.
+- A human verdict is never re-decided. Its crop may be rebuilt when the crop
+  geometry contract changes, but the person's answer remains authoritative.
 - Only events whose pick actually MOVED are re-cropped. A policy that agrees
   with the previous one costs a jsonl rewrite and nothing else, so re-running
   is cheap and idempotent rather than a full re-encode.
@@ -27,6 +27,7 @@ from yp_video.actor.resolution import ActorResolution
 from yp_video.core.jsonl import read_jsonl, write_jsonl
 from yp_video.core.progress import ProgressFn
 from yp_video.extraction.cropping import (
+    CROP_SCHEMA_VERSION,
     CropTarget,
     clamp_box,
     crop_target,
@@ -341,7 +342,10 @@ def _is_materialized(record: dict, label) -> bool:
     """
     if label.verdict is ActorVerdict.OCCLUDED:
         return record.get("resolution") == ActorResolution.OCCLUDED.value
-    return record.get("crop") is not None
+    return (
+        record.get("crop") is not None
+        and record.get("crop_schema") == CROP_SCHEMA_VERSION
+    )
 
 
 def _clear(record: dict) -> bool:
@@ -353,10 +357,11 @@ def _clear(record: dict) -> bool:
         actor_box=None,
         score=None,
         crop=None,
-        keypoints=None,
+        crop_schema=_ABSENT,
         resolution=ActorResolution.UNRESOLVED.value,
         crop_frame=_ABSENT,
         track=_ABSENT,
+        keypoints=_ABSENT,
     )
     if changed:
         record["actor_revision"] = int(record.get("actor_revision") or 0) + 1
@@ -380,6 +385,7 @@ def _same_pick(
     current = record.get("actor_box")
     if (
         current is None
+        or record.get("crop_schema") != CROP_SCHEMA_VERSION
         or int(record.get("crop_frame") or record["frame"]) != target.frame
     ):
         return False

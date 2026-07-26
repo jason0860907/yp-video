@@ -24,11 +24,7 @@ from enum import Enum
 
 import numpy as np
 
-from yp_video.person.detector import (
-    PERSON_SCORE_THRESHOLD,
-    WRIST_IDXS,
-    PersonBox,
-)
+from yp_video.person.detector import PERSON_SCORE_THRESHOLD, PersonBox
 
 RULE_BASED = "rule-based"
 
@@ -42,27 +38,21 @@ RULE_BASED = "rule-based"
 # to give the human picker more boxes to click.
 AUTO_PICK_MIN_SCORE = 0.5
 
-# A wrist match counts when the contact point is within this fraction of the
-# person's box height from the wrist — roughly ball-diameter reach at contact.
-WRIST_REACH_FRAC = 0.6
-
-# Box-geometry fallback for people whose wrists weren't found: the contact
-# point may sit up to 35% of box height above the top (ball above the raised
-# hand) and 20% of box width outside the horizontal span. Validated on
-# annotated sideline footage.
+# The contact point may sit above or beside the segmentation box: the ball is
+# often just beyond an extended hand. These pads were validated on annotated
+# sideline footage.
 X_PAD_FRAC = 0.20
 Y_ABOVE_FRAC = 0.35
-# Fallback candidates always rank below any wrist match.
-FALLBACK_PENALTY = 10.0
+# Incompatible detections remain learned-ranker candidates but rank after
+# boxes whose padded extent reaches the ball.
+INCOMPATIBLE_PENALTY = 10.0
 
 # Detection confidence influences the CANDIDATE ordering without excluding a
-# plausible actor. Geometry remains dominant: a wrist-compatible candidate
-# always outranks a box fallback, matching the physical meaning of a contact.
+# plausible actor. Geometry remains dominant.
 DETECTION_PENALTY_WEIGHT = 0.25
 
 
 class CandidateSource(str, Enum):
-    WRIST = "wrist"
     BOX = "box"
     OTHER = "other"
 
@@ -149,50 +139,30 @@ def _rank(
         width = max(x1 - x0, 1.0)
         height = max(y1 - y0, 1.0)
 
-        wrist_distance = None
-        if box.keypoints is not None:
-            wrist_distance = min(
+        in_x = x0 - X_PAD_FRAC * width <= x <= x1 + X_PAD_FRAC * width
+        in_y = y0 - Y_ABOVE_FRAC * height <= y <= y1
+        if in_x and in_y:
+            source = CandidateSource.BOX
+            geometry_cost = (
+                float(np.hypot(x - (x0 + x1) / 2, y - y0))
+                / height
+            )
+        elif keep_incompatible:
+            # Still a training/ranking candidate. Geometry becomes a strong
+            # negative feature, never a hard exclusion.
+            source = CandidateSource.OTHER
+            geometry_cost = (
                 float(
                     np.hypot(
-                        box.keypoints[index][0] - x,
-                        box.keypoints[index][1] - y,
+                        x - (x0 + x1) / 2,
+                        y - (y0 + y1) / 2,
                     )
                 )
-                for index in WRIST_IDXS
+                / height
+                + INCOMPATIBLE_PENALTY
             )
-
-        if (
-            wrist_distance is not None
-            and wrist_distance <= WRIST_REACH_FRAC * height
-        ):
-            source = CandidateSource.WRIST
-            geometry_cost = wrist_distance / height
         else:
-            in_x = x0 - X_PAD_FRAC * width <= x <= x1 + X_PAD_FRAC * width
-            in_y = y0 - Y_ABOVE_FRAC * height <= y <= y1
-            if in_x and in_y:
-                source = CandidateSource.BOX
-                geometry_cost = (
-                    float(np.hypot(x - (x0 + x1) / 2, y - y0))
-                    / height
-                    + FALLBACK_PENALTY
-                )
-            elif keep_incompatible:
-                # Still a training/ranking candidate. Geometry becomes a
-                # strong negative feature, never a hard exclusion.
-                source = CandidateSource.OTHER
-                geometry_cost = (
-                    float(
-                        np.hypot(
-                            x - (x0 + x1) / 2,
-                            y - (y0 + y1) / 2,
-                        )
-                    )
-                    / height
-                    + 2 * FALLBACK_PENALTY
-                )
-            else:
-                continue
+            continue
 
         ranked.append(
             RankedActor(

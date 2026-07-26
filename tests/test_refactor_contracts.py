@@ -21,6 +21,7 @@ from yp_video.contracts.reid import (
 from yp_video.extraction import actor_fix, cropping, pipeline
 from yp_video.reid import checkpoints, store
 from yp_video.web.jobs import MAX_LOG_LINES, Job, JobManager, JobStatus
+from yp_video.web.routers import extraction as extraction_router
 from yp_video.web.routers.action_train import (
     ActionTrainRequest,
     AnnotationActionTrainRequest,
@@ -433,6 +434,7 @@ class CroppingTests(unittest.TestCase):
         self.assertIsNotNone(self._cut(record, target, (300.0, 150.0)))
         # The display box unions the ball, so it reaches out to it.
         self.assertGreaterEqual(record["box"][2], 300)
+        self.assertEqual(record["crop_schema"], cropping.CROP_SCHEMA_VERSION)
         self.assertNotIn("crop_frame", record)
 
     def test_a_cross_frame_crop_ignores_the_contact_point(self) -> None:
@@ -494,11 +496,29 @@ class StagesStopWhereTheyShouldTests(unittest.TestCase):
 
         params = inspect.signature(pipeline.detect_video).parameters
         self.assertEqual(
-            sorted(params), ["keypoints", "on_progress", "video_path"]
+            sorted(params), ["on_progress", "video_path"]
         )
         source = inspect.getsource(pipeline.detect_video)
         for forbidden in ("cut(", "ActorAssociationService", "embed_video"):
             self.assertNotIn(forbidden, source, f"detection must not {forbidden}")
+
+    def test_retired_detector_output_is_queued_for_migration(self) -> None:
+        """Old records are not silently treated as current segmentation data."""
+        with tempfile.TemporaryDirectory() as raw_dir:
+            root = Path(raw_dir)
+            old = root / "old.jsonl"
+            current = root / "current.jsonl"
+            old.write_text(
+                json.dumps({"source": {"detector": "retired-detector"}}) + "\n"
+            )
+            current.write_text(
+                json.dumps(
+                    {"source": {"detector": extraction_router.DETECTOR_NAME}}
+                )
+                + "\n"
+            )
+            self.assertFalse(extraction_router._has_current_detections(old))
+            self.assertTrue(extraction_router._has_current_detections(current))
 
     def test_a_re_detect_keeps_the_association_already_made(self) -> None:
         """Refreshing the candidate list is not an opinion about the answer —

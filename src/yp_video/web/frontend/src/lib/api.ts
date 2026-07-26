@@ -153,7 +153,6 @@ export const API = {
   // into the same record.
   extraction: {
     videos: '/extraction/videos',
-    options: '/extraction/options',
     detect: '/extraction/detect',
     records: (name: string) => `/extraction/records/${encodeURIComponent(name)}`,
     crop: (name: string, cropFile: string, masked = false) =>

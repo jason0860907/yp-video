@@ -1,13 +1,13 @@
 """Player detection: who is on screen when each action happened.
 
-RF-DETR with keypoints on every annotated action frame, keeping ALL the
-boxes. Decides nothing — which of those people acted is
+RF-DETR Seg on every annotated action frame, keeping ALL person boxes.
+Decides nothing — which of those people acted is
 routers/actor_association.py, and it re-decides among these boxes without
 ever opening the video again.
 
 The sparse sibling of routers/tracklets.py: tracking detects every frame of
 every rally and links the results, this detects the ~300 frames an action
-happened on and keeps their skeletons. Two perception stages, two upstreams
+happened on and keeps their boxes. Two perception stages, two upstreams
 (rally spans and action labels), neither waiting on the other — this endpoint
 does not require tracklets, because it never reads one.
 
@@ -34,7 +34,7 @@ from yp_video.core.jsonl import read_jsonl, read_jsonl_cached
 from yp_video.extraction import pipeline
 from yp_video.extraction import store as extraction_store
 from yp_video.extraction.prerequisites import prerequisites
-from yp_video.person.detector import build_keypoint_sources
+from yp_video.person.detector import DETECTOR_NAME
 from yp_video.web.job_helpers import init_batch_items, spawn_batch_video_job
 from yp_video.web.jobs import job_manager
 
@@ -43,9 +43,18 @@ router = APIRouter()
 
 DETECT_JOB_TYPE = "player_detection"
 
-# Slimmed UI payload, rebuilt only when the records change. Values are shared
-# across requests — read-only, like everything cached.
+# Slimmed UI payload, rebuilt when the detector output OR either annotation
+# source changes. Values are shared across requests — read-only, like
+# everything cached.
 _slim_records_cache: StatCache = StatCache()
+
+
+def _has_current_detections(path: Path) -> bool:
+    """Whether records were produced by the detector this build expects."""
+    if not path.exists():
+        return False
+    header, _ = read_jsonl_cached(path)
+    return (header.get("source") or {}).get("detector") == DETECTOR_NAME
 
 
 @router.get("/videos")
@@ -58,28 +67,21 @@ def list_videos() -> list[dict]:
             continue
         path = extraction_store.records_path(f.stem)
         header = read_jsonl_cached(path)[0] if path.exists() else None
+        current = _has_current_detections(path)
         results.append({
             "name": f.name,
             "kind": cut_kind_of(f),
             "event_count": len(events),
-            "has_records": header is not None,
-            # This stage's own outcome: how many people it found, and who
-            # estimated their skeletons. What was DECIDED about them is the
-            # association listing's to report.
+            # Retired detector output is deliberately pending: running the
+            # default job migrates it without requiring Overwrite.
+            "has_records": current,
+            # This stage's own outcome. What was DECIDED about the detections
+            # is the association listing's to report.
             "detections": int(header.get("detections") or 0) if header else None,
-            # Which keypoint source these detections carry. Without it there
-            # is no way to tell which videos would gain from a re-detect.
-            "keypoints": (header.get("source") or {}).get("keypoints") if header else None,
+            "detector": (header.get("source") or {}).get("detector") if header else None,
             "pipeline": prerequisites(f.stem).payload(),
         })
     return results
-
-
-@router.get("/options")
-def options() -> dict:
-    """Who may estimate the skeletons. Detection itself is always RF-DETR;
-    a keypoint source is the only choice extraction offers."""
-    return {"keypoint_sources": list(build_keypoint_sources())}
 
 
 class DetectRequest(BaseModel):
@@ -88,19 +90,10 @@ class DetectRequest(BaseModel):
     #: candidate list only changes when the detector does.
     overwrite: bool = False
     stop_vllm: bool = False
-    # Keypoint source from the registry (see /extraction/options).
-    keypoints: str = "rf-detr"
 
 
 @router.post("/detect")
 async def detect(req: DetectRequest) -> dict:
-    keypoint_sources = build_keypoint_sources()
-    if req.keypoints not in keypoint_sources:
-        raise HTTPException(
-            400,
-            f"Unknown keypoint source: {req.keypoints} (available: {', '.join(keypoint_sources)} — "
-            "sam-3d-body needs its gated HF checkpoint downloaded first)",
-        )
     video_paths: list[Path] = []
     skipped: list[str] = []
     for name in req.videos:
@@ -114,7 +107,10 @@ async def detect(req: DetectRequest) -> dict:
         # was left over from when this endpoint also picked the actor.
         if extraction_store.action_annotation_path(path.stem) is None:
             raise HTTPException(400, f"No action annotations for: {name}")
-        if not req.overwrite and extraction_store.records_path(path.stem).exists():
+        if (
+            not req.overwrite
+            and _has_current_detections(extraction_store.records_path(path.stem))
+        ):
             skipped.append(path.stem)
             continue
         video_paths.append(path)
@@ -135,7 +131,7 @@ async def detect(req: DetectRequest) -> dict:
         job,
         video_paths,
         stop_vllm=req.stop_vllm,
-        work=lambda p, cb: pipeline.detect_video(p, keypoints=req.keypoints, on_progress=cb),
+        work=lambda p, cb: pipeline.detect_video(p, on_progress=cb),
         done_message=lambda c: (
             f"{c['detections']} people over {c['events']} events"
             + (f" · {c['undecodable']} frames undecodable" if c["undecodable"] else "")
@@ -193,7 +189,8 @@ def _slim_records(path: Path, stem: str) -> list[dict]:
     # player, and nobody is tracked between rallies (extraction/store.py).
     for r in extraction_store.labelable(records, stem, float(meta.get("fps") or 0)):
         r = dict(r)
-        # The actor picker only needs boxes + scores; skeletons stay server-side.
+        # Exclude legacy pose fields from records created before their removal.
+        r.pop("keypoints", None)
         if r.get("detections"):
             r["detections"] = [{k: v for k, v in d.items() if k != "keypoints"} for d in r["detections"]]
         out.append(r)

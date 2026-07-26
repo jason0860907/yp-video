@@ -12,7 +12,10 @@ import unittest
 
 import numpy as np
 
-from yp_video.actor.features import CANDIDATE_FEATURE_NAMES
+from yp_video.actor.features import (
+    CANDIDATE_FEATURE_NAMES,
+    CONTEXT_FEATURE_NAMES,
+)
 from yp_video.actor.model import (
     FEATURE_SET_BOX,
     FEATURE_SET_TRACK,
@@ -142,9 +145,7 @@ class FeatureTests(unittest.TestCase):
         self.assertEqual(row["mask_distance_height"], row["center_distance_height"])
 
     def test_abstention_sees_the_best_candidate_s_own_distances(self) -> None:
-        """Occluded events are decided by how far the nearest player's HANDS
-        are from the ball; a centre distance cannot say that, and the NONE
-        head used to see nothing else."""
+        """The NONE head sees the nearest candidate's silhouette distance."""
         near = extract_track_features(
             candidates_near(TrackletIndex([_tracklet(1, 1, [100], [0, 0, 40, 100])]), 100), 20.0, 50.0, 100
         )
@@ -152,15 +153,18 @@ class FeatureTests(unittest.TestCase):
             candidates_near(TrackletIndex([_tracklet(1, 1, [100], [0, 0, 40, 100])]), 100), 300.0, 50.0, 100
         )
         mask_d = TRACK_CONTEXT_FEATURE_NAMES.index("top_mask_distance")
-        wrist = TRACK_CONTEXT_FEATURE_NAMES.index("top_wrist_distance")
         self.assertLess(near.context[mask_d], far.context[mask_d])
-        self.assertIn("top_wrist_distance", TRACK_CONTEXT_FEATURE_NAMES)
-        self.assertEqual(near.context[wrist], 4.0)  # no detections given
 
     def test_no_feature_is_constant_by_construction(self) -> None:
-        """`has_wrist` in the box contract had std 0 and a weight that could
-        never move; nothing here may be born that way."""
-        self.assertNotIn("has_wrist", TRACK_CANDIDATE_FEATURE_NAMES)
+        """No presence sentinel should be born constant across new data."""
+        self.assertNotIn("has_mask", TRACK_CANDIDATE_FEATURE_NAMES)
+        names = (
+            CANDIDATE_FEATURE_NAMES
+            + CONTEXT_FEATURE_NAMES
+            + TRACK_CANDIDATE_FEATURE_NAMES
+            + TRACK_CONTEXT_FEATURE_NAMES
+        )
+        self.assertFalse(any("wrist" in name for name in names))
 
 
 class ContractTests(unittest.TestCase):
@@ -192,14 +196,14 @@ class ContractTests(unittest.TestCase):
     def test_a_retired_contract_name_is_rejected_not_reinterpreted(self) -> None:
         """A checkpoint naming a contract that no longer exists must say so.
         The old ``track if ... else box`` fallback answered for any string, so
-        a track-v1 model was validated against the BOX names and reported as a
+        a retired track model was validated against the BOX names and reported as a
         box mismatch — on a model that had never seen a box."""
         payload = _model(
             FEATURE_SET_TRACK,
             len(TRACK_CANDIDATE_FEATURE_NAMES),
             len(TRACK_CONTEXT_FEATURE_NAMES),
         ).payload()
-        payload["feature_set"] = "track-v1"
+        payload["feature_set"] = "track-v2"
         with self.assertRaisesRegex(ValueError, "Unknown association feature set"):
             AssociationModel.from_payload(payload)
 
@@ -207,7 +211,7 @@ class ContractTests(unittest.TestCase):
         payload = _model(
             FEATURE_SET_BOX, len(CANDIDATE_FEATURE_NAMES), 9
         ).payload()
-        payload["schema_version"] = 2
+        payload["schema_version"] = 3
         with self.assertRaisesRegex(ValueError, "Unsupported"):
             AssociationModel.from_payload(payload)
 

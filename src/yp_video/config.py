@@ -134,12 +134,6 @@ REID_DATASETS_DIR = REID_DIR / "datasets"
 # metrics), written by yp-reid training / import_weights.
 REID_CHECKPOINTS_DIR = REID_DIR / "checkpoints"
 
-# third_party checkout; weights are gated on Hugging Face.
-SAM3D_DIR = Path(
-    os.environ.get("SAM3D_DIR")
-    or Path(__file__).resolve().parents[2].parent / "third_party" / "sam-3d-body"
-)
-
 # R2 category → local directory + glob pattern + display label. The category
 # key doubles as the bucket key prefix and matches the local dir relative to
 # VIDEOS_DIR; the Storage page renders this table verbatim (order included),
