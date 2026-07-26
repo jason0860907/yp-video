@@ -92,11 +92,15 @@ def list_candidates() -> list[dict]:
     active = active_shadow_name()
     rows: list[dict] = []
     for path in CHECKPOINTS_DIR.glob(f"*/{MANIFEST_FILE}"):
+        # Only an unreadable MANIFEST hides a checkpoint: without it there is
+        # nothing to show. A model that no longer loads — a retired feature
+        # contract, a partial write — still gets listed, because a checkpoint
+        # silently missing from the page is a worse answer than one shown with
+        # the reason it cannot be used (see the router's shadow_blocked_on).
         try:
             with open(path, encoding="utf-8") as file:
                 manifest = json.load(file)
-            load(path.parent.name)
-        except (OSError, ValueError, KeyError, json.JSONDecodeError):
+        except (OSError, ValueError, json.JSONDecodeError):
             continue
         rows.append(
             {

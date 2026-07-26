@@ -99,6 +99,20 @@ def _active_job() -> dict | None:
     )
 
 
+def _shadow_blocked_on(name: str) -> str | None:
+    """Why this checkpoint cannot be the extraction shadow, or None.
+
+    A checkpoint that no longer LOADS is one of the answers. Feature contracts
+    get retired, and the checkpoints trained against them stay on disk; a
+    listing that let that raise would take down the page for every other
+    checkpoint too, over one file nobody can activate anyway.
+    """
+    try:
+        return shadow_rejection(actor_checkpoints.load(name))
+    except (OSError, ValueError, KeyError) as exc:
+        return str(exc)
+
+
 @router.get("/status")
 def status() -> dict:
     dataset = actor_dataset.load_dataset()
@@ -110,9 +124,7 @@ def status() -> dict:
                 # Activatability is the service's judgement, not the
                 # repository's — the page needs it to disable the button
                 # instead of offering a 400.
-                "shadow_blocked_on": shadow_rejection(
-                    actor_checkpoints.load(candidate["name"])
-                ),
+                "shadow_blocked_on": _shadow_blocked_on(candidate["name"]),
             }
             for candidate in actor_checkpoints.list_candidates()
         ],
