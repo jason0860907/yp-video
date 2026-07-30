@@ -15,6 +15,7 @@ from yp_video.config import (
 from yp_video.web.job_helpers import (
     batch_message,
     batch_progress,
+    cancel_batch_items,
     fail_job_from_exc,
     finalize_batch_job,
     init_batch_items,
@@ -74,6 +75,9 @@ async def start_detection(req: DetectRequest):
         # forever (and the GPU indicator lit) with nobody to notice.
         try:
             await process_all()
+        except asyncio.CancelledError:
+            await cancel_batch_items(job.id, job.params["items"])
+            raise
         except Exception as exc:
             await fail_job_from_exc(job.id, exc)
 
@@ -160,10 +164,6 @@ async def start_detection(req: DetectRequest):
                         overall_progress=batch_progress(i, 1.0, total),
                         overall_message=batch_message(i, total, video_name, f"{n_rallies} rallies"),
                     )
-                except asyncio.CancelledError:
-                    await update_batch_item(job.id, items, i, status="cancelled", message="Cancelled")
-                    await job_manager.update_job(job.id, status="cancelled", message="Cancelled")
-                    return
                 except Exception as e:
                     failed += 1
                     await update_batch_item(

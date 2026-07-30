@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import uuid
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,7 @@ from yp_video.config import RAW_VIDEOS_DIR
 from yp_video.web.job_helpers import batch_message, finalize_batch_job
 from yp_video.web.jobs import JobType, job_manager, threadsafe_update
 
+log = logging.getLogger(__name__)
 router = APIRouter()
 
 # Store active download sessions
@@ -274,10 +276,8 @@ async def download_videos(session_id: str, videos: list[VideoInfo], quality: str
         session["cancelled"] = True
         try:
             await queue.put({"type": "cancelled"})
-        except Exception:
-            pass
-        if job_id:
-            await job_manager.update_job(job_id, status="cancelled")
+        except Exception:  # noqa: BLE001 — SSE reader may already be gone
+            log.warning("Could not mirror cancellation into download session queue")
         raise
 
 

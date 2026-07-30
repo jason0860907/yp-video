@@ -641,19 +641,12 @@ async def _start_association_training(
                 checkpoint_summary = await exporter.export_once(
                     expected_epoch=None, reason="cancelled", update_job=False
                 )
-            await job_manager.update_job(
-                job.id,
-                status="cancelled",
-                message="Cancelled",
-                params={
-                    **job.params,
-                    **(
-                        {"checkpoint_package": checkpoint_summary}
-                        if checkpoint_summary
-                        else {}
-                    ),
-                },
-            )
+            if checkpoint_summary:
+                await job_manager.update_job(
+                    job.id,
+                    params={**job.params, "checkpoint_package": checkpoint_summary},
+                )
+            raise
         except Exception as exc:  # noqa: BLE001
             print(
                 f"{terminal_prefix(job)}Failed: {type(exc).__name__}: {exc}",

@@ -37,10 +37,10 @@ from yp_video.core.jsonl import read_jsonl
 from yp_video.core.rallies import load_rallies, rally_sources
 from yp_video.web.action_waveform import audio_waveform, video_metadata
 from yp_video.web.job_helpers import (
-    TERMINAL_ITEM_STATUSES,
     ProgressParser,
     batch_message,
     batch_progress,
+    cancel_batch_items,
     fail_job_from_exc,
     finalize_batch_job,
     init_batch_items,
@@ -641,7 +641,6 @@ async def start_spot_prelabel(req: SpotPrelabelRequest) -> dict:
                 },
             )
         except asyncio.CancelledError:
-            await job_manager.update_job(job.id, status="cancelled", message="Cancelled")
             raise
         except Exception as exc:  # noqa: BLE001
             log.exception("SPOT pre-label failed for %s", video.name)
@@ -702,17 +701,7 @@ async def start_spot_prelabel_batch(req: SpotPrelabelBatchRequest) -> dict:
                 )
             await finalize_batch_job(job.id, total, failed)
         except asyncio.CancelledError:
-            for idx, item in enumerate(items):
-                if item.get("status") not in TERMINAL_ITEM_STATUSES:
-                    await update_batch_item(
-                        job.id,
-                        items,
-                        idx,
-                        status="cancelled",
-                        progress=float(item.get("progress") or 0),
-                        message="Cancelled",
-                    )
-            await job_manager.update_job(job.id, status="cancelled", message="Cancelled")
+            await cancel_batch_items(job.id, items)
             raise
         except Exception as exc:  # noqa: BLE001
             log.exception("SPOT batch pre-label failed")

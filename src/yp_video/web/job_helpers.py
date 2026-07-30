@@ -420,6 +420,24 @@ async def stop_vllm_for_job(job_id: str, *, when: bool):
         asyncio.create_task(vllm_manager.start())
 
 
+async def cancel_batch_items(job_id: str, items: list[dict]) -> None:
+    """Mark every unfinished batch item cancelled and persist the list.
+
+    Status and message are ``cancel_job``'s responsibility — it has already
+    set and broadcast them by the time the task's CancelledError lands in a
+    handler. This records only what the handler alone knows: the per-item
+    states.
+    """
+    for idx in range(len(items)):
+        if items[idx].get("status") not in TERMINAL_ITEM_STATUSES:
+            mark_batch_item(items, idx, status="cancelled", message="Cancelled")
+    current = job_manager.get_job(job_id)
+    await job_manager.update_job(
+        job_id,
+        params={**(current.params if current else {}), **batch_items_params(items)},
+    )
+
+
 def spawn_batch_video_job(
     job, video_paths: list[Path], *, stop_vllm: bool, work, done_message, start_message: str
 ) -> None:
@@ -492,14 +510,8 @@ def spawn_batch_video_job(
                             )
             await finalize_batch_job(job.id, total, failed)
         except asyncio.CancelledError:
-            for idx in range(len(items)):
-                if items[idx].get("status") not in TERMINAL_ITEM_STATUSES:
-                    mark_batch_item(items, idx, status="cancelled", message="Cancelled")
-            current = job_manager.get_job(job.id)
-            await job_manager.update_job(
-                job.id, status="cancelled", message="Cancelled",
-                params={**(current.params if current else {}), **batch_items_params(items)},
-            )
+            await cancel_batch_items(job.id, items)
+            raise
         except Exception as exc:  # noqa: BLE001
             log.exception("%s job failed", job.name)
             await fail_job_from_exc(job.id, exc)

@@ -726,15 +726,12 @@ async def start_training_job(
                     )
                 except Exception:  # noqa: BLE001
                     log.exception("Failed to export action checkpoint package after cancellation")
-            await job_manager.update_job(
-                job.id,
-                status="cancelled",
-                message="Cancelled",
-                params={
-                    **job.params,
-                    **({"checkpoint_package": checkpoint_summary} if checkpoint_summary else {}),
-                },
-            )
+            if checkpoint_summary:
+                await job_manager.update_job(
+                    job.id,
+                    params={**job.params, "checkpoint_package": checkpoint_summary},
+                )
+            raise
         except Exception as exc:  # noqa: BLE001
             print(f"{terminal_prefix(job)}Failed: {type(exc).__name__}: {exc}", flush=True)
             log.exception("Action training failed")

@@ -380,7 +380,6 @@ async def train(req: ReidTrainRequest) -> dict:
                         "best": manifest.get("best"), "metrics": manifest.get("metrics")},
             )
         except asyncio.CancelledError:
-            await job_manager.update_job(job.id, status=JobStatus.CANCELLED, message="Training cancelled")
             raise
         except Exception as exc:  # noqa: BLE001 — surfaced onto the job
             log.exception("ReID training failed")

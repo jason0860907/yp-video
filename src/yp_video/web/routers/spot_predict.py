@@ -37,10 +37,10 @@ from yp_video.contracts.action import (
 from yp_video.core.ffmpeg import probe_video_metadata
 from yp_video.core.jsonl import write_jsonl
 from yp_video.web.job_helpers import (
-    TERMINAL_ITEM_STATUSES,
     ProgressParser,
     batch_items_params,
     batch_message,
+    cancel_batch_items,
     fail_job_from_exc,
     finalize_batch_job,
     init_batch_items,
@@ -331,14 +331,8 @@ async def start(req: RallyPredictRequest) -> dict:
                 )
             await finalize_batch_job(job.id, total, failed)
         except asyncio.CancelledError:
-            for i in range(len(items)):
-                if items[i].get("status") not in TERMINAL_ITEM_STATUSES:
-                    mark_batch_item(items, i, status="cancelled", message="Cancelled")
-            current = job_manager.get_job(job.id)
-            await job_manager.update_job(
-                job.id, status="cancelled", message="Cancelled",
-                params={**(current.params if current else {}), **batch_items_params(items)},
-            )
+            await cancel_batch_items(job.id, items)
+            raise
         except Exception as exc:  # noqa: BLE001
             log.exception("Rally prediction failed")
             await fail_job_from_exc(job.id, exc)

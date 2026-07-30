@@ -313,8 +313,7 @@ async def _run_batch_transfer_inner(
             except OSError:
                 pass
         except asyncio.CancelledError:
-            await job_manager.update_job(job.id, status="cancelled", message="Cancelled")
-            return
+            raise
         except Exception as e:
             failed += 1
             await job_manager.update_job(
