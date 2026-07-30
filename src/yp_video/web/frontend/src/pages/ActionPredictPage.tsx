@@ -245,6 +245,7 @@ export function ActionPredictPage() {
         <Card>
           <VideoMultiSelectList
             videos={videos}
+            query={videosQuery}
             selected={selected}
             onSelectedChange={setSelected}
             statusOptions={[

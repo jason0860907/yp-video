@@ -146,6 +146,7 @@ export function TrackingPage() {
         <Card>
           <VideoMultiSelectList
             videos={videos}
+            query={videosQuery}
             selected={selected}
             onSelectedChange={setSelected}
             statusOptions={[

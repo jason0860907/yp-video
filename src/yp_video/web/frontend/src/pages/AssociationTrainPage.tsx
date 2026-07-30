@@ -269,6 +269,7 @@ export function AssociationTrainPage() {
             title="Training videos"
             subtitle={`${trainVideos.size} videos · ${counts.train} reviewed events`}
             videos={videos}
+            query={videosQuery}
             selected={trainVideos}
             onChange={chooseTrain}
             exclude={valVideos}
@@ -277,6 +278,7 @@ export function AssociationTrainPage() {
             title="Validation videos"
             subtitle={`${valVideos.size} videos · ${counts.validation} reviewed events`}
             videos={videos}
+            query={videosQuery}
             selected={valVideos}
             onChange={chooseValidation}
             exclude={trainVideos}
@@ -635,6 +637,7 @@ function VideoPicker({
   title,
   subtitle,
   videos,
+  query,
   selected,
   onChange,
   exclude,
@@ -642,6 +645,7 @@ function VideoPicker({
   title: string;
   subtitle: string;
   videos: AssociationVideo[];
+  query: { isPending: boolean; isError: boolean; error: unknown; refetch: () => unknown };
   selected: Set<string>;
   onChange: (next: Set<string>) => void;
   exclude: Set<string>;
@@ -652,6 +656,7 @@ function VideoPicker({
       <p className="mb-2 text-[11px] text-text-muted">{subtitle}</p>
       <VideoMultiSelectList
         videos={available}
+        query={query}
         selected={selected}
         onSelectedChange={onChange}
         title={title}

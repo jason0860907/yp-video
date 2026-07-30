@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
+import { errMsg } from '@/lib/api';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { ErrorState } from '@/components/ui/ErrorState';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { KindBadge } from './KindBadge';
 import type { CutKind } from '@/types/api';
@@ -40,6 +42,14 @@ interface VideoMultiSelectListProps<T extends VideoListItem> {
   maxHeightClass?: string;
   emptyTitle?: string;
   emptySubtitle?: string;
+  /** The query the videos came from, so failure and loading render as
+   *  themselves — a fetch error must never look like an empty library. */
+  query?: {
+    isPending: boolean;
+    isError: boolean;
+    error: unknown;
+    refetch: () => unknown;
+  };
 }
 
 type KindFilter = 'all' | CutKind;
@@ -62,6 +72,7 @@ export function VideoMultiSelectList<T extends VideoListItem>({
   maxHeightClass = 'max-h-[56vh]',
   emptyTitle = 'No videos',
   emptySubtitle,
+  query,
 }: VideoMultiSelectListProps<T>) {
   const [kindFilter, setKindFilter] = useState<KindFilter>('all');
   const [status, setStatus] = useState(statusOptions?.[0]?.value ?? '');
@@ -142,7 +153,15 @@ export function VideoMultiSelectList<T extends VideoListItem>({
       </div>
 
       <div className={cn('space-y-1 overflow-auto pr-1', maxHeightClass)}>
-        {visible.length === 0 ? (
+        {query?.isError ? (
+          <ErrorState
+            title="Failed to load videos"
+            message={errMsg(query.error)}
+            onRetry={() => void query.refetch()}
+          />
+        ) : query?.isPending ? (
+          <p className="py-12 text-center text-xs text-text-muted">Loading videos…</p>
+        ) : visible.length === 0 ? (
           <EmptyState
             icon={
               <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">

@@ -147,6 +147,7 @@ export function DetectPage() {
           <VideoMultiSelectList
             title="Cut videos"
             videos={videos}
+            query={videosQuery}
             selected={selected}
             onSelectedChange={setSelected}
             statusOptions={[

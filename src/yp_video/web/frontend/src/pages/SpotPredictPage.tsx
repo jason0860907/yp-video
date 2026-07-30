@@ -223,6 +223,7 @@ export function SpotPredictPage() {
         <Card>
           <VideoMultiSelectList
             videos={videos}
+            query={videosQuery}
             selected={selected}
             onSelectedChange={setSelected}
             statusOptions={[
