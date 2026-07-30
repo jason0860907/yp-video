@@ -90,7 +90,7 @@ class ReassociationTests(unittest.TestCase):
                 reassociate, "masked_crop_dir", return_value=self.crops / "masked"
             ),
             patch.object(actor_labels, "actors_path", return_value=self.labels),
-            patch.object(actor_labels, "_cache", StatCache()),
+            patch.object(actor_labels._store, "_cache", StatCache()),
         ]
         for item in self._patches:
             item.start()

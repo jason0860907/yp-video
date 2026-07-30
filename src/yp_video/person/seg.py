@@ -75,7 +75,9 @@ class CropMasker:
             if int(det.class_id[i]) != PERSON_CLASS_ID:
                 continue
             overlap = iou([float(v) for v in det.xyxy[i]], target_xyxy)
-            if overlap > best_iou:
+            # >= like every other IoU-threshold match in the repo, so a box
+            # sitting exactly at the threshold gets the same answer everywhere.
+            if overlap >= best_iou:
                 best, best_iou = i, overlap
         if best is None:
             return crop_bgr

@@ -153,7 +153,7 @@ class AssociationProgressTests(unittest.TestCase):
                     return_value=[{"start": 0.0, "end": 10.0}],
                 ),
                 patch.object(actor_labels, "actors_path", return_value=actors),
-                patch.object(actor_labels, "_cache", StatCache()),
+                patch.object(actor_labels._store, "_cache", StatCache()),
                 patch.object(
                     actor_association,
                     "prerequisites",
@@ -225,7 +225,7 @@ class AssociationProgressTests(unittest.TestCase):
                         store, "load_rallies", return_value=[{"start": 0.0, "end": 10.0}]
                     ),
                     patch.object(actor_labels, "actors_path", return_value=root / "a.json"),
-                    patch.object(actor_labels, "_cache", StatCache()),
+                    patch.object(actor_labels._store, "_cache", StatCache()),
                 ):
                     return actor_association.list_videos()
 

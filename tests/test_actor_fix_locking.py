@@ -94,10 +94,10 @@ def instrumented(*extra):
             _RankedLock("embedding-write", threading.RLock()),
         ),
         patch.object(
-            actor_labels, "_lock", _RankedLock("actor-labels", threading.RLock())
+            actor_labels._store, "_lock", _RankedLock("actor-labels", threading.RLock())
         ),
         patch.object(
-            reid_store, "_players_lock", _RankedLock("players", threading.RLock())
+            reid_store._players_store, "_lock", _RankedLock("players", threading.RLock())
         ),
         patch.object(
             pipeline, "_actor_fix_lock", _RankedLock("record-file", threading.RLock())

@@ -54,18 +54,14 @@ never blocks fixing an actor.
 
 from __future__ import annotations
 
-import json
-import threading
-from collections.abc import Iterable, Iterator, Mapping
-from contextlib import contextmanager
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
 from yp_video.actor.resolution import ActorResolution, actor_resolution
 from yp_video.config import ASSOCIATION_ANNOTATIONS_DIR
-from yp_video.core.cache import StatCache
-from yp_video.core.jsonl import atomic_write
+from yp_video.core.sidecar import JsonSidecar
 from yp_video.tracklets.geometry import TrackRef
 
 SCHEMA_VERSION = 2
@@ -174,24 +170,15 @@ def labeled_stems() -> list[str]:
     )
 
 
-# Serializes read-modify-write; the UI can land two picks back to back.
-_lock = threading.RLock()
-# Readers go through the cache; writers re-read under the lock.
-_cache: StatCache = StatCache()
+# Late-bound so tests patching ``actors_path`` redirect the store too.
+_store = JsonSidecar(lambda stem: actors_path(stem))
+
+#: Hold the label file across a multi-file actor transaction (see the lock
+#: order contract in extraction/actor_fix.py).
+write_transaction = _store.transaction
 
 
-@contextmanager
-def write_transaction() -> Iterator[None]:
-    """Hold the label file across a multi-file actor transaction."""
-    with _lock:
-        yield
-
-
-def _read(stem: str) -> dict[str, ActorLabel]:
-    path = actors_path(stem)
-    if not path.exists():
-        return {}
-    data = json.loads(path.read_text(encoding="utf-8"))
+def _parse(data: dict) -> dict[str, ActorLabel]:
     labels = {}
     for event_id, payload in (data.get("actors") or {}).items():
         label = ActorLabel.from_payload(payload)
@@ -200,38 +187,34 @@ def _read(stem: str) -> dict[str, ActorLabel]:
     return labels
 
 
+def _read(stem: str) -> dict[str, ActorLabel]:
+    return _parse(_store.read_fresh(stem))
+
+
 def _write(stem: str, labels: dict[str, ActorLabel]) -> None:
-    path = actors_path(stem)
     if not labels:
-        path.unlink(missing_ok=True)
+        _store.write(stem, None)
         return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with atomic_write(path) as file:
-        json.dump(
-            {
-                "version": SCHEMA_VERSION,
-                "actors": {
-                    event_id: labels[event_id].payload()
-                    for event_id in sorted(labels)
-                },
+    _store.write(
+        stem,
+        {
+            "version": SCHEMA_VERSION,
+            "actors": {
+                event_id: labels[event_id].payload()
+                for event_id in sorted(labels)
             },
-            file,
-            ensure_ascii=False,
-            indent=1,
-        )
+        },
+    )
 
 
 def load(stem: str) -> dict[str, ActorLabel]:
     """Every actor label for one video. Cached — SHARED, read-only."""
-    path = actors_path(stem)
-    if not path.exists():
-        return {}
-    return _cache.get(stem, [path], lambda: _read(stem))
+    return _store.cached(stem, _parse)
 
 
 def save(stem: str, event_id: str, label: ActorLabel | None) -> None:
     """Set (or with ``label=None`` clear) one event's verdict."""
-    with _lock:
+    with _store.transaction():
         labels = _read(stem)
         if label is None:
             labels.pop(event_id, None)
@@ -303,7 +286,7 @@ def confirm_auto(stem: str, confirmations: dict[str, ActorLabel]) -> list[str]:
     write — a caller comparing before and after could not report that
     honestly.
     """
-    with _lock:
+    with _store.transaction():
         labels = _read(stem)
         added = sorted(set(confirmations) - set(labels))
         if added:

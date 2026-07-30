@@ -26,19 +26,18 @@ matching algorithms and nothing else.
 from __future__ import annotations
 
 import json
-import os
 import threading
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from tempfile import NamedTemporaryFile
 
 import numpy as np
 
 from yp_video.config import REID_ANNOTATIONS_DIR, REID_DIR
 from yp_video.core.cache import StatCache
-from yp_video.core.jsonl import atomic_write
+from yp_video.core.jsonl import atomic_binary, atomic_write
+from yp_video.core.sidecar import JsonSidecar
 from yp_video.extraction.store import records_path
 
 EMBEDDINGS_DIR = REID_DIR / "embeddings"
@@ -226,13 +225,8 @@ def save_embedding_matrix(stem: str, model: str, matrix: np.ndarray) -> None:
     path = embedding_path(stem, model)
     path.parent.mkdir(parents=True, exist_ok=True)
     with _embedding_write_lock:
-        with NamedTemporaryFile(dir=path.parent, prefix=f"{path.name}.", suffix=".tmp", delete=False) as f:
-            try:
-                np.save(f, matrix.astype(np.float32, copy=False))
-            except BaseException:
-                os.unlink(f.name)
-                raise
-        os.replace(f.name, path)
+        with atomic_binary(path) as f:
+            np.save(f, matrix.astype(np.float32, copy=False))
 
 
 def players_path(stem: str) -> Path:
@@ -245,11 +239,8 @@ PLAYERS_SCHEMA_VERSION = 2
 
 # Serializes read-modify-write of the players file: the UI auto-saves
 # assignments while a Done verdict lands, and interleaving would drop one edit.
-_players_lock = threading.RLock()
-
-# Readers go through the cache; writers (under _players_lock) read fresh via
-# _read_players — they mutate the loaded dict before saving.
-_players_cache: StatCache = StatCache()
+# Late-bound so tests patching ``players_path`` redirect the store too.
+_players_store = JsonSidecar(lambda stem: players_path(stem))
 
 
 @dataclass(frozen=True)
@@ -274,31 +265,20 @@ class PlayersFile:
     done: bool
 
 
-def _read_players(stem: str) -> dict:
-    path = players_path(stem)
-    if not path.exists():
-        return {}
-    return json.loads(path.read_text(encoding="utf-8"))
+_read_players = _players_store.read_fresh
 
 
 def _cached_players(stem: str) -> dict:
-    path = players_path(stem)
-    if not path.exists():
-        return {}
-    return _players_cache.get(stem, [path], lambda: _read_players(stem))
+    return _players_store.cached(stem, lambda data: data)
 
 
 def _write_players(stem: str, data: dict) -> None:
     # Atomic replace — assignment auto-save and the Done button can race.
-    with atomic_write(players_path(stem)) as f:
-        json.dump(data, f, ensure_ascii=False, indent=1)
+    _players_store.write(stem, data)
 
 
-@contextmanager
-def players_write_transaction() -> Iterator[None]:
-    """Hold the players file across a multi-file transaction."""
-    with _players_lock:
-        yield
+#: Hold the players file across a multi-file transaction.
+players_write_transaction = _players_store.transaction
 
 
 def _clean(names: Mapping[str, str]) -> dict[str, str]:
@@ -321,7 +301,7 @@ def save_players(
     assignments: Mapping[str, str] | None = None,
 ) -> None:
     """Replace the naming maps. Omitted maps are left as they are."""
-    with _players_lock:
+    with _players_store.transaction():
         data = _read_players(stem)
         data["version"] = PLAYERS_SCHEMA_VERSION
         if tracks is not None:
@@ -346,7 +326,7 @@ def save_done(stem: str, done: bool) -> None:
     "done" from "gave up halfway", so the mark means what the user says it
     means. Absent rather than false when unset.
     """
-    with _players_lock:
+    with _players_store.transaction():
         data = _read_players(stem)
         if done:
             data["done"] = True
@@ -363,7 +343,7 @@ def drop_assignment(stem: str, event_id: str) -> None:
     the event's own override is dropped — its old tracklet keeps its name,
     because that name was never a claim about this one event.
     """
-    with _players_lock:
+    with _players_store.transaction():
         data = _read_players(stem)
         if data.get("assignments", {}).pop(event_id, None) is not None:
             _write_players(stem, data)

@@ -94,7 +94,7 @@ class ActorLabelStoreTests(unittest.TestCase):
                 patch.object(
                     actor_labels, "actors_path", return_value=path
                 ),
-                patch.object(actor_labels, "_cache", StatCache()),
+                patch.object(actor_labels._store, "_cache", StatCache()),
             ):
                 yield path
 
@@ -843,7 +843,7 @@ class ConfirmEndpointTests(unittest.TestCase):
                 patch.object(
                     actor_labels, "actors_path", return_value=root / "match_actors.json"
                 ),
-                patch.object(actor_labels, "_cache", StatCache()),
+                patch.object(actor_labels._store, "_cache", StatCache()),
             ):
                 yield
 

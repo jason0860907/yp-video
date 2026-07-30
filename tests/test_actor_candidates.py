@@ -68,7 +68,7 @@ class ActorCandidateExportTests(unittest.TestCase):
             patch.object(actor_labels, "records_path", return_value=self.records),
             patch.object(actor_labels, "tracks_path", return_value=self.tracks),
             patch.object(verdict_labels, "actors_path", return_value=self.verdicts),
-            patch.object(verdict_labels, "_cache", StatCache()),
+            patch.object(verdict_labels._store, "_cache", StatCache()),
         ]
         for item in self._patches:
             item.start()

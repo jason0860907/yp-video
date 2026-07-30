@@ -7,7 +7,7 @@ from collections import OrderedDict
 from contextlib import contextmanager
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Iterable, Iterator, TextIO
+from typing import BinaryIO, Iterable, Iterator, TextIO
 
 
 def _dumps(obj: dict) -> str:
@@ -24,6 +24,21 @@ def atomic_write(path: Path) -> Iterator[TextIO]:
     path.parent.mkdir(parents=True, exist_ok=True)
     with NamedTemporaryFile(
         "w", encoding="utf-8", dir=path.parent, prefix=f"{path.name}.", suffix=".tmp", delete=False
+    ) as f:
+        try:
+            yield f
+        except BaseException:
+            os.unlink(f.name)
+            raise
+    os.replace(f.name, path)
+
+
+@contextmanager
+def atomic_binary(path: Path) -> Iterator[BinaryIO]:
+    """``atomic_write`` for binary payloads (npy/npz archives)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with NamedTemporaryFile(
+        dir=path.parent, prefix=f"{path.name}.", suffix=".tmp", delete=False
     ) as f:
         try:
             yield f

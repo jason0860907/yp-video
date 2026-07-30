@@ -15,16 +15,14 @@ A leaf: paths and IO only, nothing here imports a domain package.
 
 from __future__ import annotations
 
-import os
 from collections.abc import Mapping
 from pathlib import Path
-from tempfile import NamedTemporaryFile
 
 import numpy as np
 
 from yp_video.config import TRACKS_DIR
 from yp_video.core.cache import StatCache
-from yp_video.core.jsonl import read_jsonl_cached
+from yp_video.core.jsonl import atomic_binary, read_jsonl_cached
 from yp_video.tracklets.geometry import TrackletIndex
 
 
@@ -67,14 +65,8 @@ def save_track_masks(stem: str, mask_hw: tuple[int, int], masks: dict[str, np.nd
     jsonl; ``mask_hw`` rides along as ``_shape`` so readers can unpack.
     """
     path = tracks_masks_path(stem)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with NamedTemporaryFile(dir=path.parent, prefix=f"{path.name}.", suffix=".tmp", delete=False) as f:
-        try:
-            np.savez_compressed(f, _shape=np.array(mask_hw), **masks)
-        except BaseException:
-            os.unlink(f.name)
-            raise
-    os.replace(f.name, path)
+    with atomic_binary(path) as f:
+        np.savez_compressed(f, _shape=np.array(mask_hw), **masks)
 
 
 def load_track_masks(stem: str, rally_id: int, track_id: int) -> np.ndarray:
