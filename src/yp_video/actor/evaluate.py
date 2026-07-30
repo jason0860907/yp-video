@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from yp_video.actor import labels as actor_labels
 from yp_video.actor.labels import ActorVerdict
+from yp_video.actor.metrics import association_rates, ratio
 from yp_video.actor.review import iter_reviewed
 
 if TYPE_CHECKING:
@@ -47,11 +48,6 @@ class _PolicyScore:
 
     def payload(self) -> dict:
         count = self.counts
-
-        def ratio(numerator: str, denominator: str) -> float | None:
-            total = count[denominator]
-            return count[numerator] / total if total else None
-
         return {
             "reviewed": count["reviewed"],
             "positive": count["positive"],
@@ -60,10 +56,8 @@ class _PolicyScore:
             # Of the events with a knowable answer, how many did it get right
             # — abstentions included, because an abstention is a wrong answer
             # when somebody visibly acted.
-            "top1_accuracy": ratio("correct", "positive"),
-            "auto_coverage": ratio("decided", "positive"),
-            "selective_accuracy": ratio("correct", "decided"),
-            "occluded_rejection_rate": ratio("occluded_rejected", "occluded"),
+            "top1_accuracy": ratio(count, "correct", "positive"),
+            **association_rates(count),
         }
 
 

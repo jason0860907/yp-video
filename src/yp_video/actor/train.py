@@ -17,6 +17,7 @@ from scipy.optimize import minimize
 
 from yp_video.actor import checkpoints
 from yp_video.actor.dataset import TrackDataset, TrackExample
+from yp_video.actor.metrics import association_rates, ratio
 from yp_video.actor.model import FEATURE_SET_TRACK, AssociationModel
 
 
@@ -196,10 +197,10 @@ def _metrics(
         "positive": 0,
         "occluded": 0,
         "top1": 0,
-        "selected_positive": 0,
-        "selected_correct": 0,
-        "selected_occluded": 0,
+        "decided": 0,
         "correct": 0,
+        "occluded_rejected": 0,
+        "overall_correct": 0,
     }
     for prediction in predictions:
         example = prediction.example
@@ -218,49 +219,35 @@ def _metrics(
         if example.target is None:
             counts["occluded"] += 1
             if selected is None:
-                counts["correct"] += 1
-            else:
-                counts["selected_occluded"] += 1
+                counts["occluded_rejected"] += 1
+                counts["overall_correct"] += 1
             continue
 
         counts["positive"] += 1
         if top == example.target:
             counts["top1"] += 1
         if selected is not None:
-            counts["selected_positive"] += 1
+            counts["decided"] += 1
             if selected == example.target:
-                counts["selected_correct"] += 1
                 counts["correct"] += 1
+                counts["overall_correct"] += 1
 
-    def ratio(numerator: str, denominator: str) -> float | None:
-        value = counts[denominator]
-        return counts[numerator] / value if value else None
-
-    selected_total = (
-        counts["selected_positive"] + counts["selected_occluded"]
+    # Everything the model committed an answer on, right or wrong: decided
+    # positives plus the occluded events it failed to reject.
+    selected_total = counts["decided"] + (
+        counts["occluded"] - counts["occluded_rejected"]
     )
     return {
         "reviewed": counts["reviewed"],
         "positive": counts["positive"],
         "occluded": counts["occluded"],
         "candidate_recall": 1.0 if counts["positive"] else None,
-        "top1_accuracy": ratio("top1", "positive"),
-        "auto_coverage": ratio("selected_positive", "positive"),
-        "selective_accuracy": ratio(
-            "selected_correct", "selected_positive"
-        ),
+        "top1_accuracy": ratio(counts, "top1", "positive"),
+        **association_rates(counts),
         "operational_precision": (
-            counts["selected_correct"] / selected_total
-            if selected_total
-            else None
+            counts["correct"] / selected_total if selected_total else None
         ),
-        "occluded_rejection_rate": (
-            1.0
-            - counts["selected_occluded"] / counts["occluded"]
-            if counts["occluded"]
-            else None
-        ),
-        "overall_accuracy": ratio("correct", "reviewed"),
+        "overall_accuracy": ratio(counts, "overall_correct", "reviewed"),
         "threshold": threshold,
         "none_threshold": none_threshold,
     }
