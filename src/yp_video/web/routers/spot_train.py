@@ -1,7 +1,7 @@
 """SPOT rally (segment) training router.
 
 Trains the yp-spot model on rally annotations as dense segments — every frame
-between a rally's start and end is the "rally" class. See ``yp_video.rally_spot``
+between a rally's start and end is the "rally" class. See ``yp_video.action.rally``
 for the reduced-fps frame-space contract.
 """
 
@@ -16,7 +16,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import Field
 
-from yp_video import rally_spot
+from yp_video.action import rally as rally_spot
 from yp_video.action.frames import ensure_action_frame_caches
 from yp_video.config import (
     ACTION_CHECKPOINTS_DIR,

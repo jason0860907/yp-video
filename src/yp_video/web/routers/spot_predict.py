@@ -18,8 +18,8 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import Field
 
-from yp_video import rally_spot
 from yp_video.action import prelabel
+from yp_video.action import rally as rally_spot
 from yp_video.config import (
     RALLY_ANNOTATIONS_DIR,
     RALLY_PRE_ANNOTATIONS_DIR,

@@ -73,7 +73,7 @@ def run_spot_inference(
     """Run one yp-spot inference subprocess and return its loaded predictions.
 
     Shared by the action (``predict_actions_to_jsonl``) and rally
-    (``yp_video.rally_spot.predict_rally_segments``) entry points. Streams
+    (``yp_video.action.rally.predict_rally_segments``) entry points. Streams
     stdout so progress ticks surface live; merges stderr in so a single reader
     can't deadlock and the error tail is captured too.
 
