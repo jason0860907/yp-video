@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { API, ApiError, apiPostBlob } from '@/lib/api';
+import { API, apiPostBlob, errMsg } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { formatTime } from '@/lib/format';
 import { downloadBlob } from '@/lib/download';
@@ -7,7 +7,6 @@ import { Button } from '@/components/ui/Button';
 import { toast } from '@/components/feedback/toast';
 import type { EditorAnnotation } from './AnnotationEditor';
 
-const errMsg = (e: unknown) => (e instanceof ApiError ? e.body : e instanceof Error ? e.message : String(e));
 
 interface Props {
   video: string;

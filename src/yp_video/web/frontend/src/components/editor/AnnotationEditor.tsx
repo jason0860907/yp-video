@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { API, ApiError, apiFetch, apiPostBlob } from '@/lib/api';
+import { API, apiFetch, apiPostBlob, errMsg } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { formatTime, parseTime } from '@/lib/format';
 import { copyText, downloadBlob } from '@/lib/download';
@@ -37,7 +37,6 @@ interface AnnotationEditorProps {
   onSaved?: (videoName: string) => Promise<void> | void;
 }
 
-const errMsg = (e: unknown) => (e instanceof ApiError ? e.body : e instanceof Error ? e.message : String(e));
 const normalizeRallyId = (v: unknown): number | null => {
   const n = Number(v);
   return Number.isInteger(n) && n > 0 ? n : null;

@@ -1,10 +1,9 @@
-import { API, apiFetch, ApiError } from '@/lib/api';
+import { API, apiFetch, errMsg } from '@/lib/api';
 import { toast } from '@/components/feedback/toast';
 import type { Job } from '@/types/api';
 import { JobProgress } from './JobProgress';
 import { JobItems } from './JobItems';
 
-const errMsg = (e: unknown) => (e instanceof ApiError ? e.body : e instanceof Error ? e.message : String(e));
 
 /** A job rendered as a bordered card: progress block + batch sub-items.
  *  Running jobs get a Cancel action (the current video still runs to

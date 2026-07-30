@@ -1,7 +1,6 @@
 /** Types and helpers shared by the ReID Label page, its video player and
  *  its group board. */
 
-import { ApiError } from '@/lib/api';
 import type { ReidRecord } from '@/types/api';
 
 /** The human verdict on one event's actor. "unreviewed" is the absence of
@@ -150,4 +149,3 @@ export const trackColor = (key: string) => {
 
 export const fmtTime = (s: number) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 
-export const errMsg = (e: unknown) => (e instanceof ApiError ? e.body : e instanceof Error ? e.message : String(e));

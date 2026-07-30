@@ -9,11 +9,10 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { API, apiFetch } from '@/lib/api';
+import { API, apiFetch, errMsg } from '@/lib/api';
 import { toast } from '@/components/feedback/toast';
 import { confirm } from '@/components/feedback/confirm';
 import type { ReidCluster } from '@/types/api';
-import { errMsg } from '@/components/labeling/shared';
 
 /** One editable identity group: named = a player, unnamed = an auto cluster.
  *  Locked groups survive re-clustering (threshold/model changes); any group

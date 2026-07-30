@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
-import { API, ApiError, apiFetch } from '@/lib/api';
+import { API, apiFetch, errMsg } from '@/lib/api';
+import { fieldCls } from '@/components/train/Field';
 import { cn } from '@/lib/cn';
 import { formatBytes, formatDuration, formatSpeed } from '@/lib/format';
 import { useSSE } from '@/lib/useSSE';
@@ -41,9 +42,6 @@ const QUALITIES = [
   { value: '480', label: '480p' },
 ];
 
-const fieldCls =
-  'w-full rounded-lg border border-border-light bg-surface-50 px-3 py-2.5 text-sm text-text-primary transition-all placeholder:text-text-muted focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary/15';
-const errMsg = (e: unknown) => (e instanceof ApiError ? e.body : e instanceof Error ? e.message : String(e));
 
 export function DownloadPage() {
   const [url, setUrl] = useState('');

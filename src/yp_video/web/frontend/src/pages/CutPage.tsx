@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { API, ApiError, apiFetch, apiUrl } from '@/lib/api';
+import { API, apiFetch, apiUrl, errMsg } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { formatTimePrecise } from '@/lib/format';
 import { Button } from '@/components/ui/Button';
@@ -20,7 +20,6 @@ interface Segment {
   auto: boolean;
 }
 
-const errMsg = (e: unknown) => (e instanceof ApiError ? e.body : e instanceof Error ? e.message : String(e));
 const stemOf = (name: string) => name.replace(/\.[^.]+$/, '');
 
 export function CutPage() {

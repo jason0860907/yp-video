@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { API, ApiError, apiFetch } from '@/lib/api';
+import { API, apiFetch, errMsg } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -18,7 +18,6 @@ import type { Job, SystemStats, VllmStatus } from '@/types/api';
 
 const POLL_MS = 15_000;
 
-const errMsg = (e: unknown) => (e instanceof ApiError ? e.body : e instanceof Error ? e.message : String(e));
 
 export function JobsPage() {
   const qc = useQueryClient();

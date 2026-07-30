@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type SyntheticEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type SyntheticEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { API, ApiError, apiFetch, apiUrl } from '@/lib/api';
+import { API, apiFetch, apiUrl, errMsg } from '@/lib/api';
+import { Field, fieldCls } from '@/components/train/Field';
 import { cn } from '@/lib/cn';
 import { copyText } from '@/lib/download';
 import { Button } from '@/components/ui/Button';
@@ -41,7 +42,6 @@ import { useActionWaveform } from '@/lib/useActionWaveform';
 import { ACTION_COLORS, actionColor } from '@/lib/actionColors';
 import type { ActionAnnotationData, ActionEvent, ActionVideo } from '@/types/api';
 
-const errMsg = (e: unknown) => (e instanceof ApiError ? e.body : e instanceof Error ? e.message : String(e));
 
 export function ActionAnnotatePage() {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -524,22 +524,22 @@ export function ActionAnnotatePage() {
       {/* Picker */}
       <Card>
         <div className="grid grid-cols-1 items-end gap-3 lg:grid-cols-[8.5rem_8.5rem_minmax(18rem,1fr)_auto]">
-          <FieldLabel label="Kind">
+          <Field label="Kind">
             <select value={kindFilter} onChange={(e) => setKindFilter(e.target.value as typeof kindFilter)} className={cn(fieldCls, 'h-9 w-full py-0')}>
               <option value="all">All kinds</option>
               <option value="broadcast">Broadcast</option>
               <option value="sideline">Sideline</option>
             </select>
-          </FieldLabel>
-          <FieldLabel label="Status">
+          </Field>
+          <Field label="Status">
             <select value={progressFilter} onChange={(e) => setProgressFilter(e.target.value as typeof progressFilter)} className={cn(fieldCls, 'h-9 w-full py-0')}>
               <option value="all">All</option>
               <option value="unlabeled">Unlabeled</option>
               <option value="pre-labeled">Pre-labeled</option>
               <option value="labeled">Labeled</option>
             </select>
-          </FieldLabel>
-          <FieldLabel label="Video">
+          </Field>
+          <Field label="Video">
             <VideoCombobox
               items={filtered}
               value={picked}
@@ -554,7 +554,7 @@ export function ActionAnnotatePage() {
                 </>
               )}
             />
-          </FieldLabel>
+          </Field>
           <div className="flex items-stretch gap-2">
             <Button intent="primary" className="h-9 py-0" onClick={() => load(picked)} disabled={loading || !picked}>
               {loading ? 'Loading…' : 'Load'}
@@ -792,7 +792,6 @@ export function ActionAnnotatePage() {
   );
 }
 
-const fieldCls = 'rounded-lg border border-border-light bg-surface-50 px-3 py-2 text-sm text-text-primary focus:border-primary/50 focus:outline-none';
 const clampToRally = (frame: number, ed: ActionEditor, rid: number | 'all') => {
   if (rid === 'all') return frame;
   const r = ed.rallies.find((x) => x.rally_id === rid);
@@ -802,14 +801,6 @@ const clampToRally = (frame: number, ed: ActionEditor, rid: number | 'all') => {
   return clamp(frame, sf, Math.min(ef, Math.max(0, ed.numFrames - 1)));
 };
 
-function FieldLabel({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <label className="block min-w-0 space-y-1.5">
-      <span className="block text-[10px] font-semibold uppercase tracking-widest text-text-muted">{label}</span>
-      {children}
-    </label>
-  );
-}
 
 function DotIcon() {
   return (

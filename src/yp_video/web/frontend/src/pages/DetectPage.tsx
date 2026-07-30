@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { API, ApiError, apiFetch } from '@/lib/api';
+import { API, apiFetch, errMsg } from '@/lib/api';
+import { fieldCls } from '@/components/train/Field';
 import { cn } from '@/lib/cn';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -30,9 +31,6 @@ const SETTING_FIELDS: Array<{ key: keyof Settings; label: string; min: number; m
   { key: 'min_score', label: 'Min score', min: 0, max: 1, step: 0.1 },
 ];
 
-const fieldCls =
-  'w-full rounded-lg border border-border-light bg-surface-50 px-3 py-2.5 text-sm text-text-primary focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary/15';
-const errMsg = (e: unknown) => (e instanceof ApiError ? e.body : e instanceof Error ? e.message : String(e));
 
 export function DetectPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());

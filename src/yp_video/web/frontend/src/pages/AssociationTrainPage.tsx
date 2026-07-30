@@ -10,6 +10,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { VideoMultiSelectList } from '@/components/video/VideoMultiSelectList';
 import { API, apiFetch, errMsg } from '@/lib/api';
+import { fieldCls } from '@/components/train/Field';
 import { cn } from '@/lib/cn';
 import { useSingleJob } from '@/lib/useSingleJob';
 import type {
@@ -83,9 +84,6 @@ const INITIAL_FORM: Form = {
   num_workers: 4,
   stop_vllm: false,
 };
-
-const fieldClass =
-  'w-full rounded-lg border border-border-light bg-surface-50 px-2.5 py-1.5 text-xs text-text-primary focus:border-primary/50 focus:outline-none';
 
 export function AssociationTrainPage() {
   const initialized = useRef(false);
@@ -294,14 +292,14 @@ export function AssociationTrainPage() {
               value={form.run_name}
               onChange={(event) => set('run_name', event.target.value)}
               placeholder="yp_actor_YYYYMMDD-HHMMSS"
-              className={fieldClass}
+              className={fieldCls}
             />
           </Field>
           <Field label="Init checkpoint" className="col-span-2">
             <select
               value={form.init_checkpoint}
               onChange={(event) => set('init_checkpoint', event.target.value)}
-              className={cn(fieldClass, 'cursor-pointer')}
+              className={cn(fieldCls, 'cursor-pointer')}
             >
               <option value="">New model (ImageNet-initialized backbone)</option>
               {(status?.init_checkpoints ?? []).map((checkpoint) => (
@@ -321,7 +319,7 @@ export function AssociationTrainPage() {
             <select
               value={form.backbone}
               onChange={(event) => set('backbone', event.target.value as Form['backbone'])}
-              className={cn(fieldClass, 'cursor-pointer')}
+              className={cn(fieldCls, 'cursor-pointer')}
             >
               {['rny002', 'rny002_gsm', 'rny008', 'rny008_gsm', 'rn18', 'rn50'].map((value) => (
                 <option key={value}>{value}</option>
@@ -740,7 +738,7 @@ function NumberField({
         max={max}
         step={step}
         onChange={(event) => onChange(Number(event.target.value))}
-        className={cn(fieldClass, 'font-mono tabular-nums')}
+        className={cn(fieldCls, 'font-mono tabular-nums')}
       />
     </Field>
   );

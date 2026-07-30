@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { API, ApiError, apiFetch } from '@/lib/api';
+import { API, apiFetch, errMsg } from '@/lib/api';
+import { fieldCls } from '@/components/train/Field';
 import { cn } from '@/lib/cn';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -47,9 +48,6 @@ const NUM_FIELDS: Array<{ key: keyof PredSettings; label: string; min: number; m
   { key: 'num_workers', label: 'Workers', min: 1, max: 32, step: 1 },
 ];
 
-const fieldCls =
-  'w-full rounded-lg border border-border-light bg-surface-50 px-3 py-2 text-sm text-text-primary focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary/15';
-const errMsg = (e: unknown) => (e instanceof ApiError ? e.body : e instanceof Error ? e.message : String(e));
 
 export function SpotPredictPage() {
   const navigate = useNavigate();

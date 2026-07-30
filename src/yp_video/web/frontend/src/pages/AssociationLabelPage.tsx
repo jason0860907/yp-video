@@ -13,9 +13,10 @@
  *  happens next to the video you are watching.
  */
 
-import { useMemo, useRef, useState, type ReactNode } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { API, ApiError, apiFetch, apiUrl } from '@/lib/api';
+import { API, ApiError, apiFetch, apiUrl, errMsg } from '@/lib/api';
+import { Field, fieldCls } from '@/components/train/Field';
 import { cn } from '@/lib/cn';
 import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
@@ -24,7 +25,7 @@ import { PipelineChips, STAGE_HINT } from '@/components/video/PipelineChips';
 import { VideoCombobox } from '@/components/video/VideoCombobox';
 import { toast } from '@/components/feedback/toast';
 import { EventVideoPlayer, type PlayerHandle } from '@/components/labeling/EventVideoPlayer';
-import { canConfirm, errMsg, type ActorFix, type ActorVerdict, type Rally, type SidebarAction, type TrackData } from '@/components/labeling/shared';
+import { canConfirm, type ActorFix, type ActorVerdict, type Rally, type SidebarAction, type TrackData } from '@/components/labeling/shared';
 import type {
   ActionAnnotationData,
   AssociationVideo,
@@ -32,17 +33,7 @@ import type {
   ReidRecord,
 } from '@/types/api';
 
-const fieldCls =
-  'rounded-lg border border-border-light bg-surface-50 px-3 py-2 text-sm text-text-primary focus:border-primary/50 focus:outline-none';
 
-function FieldLabel({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <label className="block min-w-0 space-y-1.5">
-      <span className="block text-[10px] font-semibold uppercase tracking-widest text-text-muted">{label}</span>
-      {children}
-    </label>
-  );
-}
 
 export function AssociationLabelPage() {
   const qc = useQueryClient();
@@ -234,7 +225,7 @@ export function AssociationLabelPage() {
     <div className="mx-auto max-w-screen-2xl space-y-5">
       <Card>
         <div className="grid grid-cols-1 items-end gap-3 lg:grid-cols-[8.5rem_8.5rem_minmax(18rem,1fr)]">
-          <FieldLabel label="Kind">
+          <Field label="Kind">
             <select
               value={kindFilter}
               onChange={(e) => setKindFilter(e.target.value as typeof kindFilter)}
@@ -244,8 +235,8 @@ export function AssociationLabelPage() {
               <option value="broadcast">Broadcast</option>
               <option value="sideline">Sideline</option>
             </select>
-          </FieldLabel>
-          <FieldLabel label="Status">
+          </Field>
+          <Field label="Status">
             <select
               value={pickStatus}
               onChange={(e) => setPickStatus(e.target.value as typeof pickStatus)}
@@ -256,8 +247,8 @@ export function AssociationLabelPage() {
               <option value="labeled">In progress</option>
               <option value="done">Done</option>
             </select>
-          </FieldLabel>
-          <FieldLabel label="Video">
+          </Field>
+          <Field label="Video">
             <VideoCombobox
               items={pickable}
               value={picked}
@@ -281,7 +272,7 @@ export function AssociationLabelPage() {
                 </>
               )}
             />
-          </FieldLabel>
+          </Field>
         </div>
       </Card>
 

@@ -12,7 +12,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { API, ApiError, apiFetch } from '@/lib/api';
+import { API, apiFetch, errMsg } from '@/lib/api';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -26,7 +26,6 @@ import { toast } from '@/components/feedback/toast';
 import { useTypedJobs } from '@/lib/useTypedJobs';
 import type { Job, ReidOptions, ReidVideo } from '@/types/api';
 
-const errMsg = (e: unknown) => (e instanceof ApiError ? e.body : e instanceof Error ? e.message : String(e));
 
 // The one job this page runs — rehydrated from the server list so navigating
 // away and back doesn't lose live progress.

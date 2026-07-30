@@ -12,9 +12,10 @@
  *  video via jumpToEvent.
  */
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { API, ApiError, apiFetch, apiUrl } from '@/lib/api';
+import { API, ApiError, apiFetch, apiUrl, errMsg } from '@/lib/api';
+import { Field, fieldCls } from '@/components/train/Field';
 import { cn } from '@/lib/cn';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -28,7 +29,7 @@ import { confirm } from '@/components/feedback/confirm';
 import { GroupBoard, type BoardHandle } from '@/components/reid/GroupBoard';
 import { EventVideoPlayer, type PlayerHandle } from '@/components/labeling/EventVideoPlayer';
 import { useGroupBoard } from '@/components/reid/useGroupBoard';
-import { errMsg, type Rally, type SidebarAction, type TrackData } from '@/components/labeling/shared';
+import { type Rally, type SidebarAction, type TrackData } from '@/components/labeling/shared';
 import { LiveJob } from '@/components/job/LiveJob';
 import type { ActionAnnotationData, Job, ReidClusters, ReidOptions, ReidPlayers, ReidRecord, ReidVideo } from '@/types/api';
 
@@ -51,16 +52,7 @@ const embeddingRetryDelay = (attempt: number, error: Error) =>
 const selectCls =
   'w-auto cursor-pointer appearance-none rounded-lg border border-border-light bg-surface-50 px-3 py-1 text-xs text-text-primary focus:border-primary/50 focus:outline-none';
 
-const fieldCls = 'rounded-lg border border-border-light bg-surface-50 px-3 py-2 text-sm text-text-primary focus:border-primary/50 focus:outline-none';
 
-function FieldLabel({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <label className="block min-w-0 space-y-1.5">
-      <span className="block text-[10px] font-semibold uppercase tracking-widest text-text-muted">{label}</span>
-      {children}
-    </label>
-  );
-}
 
 export function ReidLabelPage() {
   const qc = useQueryClient();
@@ -318,22 +310,22 @@ export function ReidLabelPage() {
       {/* Picker — same shape as the Action Label / Rally Label pickers */}
       <Card>
         <div className="grid grid-cols-1 items-end gap-3 lg:grid-cols-[8.5rem_8.5rem_minmax(18rem,1fr)]">
-          <FieldLabel label="Kind">
+          <Field label="Kind">
             <select value={kindFilter} onChange={(e) => setKindFilter(e.target.value as typeof kindFilter)} className={cn(fieldCls, 'h-9 w-full py-0')}>
               <option value="all">All kinds</option>
               <option value="broadcast">Broadcast</option>
               <option value="sideline">Sideline</option>
             </select>
-          </FieldLabel>
-          <FieldLabel label="Status">
+          </Field>
+          <Field label="Status">
             <select value={pickStatus} onChange={(e) => setPickStatus(e.target.value as typeof pickStatus)} className={cn(fieldCls, 'h-9 w-full py-0')}>
               <option value="all">All</option>
               <option value="unlabeled">Unlabeled</option>
               <option value="labeled">In progress</option>
               <option value="done">Done</option>
             </select>
-          </FieldLabel>
-          <FieldLabel label="Video">
+          </Field>
+          <Field label="Video">
             <VideoCombobox
               items={pickable}
               value={picked}
@@ -349,7 +341,7 @@ export function ReidLabelPage() {
                 </>
               )}
             />
-          </FieldLabel>
+          </Field>
         </div>
       </Card>
 

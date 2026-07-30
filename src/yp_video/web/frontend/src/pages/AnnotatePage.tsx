@@ -1,6 +1,7 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { API, ApiError, apiFetch, apiUrl } from '@/lib/api';
+import { API, apiFetch, apiUrl, errMsg } from '@/lib/api';
+import { fieldCls } from '@/components/train/Field';
 import { cn } from '@/lib/cn';
 import { copyText } from '@/lib/download';
 import { Button } from '@/components/ui/Button';
@@ -33,7 +34,6 @@ const sourceMarks = (src: string | string[]) => {
     .join('');
 };
 
-const errMsg = (e: unknown) => (e instanceof ApiError ? e.body : e instanceof Error ? e.message : String(e));
 // Stable reference so the editor's load effect doesn't re-run each render.
 const streamPath = (vp: string) => apiUrl(API.annotate.video(vp));
 
@@ -164,7 +164,6 @@ export function AnnotatePage() {
   );
 }
 
-const fieldCls = 'rounded-lg border border-border-light bg-surface-50 px-3 py-2 text-sm text-text-primary focus:border-primary/50 focus:outline-none';
 
 function FieldLabel({ label, children }: { label: string; children: ReactNode }) {
   return (
