@@ -3,6 +3,7 @@
 import asyncio
 import io
 import json
+import logging
 import os
 import shutil
 import tempfile
@@ -12,7 +13,6 @@ from urllib.parse import unquote
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, Response
-from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
 from yp_video.app_export import AppExportError, export_one_match
@@ -29,7 +29,9 @@ from yp_video.core.ffmpeg import FFmpegError, export_segment
 from yp_video.core.jsonl import read_jsonl
 from yp_video.core.rallies import RALLY_SOURCES, SOURCE_BY_TAG
 from yp_video.web.r2_client import r2_client, serve_video_or_r2_redirect, sync_to_r2
+from yp_video.web.schemas import StrictModel
 
+log = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -40,7 +42,7 @@ _SOURCES = RALLY_SOURCES
 _SOURCE_BY_TAG = SOURCE_BY_TAG
 
 
-class Annotation(BaseModel):
+class Annotation(StrictModel):
     id: str | None = None
     rally_id: int | None = None
     start: float
@@ -48,7 +50,7 @@ class Annotation(BaseModel):
     label: str
 
 
-class SaveAnnotationsRequest(BaseModel):
+class SaveAnnotationsRequest(StrictModel):
     video: str
     duration: float
     annotations: list[Annotation]
@@ -89,8 +91,8 @@ def list_results() -> list[dict]:
             for source in _SOURCES:
                 for obj in r2_client.list_objects(prefix=f"{source.r2_category}/"):
                     files.setdefault(Path(obj["key"]).name, set()).add(source.tag)
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 — R2 down must not take the page down
+            log.warning("R2 listing failed; remote annotations will look absent")
     def _kind(name: str) -> str:
         # Strip the conventional "_annotations.jsonl" suffix to get the cut stem.
         stem = name.removesuffix(".jsonl").removesuffix("_annotations")
@@ -226,18 +228,18 @@ async def save_annotations(req: SaveAnnotationsRequest) -> dict:
 _CLIP_SEMAPHORE = asyncio.Semaphore(2)
 
 
-class ClipSegment(BaseModel):
+class ClipSegment(StrictModel):
     start: float
     end: float
     label: str = "rally"
 
 
-class ClipRequest(BaseModel):
+class ClipRequest(StrictModel):
     video: str
     segment: ClipSegment
 
 
-class ClipZipRequest(BaseModel):
+class ClipZipRequest(StrictModel):
     video: str
     segments: list[ClipSegment]
 
@@ -323,7 +325,7 @@ async def cut_clip_zip(req: ClipZipRequest):
     )
 
 
-class PublishRequest(BaseModel):
+class PublishRequest(StrictModel):
     video: str
 
 

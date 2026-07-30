@@ -1,12 +1,12 @@
 """R2 cloud storage upload/download router."""
 
 import asyncio
+import logging
 import time
 from collections.abc import Callable
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
 
 from yp_video.config import R2_CATEGORIES
 from yp_video.web.job_helpers import (
@@ -17,27 +17,29 @@ from yp_video.web.job_helpers import (
 )
 from yp_video.web.jobs import JobSummary, JobType, job_manager, threadsafe_update
 from yp_video.web.r2_client import r2_client
+from yp_video.web.schemas import StrictModel
 
+log = logging.getLogger(__name__)
 router = APIRouter()
 
 
-class UploadRequest(BaseModel):
+class UploadRequest(StrictModel):
     category: str
     files: list[str]
 
 
-class DownloadRequest(BaseModel):
+class DownloadRequest(StrictModel):
     category: str
     files: list[str]  # R2 keys relative to category prefix
 
 
-class DeleteLocalRequest(BaseModel):
+class DeleteLocalRequest(StrictModel):
     category: str
     files: list[str]
     force: bool = False  # If False, only delete files that exist on R2
 
 
-class DeleteR2Request(BaseModel):
+class DeleteR2Request(StrictModel):
     category: str
     files: list[str]  # paths relative to the category prefix
 
@@ -108,8 +110,10 @@ def list_local_files(category: str = "cuts-broadcast") -> list[dict]:
         try:
             for obj in r2_client.list_objects(prefix=f"{category}/"):
                 r2_keys.add(obj["key"])
-        except Exception:
-            pass  # R2 unavailable, show all as un-synced
+        except Exception:  # noqa: BLE001
+            # R2 unavailable: everything renders un-synced, which invites a
+            # pointless full re-upload — say why in the log at least.
+            log.warning("R2 listing failed for %s; files will show as un-synced", category)
 
     files = []
     if category in CHECKPOINT_CATEGORIES:
@@ -395,8 +399,8 @@ def delete_local_files(req: DeleteLocalRequest):
         try:
             for obj in r2_client.list_objects(prefix=f"{req.category}/"):
                 r2_keys.add(obj["key"])
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001
+            log.warning("R2 listing failed; deletion summary may be incomplete")
 
     for file_path in req.files:
         local_path = base_dir / file_path

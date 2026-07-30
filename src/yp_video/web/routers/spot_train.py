@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from yp_video import rally_spot
 from yp_video.action.frames import ensure_action_frame_caches
@@ -37,6 +37,7 @@ from yp_video.web.job_helpers import (
     terminal_prefix,
 )
 from yp_video.web.jobs import JobSummary, JobType, job_manager
+from yp_video.web.schemas import StrictModel
 from yp_video.web.spot_runs import (
     PackageExporter,
     TrainProgress,
@@ -56,7 +57,7 @@ RALLY_RUN_PREFIX = "yp_rally"
 SEGMENT_MAP_PATTERN = r"Segment mAP \(mean over tIoU\):\s*([0-9.]+)%"
 
 
-class RallyTrainRequest(BaseModel):
+class RallyTrainRequest(StrictModel):
     # Frame-extraction rate; also the model's sample_fps. 2fps keeps the whole
     # 800-video library around ~30 GB of JPEGs and gives clip_len=64 a 32 s
     # temporal window — rally on/off is a slow signal, it does not need 30fps.

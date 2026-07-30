@@ -18,7 +18,7 @@ from pathlib import Path
 from urllib.parse import unquote
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from yp_video.config import find_cut
 from yp_video.core.cache import StatCache
@@ -30,6 +30,7 @@ from yp_video.tracklets import store as tracks_store
 from yp_video.tracklets import tracking
 from yp_video.web.job_helpers import init_batch_items, spawn_batch_video_job
 from yp_video.web.jobs import JobSummary, JobType, job_manager
+from yp_video.web.schemas import StrictModel
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -39,7 +40,7 @@ router = APIRouter()
 _slim_tracks_cache: StatCache = StatCache()
 
 
-class TrackRequest(BaseModel):
+class TrackRequest(StrictModel):
     videos: list[str] = Field(min_length=1)
     overwrite: bool = False
     stop_vllm: bool = False

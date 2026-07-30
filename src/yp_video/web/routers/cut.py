@@ -11,6 +11,7 @@ from yp_video.config import (
 )
 from yp_video.core.ffmpeg import FFmpegError, export_segment
 from yp_video.web.r2_client import serve_video_or_r2_redirect, sync_to_r2
+from yp_video.web.schemas import StrictModel
 
 router = APIRouter()
 
@@ -20,13 +21,13 @@ router = APIRouter()
 _EXPORT_SEMAPHORE = asyncio.Semaphore(2)
 
 
-class Segment(BaseModel):
+class Segment(StrictModel):
     name: str
     start: float
     end: float
 
 
-class ExportRequest(BaseModel):
+class ExportRequest(StrictModel):
     source: str
     segments: list[Segment]
     # "broadcast" = TV footage (default), "sideline" = practice / side-court

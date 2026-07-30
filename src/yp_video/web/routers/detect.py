@@ -4,7 +4,6 @@ import asyncio
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
 
 from yp_video.config import (
     RALLY_PRE_ANNOTATIONS_DIR,
@@ -23,6 +22,7 @@ from yp_video.web.job_helpers import (
 )
 from yp_video.web.jobs import JobSummary, JobType, job_manager
 from yp_video.web.r2_client import sync_directory_to_r2, sync_to_r2
+from yp_video.web.schemas import StrictModel
 from yp_video.web.vllm_manager import vllm_manager
 
 router = APIRouter()
@@ -30,7 +30,7 @@ router = APIRouter()
 _default_max_seqs = int(load_vllm_env()["VLLM_MAX_NUM_SEQS"])
 
 
-class DetectRequest(BaseModel):
+class DetectRequest(StrictModel):
     videos: list[str]
     batch_size: int = _default_max_seqs
     clip_duration: float = 6.0
@@ -40,7 +40,7 @@ class DetectRequest(BaseModel):
     min_score: float = 0.5
 
 
-class ConvertRequest(BaseModel):
+class ConvertRequest(StrictModel):
     min_duration: float = 3.0
     min_score: float = 0.5
 

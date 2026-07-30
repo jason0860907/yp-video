@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Response
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from yp_video.config import (
     REID_CHECKPOINTS_DIR,
@@ -51,6 +51,7 @@ from yp_video.web.job_helpers import (
     stream_subprocess,
 )
 from yp_video.web.jobs import JobStatus, JobSummary, JobType, job_manager
+from yp_video.web.schemas import StrictModel
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -201,7 +202,7 @@ def export_plan(
     )
 
 
-class ReidExportRequest(BaseModel):
+class ReidExportRequest(StrictModel):
     name: str | None = None
     split_mode: str = Field(default="auto", pattern="^(auto|session|crops|all_train)$")
     test_ratio: float = Field(default=0.25, gt=0, lt=1)
@@ -292,7 +293,7 @@ def _train_parsers() -> list[ProgressParser]:
     return [ProgressParser(rf"{REID_PROGRESS_PREFIX}(\{{.*\}})", handle)]
 
 
-class ReidTrainRequest(BaseModel):
+class ReidTrainRequest(StrictModel):
     dataset: str
     run_name: str | None = None
     epochs: int = Field(default=4, ge=1)

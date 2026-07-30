@@ -12,7 +12,7 @@ from urllib.parse import unquote
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
-from pydantic import BaseModel, Field, field_validator
+from pydantic import Field, field_validator
 
 from yp_video.action import prelabel
 from yp_video.action.frames import inspect_action_frame_cache
@@ -51,6 +51,7 @@ from yp_video.web.job_helpers import (
 )
 from yp_video.web.jobs import JobSummary, JobType, job_manager
 from yp_video.web.r2_client import serve_video_or_r2_redirect, sync_to_r2
+from yp_video.web.schemas import StrictModel
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -64,7 +65,7 @@ SPOT_DEFAULT_DECODE_CHUNK_FRAMES = 256
 SPOT_DEFAULT_NVIDIA_VIDEO_LIB_DIR = Path.home() / ".local/lib/nvidia-video"
 
 
-class ActionEvent(BaseModel):
+class ActionEvent(StrictModel):
     id: str | None = None
     rally_id: int | None = None
     frame: int = Field(ge=0)
@@ -90,14 +91,14 @@ class ActionEvent(BaseModel):
         return value
 
 
-class SaveActionAnnotationsRequest(BaseModel):
+class SaveActionAnnotationsRequest(StrictModel):
     video: str
     fps: float = Field(gt=0)
     num_frames: int = Field(ge=0)
     events: list[ActionEvent]
 
 
-class SpotPrelabelOptions(BaseModel):
+class SpotPrelabelOptions(StrictModel):
     checkpoint: str | None = None
     batch_size: int = Field(default=16, ge=1, le=128)
     num_workers: int = Field(default=2, ge=0, le=16)

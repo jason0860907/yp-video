@@ -3,7 +3,7 @@
 import time
 
 from fastapi import APIRouter
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from yp_video.actor.review import review_summary
 from yp_video.config import (
@@ -20,6 +20,7 @@ from yp_video.config import (
 )
 from yp_video.reid.store import PLAYERS_SUFFIX
 from yp_video.web.jobs import job_manager
+from yp_video.web.schemas import StrictModel
 from yp_video.web.vllm_manager import vllm_manager
 
 router = APIRouter()
@@ -34,7 +35,7 @@ _PRESENCE_TTL_S = 75.0
 _presence: dict[str, tuple[float, bool]] = {}  # client_id -> (last_seen, is_active)
 
 
-class PresenceBeat(BaseModel):
+class PresenceBeat(StrictModel):
     client_id: str = Field(min_length=8, max_length=64)
     # False once the user has gone idle (no input past the client threshold).
     active: bool = True

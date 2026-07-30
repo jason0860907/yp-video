@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from yp_video.action import training
 from yp_video.actor import labels as association_labels
@@ -29,6 +29,7 @@ from yp_video.web.action_training import (
     start_training_job,
 )
 from yp_video.web.jobs import JobSummary, JobType, job_manager
+from yp_video.web.schemas import StrictModel
 from yp_video.web.spot_runs import (
     checkpoint_package_options,
     performance_payload,
@@ -148,7 +149,7 @@ def performance(run: str | None = None) -> dict:
     )
 
 
-class FusionTrainRequest(BaseModel):
+class FusionTrainRequest(StrictModel):
     recipe: Literal[
         "association_action",
         "rally_action",

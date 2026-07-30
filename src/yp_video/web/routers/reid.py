@@ -19,7 +19,7 @@ from pathlib import Path
 from urllib.parse import unquote
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from yp_video.config import cut_kind_of, find_cut, iter_all_cuts
 from yp_video.extraction import done, links, pipeline
@@ -34,6 +34,7 @@ from yp_video.reid.embedder import (
 )
 from yp_video.web.job_helpers import init_batch_items, spawn_batch_video_job
 from yp_video.web.jobs import JobSummary, JobType, job_manager
+from yp_video.web.schemas import StrictModel
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -88,7 +89,7 @@ def options() -> dict:
     }
 
 
-class EmbedRequest(BaseModel):
+class EmbedRequest(StrictModel):
     videos: list[str] = Field(min_length=1)
     # None = every registered embedder; missing matrices only unless overwrite.
     models: list[str] | None = None
@@ -209,7 +210,7 @@ def clusters(
     }
 
 
-class SavePlayersRequest(BaseModel):
+class SavePlayersRequest(StrictModel):
     """The naming maps as the board holds them (see store.PlayersFile)."""
 
     tracks: dict[str, str] = Field(default_factory=dict)
@@ -242,7 +243,7 @@ def get_players(name: str, model: str = DEFAULT_EMBEDDER) -> dict:
     }
 
 
-class DoneRequest(BaseModel):
+class DoneRequest(StrictModel):
     done: bool = True
     confirm_auto_actors: bool = False
 
@@ -277,7 +278,7 @@ def put_players(name: str, req: SavePlayersRequest) -> dict:
     }
 
 
-class SeedClusterRequest(BaseModel):
+class SeedClusterRequest(StrictModel):
     # Seed key (the UI's group row key) -> unit keys anchoring that group.
     seeds: dict[str, list[str]]
     threshold: float = identity.DEFAULT_CLUSTER_THRESHOLD

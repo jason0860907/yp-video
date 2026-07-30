@@ -16,7 +16,7 @@ import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from yp_video import rally_spot
 from yp_video.action import prelabel
@@ -51,12 +51,13 @@ from yp_video.web.job_helpers import (
 )
 from yp_video.web.jobs import JobSummary, JobType, job_manager
 from yp_video.web.r2_client import sync_to_r2
+from yp_video.web.schemas import StrictModel
 
 log = logging.getLogger(__name__)
 router = APIRouter()
 
 
-class RallyPredictRequest(BaseModel):
+class RallyPredictRequest(StrictModel):
     videos: list[str]
     checkpoint: str = ""
     # Per-frame score floor before merging; argmax already implies ~0.5 for the

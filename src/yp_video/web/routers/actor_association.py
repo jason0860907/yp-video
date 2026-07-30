@@ -68,6 +68,7 @@ from yp_video.web.job_helpers import (
     terminal_prefix,
 )
 from yp_video.web.jobs import JobSummary, JobType, job_manager
+from yp_video.web.schemas import StrictModel
 from yp_video.web.spot_runs import PackageExporter, export_checkpoint_package
 
 log = logging.getLogger(__name__)
@@ -660,7 +661,7 @@ async def _start_association_training(
     return job.to_dict()
 
 
-class PredictRequest(BaseModel):
+class PredictRequest(StrictModel):
     model_config = ConfigDict(extra="forbid")
 
     videos: list[str]
@@ -738,7 +739,7 @@ async def predict(req: PredictRequest) -> dict:
     return job.to_dict()
 
 
-class ConfirmRequest(BaseModel):
+class ConfirmRequest(StrictModel):
     model_config = ConfigDict(extra="forbid")
 
     #: None = every automatic pick in the video that has no verdict yet.

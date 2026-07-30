@@ -25,7 +25,7 @@ from urllib.parse import unquote
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from yp_video.actor import labels as actor_labels
 from yp_video.config import cut_kind_of, find_cut, iter_all_cuts
@@ -37,6 +37,7 @@ from yp_video.extraction.prerequisites import prerequisites
 from yp_video.person.detector import DETECTOR_NAME
 from yp_video.web.job_helpers import init_batch_items, spawn_batch_video_job
 from yp_video.web.jobs import JobSummary, JobType, job_manager
+from yp_video.web.schemas import StrictModel
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -83,7 +84,7 @@ def list_videos() -> list[dict]:
     return results
 
 
-class DetectRequest(BaseModel):
+class DetectRequest(StrictModel):
     videos: list[str] = Field(min_length=1)
     #: Re-detect videos that already have detections. Off = skip them; the
     #: candidate list only changes when the detector does.

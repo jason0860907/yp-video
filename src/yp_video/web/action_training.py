@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 from fastapi import HTTPException
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import Field, model_validator
 
 from yp_video.action import training
 from yp_video.action.frames import ensure_action_frame_caches
@@ -51,6 +51,7 @@ from yp_video.web.job_helpers import (
     terminal_prefix,
 )
 from yp_video.web.jobs import JobType, job_manager
+from yp_video.web.schemas import StrictModel
 from yp_video.web.spot_runs import (
     PackageExporter,
     TrainProgress,
@@ -83,8 +84,7 @@ ACTION_TRAINING = TrainingFlavor(
 )
 
 
-class ActionTrainBase(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+class ActionTrainBase(StrictModel):
 
     dataset: str | None = None
     frame_dir: str | None = None

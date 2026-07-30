@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from yp_video.config import RAW_VIDEOS_DIR
 from yp_video.web.job_helpers import batch_message, finalize_batch_job
 from yp_video.web.jobs import JobType, job_manager, threadsafe_update
+from yp_video.web.schemas import StrictModel
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -41,7 +42,7 @@ class PlaylistInfo(BaseModel):
     videos: list[VideoInfo]
 
 
-class DownloadRequest(BaseModel):
+class DownloadRequest(StrictModel):
     videos: list[VideoInfo]
     quality: str = "best"
 
