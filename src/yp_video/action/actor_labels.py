@@ -108,6 +108,8 @@ def candidates_only(stem: str, events: Iterable[dict]) -> list[dict]:
             {
                 "id": str(event.get("id")),
                 "frame": frame,
+                "contact": event.get("xy"),
+                "contact_visible": bool(event.get("visible", True)),
                 "candidates": [
                     {
                         "track": key,
@@ -185,6 +187,8 @@ def build(stem: str, events: Iterable[dict]) -> tuple[list[dict], dict[str, int]
             {
                 "id": str(event.get("id")),
                 "frame": frame,
+                "contact": event.get("xy"),
+                "contact_visible": bool(event.get("visible", True)),
                 "candidates": payload,
                 "target_kind": kind.value,
                 **({"target": target} if target is not None else {}),

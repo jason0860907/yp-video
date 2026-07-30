@@ -79,6 +79,7 @@ const STALE_QUERIES: Record<string, string[][]> = {
   player_embed: [['reid-videos'], ['reid-clusters'], ['reid-players']],
   rally_spot_train: [['spot-train-status'], ['spot-predict-info']],
   action_train: [['action-train-status'], ['spot-info']],
+  fusion_model_train: [['fusion-model-status'], ['spot-info'], ['association-status']],
   download: [['cut-videos']],
   r2_upload: [['upload-status']],
   r2_download: [['upload-status']],

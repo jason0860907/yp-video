@@ -12,6 +12,7 @@ import { VideoMultiSelectList } from '@/components/video/VideoMultiSelectList';
 import { LiveJob } from '@/components/job/LiveJob';
 import { toast } from '@/components/feedback/toast';
 import { confirm } from '@/components/feedback/confirm';
+import { useTypedJobs } from '@/lib/useTypedJobs';
 import type { ActionVideo, Job, SpotInfo } from '@/types/api';
 
 interface PredSettings {
@@ -61,7 +62,7 @@ export function ActionPredictPage() {
   const navigate = useNavigate();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [settings, setSettings] = useState<PredSettings>(DEFAULTS);
-  const [jobs, setJobs] = useState<Job[]>([]);
+  const { jobs, upsertJob } = useTypedJobs(['spot_prelabel_batch']);
 
   const videosQuery = useQuery({
     queryKey: ['action-videos'],
@@ -93,8 +94,6 @@ export function ActionPredictPage() {
     : spotQuery.isError
       ? `status check failed: ${errMsg(spotQuery.error)}`
       : spot?.error || (spot?.available ? (checkpoints.length ? null : 'no checkpoint found') : `${spot?.spot_dir || 'yp-spot directory'} not ready`);
-
-  const upsertJob = (job: Job) => setJobs((prev) => (prev.some((j) => j.id === job.id) ? prev.map((j) => (j.id === job.id ? job : j)) : [job, ...prev]));
 
   const run = async () => {
     const names = [...selected];
@@ -185,6 +184,7 @@ export function ActionPredictPage() {
             {checkpoints.map((c) => (
               <option key={c.path} value={c.path}>
                 {c.name} · {c.is_best ? 'best' : `epoch ${c.epoch}`}
+                {c.predicts_actor ? ' · fusion' : ''}
               </option>
             ))}
           </select>

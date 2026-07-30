@@ -49,7 +49,14 @@ export interface ActionTrainStatus {
     frame_dir?: string;
     checkpoint_dir?: string;
     by_view?: Record<'broadcast' | 'sideline', { videos?: number; events?: number; frames?: number }>;
-    per_video?: Array<{ video: string; events: number; frames: number; view: string; is_val?: boolean }>;
+    per_video?: Array<{
+      video: string;
+      events: number;
+      frames: number;
+      view: string;
+      is_val?: boolean;
+      has_association_label?: boolean;
+    }>;
   };
   vnl_1_5?: {
     ready?: boolean;
@@ -60,6 +67,38 @@ export interface ActionTrainStatus {
     frame_dir?: string;
     frame_dir_exists?: boolean;
   };
+}
+
+export type FusionRecipeId =
+  | 'association_action'
+  | 'rally_action'
+  | 'association_action_rally';
+
+export interface FusionRecipe {
+  id: FusionRecipeId;
+  name: string;
+  tasks: Array<'association' | 'action' | 'rally'>;
+  available: boolean;
+  trainable: boolean;
+  predict_outputs: Array<'association' | 'action' | 'rally'>;
+  checkpoint_family: 'legacy-actor-head' | null;
+  description: string;
+  blocked_on: string | null;
+}
+
+export interface FusionModelStatus {
+  recipes: FusionRecipe[];
+  checkpoints: AssociationCheckpoint[];
+  spot_available: boolean;
+  init_checkpoints: Array<{ value: string; label: string }>;
+  resumable_runs: Array<{ value: string; label: string }>;
+  action_annotations?: ActionTrainStatus['action_annotations'];
+  supervision: {
+    action_videos: number;
+    joint_videos: number;
+    action_only_videos: number;
+  };
+  active_job: Job | null;
 }
 
 export interface ActionVideoMap {
@@ -76,6 +115,23 @@ export interface ActionMapBreakdown {
   per_video?: ActionVideoMap[];
 }
 
+export type TaskMetricValue = number | null | Record<string, number>;
+
+export interface TaskMetricPhase {
+  loss: number | null;
+  metrics: Record<string, TaskMetricValue>;
+  counts: Record<string, number>;
+}
+
+/** Common contract emitted by every enabled head in a SPOT training run. */
+export interface TaskMetricSnapshot {
+  primary_metric: string;
+  train: TaskMetricPhase;
+  validation: TaskMetricPhase;
+}
+
+export type TaskMetrics = Record<string, TaskMetricSnapshot>;
+
 export interface ActionPerfEntry {
   epoch: number;
   lr?: number | null;
@@ -86,6 +142,13 @@ export interface ActionPerfEntry {
   val_loss?: number | null;
   per_class?: Record<string, number>;
   val_per_video?: ActionVideoMap[] | null;
+  tasks?: TaskMetrics;
+  selection?: {
+    task?: string;
+    metric?: string;
+    mode?: 'min' | 'max';
+    value?: number;
+  };
 }
 
 export interface ActionPerfData {
@@ -114,9 +177,11 @@ export interface TrainProgress {
   latest_val_loss?: number;
   latest_val_map?: number;
   latest_val_breakdown?: MapBreakdown;
+  latest_task_metrics?: TaskMetrics;
   best_value?: number;
   best_epoch?: number;
   best_breakdown?: MapBreakdown;
+  best_task_metrics?: TaskMetrics;
 }
 
 /** SPOT rally (segment) training — /spot-train/status. */
@@ -229,6 +294,8 @@ export interface SpotCheckpoint {
   best_metric?: string | null;
   best_value?: number | null;
   size_mb?: number;
+  /** The packaged run also trained the fusion actor head. */
+  predicts_actor?: boolean;
 }
 
 export interface SpotInfo {
@@ -320,38 +387,25 @@ export interface ReidRecord {
   resolution: 'unresolved' | 'auto' | 'manual' | 'occluded';
   /** The human verdict on this event's actor; drives association training. */
   actor_review?: 'unreviewed' | 'confirmed_auto' | 'manual' | 'occluded';
-  /** What the rule decided, plus the learned ranker's opinion when a
-   *  shadow is activated. The rule is what produced the crop. */
+  /** What decided this actor, in that policy's own terms. `version` names
+   *  which one — the rule, `learned:<checkpoint>`, or `spot:<run>` — and the
+   *  optional fields are the ones only some policies can fill. */
   association?: {
     version: string;
     decision: 'selected' | 'ambiguous' | 'no_candidate' | 'abstained';
     candidate_count: number;
-    margin: number | null;
+    margin?: number | null;
     confidence?: number | null;
     none_probability?: number | null;
     /** Only a yp-spot policy sets this: which of the three answers it gave.
      *  An abstention lands in the records as `unresolved` either way, so this
      *  is the only place the model's REASON survives. */
     kind?: 'track' | 'occluded' | 'untracked';
-    top: {
-      box: [number, number, number, number];
-      cost: number;
-      source: 'box' | 'other';
-      detection_score: number;
-    } | null;
-    learned?: {
-      version: string;
-      decision: 'selected' | 'ambiguous' | 'no_candidate' | 'abstained';
-      candidate_count: number;
-      margin: number | null;
-      confidence?: number | null;
-      none_probability?: number | null;
-      top: {
-        box: [number, number, number, number];
-        cost: number;
-        source: 'box' | 'other';
-        detection_score: number;
-      } | null;
+    top?: {
+      box?: [number, number, number, number];
+      cost?: number;
+      detection_score?: number;
+      track?: string;
     } | null;
   };
   box?: [number, number, number, number] | null;
@@ -414,6 +468,7 @@ export interface SystemStats {
   action_pre_annotations?: number;
   actions?: number;
   association_labels?: number;
+  association_labels_done?: number;
   reid_labels?: number;
 }
 
@@ -518,11 +573,15 @@ export interface ReidPerfData {
   evaluated_at: number;
 }
 
-/** GET /actor-association/videos — one row of the Association work list. */
+/** GET /actor-association/videos — one row of the Association work list.
+ *  Only videos carrying everything association is built on are listed:
+ *  rallies, action labels and extraction records. */
 export interface AssociationVideo {
   name: string;
   kind: 'broadcast' | 'sideline';
-  /** Records extraction wrote — the review denominator. */
+  /** The review denominator: current action events inside a rally that name
+   *  somebody to identify (a `score` names nobody). Action annotations own
+   *  this, not extraction — see extraction/store.labelable_actions. */
   event_count: number;
   reviewed: number;
   unreviewed: number;
@@ -537,22 +596,34 @@ export interface ReidAssociationMetrics {
   reviewed: number;
   positive: number;
   occluded: number;
-  candidate_recall: number | null;
+  /** Verdicts naming no tracklet — the legacy box labels. Not answerable in
+   *  tracklet terms, so they are excluded from every rate rather than
+   *  counted as failures. */
+  unscorable?: number;
   top1_accuracy: number | null;
   auto_coverage: number | null;
   selective_accuracy: number | null;
-  operational_precision?: number | null;
   occluded_rejection_rate: number | null;
-  overall_accuracy: number | null;
   threshold?: number;
 }
 
+/** Every policy scored on the same reviewed events, per slice.
+ *
+ *  Read the slices, not the aggregate: `all` is dominated by events the rule
+ *  already gets right, so a model can move it without touching a single case
+ *  worth moving. `hard` is where more than one tracklet contains the contact
+ *  point; `manual` is where a human overruled the rule. */
 export interface ReidAssociationPerfData {
-  models: Record<string, ReidAssociationMetrics>;
+  /** The training corpus this scoreboard was computed over. Lives here and
+   *  not on /status because building it is expensive, and /status is what
+   *  the Association Predict model pickers wait on. */
+  dataset: ReidAssociationDatasetSummary;
+  slices: string[];
+  policies: Record<string, Record<string, ReidAssociationMetrics>>;
+  /** Each trained candidate's own grouped out-of-fold metrics, from its
+   *  manifest. Not comparable line-for-line with `policies`: those are
+   *  measured on every reviewed video, these on held-out folds only. */
   candidates?: Record<string, ReidAssociationMetrics | null>;
-  labels: Record<string, number>;
-  skipped: Record<string, number>;
-  dataset?: ReidAssociationDatasetSummary;
 }
 
 export interface ReidAssociationDatasetSummary {
@@ -564,11 +635,12 @@ export interface ReidAssociationDatasetSummary {
 
 export interface ReidAssociationCheckpoint {
   name: string;
-  active_shadow: boolean;
-  /** Which feature contract it was trained on, such as box-v3 or track-v3. */
+  /** Which feature contract it was trained on, such as track-v3. */
   feature_set: string;
-  /** Why it cannot be the extraction shadow, or null when it can. */
-  shadow_blocked_on: string | null;
+  /** Why this checkpoint cannot be run, or null when it can. A retired
+   *  feature contract is the usual reason: the file stays on disk and stays
+   *  listed, with the reason, rather than vanishing from the page. */
+  unusable_because: string | null;
   created_at: number;
   threshold: number;
   metrics: {
@@ -580,29 +652,43 @@ export interface ReidAssociationCheckpoint {
   };
 }
 
-/** A yp-spot checkpoint carrying the actor head — it answers "who acted" by
- *  looking at the frames, so it has holdout metrics rather than grouped-OOF
- *  ones and is selected through `spot_checkpoint`. */
-export interface SpotActorCheckpoint {
+/** A visual association checkpoint accepted by Association Predict. */
+export interface AssociationCheckpoint {
   path: string;
   name: string;
+  family: 'yp-association-v1' | 'legacy-actor-head';
   epoch: number | null;
   mtime: number | null;
   holdout: string | null;
   metrics: {
-    all_top1?: number;
-    hard_top1?: number;
-    manual_top1?: number;
-    rule_manual_top1?: number;
+    player_top1?: number | null;
+    player_coverage?: number | null;
+    selective_accuracy?: number | null;
+    overall_exact?: number | null;
+    occluded_recall?: number | null;
+    untracked_recall?: number | null;
+    all_top1?: number | null;
+    hard_top1?: number | null;
+    manual_top1?: number | null;
+    rule_manual_top1?: number | null;
   };
+  validation_videos?: string[];
+  actor_targets?: Record<string, number>;
+  best?: {
+    criterion?: string;
+    epoch?: number;
+    value?: number;
+    overall_exact?: number;
+  } | null;
   note: string | null;
 }
 
 export interface ReidAssociationStatus {
-  dataset: ReidAssociationDatasetSummary;
   checkpoints: ReidAssociationCheckpoint[];
-  spot_checkpoints: SpotActorCheckpoint[];
-  active_shadow: string | null;
+  association_checkpoints: AssociationCheckpoint[];
+  spot_available?: boolean;
+  init_checkpoints?: Array<{ value: string; label: string }>;
+  frame_dir?: string;
   active_job: Job | null;
 }
 

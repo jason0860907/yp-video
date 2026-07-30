@@ -12,7 +12,7 @@ import { ProgressBar } from '@/components/job/ProgressBar';
 import { JobItems } from '@/components/job/JobItems';
 import { formatClock } from '@/lib/format';
 import { statusLabel, statusTheme } from '@/lib/job';
-import { STAT_ROWS } from '@/lib/stats';
+import { formatStatValue, STAT_ROWS } from '@/lib/stats';
 import { toast } from '@/components/feedback/toast';
 import type { Job, SystemStats, VllmStatus } from '@/types/api';
 
@@ -165,9 +165,19 @@ export function JobsPage() {
             <SectionLabel>Corpus</SectionLabel>
             <div className="space-y-1.5 text-[11.5px]">
               {STAT_ROWS.map(([label, key]) => (
-                <div key={key} className="flex items-center justify-between">
+                <div
+                  key={key}
+                  className="flex items-center justify-between"
+                  title={
+                    key === 'association_labels'
+                      ? 'Done / Started (includes In Progress)'
+                      : undefined
+                  }
+                >
                   <span className="text-text-secondary">{label}</span>
-                  <span className="font-mono tabular-nums text-text-primary">{stats.data?.[key] ?? 0}</span>
+                  <span className="font-mono tabular-nums text-text-primary">
+                    {formatStatValue(stats.data, key)}
+                  </span>
                 </div>
               ))}
             </div>

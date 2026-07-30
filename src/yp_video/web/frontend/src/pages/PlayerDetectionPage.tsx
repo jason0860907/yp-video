@@ -10,7 +10,7 @@
  *  perception stages, two upstreams, neither waiting on the other.
  */
 
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { API, ApiError, apiFetch } from '@/lib/api';
@@ -24,6 +24,7 @@ import { StatTile } from '@/components/ui/StatTile';
 import { VideoMultiSelectList } from '@/components/video/VideoMultiSelectList';
 import { LiveJob } from '@/components/job/LiveJob';
 import { toast } from '@/components/feedback/toast';
+import { useTypedJobs } from '@/lib/useTypedJobs';
 import type { ExtractionVideo, Job } from '@/types/api';
 
 const errMsg = (e: unknown) => (e instanceof ApiError ? e.body : e instanceof Error ? e.message : String(e));
@@ -35,28 +36,14 @@ export function PlayerDetectionPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [overwrite, setOverwrite] = useState(false);
   const [stopVllm, setStopVllm] = useState(false);
-  const [jobOverrides, setJobOverrides] = useState<Record<string, Job>>({});
+  const { jobs, upsertJob } = useTypedJobs([DETECT_JOB_TYPE]);
 
-  const jobsQuery = useQuery({
-    queryKey: ['jobs-list'],
-    queryFn: () => apiFetch<Job[]>(API.jobs.list),
-  });
   const videosQuery = useQuery({
     queryKey: ['extraction-videos'],
     queryFn: () => apiFetch<ExtractionVideo[]>(API.extraction.videos),
   });
   const videos = videosQuery.data ?? [];
   const detected = videos.filter((v) => v.has_records);
-
-  const upsertJob = (job: Job) => setJobOverrides((prev) => ({ ...prev, [job.id]: job }));
-  const jobs = useMemo(() => {
-    const merged = new Map<string, Job>();
-    for (const job of jobsQuery.data ?? []) {
-      if (job.type === DETECT_JOB_TYPE) merged.set(job.id, job);
-    }
-    for (const job of Object.values(jobOverrides)) merged.set(job.id, job);
-    return [...merged.values()].sort((a, b) => (b.created_at ?? 0) - (a.created_at ?? 0));
-  }, [jobsQuery.data, jobOverrides]);
 
   // The action labels are the only prerequisite — they say which frames to
   // look at. Tracklets are the association stage's requirement, and gating

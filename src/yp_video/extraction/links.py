@@ -39,7 +39,12 @@ from yp_video.extraction.store import (
     records_path,
 )
 from yp_video.person.detector import iou
-from yp_video.tracklets.geometry import BoxQuery, TrackRef, link_boxes
+from yp_video.tracklets.geometry import (
+    BOX_MATCH_IOU,
+    BoxQuery,
+    TrackRef,
+    link_boxes,
+)
 from yp_video.tracklets.store import (
     TrackMasks,
     load_track_masks,
@@ -149,8 +154,6 @@ def link_payload(stem: str) -> dict[str, dict]:
 #: fragment, and a fragment always loses an IoU contest to the occluder in
 #: front of it.
 MASK_COVERAGE_MIN = 0.6
-#: Without masks, box IoU is the best available signal.
-PICK_IOU_MIN = 0.3
 #: How far from the event the tracklet may be sampled before it counts as
 #: "never reaches the action" and the crop comes from elsewhere.
 EVENT_TRACK_MAX_DELTA = 3
@@ -308,7 +311,7 @@ def resolve_track(
         return TrackPick(box=_as_box(track_box), frame=event_frame, snap=False)
 
     # Tracked before instance masks existed — box IoU is all there is.
-    best_box, best_iou = track_box, PICK_IOU_MIN
+    best_box, best_iou = track_box, BOX_MATCH_IOU
     for detection in detections:
         overlap = iou(detection["box"], track_box)
         if overlap >= best_iou:

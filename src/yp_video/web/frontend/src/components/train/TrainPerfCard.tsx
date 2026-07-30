@@ -2,6 +2,10 @@ import { useMemo } from 'react';
 import { cn } from '@/lib/cn';
 import { Card } from '@/components/ui/Card';
 import { SectionLabel } from '@/components/ui/SectionLabel';
+import {
+  TaskMetricHistory,
+  TaskMetricsTable,
+} from '@/components/train/TaskMetricsTable';
 import type { ActionPerfData, ActionPerfEntry, ActionVideoMap } from '@/types/api';
 
 // Three related metrics, not arbitrary categories: harmonic is the headline
@@ -81,6 +85,9 @@ function shortLabel(video: string): string {
 export function TrainPerfCard({ data, onSelectRun }: { data: ActionPerfData; onSelectRun: (run: string) => void }) {
   const entries = useMemo(() => (data.entries ?? []).filter((e) => typeof e.val_mAP === 'number'), [data.entries]);
   const series = useMemo(() => buildSeries(entries), [entries]);
+  const latestEntry = entries[entries.length - 1];
+  const bestEntry =
+    entries.find((entry) => entry.epoch === data.best?.epoch) ?? latestEntry;
 
   // Per-video comes from the best epoch (fall back to the latest epoch that has it).
   const perVideo = useMemo<ActionVideoMap[]>(() => {
@@ -151,6 +158,16 @@ export function TrainPerfCard({ data, onSelectRun }: { data: ActionPerfData; onS
           ))}
         </div>
       </div>
+      <TaskMetricsTable
+        latest={latestEntry?.tasks}
+        best={bestEntry?.tasks}
+        title="Task validation metrics"
+      />
+      <TaskMetricHistory
+        entries={entries}
+        bestEpoch={data.best?.epoch}
+        excludeTasks={['action', 'location']}
+      />
       {/* A single class (rally runs) carries no comparison — the headline line already shows it. */}
       {perClass.length > 1 && <PerClassChart rows={perClass} bestEpoch={data.best?.epoch} />}
       {perVideo.length > 0 && <PerVideoChart rows={perVideo} bestEpoch={data.best?.epoch} />}

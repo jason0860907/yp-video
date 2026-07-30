@@ -5,7 +5,7 @@ import time
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-from yp_video.actor.labels import LABEL_SUFFIX as ACTOR_LABEL_SUFFIX
+from yp_video.actor.review import review_summary
 from yp_video.config import (
     RALLY_ANNOTATIONS_DIR,
     ACTION_ANNOTATIONS_DIR,
@@ -102,6 +102,7 @@ def list_videos() -> list[dict]:
 @router.get("/stats")
 def get_stats():
     """Get pipeline statistics."""
+    association = review_summary()
     return {
         "videos": count_files(RAW_VIDEOS_DIR, "*.mp4"),
         "cuts": sum(1 for _ in iter_all_cuts()),
@@ -110,11 +111,10 @@ def get_stats():
         "annotations": count_files(RALLY_ANNOTATIONS_DIR, "*.jsonl"),
         "action_pre_annotations": count_files(ACTION_PRE_ANNOTATIONS_DIR, "*.jsonl"),
         "actions": count_files(ACTION_ANNOTATIONS_DIR, "*.jsonl"),
-        # Both label kinds share one directory and are told apart by the
-        # suffix each package owns; counting videos, like every row above.
-        "association_labels": count_files(
-            REID_ANNOTATIONS_DIR, f"*{ACTOR_LABEL_SUFFIX}"
-        ),
+        # Association is review progress rather than a raw file count:
+        # started includes both Done and In Progress.
+        "association_labels": association.started,
+        "association_labels_done": association.done,
         "reid_labels": count_files(REID_ANNOTATIONS_DIR, f"*{PLAYERS_SUFFIX}"),
         "active_jobs": job_manager.active_count(),
     }

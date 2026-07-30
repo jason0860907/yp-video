@@ -9,7 +9,11 @@ extraction records they both read.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
+import re
+import shutil
 import time
 from pathlib import Path
 from typing import Annotated, Literal
@@ -18,19 +22,34 @@ from urllib.parse import unquote
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from yp_video.actor import checkpoints as actor_checkpoints
 from yp_video.actor import dataset as actor_dataset
 from yp_video.actor import evaluate as actor_evaluate
 from yp_video.actor import labels as actor_labels
 from yp_video.actor import policy as actor_policy
-from yp_video.actor import train as actor_train
+from yp_video.actor import review as actor_review
 from yp_video.actor.ranking import RULE_BASED
-from yp_video.actor.service import shadow_rejection
-from yp_video.config import cut_kind_of, find_cut, iter_all_cuts
+from yp_video.config import (
+    ACTION_CHECKPOINTS_DIR,
+    ACTION_FRAMES_DIR,
+    SPOT_DIR,
+    SPOT_PYTHON,
+    cut_kind_of,
+    find_cut,
+    iter_all_cuts,
+)
+from yp_video.contracts.action import (
+    ACTION_CONTRACT_VERSION,
+    ACTION_CONTRACT_VERSION_ENV,
+    ACTOR_FILE_GLOB,
+    ACTOR_LABEL_SUBDIR,
+)
+from yp_video.action.frames import ensure_action_frame_caches
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import read_jsonl_cached, read_jsonl_header
+from yp_video.action import actor_labels as spot_actor_labels
 from yp_video.action import prelabel
 from yp_video.actor import spot_associate
+from yp_video.actor import spot_predictions
 from yp_video.extraction import actor_fix, links, reassociate
 from yp_video.extraction.prerequisites import prerequisites
 from yp_video.extraction import store as extraction_store
@@ -39,11 +58,17 @@ from yp_video.tracklets import store as tracks_store
 from yp_video.tracklets.geometry import TrackRef
 from yp_video.reid.embedder import DEFAULT_EMBEDDER, base_embedder_name
 from yp_video.web.job_helpers import (
+    ProgressParser,
     fail_job_from_exc,
     init_batch_items,
     spawn_batch_video_job,
+    stop_vllm_for_job,
+    stream_subprocess,
+    terminal_prefix,
 )
 from yp_video.web.jobs import JobStatus, job_manager
+from yp_video.web.routers import action_train as action_train_router
+from yp_video.web.spot_runs import PackageExporter, export_checkpoint_package
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -51,6 +76,7 @@ router = APIRouter()
 TRAIN_JOB_TYPE = "actor_association_train"
 PREDICT_JOB_TYPE = "actor_association_predict"
 _evaluation_cache: StatCache = StatCache()
+_train_start_lock = asyncio.Lock()
 
 
 @router.get("/videos")
@@ -60,33 +86,36 @@ def list_videos() -> list[dict]:
     Action annotations own event membership and labels. Extraction records
     only say which of those events have detector output, and actor labels say
     which current, labelable ids a human reviewed.
+
+    A video missing anything association is built on is left out entirely
+    rather than listed as a row with nothing in it: actions own which events
+    exist, rallies own which of them are in play (and namespace every tracklet
+    an answer can name), and records hold the detections a pick chooses among.
+    Producing any of the three is another page's job, so a row here would be a
+    dead end — the pipeline chips on those pages are where the gap belongs.
     """
     results = []
     for path in sorted(iter_all_cuts(), key=lambda p: p.name):
+        # Cheapest gate first: this walks every cut on every page load, and
+        # only a minority have been extracted at all.
         records = extraction_store.records_path(path.stem)
         if not records.exists():
             continue
+        pipeline = prerequisites(path.stem)
+        if not (pipeline.rally_sources and pipeline.has_action):
+            continue
         header = read_jsonl_header(records)
-        current = extraction_store.labelable_actions(
+        progress = actor_review.review_progress(
             path.stem, float(header.get("fps") or 0)
         )
-        current_ids = {str(record["id"]) for record in current}
-        labels = actor_labels.load(path.stem)
-        verdicts: dict[str, int] = {}
-        for event_id, label in labels.items():
-            if event_id not in current_ids:
-                continue
-            verdicts[label.verdict.value] = verdicts.get(label.verdict.value, 0) + 1
-        reviewed_ids = current_ids & set(labels)
-        event_count = len(current_ids)
         results.append(
             {
                 "name": path.name,
                 "kind": cut_kind_of(path),
-                "event_count": event_count,
-                "reviewed": len(reviewed_ids),
-                "unreviewed": len(current_ids - reviewed_ids),
-                "verdicts": verdicts,
+                "event_count": progress.event_count,
+                "reviewed": progress.reviewed,
+                "unreviewed": progress.unreviewed,
+                "verdicts": progress.verdicts,
                 # The automatic policy's own outcome, for context on how much
                 # of the remainder is likely to just need confirming. These
                 # are detector-run diagnostics; unlike progress above they
@@ -95,7 +124,7 @@ def list_videos() -> list[dict]:
                     key: int(header.get(key) or 0)
                     for key in ("ok", "multi", "miss")
                 },
-                "pipeline": prerequisites(path.stem).payload(),
+                "pipeline": pipeline.payload(),
             }
         )
     return results
@@ -113,94 +142,193 @@ def _active_job() -> dict | None:
     )
 
 
-def _shadow_blocked_on(name: str) -> str | None:
-    """Why this checkpoint cannot be the extraction shadow, or None.
-
-    A checkpoint that no longer LOADS is one of the answers. Feature contracts
-    get retired, and the checkpoints trained against them stay on disk; a
-    listing that let that raise would take down the page for every other
-    checkpoint too, over one file nobody can activate anyway.
-    """
-    try:
-        return shadow_rejection(actor_checkpoints.load(name))
-    except (OSError, ValueError, KeyError) as exc:
-        return str(exc)
-
-
 @router.get("/status")
 def status() -> dict:
-    dataset = actor_dataset.load_dataset()
+    """Which models exist, and whether a training job is running.
+
+    Cheap on purpose, and it must stay that way: this is the single query the
+    Association Predict pickers wait on. It used to also return the training
+    corpus summary, which meant building the dataset — decompressing a
+    silhouette archive per labelled video — before anyone could choose a
+    model. The corpus belongs to /performance, which is already the slow,
+    cached one and is read by the page that actually wants it.
+    """
+    association_checkpoints = spot_associate.list_association_checkpoints()
     return {
-        "dataset": dataset.payload(),
-        "checkpoints": [
+        # Kept as an empty field until the hand-written frontend response type
+        # is retired. Association no longer trains or offers the linear
+        # tracklet ranker.
+        "checkpoints": [],
+        # Visual models answer by looking at pixels and choosing among the
+        # tracked candidates; this also includes supported legacy actor heads.
+        "association_checkpoints": association_checkpoints,
+        "spot_available": SPOT_DIR.exists() and SPOT_PYTHON.exists(),
+        "init_checkpoints": [
             {
-                **candidate,
-                # Activatability is the service's judgement, not the
-                # repository's — the page needs it to disable the button
-                # instead of offering a 400.
-                "shadow_blocked_on": _shadow_blocked_on(candidate["name"]),
+                "value": row["path"],
+                "label": (
+                    f"{row['name']} (Top-1 "
+                    f"{float(((row.get('best') or {}).get('value') or 0)):.1%})"
+                ),
             }
-            for candidate in actor_checkpoints.list_candidates()
+            for row in association_checkpoints
+            if row["family"] == spot_associate.INDEPENDENT_FORMAT
         ],
-        # yp-spot models that answer the same question by looking at pixels.
-        # A separate list because they are a different kind of thing: no
-        # grouped-OOF metrics, no shadow activation, and they are selected
-        # through `spot_checkpoint` rather than `checkpoint`.
-        "spot_checkpoints": spot_associate.list_actor_checkpoints(),
-        "active_shadow": actor_checkpoints.active_shadow_name(),
+        "frame_dir": str(ACTION_FRAMES_DIR),
         "active_job": _active_job(),
+    }
+
+
+def _association_history(path: Path) -> list[dict]:
+    if not path.is_file():
+        return []
+    history = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(record.get("epoch"), int):
+            continue
+        train_metrics = record.get("train") or {}
+        val_metrics = record.get("val") or {}
+        losses = record.get("loss") or {}
+        history.append(
+            {
+                "epoch": record["epoch"] + 1,
+                "train_player_top1": train_metrics.get("player_top1"),
+                "val_player_top1": val_metrics.get("player_top1"),
+                "train_overall_exact": train_metrics.get("overall_exact"),
+                "val_overall_exact": val_metrics.get("overall_exact"),
+                "train_loss": losses.get("train"),
+                "val_loss": losses.get("val"),
+                "best": bool(record.get("best")),
+            }
+        )
+    return history
+
+
+@router.get("/train-history")
+def train_history(run: str | None = None) -> dict:
+    """Per-epoch metrics for an active or packaged Association run."""
+    if run is not None:
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", run) or run.startswith("."):
+            raise HTTPException(400, "Invalid Association run name")
+        candidates = (
+            SPOT_DIR / "exp" / run / "metrics.jsonl",
+            ACTION_CHECKPOINTS_DIR / run / "metrics.jsonl",
+        )
+    else:
+        active = _active_job()
+        if active is None:
+            return {"run": None, "history": []}
+        save_dir = (active.get("params") or {}).get("save_dir")
+        if not isinstance(save_dir, str):
+            return {"run": None, "history": []}
+        root = Path(save_dir)
+        run = root.name
+        candidates = (root / "metrics.jsonl",)
+    path = next((candidate for candidate in candidates if candidate.is_file()), None)
+    return {
+        "run": run,
+        "history": _association_history(path) if path is not None else [],
     }
 
 
 @router.get("/performance")
 async def performance() -> dict:
-    dataset = actor_dataset.load_dataset()
-    candidates = actor_checkpoints.list_candidates()
-    sources = list(dataset.sources)
-    for candidate in candidates:
-        sources.append(
-            actor_checkpoints.checkpoint_dir(candidate["name"])
-            / actor_checkpoints.MANIFEST_FILE
-        )
+    """Every policy that can answer, on the reviewed events, sliced.
+
+    The rule and persisted yp-actor answers are scored on the same reviewed
+    events. The `hard` and `manual` slices are the point: the aggregate is
+    dominated by events the rule already gets right, so a model can move it
+    without touching a single case anyone cares about.
+
+    Note the yp-spot column is scored on answers ALREADY on disk from an
+    earlier Association Predict run, not by re-running the head — scoring
+    would mean a GPU pass per video from inside a web request.
+    """
+    stems = list(actor_labels.labeled_stems())
+    spot_runs = sorted(spot_predictions.available_runs(stems))
+
+    sources = [
+        *actor_dataset.source_paths(stems),
+        spot_predictions.ACTOR_PREDICTIONS_DIR,
+    ]
 
     def compute() -> dict:
-        rules = actor_evaluate.evaluate_dataset(dataset)
+        dataset = actor_dataset.load_track_dataset(stems)
+        builders: dict = {RULE_BASED: lambda _stem: actor_policy.RulePolicy()}
+        for run in spot_runs:
+            builders[f"spot:{run}"] = (
+                lambda stem, r=run: spot_predictions.policy_for(stem, r)
+            )
         return {
-            **rules,
-            "candidates": {
-                candidate["name"]: (
-                    candidate.get("metrics", {}).get("grouped_oof")
-                )
-                for candidate in candidates
-            },
+            "dataset": dataset.payload(),
+            "slices": list(actor_evaluate.SLICES),
+            "policies": actor_evaluate.evaluate_policies(builders, stems),
+            "candidates": {},
         }
 
     return await asyncio.to_thread(
         _evaluation_cache.get,
-        ("actor-association", dataset.stems),
+        ("actor-association", tuple(stems)),
         sources,
         compute,
     )
 
 
 class AssociationTrainRequest(BaseModel):
-    # Training is an explicit experiment over this exact corpus. The UI
-    # defaults to completed reviews, but may deliberately include a partial
-    # video; silently sweeping every actors file made that impossible to see.
-    videos: list[str] = Field(min_length=2)
+    """An independent event-level association experiment."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    train_videos: list[str] = Field(min_length=1)
+    val_videos: list[str] = Field(min_length=1)
     run_name: str | None = None
-    seed: int = 42
-    folds: int = Field(default=5, ge=2, le=10)
-    l2: float = Field(default=0.05, gt=0)
-    target_precision: float = Field(default=0.9, gt=0, le=1)
-    min_occluded_rejection: float = Field(default=0.5, ge=0, le=1)
+    init_checkpoint: str | None = None
+    gpu: int = Field(default=0, ge=0, le=7)
+    num_epochs: int = Field(default=40, ge=1, le=1000)
+    batch_size: int = Field(default=8, ge=1, le=64)
+    learning_rate: float = Field(default=0.0003, gt=0)
+    warm_up_epochs: int = Field(default=3, ge=0, le=100)
+    backbone: Literal[
+        "rny002",
+        "rny002_gsm",
+        "rny008",
+        "rny008_gsm",
+        "rn18",
+        "rn50",
+    ] = "rny002"
+    backbone_learning_rate: float = Field(default=0.00003, gt=0)
+    crop_dim: int = Field(default=224, ge=64, le=512)
+    num_workers: int = Field(default=4, ge=0, le=32)
+    stop_vllm: bool = False
+
+    @model_validator(mode="after")
+    def distinct_splits(self):
+        train = set(self.train_videos)
+        validation = set(self.val_videos)
+        overlap = sorted(train & validation)
+        if overlap:
+            raise ValueError(
+                "Train and validation videos must be disjoint: "
+                + ", ".join(overlap)
+            )
+        return self
 
 
-def _selected_training_dataset(
+def _association_training_items(
     names: list[str],
-) -> tuple[actor_dataset.AssociationDataset, list[Path]]:
-    """Resolve the requested videos and build exactly their dataset."""
-    paths: list[Path] = []
+) -> list[tuple[Path, Path]]:
+    """Resolve the exact action-label/video pairs selected on this page.
+
+    Association supervision may sit on top of either manual action labels or
+    action predictions.  Reusing Action Train's global annotation scan would
+    silently drop the latter, so the association surface resolves each video
+    through the same manual-first source rule used by inference.
+    """
+    items: list[tuple[Path, Path]] = []
     seen: set[str] = set()
     for name in names:
         path = find_cut(name)
@@ -209,105 +337,347 @@ def _selected_training_dataset(
         if path.stem in seen:
             continue
         seen.add(path.stem)
-        paths.append(path)
-    if len(paths) < 2:
-        raise HTTPException(
-            400, "Association training needs at least two distinct videos"
-        )
-
-    dataset = actor_dataset.load_dataset([path.stem for path in paths])
-    if len(dataset.stems) < 2:
-        absent = sorted(set(seen) - set(dataset.stems))
-        detail = (
-            f" No usable examples from: {', '.join(absent)}."
-            if absent else ""
-        )
-        raise HTTPException(
-            400,
-            "Association training needs usable explicit reviews from at "
-            f"least two selected videos.{detail}",
-        )
-    return dataset, paths
+        label_path = spot_associate.action_label_path(path.stem)
+        if label_path is None:
+            raise HTTPException(
+                400,
+                f"No action labels for {name}; run Action Predict or label it first",
+            )
+        if not actor_labels.load(path.stem):
+            raise HTTPException(
+                400,
+                f"No reviewed actors for {name}; review it in Association Label first",
+            )
+        _meta, events = read_jsonl_cached(label_path)
+        actor_rows, _tally = spot_actor_labels.build(path.stem, events)
+        if not actor_rows:
+            raise HTTPException(
+                400,
+                f"No usable yp-actor targets for {name}; it needs reviewed "
+                "tracklet labels and Rally Tracking",
+            )
+        items.append((label_path, path))
+    return items
 
 
 @router.post("/train")
 async def train(req: AssociationTrainRequest) -> dict:
-    dataset, video_paths = _selected_training_dataset(req.videos)
-    name = req.run_name or f"association_{time.strftime('%Y%m%d-%H%M%S')}"
-    try:
-        root = actor_checkpoints.checkpoint_dir(name)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
-    if root.exists():
+    async with _train_start_lock:
+        return await _train_locked(req)
+
+
+async def _train_locked(req: AssociationTrainRequest) -> dict:
+    active = _active_job()
+    if active is not None:
         raise HTTPException(
             409,
-            f"Association checkpoint {name} exists; run names are immutable",
+            f"Association training is already active: {active['name']}",
         )
-    config = actor_train.TrainingConfig(
-        seed=req.seed,
-        folds=req.folds,
-        l2=req.l2,
-        target_precision=req.target_precision,
-        min_occluded_rejection=req.min_occluded_rejection,
+    name = req.run_name or f"yp_actor_{time.strftime('%Y%m%d-%H%M%S')}"
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", name) or name.startswith("."):
+        raise HTTPException(
+            400,
+            "Run name may contain only letters, numbers, dot, underscore and dash",
+        )
+    checkpoint_dir = ACTION_CHECKPOINTS_DIR / name
+    save_dir = SPOT_DIR / "exp" / name
+    if checkpoint_dir.exists() or save_dir.exists():
+        raise HTTPException(
+            409,
+            f"Association run {name} already exists; run names are immutable",
+        )
+    train_items = _association_training_items(req.train_videos)
+    val_items = _association_training_items(req.val_videos)
+    init_checkpoint = None
+    if req.init_checkpoint:
+        try:
+            init_checkpoint = prelabel.resolve_checkpoint(req.init_checkpoint)
+        except (FileNotFoundError, ValueError) as exc:
+            raise HTTPException(404, str(exc)) from exc
+        reason = spot_associate.rejection(init_checkpoint)
+        if reason:
+            raise HTTPException(400, reason)
+    return await _start_association_training(
+        req,
+        save_dir=save_dir,
+        checkpoint_dir=checkpoint_dir,
+        train_items=train_items,
+        val_items=val_items,
+        init_checkpoint=init_checkpoint,
     )
+
+
+def _export_association_package(
+    *,
+    run_dir: Path,
+    package_dir: Path,
+    req: AssociationTrainRequest,
+    cmd: list[str],
+    label_summary: dict,
+) -> dict:
+    summary = export_checkpoint_package(
+        run_dir=run_dir,
+        package_dir=package_dir,
+        checkpoints_root=ACTION_CHECKPOINTS_DIR,
+        package_type="yp-video-association-checkpoint",
+        label_subdir="action-annotations",
+        label_glob="*_actions.jsonl",
+        training={
+            "purpose": "association",
+            "frame_dir": str(ACTION_FRAMES_DIR),
+            "selection_metric": "player_top1",
+            "label_summary": label_summary,
+        },
+        cmd=cmd,
+    )
+    source = run_dir / "labels" / ACTOR_LABEL_SUBDIR
+    destination = package_dir / "labels" / ACTOR_LABEL_SUBDIR
+    if source.exists():
+        if destination.exists():
+            shutil.rmtree(destination)
+        shutil.copytree(source, destination)
+    manifest_path = package_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    best = manifest.get("best") or {}
+    metrics_path = run_dir / "metrics.jsonl"
+    if metrics_path.exists() and isinstance(best.get("epoch"), int):
+        for line in metrics_path.read_text(encoding="utf-8").splitlines():
+            record = json.loads(line)
+            if record.get("epoch") == best["epoch"]:
+                best["metrics"] = record.get("val") or {}
+                break
+    manifest["best"] = best
+    manifest["files"] = [
+        *manifest.get("files", []),
+        *(
+            str(path.relative_to(package_dir))
+            for path in sorted(destination.glob(ACTOR_FILE_GLOB))
+        ),
+    ]
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    summary["best"] = best
+    return summary
+
+
+async def _start_association_training(
+    req: AssociationTrainRequest,
+    *,
+    save_dir: Path,
+    checkpoint_dir: Path,
+    train_items: list[tuple[Path, Path]],
+    val_items: list[tuple[Path, Path]],
+    init_checkpoint: Path | None,
+) -> dict:
     job = job_manager.create_job(
         TRAIN_JOB_TYPE,
         {
-            "run_name": name,
-            "videos": [path.name for path in video_paths],
-            "dataset": dataset.payload(),
-            "config": {
-                "seed": req.seed,
-                "folds": req.folds,
-                "l2": req.l2,
-                "target_precision": req.target_precision,
-                "min_occluded_rejection": req.min_occluded_rejection,
-            },
+            "save_dir": str(save_dir),
+            "checkpoint_dir": str(checkpoint_dir),
+            "train_videos": [video.name for _label, video in train_items],
+            "val_videos": [video.name for _label, video in val_items],
+            "backbone": req.backbone,
+            "epochs": req.num_epochs,
         },
-        name=f"Actor association train ({name})",
+        name=f"Association Train ({save_dir.name})",
     )
 
     async def run_job() -> None:
+        exporter: PackageExporter | None = None
         try:
             await job_manager.update_job(
-                job.id,
-                status=JobStatus.RUNNING,
-                message="Grouped association training…",
+                job.id, status="running", message="Preparing association events..."
             )
-            result = await asyncio.to_thread(
-                actor_train.train_candidate,
-                dataset,
-                name,
-                config=config,
+            items = [*train_items, *val_items]
+            frame_summary = await asyncio.to_thread(
+                ensure_action_frame_caches,
+                [(video, None) for _label, video in items],
+                cache_root=ACTION_FRAMES_DIR,
             )
-            metrics = result["metrics"]["grouped_oof"]
+            label_summary = await asyncio.to_thread(
+                action_train_router._prepare_action_training_labels,
+                items=items,
+                frame_dir=ACTION_FRAMES_DIR,
+                save_dir=save_dir,
+                camera_view="all",
+            )
+            split = await asyncio.to_thread(
+                action_train_router._materialize_holdout_split,
+                Path(label_summary["label_dir"]),
+                [label.name for label, _video in val_items],
+            )
+            label_summary = {**label_summary, **split}
+            cmd = [
+                str(SPOT_PYTHON),
+                "-m",
+                "yp_spot.association.train",
+                "--train-labels",
+                str(save_dir / "labels" / "train"),
+                "--val-labels",
+                str(save_dir / "labels" / "val"),
+                "--actor-dir",
+                str(save_dir / "labels" / ACTOR_LABEL_SUBDIR),
+                "--frame-dir",
+                str(ACTION_FRAMES_DIR),
+                "--save-dir",
+                str(save_dir),
+                "--backbone",
+                req.backbone,
+                "--batch-size",
+                str(req.batch_size),
+                "--epochs",
+                str(req.num_epochs),
+                "--learning-rate",
+                str(req.learning_rate),
+                "--backbone-learning-rate",
+                str(req.backbone_learning_rate),
+                "--warmup-epochs",
+                str(req.warm_up_epochs),
+                "--num-workers",
+                str(req.num_workers),
+                "--crop-dim",
+                str(req.crop_dim),
+            ]
+            if init_checkpoint:
+                cmd.extend(["--init-checkpoint", str(init_checkpoint)])
             await job_manager.update_job(
                 job.id,
-                status=JobStatus.COMPLETED,
-                progress=1.0,
-                message=(
-                    f"Association candidate ready: {name} · "
-                    f"coverage {metrics['auto_coverage']:.1%} · "
-                    f"precision {metrics['selective_accuracy']:.1%}"
-                ),
+                progress=0.2,
+                message="Waiting for GPU...",
                 params={
                     **job.params,
-                    "checkpoint": name,
-                    "metrics": metrics,
+                    "frame_cache": frame_summary,
+                    "training_labels": label_summary,
+                    "command": cmd,
+                },
+            )
+            exporter = PackageExporter(
+                job.id,
+                save_dir,
+                lambda: _export_association_package(
+                    run_dir=save_dir,
+                    package_dir=checkpoint_dir,
+                    req=req,
+                    cmd=cmd,
+                    label_summary=label_summary,
+                ),
+            )
+
+            def on_metrics(match: re.Match) -> dict:
+                record = json.loads(match.group(1))
+                epoch = int(record["epoch"])
+                validation = record.get("val") or {}
+                if record.get("best"):
+                    exporter.schedule(epoch, "new_best")
+                top1 = validation.get("player_top1")
+                overall = validation.get("overall_exact")
+                progress = 0.2 + 0.79 * ((epoch + 1) / req.num_epochs)
+                return {
+                    "progress": min(progress, 0.99),
+                    "message": (
+                        f"Epoch {epoch + 1}/{req.num_epochs} · player Top-1 "
+                        f"{float(top1 or 0):.1%} · overall "
+                        f"{float(overall or 0):.1%}"
+                    ),
+                    "params": {
+                        "association_train_progress": {
+                            "epoch": epoch,
+                            "epoch_display": epoch + 1,
+                            "epochs": req.num_epochs,
+                            "train_loss": (record.get("loss") or {}).get("train"),
+                            "val_loss": (record.get("loss") or {}).get("val"),
+                            "train": record.get("train"),
+                            "val": validation,
+                            "best": bool(record.get("best")),
+                        }
+                    },
+                }
+
+            parsers = [
+                ProgressParser(r"ASSOCIATION_METRICS (\{.*\})", on_metrics)
+            ]
+            env = {
+                **os.environ,
+                "PYTHONUNBUFFERED": "1",
+                "PYTHONPATH": (
+                    f"{SPOT_DIR}{os.pathsep}{os.environ['PYTHONPATH']}"
+                    if os.environ.get("PYTHONPATH")
+                    else str(SPOT_DIR)
+                ),
+                "CUDA_VISIBLE_DEVICES": str(req.gpu),
+                ACTION_CONTRACT_VERSION_ENV: ACTION_CONTRACT_VERSION,
+            }
+            async with stop_vllm_for_job(job.id, when=req.stop_vllm):
+                async with job_manager.gpu_lock:
+                    await job_manager.update_job(
+                        job.id, message="Training independent association model..."
+                    )
+                    rc, last_line = await stream_subprocess(
+                        job.id,
+                        cmd,
+                        cwd=SPOT_DIR,
+                        env=env,
+                        parsers=parsers,
+                        is_key_line=lambda line: (
+                            "ASSOCIATION_METRICS " in line
+                            or "Best epoch:" in line
+                        ),
+                        tee_to_terminal=True,
+                        log_path=save_dir / "terminal.log",
+                    )
+            if rc != 0:
+                raise RuntimeError(
+                    last_line or f"Association training exited with code {rc}"
+                )
+            checkpoint_summary = await exporter.export_once(
+                expected_epoch=None, reason="completed", update_job=False
+            )
+            if checkpoint_summary is None:
+                raise RuntimeError("Training completed without a best checkpoint")
+            await job_manager.update_job(
+                job.id,
+                status="completed",
+                progress=1.0,
+                message=f"Association model ready: {checkpoint_dir}",
+                params={
+                    **job.params,
+                    "checkpoint_package": checkpoint_summary,
                 },
             )
         except asyncio.CancelledError:
+            checkpoint_summary = None
+            if (
+                exporter is not None
+                and (save_dir / "checkpoint_best.pt").exists()
+            ):
+                checkpoint_summary = await exporter.export_once(
+                    expected_epoch=None, reason="cancelled", update_job=False
+                )
             await job_manager.update_job(
                 job.id,
-                status=JobStatus.CANCELLED,
-                message="Association training cancelled",
+                status="cancelled",
+                message="Cancelled",
+                params={
+                    **job.params,
+                    **(
+                        {"checkpoint_package": checkpoint_summary}
+                        if checkpoint_summary
+                        else {}
+                    ),
+                },
             )
-            raise
         except Exception as exc:  # noqa: BLE001
+            print(
+                f"{terminal_prefix(job)}Failed: {type(exc).__name__}: {exc}",
+                flush=True,
+            )
             log.exception("Association training failed")
             await fail_job_from_exc(job.id, exc)
 
-    job_manager.attach_task(job, asyncio.create_task(run_job()))
+    task = asyncio.create_task(run_job())
+    job_manager.attach_task(job, task)
     return job.to_dict()
 
 
@@ -315,20 +685,9 @@ class PredictRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     videos: list[str]
-    #: None (or "rule-based") is the rule; anything else names a checkpoint.
-    checkpoint: str | None = None
-    #: A yp-spot checkpoint carrying the actor head, under the action
-    #: checkpoints root. Mutually exclusive with `checkpoint`: they are two
-    #: different models answering the same question, and picking both would
-    #: leave which one decided to argument order.
-    spot_checkpoint: str | None = None
+    #: An independent yp-association checkpoint. None selects the rule.
+    association_checkpoint: str | None = None
     stop_vllm: bool = False
-
-    @model_validator(mode="after")
-    def one_model_only(self):
-        if self.spot_checkpoint and self.checkpoint not in (None, RULE_BASED):
-            raise ValueError("checkpoint and spot_checkpoint are mutually exclusive")
-        return self
 
 
 @router.post("/predict")
@@ -337,20 +696,21 @@ async def predict(req: PredictRequest) -> dict:
 
     Every human verdict survives untouched — see extraction/reassociate.py.
     """
-    if req.spot_checkpoint:
+    if req.association_checkpoint:
         try:
-            spot_checkpoint = prelabel.resolve_checkpoint(req.spot_checkpoint)
+            association_checkpoint = prelabel.resolve_checkpoint(
+                req.association_checkpoint
+            )
         except (FileNotFoundError, ValueError) as exc:
             raise HTTPException(404, str(exc)) from exc
-        reason = spot_associate.rejection(spot_checkpoint)
+        reason = spot_associate.rejection(association_checkpoint)
         if reason is not None:
             raise HTTPException(400, reason)
-        plan: actor_policy.PolicyPlan = actor_policy.SpotPlan(spot_checkpoint)
+        plan: actor_policy.PolicyPlan = actor_policy.SpotPlan(
+            association_checkpoint
+        )
     else:
-        try:
-            plan = actor_policy.build_policy(req.checkpoint)
-        except (FileNotFoundError, ValueError) as exc:
-            raise HTTPException(404, str(exc)) from exc
+        plan = actor_policy.RulePolicy()
 
     video_paths: list[Path] = []
     for name in req.videos:
@@ -397,24 +757,6 @@ async def predict(req: PredictRequest) -> dict:
         start_message="re-deciding actors...",
     )
     return job.to_dict()
-
-
-class ShadowRequest(BaseModel):
-    checkpoint: str | None
-
-
-@router.put("/shadow")
-def set_shadow(req: ShadowRequest) -> dict:
-    """Explicitly select learned diagnostics; the rule remains production."""
-    try:
-        if req.checkpoint is not None:
-            reason = shadow_rejection(actor_checkpoints.load(req.checkpoint))
-            if reason is not None:
-                raise HTTPException(400, reason)
-        actor_checkpoints.set_active_shadow(req.checkpoint)
-    except (FileNotFoundError, ValueError) as exc:
-        raise HTTPException(404, str(exc)) from exc
-    return {"active_shadow": req.checkpoint}
 
 
 class ConfirmRequest(BaseModel):

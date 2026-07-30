@@ -4,9 +4,9 @@ import json
 import tempfile
 import unittest
 from contextlib import contextmanager
-from dataclasses import replace
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import numpy as np
 from fastapi import HTTPException
@@ -14,24 +14,11 @@ from pydantic import TypeAdapter
 
 from yp_video.actor import checkpoints as association_checkpoints
 from yp_video.actor import labels as actor_labels
-from yp_video.actor.features import (
-    CANDIDATE_FEATURE_NAMES,
-    CONTEXT_FEATURE_NAMES,
-    AssociationFeatures,
-    extract_features,
-)
+from yp_video.actor import review as actor_review
 from yp_video.actor.labels import ActorLabel, ActorVerdict
 from yp_video.actor.model import FEATURE_SET_TRACK, AssociationModel
-from yp_video.actor.ranking import (
-    CandidateSource,
-    DecisionReason,
-    rank_candidates,
-    rule_decision,
-)
-from yp_video.actor.service import (
-    ActorAssociationService,
-    shadow_rejection,
-)
+from yp_video.actor.ranking import DecisionReason, rule_decision
+from yp_video.actor.service import ActorAssociationService
 from yp_video.actor.track_features import (
     TRACK_CANDIDATE_FEATURE_NAMES,
     TRACK_CONTEXT_FEATURE_NAMES,
@@ -52,10 +39,11 @@ def _person(
 
 
 class RulePolicyTests(unittest.TestCase):
-    """The rule decides; the candidate ranking does not.
+    """The rule, which is now the only thing in ranking.py.
 
-    They used to be two "rules" (V1 and a V2 that also abstained), which made
-    the candidate generator look like a competing policy nobody had adopted.
+    It decides and it gates. The wide candidate SET that used to live beside
+    it — everyone above the detector floor, geometry as a negative feature —
+    existed only to feed a learned box ranker and went with it.
     """
 
     def test_the_rule_takes_the_best_confident_candidate(self) -> None:
@@ -72,27 +60,28 @@ class RulePolicyTests(unittest.TestCase):
         faint = _person(score=0.2, box=(30, 20, 70, 120))
 
         self.assertEqual(rule_decision([faint], 50, 20).ranked, ())
-        # ...but it stays a candidate the learned ranker may choose.
-        self.assertEqual(len(rank_candidates([faint], 50, 20)), 1)
+        self.assertIsNone(rule_decision([faint], 50, 20).selected)
 
-    def test_the_candidate_set_never_drops_a_detected_person(self) -> None:
-        """Candidate recall has to be 1.0 or a labeled truth can be
-        unreachable — geometry is a negative feature, not a gate."""
-        far = _person(score=0.2, box=(400, 400, 450, 550))
+    def test_the_rule_gates_on_geometry_and_says_so(self) -> None:
+        """Out of reach of the padded box is NO_CANDIDATE, not a bad pick."""
+        far = _person(score=0.9, box=(400, 400, 450, 550))
 
-        self.assertEqual(rule_decision([far], 10, 10).ranked, ())
-        ranked = rank_candidates([far], 10, 10)
-        self.assertEqual(len(ranked), 1)
-        self.assertIs(ranked[0].source, CandidateSource.OTHER)
+        decision = rule_decision([far], 10, 10)
+
+        self.assertEqual(decision.ranked, ())
+        self.assertEqual(decision.reason, DecisionReason.NO_CANDIDATE)
 
     def test_candidates_are_ordered_best_first(self) -> None:
         near = _person(score=0.8, box=(30, 20, 70, 120))
-        far = _person(score=0.8, box=(400, 400, 450, 550))
+        also = _person(score=0.8, box=(45, 20, 85, 120))
 
-        ranked = rank_candidates([far, near], 50, 20)
+        decision = rule_decision([also, near], 50, 20)
 
-        self.assertIs(ranked[0].person, near)
-        self.assertLess(ranked[0].cost, ranked[1].cost)
+        self.assertIs(decision.ranked[0].person, near)
+        self.assertLess(
+            decision.ranked[0].geometry_cost,
+            decision.ranked[1].geometry_cost,
+        )
 
 
 class ActorLabelStoreTests(unittest.TestCase):
@@ -187,6 +176,35 @@ class ActorLabelStoreTests(unittest.TestCase):
             self.assertFalse(labels["untouched"].overrides_auto)
 
 
+class AssociationReviewProgressTests(unittest.TestCase):
+    def test_summary_is_done_over_done_plus_in_progress(self) -> None:
+        rows = [
+            actor_review.ReviewProgress(3, 3, 0, {"manual": 3}),
+            actor_review.ReviewProgress(3, 1, 2, {"occluded": 1}),
+            actor_review.ReviewProgress(3, 0, 3, {}),
+        ]
+        with tempfile.TemporaryDirectory() as raw_dir:
+            records = Path(raw_dir) / "records.jsonl"
+            records.touch()
+            with (
+                patch.object(
+                    actor_review, "records_path", return_value=records
+                ),
+                patch.object(
+                    actor_review, "read_jsonl_header", return_value={}
+                ),
+                patch.object(
+                    actor_review, "review_progress", side_effect=rows
+                ),
+            ):
+                summary = actor_review.review_summary(
+                    ["done", "in-progress", "unlabeled"]
+                )
+
+        self.assertEqual(summary.done, 1)
+        self.assertEqual(summary.started, 2)
+
+
 class DoneConfirmationTests(unittest.TestCase):
     def test_done_confirms_only_assigned_automatic_actors(self) -> None:
         records = [
@@ -226,48 +244,470 @@ class DoneConfirmationTests(unittest.TestCase):
 
 
 class AssociationTrainingSelectionTests(unittest.TestCase):
-    def test_training_request_requires_an_explicit_video_selection(self) -> None:
+    def test_training_request_requires_disjoint_train_and_validation(self) -> None:
         adapter = TypeAdapter(router.AssociationTrainRequest)
         with self.assertRaises(ValueError):
             adapter.validate_python({})
         with self.assertRaises(ValueError):
-            adapter.validate_python({"videos": ["only-one.mp4"]})
+            adapter.validate_python(
+                {
+                    "train_videos": ["same.mp4"],
+                    "val_videos": ["same.mp4"],
+                }
+            )
 
-    def test_only_the_selected_stems_build_the_dataset(self) -> None:
-        selected_dataset = type(
-            "Dataset",
-            (),
-            {"stems": ("a", "b")},
-        )()
+    def test_only_the_selected_videos_build_the_spot_snapshot(self) -> None:
         paths = {
             "a.mp4": Path("/cuts/a.mp4"),
             "b.mp4": Path("/cuts/b.mp4"),
         }
+        labels = {
+            "a": Path("/labels/a_actions.jsonl"),
+            "b": Path("/labels/b_actions.jsonl"),
+        }
         with (
             patch.object(router, "find_cut", side_effect=paths.get),
             patch.object(
-                router.actor_dataset,
-                "load_dataset",
-                return_value=selected_dataset,
-            ) as load,
+                router.spot_associate,
+                "action_label_path",
+                side_effect=labels.get,
+            ),
+            patch.object(router.actor_labels, "load", return_value={"event": object()}),
+            patch.object(router, "read_jsonl_cached", return_value=({}, [{}])),
+            patch.object(
+                router.spot_actor_labels,
+                "build",
+                return_value=([{"id": "event"}], {"track": 1}),
+            ),
         ):
-            result, resolved = router._selected_training_dataset(
+            result = router._association_training_items(
                 ["b.mp4", "a.mp4"]
             )
 
-        self.assertIs(result, selected_dataset)
-        self.assertEqual(resolved, [paths["b.mp4"], paths["a.mp4"]])
-        load.assert_called_once_with(["b", "a"])
+        self.assertEqual(
+            result,
+            [(labels["b"], paths["b.mp4"]), (labels["a"], paths["a.mp4"])],
+        )
 
-    def test_duplicate_video_names_do_not_fake_grouped_validation(self) -> None:
-        with patch.object(
-            router, "find_cut", return_value=Path("/cuts/a.mp4")
+    def test_video_without_actor_review_is_rejected_before_gpu_work(self) -> None:
+        with (
+            patch.object(router, "find_cut", return_value=Path("/cuts/a.mp4")),
+            patch.object(
+                router.spot_associate,
+                "action_label_path",
+                return_value=Path("/labels/a_actions.jsonl"),
+            ),
+            patch.object(router.actor_labels, "load", return_value={}),
         ):
             with self.assertRaises(HTTPException) as caught:
-                router._selected_training_dataset(["a.mp4", "a.mp4"])
+                router._association_training_items(["a.mp4"])
 
         self.assertEqual(caught.exception.status_code, 400)
-        self.assertIn("distinct", str(caught.exception.detail))
+        self.assertIn("Association Label", str(caught.exception.detail))
+
+
+class NeuralAssociationTrainTests(unittest.IsolatedAsyncioTestCase):
+    async def test_train_starts_the_independent_association_runner(self) -> None:
+        request = router.AssociationTrainRequest(
+            train_videos=["train.mp4"],
+            val_videos=["val.mp4"],
+            run_name="yp_actor_test",
+            backbone="rny002",
+        )
+        train_item = (Path("/labels/train_actions.jsonl"), Path("/cuts/train.mp4"))
+        val_item = (Path("/labels/val_actions.jsonl"), Path("/cuts/val.mp4"))
+        start = AsyncMock(return_value={"id": "job"})
+
+        with tempfile.TemporaryDirectory() as raw_dir:
+            root = Path(raw_dir)
+            with (
+                patch.object(router, "ACTION_CHECKPOINTS_DIR", root / "checkpoints"),
+                patch.object(router, "SPOT_DIR", root / "yp-spot"),
+                patch.object(
+                    router,
+                    "_association_training_items",
+                    side_effect=[[train_item], [val_item]],
+                ),
+                patch.object(
+                    router,
+                    "_start_association_training",
+                    start,
+                ),
+            ):
+                result = await router.train(request)
+
+        self.assertEqual(result, {"id": "job"})
+        self.assertEqual(start.await_args.args[0].backbone, "rny002")
+        self.assertEqual(start.await_args.kwargs["train_items"], [train_item])
+        self.assertEqual(start.await_args.kwargs["val_items"], [val_item])
+        self.assertIsNone(start.await_args.kwargs["init_checkpoint"])
+
+    async def test_train_rejects_a_duplicate_active_job_before_validation(
+        self,
+    ) -> None:
+        request = router.AssociationTrainRequest(
+            train_videos=["train.mp4"],
+            val_videos=["val.mp4"],
+        )
+        with (
+            patch.object(
+                router,
+                "_active_job",
+                return_value={"name": "Association Train (already-running)"},
+            ),
+            patch.object(router, "_association_training_items") as prepare,
+        ):
+            with self.assertRaises(HTTPException) as caught:
+                await router.train(request)
+
+        self.assertEqual(caught.exception.status_code, 409)
+        self.assertIn("already active", str(caught.exception.detail))
+        prepare.assert_not_called()
+
+    def test_history_exposes_each_epoch_in_display_order(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_dir:
+            path = Path(raw_dir) / "metrics.jsonl"
+            path.write_text(
+                "\n".join(
+                    (
+                        json.dumps(
+                            {
+                                "epoch": 0,
+                                "loss": {"train": 2.0, "val": 3.0},
+                                "train": {
+                                    "player_top1": 0.7,
+                                    "overall_exact": 0.6,
+                                },
+                                "val": {
+                                    "player_top1": 0.4,
+                                    "overall_exact": 0.3,
+                                },
+                                "best": True,
+                            }
+                        ),
+                        "not-json",
+                    )
+                ),
+                encoding="utf-8",
+            )
+
+            history = router._association_history(path)
+
+        self.assertEqual(
+            history,
+            [
+                {
+                    "epoch": 1,
+                    "train_player_top1": 0.7,
+                    "val_player_top1": 0.4,
+                    "train_overall_exact": 0.6,
+                    "val_overall_exact": 0.3,
+                    "train_loss": 2.0,
+                    "val_loss": 3.0,
+                    "best": True,
+                }
+            ],
+        )
+
+    def test_predict_contract_no_longer_accepts_a_linear_checkpoint(self) -> None:
+        adapter = TypeAdapter(router.PredictRequest)
+        with self.assertRaises(ValueError):
+            adapter.validate_python(
+                {"videos": ["a.mp4"], "checkpoint": "linear-model"}
+            )
+
+
+class SpotActorInferenceContractTests(unittest.TestCase):
+    @staticmethod
+    def _declare_independent(package: Path) -> None:
+        (package / "config.json").write_text(
+            json.dumps(
+                {
+                    "task": "association",
+                    "checkpoint_format": "yp-association-v1",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    @staticmethod
+    def _declare_legacy(package: Path) -> None:
+        (package / "config.json").write_text(
+            json.dumps({"predict_actor": True, "audio_backend": "logmel"}),
+            encoding="utf-8",
+        )
+        (package / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "type": "actor-association-spot",
+                    "holdout": "held-out-video",
+                    "actor_targets": {"track": 12},
+                    "holdout_metrics": {"all_top1": 0.84},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def test_inference_uses_the_independent_event_model_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_dir:
+            root = Path(raw_dir)
+            package = root / "checkpoints" / "yp_actor"
+            package.mkdir(parents=True)
+            checkpoint = package / "checkpoint_best.pt"
+            checkpoint.touch()
+            self._declare_independent(package)
+            label_file = root / "video_actions.jsonl"
+            label_file.touch()
+            predictions = root / "video_predictions.json"
+            captured: list[str] = []
+
+            def run_subprocess(command, **_kwargs):
+                captured.extend(command)
+                output = Path(command[command.index("--out") + 1])
+                output.write_text(
+                    json.dumps(
+                        {
+                            "events": [
+                                {
+                                    "id": "event",
+                                    "track": "1:1",
+                                    "confidence": 0.9,
+                                    "kind": "track",
+                                }
+                            ]
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            with (
+                patch.object(
+                    router.spot_associate,
+                    "action_label_path",
+                    return_value=label_file,
+                ),
+                patch.object(
+                    router.spot_associate,
+                    "read_jsonl",
+                    return_value=({}, [{"id": "event"}]),
+                ),
+                patch.object(
+                    router.spot_associate.actor_labels,
+                    "candidates_only",
+                    return_value=[{"id": "event", "frame": 10}],
+                ),
+                patch.object(
+                    router.spot_associate,
+                    "ensure_action_frame_cache",
+                ),
+                patch.object(
+                    router.spot_associate.subprocess,
+                    "run",
+                    side_effect=run_subprocess,
+                ),
+                patch.object(
+                    router.spot_associate,
+                    "ACTOR_PREDICTIONS_DIR",
+                    predictions.parent,
+                ),
+                patch.object(
+                    router.spot_associate,
+                    "predictions_path",
+                    return_value=predictions,
+                ),
+            ):
+                answers = router.spot_associate.run(
+                    root / "video.mp4",
+                    checkpoint,
+                )
+
+        self.assertEqual(answers["event"].track.key, "1:1")
+        self.assertIn("yp_spot.association.predict", captured)
+        self.assertEqual(
+            captured[captured.index("--checkpoint-path") + 1],
+            str(checkpoint),
+        )
+        self.assertNotIn("--audio-dir", captured)
+
+    def test_picker_lists_a_legacy_actor_head_with_its_family(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_dir:
+            package = Path(raw_dir) / "yp_actor_only"
+            package.mkdir()
+            checkpoint = package / "checkpoint_best.pt"
+            checkpoint.touch()
+            self._declare_legacy(package)
+            with patch.object(
+                router.spot_associate.prelabel,
+                "list_checkpoints",
+                return_value=[
+                    {
+                        "path": str(checkpoint),
+                        "epoch": 4,
+                        "mtime": 123.0,
+                    }
+                ],
+            ):
+                listed = router.spot_associate.list_association_checkpoints()
+
+        self.assertEqual(len(listed), 1)
+        self.assertEqual(listed[0]["name"], "yp_actor_only")
+        self.assertEqual(listed[0]["family"], "legacy-actor-head")
+        self.assertEqual(listed[0]["metrics"]["all_top1"], 0.84)
+        self.assertEqual(listed[0]["validation_videos"], ["held-out-video"])
+        self.assertEqual(listed[0]["actor_targets"], {"track": 12})
+
+    def test_picker_exposes_joint_actor_validation_metrics(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_dir:
+            package = Path(raw_dir) / "yp_fusion_joint"
+            package.mkdir()
+            checkpoint = package / "checkpoint_best.pt"
+            checkpoint.touch()
+            self._declare_legacy(package)
+            manifest = json.loads(
+                (package / "manifest.json").read_text(encoding="utf-8")
+            )
+            manifest["best"] = {
+                "task_metrics": {
+                    "actor": {
+                        "validation": {
+                            "metrics": {
+                                "player_top1": 0.72,
+                                "overall_top1": 0.68,
+                                "occluded_recall": 0.5,
+                                "untracked_recall": 0.25,
+                            }
+                        }
+                    }
+                }
+            }
+            (package / "manifest.json").write_text(
+                json.dumps(manifest),
+                encoding="utf-8",
+            )
+            with patch.object(
+                router.spot_associate.prelabel,
+                "list_checkpoints",
+                return_value=[
+                    {
+                        "path": str(checkpoint),
+                        "epoch": 4,
+                        "mtime": 123.0,
+                    }
+                ],
+            ):
+                listed = router.spot_associate.list_association_checkpoints()
+
+        self.assertEqual(listed[0]["metrics"]["player_top1"], 0.72)
+        self.assertEqual(listed[0]["metrics"]["overall_exact"], 0.68)
+        self.assertEqual(listed[0]["metrics"]["occluded_recall"], 0.5)
+        self.assertEqual(listed[0]["metrics"]["untracked_recall"], 0.25)
+
+    def test_submit_validation_accepts_legacy_actor_weights(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_dir:
+            package = Path(raw_dir) / "yp_actor_only"
+            package.mkdir()
+            checkpoint = package / "checkpoint_best.pt"
+            checkpoint.touch()
+            self._declare_legacy(package)
+            with patch(
+                "torch.load",
+                return_value={"model._pred_actor.weight": object()},
+            ):
+                reason = router.spot_associate.rejection(checkpoint)
+
+        self.assertIsNone(reason)
+
+    def test_legacy_actor_head_uses_the_original_inference_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_dir:
+            root = Path(raw_dir)
+            package = root / "yp_actor_only"
+            package.mkdir()
+            checkpoint = package / "checkpoint_best.pt"
+            checkpoint.touch()
+            self._declare_legacy(package)
+            label_file = root / "video_actions.jsonl"
+            label_file.touch()
+            predictions = root / "video_predictions.json"
+            audio_dir = root / "audio"
+            captured: list[str] = []
+
+            def run_subprocess(command, **_kwargs):
+                captured.extend(command)
+                output = Path(command[command.index("--out") + 1])
+                output.write_text(
+                    json.dumps(
+                        {
+                            "events": [
+                                {
+                                    "id": "event",
+                                    "track": "1:1",
+                                    "confidence": 0.8,
+                                    "kind": "track",
+                                }
+                            ]
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            with (
+                patch.object(
+                    router.spot_associate,
+                    "action_label_path",
+                    return_value=label_file,
+                ),
+                patch.object(
+                    router.spot_associate,
+                    "read_jsonl",
+                    return_value=({}, [{"id": "event"}]),
+                ),
+                patch.object(
+                    router.spot_associate.actor_labels,
+                    "candidates_only",
+                    return_value=[{"id": "event", "frame": 10}],
+                ),
+                patch.object(
+                    router.spot_associate,
+                    "ensure_action_frame_cache",
+                ),
+                patch.object(
+                    router.spot_associate,
+                    "_ensure_legacy_audio",
+                    return_value=audio_dir,
+                ),
+                patch.object(
+                    router.spot_associate.subprocess,
+                    "run",
+                    side_effect=run_subprocess,
+                ),
+                patch.object(
+                    router.spot_associate,
+                    "ACTOR_PREDICTIONS_DIR",
+                    predictions.parent,
+                ),
+                patch.object(
+                    router.spot_associate,
+                    "predictions_path",
+                    return_value=predictions,
+                ),
+            ):
+                answers = router.spot_associate.run(
+                    root / "video.mp4",
+                    checkpoint,
+                )
+
+        self.assertEqual(answers["event"].track.key, "1:1")
+        self.assertIn("yp_spot.associate", captured)
+        self.assertEqual(
+            captured[captured.index("--checkpoint_path") + 1],
+            str(checkpoint),
+        )
+        self.assertEqual(
+            captured[captured.index("--audio_dir") + 1],
+            str(audio_dir),
+        )
 
 
 class FixEndpointTests(unittest.TestCase):
@@ -472,138 +912,13 @@ class ConfirmEndpointTests(unittest.TestCase):
 
 
 class LearnedAssociationTests(unittest.TestCase):
-    def _model(
-        self,
-    ) -> tuple[AssociationModel, PersonBox, AssociationFeatures]:
-        actor = _person(
-            score=0.9,
-            box=(30, 20, 70, 120),
-        )
-        other = _person(
-            score=0.8,
-            box=(60, 20, 100, 120),
-        )
-        features = extract_features([actor, other], 50, 20)
-        candidate_weights = np.zeros(
-            len(CANDIDATE_FEATURE_NAMES), dtype=np.float64
-        )
-        candidate_weights[
-            CANDIDATE_FEATURE_NAMES.index("rank_reciprocal")
-        ] = 8.0
-        none_weights = np.zeros(
-            len(CONTEXT_FEATURE_NAMES), dtype=np.float64
-        )
-        none_weights[0] = -10.0
-        return (
-            AssociationModel(
-                name="candidate",
-                candidate_mean=np.zeros_like(candidate_weights),
-                candidate_scale=np.ones_like(candidate_weights),
-                context_mean=np.zeros_like(none_weights),
-                context_scale=np.ones_like(none_weights),
-                candidate_weights=candidate_weights,
-                none_weights=none_weights,
-                threshold=0.5,
-                none_threshold=0.5,
-            ),
-            actor,
-            features,
-        )
+    """A trained checkpoint is a file, and stays one until it is named."""
 
-    def test_ranker_and_none_classifier_have_separate_decisions(self) -> None:
-        model, actor, features = self._model()
-
-        decision = model.decision(features)
-        self.assertIs(decision.selected, actor)
-        self.assertGreater(decision.confidence or 0, 0.5)
-
-        none_weights = model.none_weights.copy()
-        none_weights[0] = 10.0
-        abstaining = replace(model, none_weights=none_weights)
-        self.assertIsNone(abstaining.decision(features).selected)
-
-        restored = AssociationModel.from_payload(model.payload())
-        self.assertEqual(restored.name, model.name)
-        self.assertTrue(
-            np.allclose(restored.candidate_weights, model.candidate_weights)
-        )
-
-    def test_candidate_checkpoint_never_activates_implicitly(self) -> None:
-        model, _actor, _features = self._model()
-        with tempfile.TemporaryDirectory() as raw_dir:
-            root = Path(raw_dir)
-            with (
-                patch.object(
-                    association_checkpoints,
-                    "CHECKPOINTS_DIR",
-                    root / "checkpoints",
-                ),
-                patch.object(
-                    association_checkpoints,
-                    "SHADOW_CONFIG",
-                    root / "shadow.json",
-                ),
-                patch.object(
-                    association_checkpoints,
-                    "_model_cache",
-                    StatCache(),
-                ),
-            ):
-                association_checkpoints.save_candidate(
-                    model,
-                    {
-                        "name": model.name,
-                        "metrics": {},
-                        "training": {"examples": 1, "stems": []},
-                    },
-                )
-                self.assertIsNone(
-                    association_checkpoints.active_shadow_name()
-                )
-                self.assertFalse(
-                    association_checkpoints.list_candidates()[0][
-                        "active_shadow"
-                    ]
-                )
-
-                association_checkpoints.set_active_shadow(model.name)
-                self.assertEqual(
-                    association_checkpoints.active_shadow_name(),
-                    model.name,
-                )
-
-    def test_broken_shadow_cannot_block_production_rule(self) -> None:
-        actor = _person(
-            score=0.9,
-            box=(30, 20, 70, 120),
-        )
-        with (
-            self.assertLogs(
-                "yp_video.actor.service", level="ERROR"
-            ),
-            patch.object(
-                association_checkpoints,
-                "load_active_shadow",
-                side_effect=ValueError("broken candidate"),
-            ),
-        ):
-            service = ActorAssociationService.from_active_shadow()
-
-        result = service.associate([actor], 50, 20)
-        self.assertIs(result.production.selected, actor)
-        self.assertIsNone(result.learned_shadow)
-
-    def test_tracklet_model_is_refused_as_the_box_shadow(self) -> None:
-        """A track checkpoint loads fine and still cannot serve here.
-
-        The service supplies box features; feeding them to a tracklet model is
-        a shape error, so it must be refused once at construction rather than
-        raise on every event of a video.
-        """
+    def _track_model(self, name: str = "candidate") -> AssociationModel:
         n_candidate = len(TRACK_CANDIDATE_FEATURE_NAMES)
         n_context = len(TRACK_CONTEXT_FEATURE_NAMES)
-        track_model = AssociationModel(
-            name="track-shadow",
+        return AssociationModel(
+            name=name,
             candidate_mean=np.zeros(n_candidate),
             candidate_scale=np.ones(n_candidate),
             context_mean=np.zeros(n_context),
@@ -614,22 +929,99 @@ class LearnedAssociationTests(unittest.TestCase):
             none_threshold=0.5,
             feature_set=FEATURE_SET_TRACK,
         )
-        self.assertIsNotNone(shadow_rejection(track_model))
 
+    @contextmanager
+    def _repository(self):
+        with tempfile.TemporaryDirectory() as raw_dir:
+            with (
+                patch.object(
+                    association_checkpoints,
+                    "CHECKPOINTS_DIR",
+                    Path(raw_dir) / "checkpoints",
+                ),
+                patch.object(
+                    association_checkpoints, "_model_cache", StatCache()
+                ),
+            ):
+                yield Path(raw_dir) / "checkpoints"
+
+    def test_a_saved_candidate_survives_a_round_trip(self) -> None:
+        model = self._track_model()
+        restored = AssociationModel.from_payload(model.payload())
+
+        self.assertEqual(restored.name, model.name)
+        self.assertEqual(restored.feature_set, FEATURE_SET_TRACK)
+        self.assertTrue(
+            np.allclose(restored.candidate_weights, model.candidate_weights)
+        )
+
+    def test_saving_a_candidate_activates_nothing(self) -> None:
+        """There is no "current model" setting to drift out of sync with what
+        produced a record. A model decides only where it is named, and its
+        name is written into the record it produced."""
+        model = self._track_model()
+        with self._repository():
+            association_checkpoints.save_candidate(
+                model,
+                {
+                    "name": model.name,
+                    "metrics": {},
+                    "training": {"examples": 1, "stems": []},
+                },
+            )
+            listed = association_checkpoints.list_candidates()
+
+            self.assertEqual([row["name"] for row in listed], [model.name])
+            self.assertIsNone(
+                association_checkpoints.usable_rejection(model.name)
+            )
+            self.assertFalse(
+                any(key.startswith("active") for key in listed[0])
+            )
+
+    def test_a_retired_contract_is_listed_with_its_reason(self) -> None:
+        """box-v3 checkpoints sit on disk from before the box ranker was
+        removed. Hiding them would be a worse answer than showing them with
+        the reason they cannot run — the page has to explain the file."""
+        model = self._track_model("legacy")
+        with self._repository() as root:
+            association_checkpoints.save_candidate(
+                model,
+                {
+                    "name": model.name,
+                    "metrics": {},
+                    "training": {"examples": 1, "stems": []},
+                },
+            )
+            payload = json.loads(
+                (root / "legacy" / "model.json").read_text(encoding="utf-8")
+            )
+            payload["feature_set"] = "box-v3"
+            (root / "legacy" / "model.json").write_text(
+                json.dumps(payload), encoding="utf-8"
+            )
+
+            self.assertEqual(
+                [row["name"] for row in association_checkpoints.list_candidates()],
+                ["legacy"],
+            )
+            reason = association_checkpoints.usable_rejection("legacy")
+
+        self.assertIsNotNone(reason)
+        self.assertIn("box-v3", reason or "")
+
+    def test_extraction_associates_on_the_rule_alone(self) -> None:
+        """Extraction associates from detection boxes, before tracking has
+        necessarily run, so the geometric question is the only one answerable
+        there. The learned path answers a tracklet question and is reached by
+        naming it in Association Predict, not by activating anything here."""
         actor = _person(score=0.9, box=(30, 20, 70, 120))
-        with (
-            self.assertLogs("yp_video.actor.service", level="WARNING"),
-            patch.object(
-                association_checkpoints,
-                "load_active_shadow",
-                return_value=track_model,
-            ),
-        ):
-            service = ActorAssociationService.from_active_shadow()
 
-        result = service.associate([actor], 50, 20)
+        result = ActorAssociationService().associate([actor], 50, 20)
+
         self.assertIs(result.production.selected, actor)
-        self.assertIsNone(result.learned_shadow)
+        self.assertEqual(result.production_candidates, [actor])
+        self.assertEqual(result.diagnostic()["version"], "rule-based")
 
 
 if __name__ == "__main__":

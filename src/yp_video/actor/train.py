@@ -1,4 +1,10 @@
-"""Grouped out-of-fold training for the learned association shadow model."""
+"""Grouped out-of-fold training for the learned tracklet association model.
+
+Validation holds out whole VIDEOS. Events inside one video share tracking,
+lighting and the same handful of players, so a random split would score the
+model on players it had already memorised and report a number the next video
+will not reproduce.
+"""
 
 from __future__ import annotations
 
@@ -10,13 +16,8 @@ import numpy as np
 from scipy.optimize import minimize
 
 from yp_video.actor import checkpoints
-from yp_video.actor.dataset import (
-    AssociationDataset,
-    AssociationExample,
-    TrackDataset,
-    TrackExample,
-)
-from yp_video.actor.model import FEATURE_SET_BOX, AssociationModel
+from yp_video.actor.dataset import TrackDataset, TrackExample
+from yp_video.actor.model import FEATURE_SET_TRACK, AssociationModel
 
 
 @dataclass(frozen=True)
@@ -31,13 +32,13 @@ class TrainingConfig:
 
 @dataclass(frozen=True)
 class _Prediction:
-    example: AssociationExample | TrackExample
+    example: TrackExample
     candidate_probabilities: np.ndarray
     none_probability: float
 
 
 def _scaler(
-    examples: tuple[AssociationExample | TrackExample, ...],
+    examples: tuple[TrackExample, ...],
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     candidate_rows = [
         row
@@ -63,9 +64,9 @@ def _scaler(
 
 def _fit(
     name: str,
-    examples: tuple[AssociationExample | TrackExample, ...],
+    examples: tuple[TrackExample, ...],
     config: TrainingConfig,
-    feature_set: str = FEATURE_SET_BOX,
+    feature_set: str = FEATURE_SET_TRACK,
 ) -> AssociationModel:
     (
         candidate_mean,
@@ -168,7 +169,7 @@ def _fit(
 
 def _predict(
     model: AssociationModel,
-    examples: tuple[AssociationExample | TrackExample, ...],
+    examples: tuple[TrackExample, ...],
 ) -> list[_Prediction]:
     predictions: list[_Prediction] = []
     for example in examples:
@@ -316,9 +317,9 @@ def _calibrate(
 
 
 def _folds(
-    examples: tuple[AssociationExample | TrackExample, ...],
+    examples: tuple[TrackExample, ...],
     config: TrainingConfig,
-) -> list[tuple[AssociationExample | TrackExample, ...]]:
+) -> list[tuple[TrackExample, ...]]:
     stems = sorted({example.stem for example in examples})
     if len(stems) < 2:
         raise ValueError(
@@ -339,11 +340,11 @@ def _folds(
 
 
 def train_candidate(
-    dataset: AssociationDataset | TrackDataset,
+    dataset: TrackDataset,
     name: str,
     *,
     config: TrainingConfig | None = None,
-    feature_set: str = FEATURE_SET_BOX,
+    feature_set: str = FEATURE_SET_TRACK,
 ) -> dict:
     """Train with grouped OOF calibration, then fit the saved model on all."""
     resolved_config = config or TrainingConfig()

@@ -58,9 +58,11 @@ class TrainProgress:
     latest_val_loss: float | None = None
     latest_val_map: float | None = None
     latest_val_breakdown: dict | None = None
+    latest_task_metrics: dict | None = None
     best_epoch: int | None = None
     best_value: float | None = None
     best_breakdown: dict | None = None
+    best_task_metrics: dict | None = None
 
 
 def make_train_parsers(
@@ -93,9 +95,11 @@ def make_train_parsers(
                 "latest_val_loss": ctx.latest_val_loss,
                 "latest_val_map": ctx.latest_val_map,
                 "latest_val_breakdown": ctx.latest_val_breakdown,
+                "latest_task_metrics": ctx.latest_task_metrics,
                 "best_epoch": ctx.best_epoch,
                 "best_value": ctx.best_value,
                 "best_breakdown": ctx.best_breakdown,
+                "best_task_metrics": ctx.best_task_metrics,
                 **extra,
             }
         }
@@ -167,11 +171,11 @@ def make_train_parsers(
         }
 
     def on_train_loss(match: re.Match) -> dict:
-        ctx.latest_train_loss = float(match.group(4))
+        ctx.latest_train_loss = float(match.group(1).split()[-1])
         return {"params": training_params()}
 
     def on_val_loss(match: re.Match) -> dict:
-        ctx.latest_val_loss = float(match.group(4))
+        ctx.latest_val_loss = float(match.group(1).split()[-1])
         return {"params": training_params()}
 
     def on_val_map(match: re.Match) -> dict:
@@ -185,12 +189,23 @@ def make_train_parsers(
             return None
         return {"params": training_params()}
 
+    def on_task_metrics(match: re.Match) -> dict | None:
+        try:
+            payload = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        ctx.latest_task_metrics = payload
+        return {"params": training_params()}
+
     def on_new_best_line(_match: re.Match) -> dict:
         ctx.best_epoch = ctx.current_epoch
         ctx.best_value = (
             ctx.latest_val_map if criterion == "map" else ctx.latest_val_loss
         )
         ctx.best_breakdown = ctx.latest_val_breakdown
+        ctx.best_task_metrics = ctx.latest_task_metrics
         if on_new_best is not None:
             on_new_best()
         return {"params": training_params()}
@@ -203,15 +218,16 @@ def make_train_parsers(
         ),
         ProgressParser(r"Epoch:\s*(\d+)", on_epoch),
         ProgressParser(
-            r"Train loss\s+([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)",
+            r"Train loss\s+((?:[0-9.]+\s*)+)",
             on_train_loss,
         ),
         ProgressParser(
-            r"Val loss\s+([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)",
+            r"Val loss\s+((?:[0-9.]+\s*)+)",
             on_val_loss,
         ),
         ProgressParser(headline_pattern, on_val_map),
         ProgressParser(r"SPOT_METRICS (\{.*\})", on_val_metrics),
+        ProgressParser(r"SPOT_TASK_METRICS (\{.*\})", on_task_metrics),
         ProgressParser(r"New best epoch!", on_new_best_line),
     ]
 
@@ -223,6 +239,7 @@ def make_train_parsers(
             or "Harmonic mean" in line
             or "Segment mAP" in line
             or "SPOT_METRICS" in line
+            or "SPOT_TASK_METRICS" in line
             or "Train loss" in line
             or "Val loss" in line
         )
@@ -481,6 +498,8 @@ def _normalize_metrics_entry(rec: dict) -> dict:
             "val_loss": loss.get("val"),
             "per_class": rec.get("per_class") or {},
             "val_per_video": rec.get("per_video") or [],
+            "tasks": rec.get("tasks") or {},
+            "selection": rec.get("selection") or {},
         }
     return {  # legacy loss.json schema
         "epoch": rec.get("epoch"),
@@ -492,6 +511,8 @@ def _normalize_metrics_entry(rec: dict) -> dict:
         "val_loss": rec.get("val"),
         "per_class": rec.get("per_class") or {},
         "val_per_video": rec.get("val_per_video") or [],
+        "tasks": rec.get("tasks") or {},
+        "selection": rec.get("selection") or {},
     }
 
 
@@ -548,12 +569,19 @@ def _freshest_metrics_dir(package_dir: Path) -> Path:
     return package_dir
 
 
-def performance_payload(checkpoints_dir: Path, run: str | None = None) -> dict:
+def performance_payload(
+    checkpoints_dir: Path,
+    run: str | None = None,
+    *,
+    run_prefixes: tuple[str, ...] | None = None,
+) -> dict:
     """Per-epoch validation metrics (lr, mAP, per-class, per-video) for a run.
 
     Reads ``metrics.jsonl`` (falling back to the legacy ``loss.json``) from a
     checkpoint package. Defaults to the most recently modified run; pass
     ``run`` to select one by name. ``runs`` lists the runs (newest first).
+    ``run_prefixes`` lets a shared checkpoint root expose only one model
+    family without duplicating the metrics reader.
     """
     if not checkpoints_dir.exists():
         return {"entries": [], "runs": []}
@@ -562,16 +590,29 @@ def performance_payload(checkpoints_dir: Path, run: str | None = None) -> dict:
         return (d / "metrics.jsonl").exists() or (d / "loss.json").exists()
 
     runs = sorted(
-        (d for d in checkpoints_dir.iterdir() if d.is_dir() and has_metrics(d)),
+        (
+            d
+            for d in checkpoints_dir.iterdir()
+            if d.is_dir()
+            and has_metrics(d)
+            and (
+                run_prefixes is None
+                or d.name.startswith(run_prefixes)
+            )
+        ),
         key=lambda d: d.stat().st_mtime,
         reverse=True,
     )
     if not runs:
         return {"entries": [], "runs": []}
 
-    run_dir = (checkpoints_dir / run) if run else runs[0]
-    if not has_metrics(run_dir):
-        raise HTTPException(404, f"No metrics for run {run_dir.name!r}")
+    run_dir = (
+        next((candidate for candidate in runs if candidate.name == run), None)
+        if run
+        else runs[0]
+    )
+    if run_dir is None:
+        raise HTTPException(404, f"No metrics for run {run!r}")
 
     meta, entries = _read_run_metrics(_freshest_metrics_dir(run_dir))
     best = load_json_file(run_dir / "checkpoint_best.json")

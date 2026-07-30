@@ -1,9 +1,10 @@
 import { BreakdownTable } from '@/components/train/BreakdownTable';
+import { TaskMetricsTable } from '@/components/train/TaskMetricsTable';
 import type { TrainProgress } from '@/types/api';
 
 const fmtMetric = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v).toFixed(4) : '');
 
-/** Live metric tiles + collapsible mAP breakdown for a running training job. */
+/** Live metric tiles + mAP breakdown for a running training job. */
 export function TrainDetail({
   progress: p,
   epochsFallback,
@@ -50,9 +51,13 @@ export function TrainDetail({
           </div>
         ))}
       </div>
+      <TaskMetricsTable
+        latest={p.latest_task_metrics}
+        best={p.best_task_metrics}
+      />
       {(p.latest_val_breakdown || p.best_breakdown) && (
-        <details className="mt-2">
-          <summary className="cursor-pointer text-[10px] text-text-muted hover:text-text-primary">mAP breakdown</summary>
+        <div className="mt-2">
+          <div className="text-[10px] text-text-muted">mAP breakdown</div>
           {p.latest_val_breakdown && (
             <BreakdownTable title={`Latest — Epoch ${p.epoch_display ?? 1}`} bd={p.latest_val_breakdown} eventNoun={eventNoun} />
           )}
@@ -63,7 +68,7 @@ export function TrainDetail({
               eventNoun={eventNoun}
             />
           )}
-        </details>
+        </div>
       )}
     </>
   );

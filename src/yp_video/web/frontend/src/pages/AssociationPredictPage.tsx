@@ -22,6 +22,7 @@ import { PipelineChips, STAGE_HINT } from '@/components/video/PipelineChips';
 import { VideoMultiSelectList } from '@/components/video/VideoMultiSelectList';
 import { LiveJob } from '@/components/job/LiveJob';
 import { toast } from '@/components/feedback/toast';
+import { useTypedJobs } from '@/lib/useTypedJobs';
 import type {
   AssociationVideo,
   Job,
@@ -31,30 +32,21 @@ import type {
 const errMsg = (e: unknown) =>
   e instanceof ApiError ? e.body : e instanceof Error ? e.message : String(e);
 
-const PREDICT_JOB_TYPE = 'actor_association_predict';
-// Tracking is offered here too, so its job card belongs here too.
-const PAGE_JOB_TYPES = new Set([PREDICT_JOB_TYPE]);
+const PAGE_JOB_TYPES = ['actor_association_predict'];
 
 /** The rule is a policy like any other, and the only one that is always
  *  available — it needs no checkpoint and no tracking. */
 const RULE = 'rule-based';
 
-/** yp-spot models are selected from the same dropdown but submitted through a
- *  different field, so the option value carries which kind it is. Prefixing
- *  beats a second piece of state that could disagree with the selection. */
-const SPOT_PREFIX = 'spot::';
+const ASSOCIATION_PREFIX = 'association::';
 
 export function AssociationPredictPage() {
   const navigate = useNavigate();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [policy, setPolicy] = useState(RULE);
   const [stopVllm, setStopVllm] = useState(false);
-  const [jobOverrides, setJobOverrides] = useState<Record<string, Job>>({});
+  const { jobs, upsertJob } = useTypedJobs(PAGE_JOB_TYPES);
 
-  const jobsQuery = useQuery({
-    queryKey: ['jobs-list'],
-    queryFn: () => apiFetch<Job[]>(API.jobs.list),
-  });
   const videosQuery = useQuery({
     queryKey: ['association-videos'],
     queryFn: () => apiFetch<AssociationVideo[]>(API.association.videos),
@@ -65,28 +57,13 @@ export function AssociationPredictPage() {
   });
 
   const videos = videosQuery.data ?? [];
-  const checkpoints = statusQuery.data?.checkpoints ?? [];
-  const spotCheckpoints = statusQuery.data?.spot_checkpoints ?? [];
-  const chosenCheckpoint = checkpoints.find((c) => c.name === policy);
-  const chosenSpot = policy.startsWith(SPOT_PREFIX)
-    ? spotCheckpoints.find((c) => SPOT_PREFIX + c.path === policy)
+  const associationCheckpoints = statusQuery.data?.association_checkpoints ?? [];
+  const chosenAssociation = policy.startsWith(ASSOCIATION_PREFIX)
+    ? associationCheckpoints.find((c) => ASSOCIATION_PREFIX + c.path === policy)
     : undefined;
   // Anything that chooses among tracklets has nothing to choose from on a
   // video that was never tracked.
-  const needsTracks = chosenCheckpoint?.feature_set.startsWith('track-') || !!chosenSpot;
-
-  const upsertJob = (job: Job) =>
-    setJobOverrides((prev) => ({ ...prev, [job.id]: job }));
-  const jobs = useMemo(() => {
-    const merged = new Map<string, Job>();
-    for (const job of jobsQuery.data ?? []) {
-      if (PAGE_JOB_TYPES.has(job.type ?? '')) merged.set(job.id, job);
-    }
-    for (const job of Object.values(jobOverrides)) merged.set(job.id, job);
-    return [...merged.values()].sort(
-      (a, b) => (b.created_at ?? 0) - (a.created_at ?? 0),
-    );
-  }, [jobsQuery.data, jobOverrides]);
+  const needsTracks = !!chosenAssociation;
 
   const chosen = videos.filter((v) => selected.has(v.name));
   const blocked = useMemo(() => {
@@ -125,8 +102,7 @@ export function AssociationPredictPage() {
         method: 'POST',
         body: {
           videos: names,
-          checkpoint: chosenSpot || policy === RULE ? null : policy,
-          spot_checkpoint: chosenSpot?.path ?? null,
+          association_checkpoint: chosenAssociation?.path ?? null,
           stop_vllm: stopVllm,
         },
       });
@@ -168,10 +144,10 @@ export function AssociationPredictPage() {
           <SectionLabel>Policy</SectionLabel>
           <p className="mb-3 text-xs leading-relaxed text-text-muted">
             Re-decides the actor for every event <em>nobody has ruled on</em>,
-            from the detections already stored in the records — no person
-            detection, no GPU. Only picks that actually move are re-cropped, so
-            re-running with the same policy is close to free. Embeddings of
-            changed events go stale; back them up on ReID Predict afterwards.
+            from the detections and tracks already stored. The rule is
+            geometry-only; visual association models run on the GPU. Only picks
+            that move are re-cropped. Embeddings of changed events go stale;
+            back them up on ReID Predict afterwards.
           </p>
           <label className="block text-xs text-text-secondary">
             <span className="mb-1 block">Decide with</span>
@@ -181,74 +157,68 @@ export function AssociationPredictPage() {
               className="w-full cursor-pointer appearance-none rounded-lg border border-border-light bg-surface-50 px-3 py-1.5 text-xs text-text-primary focus:border-primary/50 focus:outline-none"
             >
               <option value={RULE}>rule-based (geometry, never abstains)</option>
-              {checkpoints.map((c) => (
-                <option key={c.name} value={c.name}>
-                  {c.name} — {c.feature_set}
-                </option>
-              ))}
-              {spotCheckpoints.map((c) => (
-                <option key={c.path} value={SPOT_PREFIX + c.path}>
-                  {c.name} — yp-spot (looks at the frames)
+              {associationCheckpoints.map((c) => (
+                <option key={c.path} value={ASSOCIATION_PREFIX + c.path}>
+                  {c.name} — {c.family === 'legacy-actor-head'
+                    ? 'SPOT joint actor head (fusion)'
+                    : 'independent visual association'}
                 </option>
               ))}
             </select>
           </label>
 
-          {chosenSpot && (
+          {chosenAssociation?.family === 'yp-association-v1' && (
             <dl className="mt-3 space-y-1 rounded-lg border border-border bg-surface-50 px-3 py-2 text-[11px]">
               {(
                 [
-                  ['Overall', 'all_top1'],
-                  ['Where geometry is ambiguous', 'hard_top1'],
-                  ['Where the rule was overruled', 'manual_top1'],
+                  ['Selected the right player', 'player_top1'],
+                  ['Answers with a player', 'player_coverage'],
+                  ['All outcomes exact', 'overall_exact'],
+                  ['Occluded recall', 'occluded_recall'],
+                  ['Untracked recall', 'untracked_recall'],
                 ] as const
               ).map(([label, key]) => {
-                const value = chosenSpot.metrics[key];
+                const value = chosenAssociation.metrics[key];
                 return (
                   <div key={key} className="flex justify-between">
                     <dt className="text-text-muted">{label}</dt>
                     <dd className="font-mono tabular-nums text-text-secondary">
-                      {value === undefined ? '—' : `${(value * 100).toFixed(1)}%`}
-                      {key === 'manual_top1' &&
-                        chosenSpot.metrics.rule_manual_top1 !== undefined && (
-                          <span className="ml-1 text-text-muted">
-                            (rule {(chosenSpot.metrics.rule_manual_top1 * 100).toFixed(1)}%)
-                          </span>
-                        )}
-                    </dd>
-                  </div>
-                );
-              })}
-              <p className="pt-1 text-[10px] leading-snug text-text-muted">
-                Held out on {chosenSpot.holdout ?? 'one video'}. Needs tracking and
-                action labels; it scores every event by looking at the frames, so
-                expect roughly a minute per video.
-              </p>
-            </dl>
-          )}
-
-          {chosenCheckpoint && (
-            <dl className="mt-3 space-y-1 rounded-lg border border-border bg-surface-50 px-3 py-2 text-[11px]">
-              {(
-                [
-                  ['Answers', 'auto_coverage'],
-                  ['Right when it answers', 'selective_accuracy'],
-                  ['Spots occlusion', 'occluded_rejection_rate'],
-                ] as const
-              ).map(([label, key]) => {
-                const value = chosenCheckpoint.metrics.grouped_oof?.[key];
-                return (
-                  <div key={key} className="flex justify-between">
-                    <dt className="text-text-muted">{label}</dt>
-                    <dd className="font-mono tabular-nums text-text-primary">
                       {value == null ? '—' : `${(value * 100).toFixed(1)}%`}
                     </dd>
                   </div>
                 );
               })}
-              <p className="pt-1 text-text-muted">
-                Grouped out-of-fold over {chosenCheckpoint.training.stems.length}{' '}
-                videos — measured on videos the model had not seen.
+              <p className="pt-1 text-[10px] leading-snug text-text-muted">
+                Validated on {chosenAssociation.validation_videos?.length ?? 0} held-out
+                video(s). The best epoch is selected by player Top-1, not action
+                loss.
+              </p>
+            </dl>
+          )}
+
+          {chosenAssociation?.family === 'legacy-actor-head' && (
+            <dl className="mt-3 space-y-1 rounded-lg border border-border bg-surface-50 px-3 py-2 text-[11px]">
+              {(
+                [
+                  ['Overall Top-1', 'all_top1'],
+                  ['Ambiguous geometry Top-1', 'hard_top1'],
+                  ['Human-overruled Top-1', 'manual_top1'],
+                  ['Rule on human-overruled', 'rule_manual_top1'],
+                ] as const
+              ).map(([label, key]) => {
+                const value = chosenAssociation.metrics[key];
+                return (
+                  <div key={key} className="flex justify-between">
+                    <dt className="text-text-muted">{label}</dt>
+                    <dd className="font-mono tabular-nums text-text-secondary">
+                      {value == null ? '—' : `${(value * 100).toFixed(1)}%`}
+                    </dd>
+                  </div>
+                );
+              })}
+              <p className="pt-1 text-[10px] leading-snug text-text-muted">
+                SPOT joint actor head (fusion) held out on {chosenAssociation.holdout ?? 'one video'}.
+                It uses the yp-spot association path and Log-mel audio.
               </p>
             </dl>
           )}
@@ -323,8 +293,8 @@ export function AssociationPredictPage() {
                 <PipelineChips pipeline={v.pipeline} />
               </>
             )}
-            emptyTitle="No extracted videos"
-            emptySubtitle="Run ReID Predict first — association re-decides existing records"
+            emptyTitle="No videos ready for association"
+            emptySubtitle="A video appears here once it has rallies, action labels and extraction records — association only re-decides among detections that already exist"
           />
         </Card>
       </div>

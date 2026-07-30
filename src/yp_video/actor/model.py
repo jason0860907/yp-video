@@ -7,16 +7,6 @@ from typing import Protocol
 
 import numpy as np
 
-from yp_video.actor.ranking import (
-    AssociationDecision,
-    DecisionReason,
-    RankedActor,
-)
-from yp_video.actor.features import (
-    CANDIDATE_FEATURE_NAMES,
-    CONTEXT_FEATURE_NAMES,
-    AssociationFeatures,
-)
 from yp_video.actor.track_features import (
     TRACK_CANDIDATE_FEATURE_NAMES,
     TRACK_CONTEXT_FEATURE_NAMES,
@@ -35,20 +25,18 @@ class FeatureVectors(Protocol):
 
 MODEL_SCHEMA_VERSION = 4
 
-#: Which feature contract a checkpoint was trained against. The contract is
-#: validated by NAME, and an early checkpoint carried no statement of WHICH list
-#: those names came from — so a loader could not tell a box model from a
-#: tracklet one. Now it must say.
-FEATURE_SET_BOX = "box-v3"
+#: Which feature contract a checkpoint was trained against. Stated in the
+#: payload rather than inferred: contracts get retired, and a checkpoint left
+#: on disk from a retired one must fail to LOAD rather than be silently
+#: validated against whichever contract happens to be current.
 FEATURE_SET_TRACK = "track-v3"
 
 #: The only contracts that exist, and the column names each one means. A
-#: lookup and not an ``if track else box``: that fallback answered for any
-#: string at all, so a checkpoint naming a retired contract would be validated
-#: against the BOX names — the mismatch reported as a box problem, on a model
-#: that had never seen a box.
+#: lookup and not a fallback: a fallback answers for any string at all, so a
+#: checkpoint naming a retired contract would be validated against the live
+#: names and the mismatch reported as a column problem on a model that never
+#: had those columns.
 FEATURE_SETS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
-    FEATURE_SET_BOX: (CANDIDATE_FEATURE_NAMES, CONTEXT_FEATURE_NAMES),
     FEATURE_SET_TRACK: (
         TRACK_CANDIDATE_FEATURE_NAMES,
         TRACK_CONTEXT_FEATURE_NAMES,
@@ -94,11 +82,16 @@ class AssociationModel:
     none_weights: np.ndarray
     threshold: float
     none_threshold: float
-    feature_set: str = FEATURE_SET_BOX
+    feature_set: str = FEATURE_SET_TRACK
 
     def probabilities(self, features: FeatureVectors) -> tuple[np.ndarray, float]:
-        """Scores from the two blocks. Either contract fits — this reads only
-        the matrices, which is what lets one model class serve both."""
+        """Scores from the two blocks, and nothing else.
+
+        Deliberately numeric all the way through: it reads the two matrices
+        and never the candidates they describe, so a new feature contract is
+        a new column list rather than a new model class. What the winning
+        INDEX refers to is the caller's business — see policy.TrackletPolicy.
+        """
         candidate_matrix = (
             features.candidates - self.candidate_mean
         ) / self.candidate_scale
@@ -106,62 +99,6 @@ class AssociationModel:
         candidate_logits = candidate_matrix @ self.candidate_weights
         none_logit = float(context @ self.none_weights)
         return _softmax(candidate_logits), _sigmoid(none_logit)
-
-    def decision(self, features: AssociationFeatures) -> AssociationDecision:
-        candidate_probabilities, none_probability = self.probabilities(
-            features
-        )
-        if not features.ranked:
-            return AssociationDecision(
-                version=f"learned:{self.name}",
-                ranked=(),
-                selected=None,
-                reason=DecisionReason.NO_CANDIDATE,
-                margin=None,
-                confidence=None,
-                none_probability=none_probability,
-            )
-
-        order = np.argsort(-candidate_probabilities)
-        ranked = tuple(
-            RankedActor(
-                person=features.ranked[int(index)].person,
-                source=features.ranked[int(index)].source,
-                geometry_cost=1.0
-                - float(candidate_probabilities[int(index)]),
-                detection_penalty=0.0,
-            )
-            for index in order
-        )
-        top_index = int(order[0])
-        confidence = float(candidate_probabilities[top_index])
-        competitor = max(
-            none_probability,
-            (
-                float(candidate_probabilities[int(order[1])])
-                if len(order) > 1
-                else 0.0
-            ),
-        )
-        selected = (
-            features.ranked[top_index].person
-            if confidence >= self.threshold
-            and none_probability < self.none_threshold
-            else None
-        )
-        return AssociationDecision(
-            version=f"learned:{self.name}",
-            ranked=ranked,
-            selected=selected,
-            reason=(
-                DecisionReason.SELECTED
-                if selected is not None
-                else DecisionReason.AMBIGUOUS
-            ),
-            margin=confidence - competitor,
-            confidence=confidence,
-            none_probability=none_probability,
-        )
 
     def payload(self) -> dict:
         return {
@@ -190,7 +127,7 @@ class AssociationModel:
                 f"Unsupported association model schema: "
                 f"{payload.get('schema_version')!r}"
             )
-        feature_set = str(payload.get("feature_set") or FEATURE_SET_BOX)
+        feature_set = str(payload.get("feature_set") or FEATURE_SET_TRACK)
         expected_candidate, expected_context = _names(feature_set)
         contract = payload.get("feature_contract") or {}
         if tuple(contract.get("candidate") or ()) != expected_candidate:

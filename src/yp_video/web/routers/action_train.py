@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import shutil
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Literal
@@ -63,6 +64,25 @@ log = logging.getLogger(__name__)
 router = APIRouter()
 
 
+@dataclass(frozen=True)
+class TrainingFlavor:
+    """What differs between SPOT action-training variants."""
+
+    job_type: str
+    job_name: str
+    package_type: str
+    progress_key: str
+    subject: str
+
+
+ACTION_TRAINING = TrainingFlavor(
+    job_type="action_train",
+    job_name="Action Train",
+    package_type="yp-video-action-checkpoint",
+    progress_key="action_train_progress",
+    subject="action",
+)
+
 class ActionTrainBase(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -99,8 +119,8 @@ class ActionTrainBase(BaseModel):
     epoch_num_frames: int | None = Field(default=None, ge=1)
     predict_location: bool = True
     # Also learn WHICH PLAYER acted, from the actor-candidate sidecar the
-    # label snapshot carries. Silently inert on a run whose videos have no
-    # actor work.
+    # label snapshot carries. Rejected up front when the snapshot has no
+    # actor work — see the flag's use in the command builder.
     predict_actor: bool = False
     stop_vllm: bool = False
 
@@ -309,7 +329,12 @@ def _rally_match_span(meta: dict, num_frames: int) -> tuple[int, int] | None:
 
 
 def _prepare_action_training_labels(
-    *, items: list[tuple[Path, Path]], frame_dir: Path, save_dir: Path, camera_view: str = "all"
+    *,
+    items: list[tuple[Path, Path]],
+    frame_dir: Path,
+    save_dir: Path,
+    camera_view: str = "all",
+    require_actor_targets: bool = False,
 ) -> dict:
     """Write run-local label copies whose frame counts match the SPOT cache.
 
@@ -390,6 +415,11 @@ def _prepare_action_training_labels(
         # a handful of videos carry actor work, and the action labels are read
         # by every spotting run over every video.
         actor_rows, tally = actor_labels.build(stem, records)
+        if require_actor_targets and not actor_rows:
+            raise RuntimeError(
+                f"{stem} was selected for joint Association + Action training "
+                "but produced no usable actor targets"
+            )
         if actor_rows:
             actor_dir.mkdir(parents=True, exist_ok=True)
             write_jsonl(
@@ -589,12 +619,13 @@ def _export_action_checkpoint_package(
     req: ActionTrainRequest,
     cmd: list[str],
     label_summary: dict | None,
+    flavor: TrainingFlavor = ACTION_TRAINING,
 ) -> dict:
     return export_checkpoint_package(
         run_dir=run_dir,
         package_dir=package_dir,
         checkpoints_root=ACTION_CHECKPOINTS_DIR,
-        package_type="yp-video-action-checkpoint",
+        package_type=flavor.package_type,
         label_subdir="action-annotations",
         label_glob="*_actions.jsonl",
         training={
@@ -607,6 +638,7 @@ def _export_action_checkpoint_package(
             "dataset": req.dataset or _default_dataset(req.source),
             "frame_dir": str(_spot_path(req.frame_dir or _default_frame_dir(req.source))),
             "init_checkpoint": req.init_checkpoint or "",
+            "purpose": flavor.subject,
             "label_summary": label_summary,
         },
         cmd=cmd,
@@ -756,11 +788,18 @@ def _build_command(
         cmd.extend(["--camera_view", req.camera_view])
     if req.predict_location:
         cmd.append("--predict_location")
-    # Only worth asking for when the snapshot actually contains actor work;
-    # a head with nothing to learn from is dead weight in the checkpoint.
-    if req.predict_actor and actor_dir is not None and any(
-        actor_dir.glob(ACTOR_FILE_GLOB)
-    ):
+    if req.predict_actor:
+        # Refuse rather than train a head with nothing to learn from. This
+        # used to fall through silently, which was tolerable while the flag
+        # was API-only; it is a checkbox now, and a run that quietly produces
+        # no actor head costs hours before anyone finds out.
+        if actor_dir is None or not any(actor_dir.glob(ACTOR_FILE_GLOB)):
+            raise HTTPException(
+                400,
+                "Predict actor needs reviewed actor labels in the snapshot; "
+                "none of the selected videos have any. Review actors in "
+                "Association Label first.",
+            )
         cmd.extend(["--predict_actor", "--actor_dir", str(actor_dir)])
     if req.resume:
         if last_resumable_epoch(save_dir) is None:
@@ -836,6 +875,24 @@ def _build_command(
 
 @router.post("/start")
 async def start(req: ActionTrainRequest) -> dict:
+    return await start_training_job(req)
+
+
+async def start_training_job(
+    req: ActionTrainRequest,
+    *,
+    flavor: TrainingFlavor = ACTION_TRAINING,
+    label_items: list[tuple[Path, Path]] | None = None,
+    reuse_existing_labels: bool = False,
+    require_actor_targets: bool = False,
+) -> dict:
+    """Start one SPOT training job using the shared action/actor pipeline.
+
+    ``label_items`` lets Association Train provide the exact videos selected
+    on its page, including action pre-annotations. ``reuse_existing_labels``
+    resumes a joint-head run against its frozen label/actor snapshot instead
+    of silently replacing it with today's annotation corpus.
+    """
     dataset = req.dataset or _default_dataset(req.source)
     save_dir = _resolve_save_dir(req, dataset)
     checkpoint_dir = _resolve_checkpoint_dir(req, save_dir=save_dir)
@@ -853,72 +910,114 @@ async def start(req: ActionTrainRequest) -> dict:
     if isinstance(req, AnnotationActionTrainRequest):
         initial_params["training_mode"] = req.training_mode
     job = job_manager.create_job(
-        "action_train",
+        flavor.job_type,
         initial_params,
-        name=f"Action Train ({dataset})",
+        name=f"{flavor.job_name} ({save_dir.name})",
     )
 
     async def run_job() -> None:
         exporter: PackageExporter | None = None
         try:
-            await job_manager.update_job(job.id, status="running", message="Preparing action training...")
+            await job_manager.update_job(
+                job.id,
+                status="running",
+                message=f"Preparing {flavor.subject} training...",
+            )
             frame_dir = _spot_path(req.frame_dir or _default_frame_dir(req.source))
             action_label_dir = None
             label_summary = None
             if isinstance(req, AnnotationActionTrainRequest):
-                items = await asyncio.to_thread(_action_label_items)
-                if not items:
-                    raise RuntimeError(f"No action JSONL labels found in {ACTION_ANNOTATIONS_DIR}")
+                if reuse_existing_labels:
+                    action_label_dir = (
+                        save_dir / "labels" / "action-annotations"
+                    )
+                    actor_dir = save_dir / "labels" / ACTOR_LABEL_SUBDIR
+                    if not any(action_label_dir.glob("*_actions.jsonl")):
+                        raise RuntimeError(
+                            f"Resume label snapshot is missing: {action_label_dir}"
+                        )
+                    if not any(actor_dir.glob(ACTOR_FILE_GLOB)):
+                        raise RuntimeError(
+                            f"Resume actor snapshot is missing: {actor_dir}"
+                        )
+                    label_summary = {
+                        "label_dir": str(action_label_dir),
+                        "actor_dir": str(actor_dir),
+                        "reused": True,
+                    }
+                    await job_manager.update_job(
+                        job.id,
+                        progress=0.2,
+                        message="Reusing frozen training label snapshot.",
+                        params={
+                            **job.params,
+                            "training_labels": label_summary,
+                        },
+                    )
+                else:
+                    items = (
+                        list(label_items)
+                        if label_items is not None
+                        else await asyncio.to_thread(_action_label_items)
+                    )
+                    if not items:
+                        raise RuntimeError("No action labels selected for training")
 
-                loop = asyncio.get_running_loop()
+                    loop = asyncio.get_running_loop()
 
-                def frame_progress(done: int, total: int, message: str) -> None:
-                    progress = 0.02 + (0.16 * done / total if total else 0.0)
-                    loop.call_soon_threadsafe(
-                        lambda progress=progress, message=message: asyncio.ensure_future(
-                            job_manager.update_job(
-                                job.id,
-                                progress=progress,
-                                message=message,
+                    def frame_progress(done: int, total: int, message: str) -> None:
+                        progress = 0.02 + (0.16 * done / total if total else 0.0)
+                        loop.call_soon_threadsafe(
+                            lambda progress=progress, message=message: asyncio.ensure_future(
+                                job_manager.update_job(
+                                    job.id,
+                                    progress=progress,
+                                    message=message,
+                                )
                             )
                         )
-                    )
 
-                # Action JSONL metadata can inherit an over-reported MP4 frame
-                # count, so expected_frames is None — the training labels are
-                # normalized against the extracted cache in the next step.
-                summary = await asyncio.to_thread(
-                    ensure_action_frame_caches,
-                    [(video_path, None) for _label, video_path in items],
-                    cache_root=frame_dir,
-                    progress=frame_progress,
-                )
-                await job_manager.update_job(
-                    job.id,
-                    progress=0.18,
-                    message="Frame cache ready.",
-                    params={**job.params, "frame_cache": summary},
-                )
-                label_summary = await asyncio.to_thread(
-                    _prepare_action_training_labels,
-                    items=items,
-                    frame_dir=frame_dir,
-                    save_dir=save_dir,
-                    camera_view=req.camera_view,
-                )
-                action_label_dir = Path(label_summary["label_dir"])
-                if req.training_mode == "holdout":
-                    holdout_videos = _resolve_holdout_videos(req)
-                    split = await asyncio.to_thread(
-                        _materialize_holdout_split, action_label_dir, holdout_videos
+                    # Action JSONL metadata can inherit an over-reported MP4 frame
+                    # count, so expected_frames is None — the training labels are
+                    # normalized against the extracted cache in the next step.
+                    summary = await asyncio.to_thread(
+                        ensure_action_frame_caches,
+                        [(video_path, None) for _label, video_path in items],
+                        cache_root=frame_dir,
+                        progress=frame_progress,
                     )
-                    label_summary = {**label_summary, **split}
-                await job_manager.update_job(
-                    job.id,
-                    progress=0.2,
-                    message="Training labels validated.",
-                    params={**job.params, "training_labels": label_summary},
-                )
+                    await job_manager.update_job(
+                        job.id,
+                        progress=0.18,
+                        message="Frame cache ready.",
+                        params={**job.params, "frame_cache": summary},
+                    )
+                    label_summary = await asyncio.to_thread(
+                        _prepare_action_training_labels,
+                        items=items,
+                        frame_dir=frame_dir,
+                        save_dir=save_dir,
+                        camera_view=req.camera_view,
+                        require_actor_targets=require_actor_targets,
+                    )
+                    action_label_dir = Path(label_summary["label_dir"])
+                    if req.training_mode == "holdout":
+                        holdout_videos = _resolve_holdout_videos(req)
+                        split = await asyncio.to_thread(
+                            _materialize_holdout_split,
+                            action_label_dir,
+                            holdout_videos,
+                        )
+                        label_summary = {**label_summary, **split}
+                    await job_manager.update_job(
+                        job.id,
+                        progress=0.2,
+                        message="Training labels validated.",
+                        params={
+                            **job.params,
+                            "training_labels": label_summary,
+                        },
+                    )
 
             # Resolve / build audio features for late fusion (no-op visual-only).
             audio_dir = await asyncio.to_thread(
@@ -956,7 +1055,10 @@ async def start(req: ActionTrainRequest) -> dict:
             )
             async with stop_vllm_for_job(job.id, when=req.stop_vllm):
                 async with job_manager.gpu_lock:
-                    await job_manager.update_job(job.id, message="Starting SPOT training...")
+                    await job_manager.update_job(
+                        job.id,
+                        message=f"Starting SPOT {flavor.subject} training...",
+                    )
                     ctx = TrainProgress(epochs=req.num_epochs)
                     exporter = PackageExporter(
                         job.id,
@@ -967,12 +1069,13 @@ async def start(req: ActionTrainRequest) -> dict:
                             req=req,
                             cmd=cmd,
                             label_summary=label_summary,
+                            flavor=flavor,
                         ),
                     )
 
                     parsers, is_key_line = make_train_parsers(
                         ctx,
-                        params_key="action_train_progress",
+                        params_key=flavor.progress_key,
                         criterion=req.criterion,
                         headline_pattern=(
                             r"Harmonic mean \(temporal and spatial mAPs\):\s*([0-9.]+)%"
@@ -1017,7 +1120,7 @@ async def start(req: ActionTrainRequest) -> dict:
                     job.id,
                     status="completed",
                     progress=1.0,
-                    message=f"Training complete: {checkpoint_dir}",
+                    message=f"{flavor.job_name} complete: {checkpoint_dir}",
                     params={**job.params, "checkpoint_package": checkpoint_summary},
                 )
             else:

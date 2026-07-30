@@ -3,7 +3,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { API, apiFetch } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { usePresence } from '@/lib/usePresence';
-import { STAT_ROWS } from '@/lib/stats';
+import { formatStatValue, STAT_ROWS } from '@/lib/stats';
 import { Icon } from '@/components/ui/Icon';
 import type { ActiveCount, SystemStats } from '@/types/api';
 import { NAV, PATH_SECTION, type NavItem, type NavSection } from './nav';
@@ -138,9 +138,19 @@ export function Sidebar() {
         <div className="h-px w-full bg-border" />
         <div className="space-y-1 text-[11px] text-text-muted">
           {STAT_ROWS.map(([label, key]) => (
-            <div key={key} className="flex items-center justify-between">
+            <div
+              key={key}
+              className="flex items-center justify-between"
+              title={
+                key === 'association_labels'
+                  ? 'Done / Started (includes In Progress)'
+                  : undefined
+              }
+            >
               <span>{label}</span>
-              <span className="font-mono tabular-nums text-text-secondary">{stats.data?.[key] ?? 0}</span>
+              <span className="font-mono tabular-nums text-text-secondary">
+                {formatStatValue(stats.data, key)}
+              </span>
             </div>
           ))}
         </div>

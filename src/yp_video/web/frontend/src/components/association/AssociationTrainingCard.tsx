@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 
 import { toast } from '@/components/feedback/toast';
 import { JobProgress } from '@/components/job/JobProgress';
@@ -29,6 +30,7 @@ const errMsg = (error: unknown) =>
       : String(error);
 
 export function AssociationTrainingCard() {
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [job, setJob] = useState<Job | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -53,6 +55,7 @@ export function AssociationTrainingCard() {
     staleTime: 60_000,
   });
   const status = statusQuery.data;
+  const corpus = performanceQuery.data?.dataset;
   const videos = videosQuery.data ?? [];
 
   // A completed review is the safe default training corpus. Do this once:
@@ -97,26 +100,35 @@ export function AssociationTrainingCard() {
     },
   );
 
+  const slices = performanceQuery.data?.slices ?? [];
+  const [slice, setSlice] = useState('all');
+  const activeSlice = slices.includes(slice) ? slice : (slices[0] ?? 'all');
+
   const rows = useMemo(() => {
-    const ruleRows = Object.entries(
-      performanceQuery.data?.models ?? {},
-    );
+    const policyRows = Object.entries(
+      performanceQuery.data?.policies ?? {},
+    ).flatMap(([name, bySlice]) => {
+      const metrics = bySlice[activeSlice];
+      return metrics
+        ? [[name, metrics, 'all reviewed videos'] as const]
+        : [];
+    });
+    // A candidate's own grouped-OOF row is a DIFFERENT measurement, not a
+    // second opinion on the same one: held-out folds rather than every
+    // reviewed video. Labelled as such so the two are never read as a delta.
     const candidateRows = Object.entries(
       performanceQuery.data?.candidates ?? {},
     ).filter(
       (row): row is [string, ReidAssociationMetrics] => row[1] != null,
     );
     return [
-      ...ruleRows.map(
-        ([name, metrics]) =>
-          [name, metrics, 'full labels'] as const,
-      ),
+      ...policyRows,
       ...candidateRows.map(
         ([name, metrics]) =>
           [`learned:${name}`, metrics, 'grouped OOF'] as const,
       ),
     ];
-  }, [performanceQuery.data]);
+  }, [performanceQuery.data, activeSlice]);
 
   const startTraining = async () => {
     const names = [...selected];
@@ -139,23 +151,6 @@ export function AssociationTrainingCard() {
     }
   };
 
-  const setShadow = async (checkpoint: string | null) => {
-    try {
-      await apiFetch(API.association.shadow, {
-        method: 'PUT',
-        body: { checkpoint },
-      });
-      toast.success(
-        checkpoint
-          ? `${checkpoint} enabled in shadow mode`
-          : 'Learned shadow disabled',
-      );
-      void statusQuery.refetch();
-    } catch (error) {
-      toast.error(`Shadow update failed: ${errMsg(error)}`);
-    }
-  };
-
   const busy = Boolean(job && !isTerminal(job.status));
   const chosen = videos.filter((video) => selected.has(video.name));
   const selectedReviews = chosen.reduce(
@@ -169,29 +164,40 @@ export function AssociationTrainingCard() {
 
   return (
     <Card>
-      <SectionLabel>Actor association · learned shadow</SectionLabel>
+      <SectionLabel>Actor association · tracklet ranker</SectionLabel>
       <p className="mb-3 text-[11px] text-text-muted">
-        A candidate scorer and an explicit NONE scorer train together.
-        Validation holds out whole videos. Training never changes production
-        or shadow activation automatically; the rule remains production.
-        Completed reviews are selected by default.
+        A candidate scorer and an explicit NONE scorer train together over the
+        tracklets alive around each event. Validation holds out whole videos.
+        Training changes nothing in production — a model decides only when you
+        name it in Association Predict. Completed reviews are selected by
+        default; a video without tracking contributes nothing.
       </p>
 
+      {/* The OTHER model that answers "who acted" is not trained here, and
+          cannot be: it is a head bolted onto an Action training run, sharing
+          that run's backbone, frames and epochs. A button here would imply a
+          job that does not exist — a pointer is the honest version. */}
+      <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface-50 px-3 py-2 text-[11px] text-text-muted">
+        <span>
+          The yp-spot actor head answers the same question by looking at the
+          frames. It trains as part of an Action run, not here.
+        </span>
+        <Button
+          className="ml-auto"
+          onClick={() => navigate('/action-train')}
+        >
+          Action Train · Predict actor
+        </Button>
+      </div>
+
       <div className="mb-3 flex flex-wrap items-center gap-2 text-[11px] text-text-muted">
-        <span>{status?.dataset.examples ?? '—'} usable examples in corpus</span>
+        <span>{corpus?.examples ?? '—'} usable examples in corpus</span>
         <span>·</span>
-        <span>{status?.dataset.stems ?? '—'} labeled videos</span>
+        <span>{corpus?.stems ?? '—'} labeled videos</span>
         <span>·</span>
         <span>{selected.size} selected</span>
         <span>·</span>
         <span>{selectedReviews} selected reviews</span>
-        <span>·</span>
-        <span>
-          shadow{' '}
-          <span className="font-mono text-text-secondary">
-            {status?.active_shadow ?? 'disabled'}
-          </span>
-        </span>
       </div>
 
       <div className="mb-4 rounded-lg border border-border p-3">
@@ -238,7 +244,7 @@ export function AssociationTrainingCard() {
           )}
           maxHeightClass="max-h-[38vh]"
           emptyTitle="No association videos"
-          emptySubtitle="Run Player Detection before building an Association training corpus"
+          emptySubtitle="A video appears here once it has rallies, action labels and extraction records"
         />
       </div>
 
@@ -258,11 +264,6 @@ export function AssociationTrainingCard() {
         >
           {busy ? 'Training…' : 'Train selected candidate'}
         </Button>
-        {status?.active_shadow ? (
-          <Button onClick={() => void setShadow(null)}>
-            Disable learned shadow
-          </Button>
-        ) : null}
         {!canTrain ? (
           <span className="self-center text-[11px] text-amber-400">
             Select at least 20 explicit reviews across two videos.
@@ -285,22 +286,15 @@ export function AssociationTrainingCard() {
                   {checkpoint.feature_set} · {checkpoint.training.examples}{' '}
                   examples · threshold {checkpoint.threshold.toFixed(3)}
                 </span>
-                <Button
-                  className="ml-auto"
-                  disabled={
-                    checkpoint.active_shadow ||
-                    checkpoint.shadow_blocked_on !== null
-                  }
-                  title={checkpoint.shadow_blocked_on ?? undefined}
-                  onClick={() => void setShadow(checkpoint.name)}
-                >
-                  {checkpoint.active_shadow
-                    ? 'Shadow active'
-                    : checkpoint.shadow_blocked_on !== null
-                      ? 'Not a shadow model'
-                      : 'Use as shadow'}
-                </Button>
+                {checkpoint.unusable_because !== null ? (
+                  <Badge tone="warning">Cannot run</Badge>
+                ) : null}
               </div>
+              {checkpoint.unusable_because !== null ? (
+                <p className="mt-1 break-words text-[10px] text-amber-400">
+                  {checkpoint.unusable_because}
+                </p>
+              ) : null}
               <p className="mt-1 break-words text-[10px] text-text-muted">
                 Trained on: {checkpoint.training.stems.join(' · ')}
               </p>
@@ -324,14 +318,36 @@ export function AssociationTrainingCard() {
           {errMsg(performanceQuery.error)}
         </p>
       ) : (
-        <div className="overflow-x-auto">
+        <>
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <span className="text-[10px] uppercase tracking-widest text-text-muted">
+              slice
+            </span>
+            {slices.map((name) => (
+              <Button
+                key={name}
+                intent={name === activeSlice ? 'primary' : undefined}
+                onClick={() => setSlice(name)}
+              >
+                {name}
+              </Button>
+            ))}
+            <span className="text-[11px] text-text-muted">
+              {activeSlice === 'hard'
+                ? 'more than one tracklet contains the contact point'
+                : activeSlice === 'manual'
+                  ? 'a human overruled the rule'
+                  : 'every reviewed event — dominated by ones the rule already gets right'}
+            </span>
+          </div>
+          <div className="overflow-x-auto">
           <table className="w-full min-w-[48rem] text-xs">
             <thead className="text-[10px] uppercase tracking-widest text-text-muted">
               <tr>
                 {[
                   'policy',
                   'evaluation',
-                  'reviewed',
+                  'scorable',
                   'top-1',
                   'coverage',
                   'selected accuracy',
@@ -358,8 +374,15 @@ export function AssociationTrainingCard() {
                   <td className="px-2 py-1.5 text-text-muted">
                     {evaluation}
                   </td>
-                  <td className="px-2 py-1.5 text-right font-mono">
-                    {metric.reviewed}
+                  <td
+                    className="px-2 py-1.5 text-right font-mono"
+                    title={
+                      metric.unscorable
+                        ? `${metric.unscorable} legacy box verdicts excluded`
+                        : undefined
+                    }
+                  >
+                    {metric.positive + metric.occluded}
                   </td>
                   <Metric value={metric.top1_accuracy} />
                   <Metric value={metric.auto_coverage} />
@@ -369,7 +392,8 @@ export function AssociationTrainingCard() {
               ))}
             </tbody>
           </table>
-        </div>
+          </div>
+        </>
       )}
     </Card>
   );

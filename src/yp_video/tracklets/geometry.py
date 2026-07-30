@@ -26,6 +26,14 @@ from yp_video.person.detector import iou
 #: of the track box and IoU would punish it for being big.
 LINK_MIN_CONTAINMENT = 0.5
 
+#: How much a loose box must overlap a tracklet's box to be calling the same
+#: person. One number, here, because three layers ask it of the same data and
+#: an answer that differs between them is a silent disagreement about WHO was
+#: named: extraction resolves a picked tracklet to a croppable box, training
+#: resolves a labelled box to its tracklet, and the evaluator resolves a
+#: policy's box answer before scoring it.
+BOX_MATCH_IOU = 0.3
+
 
 class TrackRef(NamedTuple):
     """A tracklet's identity. The pair — track_id alone restarts per rally."""
@@ -123,6 +131,24 @@ class TrackletIndex:
             (self._refs[position], self._tracklets[position]["boxes"][row])
             for position, row in self._by_frame.get(frame, ())
         ]
+
+    def at_box(
+        self, frame: int, box: Sequence[float] | None
+    ) -> TrackRef | None:
+        """The tracklet ``box`` names on ``frame``, by overlap, or None.
+
+        None is an answer, not a failure: a box drawn on somebody tracking
+        never found has no tracklet, and inventing the nearest one would put
+        a stranger's identity on the label.
+        """
+        if box is None:
+            return None
+        best, best_overlap = None, BOX_MATCH_IOU
+        for ref, track_box in self.at(frame):
+            overlap = iou(list(box), list(track_box))
+            if overlap >= best_overlap:
+                best, best_overlap = ref, overlap
+        return best
 
     def nearest(self, frame: int, *, window: int) -> list[tuple[TrackRef, list[float]]]:
         """The nearest detected frame's tracklets, searching outward.

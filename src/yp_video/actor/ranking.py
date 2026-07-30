@@ -1,20 +1,16 @@
-"""Candidate ranking, the rule policy, and explainable diagnostics.
+"""The geometric rule policy and its explainable diagnostic.
 
 Detection answers "which people are visible"; this module answers "which
 person plausibly performed the action at the annotated contact point" from
 geometry alone. The human's answer to the same question is a label
 (see actor/labels.py); this is the machine's.
 
-Two separate things live here, and conflating them was a mistake worth not
-repeating:
-
-- ``rule_decision`` is the POLICY production runs on. It picks the best
-  confident, geometrically compatible candidate.
-- ``rank_candidates`` is the CANDIDATE SET a learned ranker chooses from. It
-  keeps everyone the detector supports so the truth is always in the list.
-
-They were once two competing "rules" (V1 and a V2 that also abstained), which
-made the candidate generator look like a policy nobody had adopted.
+This is the BASELINE, and only that. The learned path ranks TRACKLETS and
+lives in actor/track_features.py — it shares no code with this file on
+purpose. The wide box candidate set that used to sit here fed a learned box
+ranker; both were retired together, because a candidate generator that keeps
+everyone the detector supports looks exactly like a policy and decides
+nothing.
 """
 
 from __future__ import annotations
@@ -24,7 +20,7 @@ from enum import Enum
 
 import numpy as np
 
-from yp_video.person.detector import PERSON_SCORE_THRESHOLD, PersonBox
+from yp_video.person.detector import PersonBox
 
 RULE_BASED = "rule-based"
 
@@ -43,18 +39,6 @@ AUTO_PICK_MIN_SCORE = 0.5
 # sideline footage.
 X_PAD_FRAC = 0.20
 Y_ABOVE_FRAC = 0.35
-# Incompatible detections remain learned-ranker candidates but rank after
-# boxes whose padded extent reaches the ball.
-INCOMPATIBLE_PENALTY = 10.0
-
-# Detection confidence influences the CANDIDATE ordering without excluding a
-# plausible actor. Geometry remains dominant.
-DETECTION_PENALTY_WEIGHT = 0.25
-
-
-class CandidateSource(str, Enum):
-    BOX = "box"
-    OTHER = "other"
 
 
 class DecisionReason(str, Enum):
@@ -72,25 +56,26 @@ class DecisionReason(str, Enum):
 @dataclass(frozen=True)
 class RankedActor:
     person: PersonBox
-    source: CandidateSource
+    #: Distance from the contact point to the top-centre of the box, in body
+    #: heights. Lower is more plausible.
     geometry_cost: float
-    detection_penalty: float
-
-    @property
-    def cost(self) -> float:
-        """Lower is more plausible."""
-        return self.geometry_cost + self.detection_penalty
 
 
 @dataclass(frozen=True)
 class AssociationDecision:
+    """What the rule decided, in the shape the extraction records store.
+
+    Rule-shaped by construction: it names a BOX. A learned policy answers with
+    a tracklet and writes its own diagnostic (see policy.TrackletPolicy);
+    letting one type carry both is what previously allowed a box-shaped answer
+    to pass as an answer to the tracklet question.
+    """
+
     version: str
     ranked: tuple[RankedActor, ...]
     selected: PersonBox | None
     reason: DecisionReason
     margin: float | None
-    confidence: float | None = None
-    none_probability: float | None = None
 
     def diagnostic(self) -> dict:
         top = self.ranked[0] if self.ranked else None
@@ -99,81 +84,16 @@ class AssociationDecision:
             "decision": self.reason.value,
             "candidate_count": len(self.ranked),
             "margin": round(self.margin, 4) if self.margin is not None else None,
-            "confidence": (
-                round(self.confidence, 4)
-                if self.confidence is not None
-                else None
-            ),
-            "none_probability": (
-                round(self.none_probability, 4)
-                if self.none_probability is not None
-                else None
-            ),
             "top": (
                 {
                     "box": [round(float(v), 1) for v in top.person.xyxy],
-                    "cost": round(top.cost, 4),
-                    "source": top.source.value,
+                    "cost": round(top.geometry_cost, 4),
                     "detection_score": round(float(top.person.score), 3),
                 }
                 if top is not None
                 else None
             ),
         }
-
-
-def _rank(
-    boxes: list[PersonBox],
-    x: float,
-    y: float,
-    *,
-    min_detection_score: float,
-    detection_penalty_weight: float,
-    keep_incompatible: bool,
-) -> tuple[RankedActor, ...]:
-    ranked: list[RankedActor] = []
-    for box in boxes:
-        if box.score < min_detection_score:
-            continue
-        x0, y0, x1, y1 = box.xyxy
-        width = max(x1 - x0, 1.0)
-        height = max(y1 - y0, 1.0)
-
-        in_x = x0 - X_PAD_FRAC * width <= x <= x1 + X_PAD_FRAC * width
-        in_y = y0 - Y_ABOVE_FRAC * height <= y <= y1
-        if in_x and in_y:
-            source = CandidateSource.BOX
-            geometry_cost = (
-                float(np.hypot(x - (x0 + x1) / 2, y - y0))
-                / height
-            )
-        elif keep_incompatible:
-            # Still a training/ranking candidate. Geometry becomes a strong
-            # negative feature, never a hard exclusion.
-            source = CandidateSource.OTHER
-            geometry_cost = (
-                float(
-                    np.hypot(
-                        x - (x0 + x1) / 2,
-                        y - (y0 + y1) / 2,
-                    )
-                )
-                / height
-                + INCOMPATIBLE_PENALTY
-            )
-        else:
-            continue
-
-        ranked.append(
-            RankedActor(
-                person=box,
-                source=source,
-                geometry_cost=geometry_cost,
-                detection_penalty=detection_penalty_weight
-                * (1.0 - min(max(float(box.score), 0.0), 1.0)),
-            )
-        )
-    return tuple(sorted(ranked, key=lambda candidate: candidate.cost))
 
 
 def rule_decision(
@@ -185,44 +105,37 @@ def rule_decision(
     abstains — its errors are visible as a wrong crop, which is what the
     labeling pages exist to correct.
     """
-    ranked = _rank(
-        boxes,
-        x,
-        y,
-        min_detection_score=AUTO_PICK_MIN_SCORE,
-        detection_penalty_weight=0.0,
-        keep_incompatible=False,
+    ranked: list[RankedActor] = []
+    for box in boxes:
+        if box.score < AUTO_PICK_MIN_SCORE:
+            continue
+        x0, y0, x1, y1 = box.xyxy
+        width = max(x1 - x0, 1.0)
+        height = max(y1 - y0, 1.0)
+        in_x = x0 - X_PAD_FRAC * width <= x <= x1 + X_PAD_FRAC * width
+        in_y = y0 - Y_ABOVE_FRAC * height <= y <= y1
+        if not (in_x and in_y):
+            continue
+        ranked.append(
+            RankedActor(
+                person=box,
+                geometry_cost=float(np.hypot(x - (x0 + x1) / 2, y - y0))
+                / height,
+            )
+        )
+    ordered = tuple(
+        sorted(ranked, key=lambda candidate: candidate.geometry_cost)
     )
     return AssociationDecision(
         version=RULE_BASED,
-        ranked=ranked,
-        selected=ranked[0].person if ranked else None,
+        ranked=ordered,
+        selected=ordered[0].person if ordered else None,
         reason=(
-            DecisionReason.SELECTED
-            if ranked
-            else DecisionReason.NO_CANDIDATE
+            DecisionReason.SELECTED if ordered else DecisionReason.NO_CANDIDATE
         ),
         margin=(
-            ranked[1].cost - ranked[0].cost if len(ranked) > 1 else None
+            ordered[1].geometry_cost - ordered[0].geometry_cost
+            if len(ordered) > 1
+            else None
         ),
-    )
-
-
-def rank_candidates(
-    boxes: list[PersonBox], x: float, y: float
-) -> tuple[RankedActor, ...]:
-    """Every plausible actor, ranked — the learned ranker's candidate set.
-
-    Not a policy: it decides nothing and rejects nobody above the detector's
-    own floor. Geometry becomes a strong negative feature instead of a hard
-    gate, so a labeled truth is always somewhere in the list and candidate
-    recall stays 1.0. What to DO with the ranking is the model's business.
-    """
-    return _rank(
-        boxes,
-        x,
-        y,
-        min_detection_score=PERSON_SCORE_THRESHOLD,
-        detection_penalty_weight=DETECTION_PENALTY_WEIGHT,
-        keep_incompatible=True,
     )

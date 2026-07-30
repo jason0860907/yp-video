@@ -1,4 +1,10 @@
-"""Association checkpoint repository with explicit shadow activation."""
+"""Association checkpoint repository.
+
+A trained candidate is a file and nothing more. Nothing here activates: a
+model is used by naming it in an Association Predict run, which writes its
+answers into the records under its own name. There is deliberately no
+"current model" setting to drift out of sync with what produced a record.
+"""
 
 from __future__ import annotations
 
@@ -14,7 +20,6 @@ from yp_video.core.jsonl import atomic_write
 from yp_video.actor.model import AssociationModel
 
 CHECKPOINTS_DIR = ASSOCIATION_DIR / "checkpoints"
-SHADOW_CONFIG = ASSOCIATION_DIR / "shadow.json"
 MODEL_FILE = "model.json"
 MANIFEST_FILE = "manifest.json"
 
@@ -65,37 +70,30 @@ def load(name: str) -> AssociationModel:
     return _model_cache.get(name, [path], parse)
 
 
-def active_shadow_name() -> str | None:
-    if not SHADOW_CONFIG.exists():
-        return None
-    with open(SHADOW_CONFIG, encoding="utf-8") as file:
-        value = json.load(file).get("checkpoint")
-    return str(value) if value else None
+def usable_rejection(name: str) -> str | None:
+    """Why this checkpoint cannot be run, or None when it can.
 
-
-def load_active_shadow() -> AssociationModel | None:
-    name = active_shadow_name()
-    return load(name) if name is not None else None
-
-
-def set_active_shadow(name: str | None) -> None:
-    if name is not None:
+    A checkpoint that no longer LOADS is one of the answers. Feature contracts
+    get retired and the checkpoints trained against them stay on disk; a
+    listing that let that raise would take down the page for every other
+    checkpoint too, over one file nobody can select anyway.
+    """
+    try:
         load(name)
-    with atomic_write(SHADOW_CONFIG) as file:
-        json.dump({"checkpoint": name}, file, ensure_ascii=False, indent=2)
+    except (OSError, ValueError, KeyError) as exc:
+        return str(exc)
+    return None
 
 
 def list_candidates() -> list[dict]:
     if not CHECKPOINTS_DIR.exists():
         return []
-    active = active_shadow_name()
     rows: list[dict] = []
     for path in CHECKPOINTS_DIR.glob(f"*/{MANIFEST_FILE}"):
         # Only an unreadable MANIFEST hides a checkpoint: without it there is
-        # nothing to show. A model that no longer loads — a retired feature
-        # contract, a partial write — still gets listed, because a checkpoint
-        # silently missing from the page is a worse answer than one shown with
-        # the reason it cannot be used (see the router's shadow_blocked_on).
+        # nothing to show. A model that no longer loads still gets listed,
+        # because a checkpoint silently missing from the page is a worse
+        # answer than one shown with the reason it cannot be used.
         try:
             with open(path, encoding="utf-8") as file:
                 manifest = json.load(file)
@@ -105,12 +103,7 @@ def list_candidates() -> list[dict]:
             {
                 **manifest,
                 "name": path.parent.name,
-                "active_shadow": path.parent.name == active,
                 "mtime": path.stat().st_mtime,
             }
         )
-    return sorted(
-        rows,
-        key=lambda row: (row["active_shadow"], row["mtime"]),
-        reverse=True,
-    )
+    return sorted(rows, key=lambda row: row["mtime"], reverse=True)

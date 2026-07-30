@@ -133,6 +133,11 @@ export const API = {
     start: '/action-train/start',
     performance: '/action-train/performance',
   },
+  fusionModel: {
+    status: '/fusion-model/status',
+    train: '/fusion-model/train',
+    performance: '/fusion-model/performance',
+  },
   spotTrain: {
     status: '/spot-train/status',
     start: '/spot-train/start',
@@ -185,8 +190,8 @@ export const API = {
     confirm: (name: string) => `/actor-association/confirm/${encodeURIComponent(name)}`,
     status: '/actor-association/status',
     performance: '/actor-association/performance',
+    trainHistory: '/actor-association/train-history',
     train: '/actor-association/train',
     predict: '/actor-association/predict',
-    shadow: '/actor-association/shadow',
   },
 } as const;

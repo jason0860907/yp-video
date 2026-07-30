@@ -20,7 +20,6 @@ from typing import Protocol, Sequence
 
 import numpy as np
 
-from yp_video.actor.features import extract_features
 from yp_video.core.progress import ProgressFn
 from yp_video.actor.model import FEATURE_SET_TRACK, AssociationModel
 from yp_video.actor.ranking import DecisionReason, RULE_BASED, rule_decision
@@ -41,6 +40,9 @@ class EventContext:
     frame: int
     #: The annotated contact point in pixels, or None when the event has none.
     contact: tuple[float, float] | None
+    #: Whether the BALL was visible. An action label says nothing about
+    #: whether the PLAYER was — that is the association layer's `occluded`
+    #: verdict, and the two are unrelated.
     visible: bool
     #: The extraction event id. A policy that reads a precomputed answer needs
     #: to look it up by something, and the frame is not unique — two actions
@@ -58,16 +60,16 @@ class EventContext:
     masks: Mapping[str, np.ndarray | None] | None = None
 
     @property
-    def attributable(self) -> bool:
-        """Whether an automatic pick is meaningful here at all.
+    def contact_usable(self) -> bool:
+        """Whether the annotated contact point may be trusted as evidence.
 
-        Two events get no automatic actor, and neither is a missing value:
-        one with no contact point has nothing to attribute, and an INVISIBLE
-        one has a point that sits next to somebody who demonstrably did not
-        perform the action (the actor is off-screen or hidden — that is what
-        makes it invisible). Extraction has always refused both; stating it
-        here keeps every policy refusing them the same way instead of each
-        rediscovering the rule, or quietly not.
+        Two states, neither a missing value: no point at all, and a point on
+        an event whose BALL was not visible — annotated from memory, and in
+        practice sitting at the frame edge where the ball left. A policy that
+        ranks people by distance to it would be ranking them by a guess.
+
+        This says nothing about whether the ACTOR is on screen; a policy that
+        does not read the contact point has no business consulting it.
         """
         return self.contact is not None and self.visible
 
@@ -142,7 +144,7 @@ class RulePolicy(ImmediatePolicy):
     needs_tracklets = False
 
     def decide(self, context: EventContext) -> ActorPick:
-        if not context.attributable:
+        if not context.contact_usable:
             return ActorPick()
         assert context.contact is not None
         x, y = context.contact
@@ -177,7 +179,7 @@ class TrackletPolicy(ImmediatePolicy):
         return f"learned:{self._model.name}"
 
     def decide(self, context: EventContext) -> ActorPick:
-        if not context.attributable or context.tracks is None:
+        if not context.contact_usable or context.tracks is None:
             return ActorPick()
         assert context.contact is not None
         x, y = context.contact
@@ -243,6 +245,12 @@ class SpotActorPolicy(ImmediatePolicy):
     the answer NAMES a tracklet, so a video without tracking cannot receive
     one, and the caller should refuse the job up front rather than abstain on
     every event.
+
+    The one policy that ignores ``contact_usable``: it looked at the frames,
+    not at the annotated point, so a ball nobody could see costs it nothing.
+    Refusing those events here would throw away an answer the model already
+    gave — and leave them unconfirmable forever, since only a diagnostic makes
+    an unresolved event endorsable.
     """
 
     needs_tracklets = True
@@ -256,7 +264,7 @@ class SpotActorPolicy(ImmediatePolicy):
         return f"spot:{self._name}"
 
     def decide(self, context: EventContext) -> ActorPick:
-        if not context.attributable or context.event_id is None:
+        if context.event_id is None:
             return ActorPick()
         answer = self._answers.get(context.event_id)
         if answer is None:
@@ -310,41 +318,15 @@ class SpotPlan:
 
 
 def build_policy(checkpoint: str | None) -> PolicyPlan:
-    """``None`` is the rule; anything else names a trained checkpoint."""
+    """``None`` is the rule; anything else names a trained checkpoint.
+
+    A checkpoint from a retired feature contract raises here rather than
+    quietly falling back to the rule: the caller asked for a specific model,
+    and answering with a different one would be recorded as that model's
+    output.
+    """
     from yp_video.actor import checkpoints
 
     if checkpoint is None or checkpoint == RULE_BASED:
         return RulePolicy()
-    model = checkpoints.load(checkpoint)
-    if model.feature_set == FEATURE_SET_TRACK:
-        return TrackletPolicy(model)
-    return _BoxModelPolicy(model)
-
-
-class _BoxModelPolicy(ImmediatePolicy):
-    """A learned ranker over detection boxes — the box contract's twin of
-    TrackletPolicy. No checkpoint uses it today; it exists so ``build_policy``
-    has no unreachable branch and no silent wrong answer if one is trained."""
-
-    needs_tracklets = False
-
-    def __init__(self, model: AssociationModel):
-        self._model = model
-
-    @property
-    def name(self) -> str:
-        return f"learned:{self._model.name}"
-
-    def decide(self, context: EventContext) -> ActorPick:
-        if not context.attributable:
-            return ActorPick()
-        assert context.contact is not None
-        x, y = context.contact
-        people = [person_from_detection(d) for d in context.detections]
-        features = extract_features(people, x, y)
-        decision = self._model.decision(features)
-        return ActorPick(
-            box=decision.selected.xyxy if decision.selected else None,
-            candidates=len(decision.ranked),
-            diagnostic=decision.diagnostic(),
-        )
+    return TrackletPolicy(checkpoints.load(checkpoint))

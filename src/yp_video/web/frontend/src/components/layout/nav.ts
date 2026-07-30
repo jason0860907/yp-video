@@ -96,6 +96,13 @@ export const NAV: NavSection[] = [
     ],
   },
   {
+    title: 'Fusion',
+    collapsible: true,
+    items: [
+      { path: '/fusion-train', label: 'Fusion Train', icon: ICON.train },
+    ],
+  },
+  {
     title: 'ReID',
     collapsible: true,
     items: [

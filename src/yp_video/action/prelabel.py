@@ -32,6 +32,7 @@ def spot_available() -> bool:
 def list_checkpoints(root: Path = ACTION_CHECKPOINTS_DIR) -> list[dict]:
     """Packaged SPOT checkpoints under ``root`` (action or rally packages)."""
     checkpoints = []
+    actor_heads: dict[Path, bool] = {}
     for path in _iter_checkpoint_paths(root):
         if not path.is_file():
             continue
@@ -41,6 +42,8 @@ def list_checkpoints(root: Path = ACTION_CHECKPOINTS_DIR) -> list[dict]:
         epoch = int(match.group(1)) if match else int(best_metadata.get("epoch", -1))
         stat = path.stat()
         rel = checkpoint_ref(path)
+        if path.parent not in actor_heads:
+            actor_heads[path.parent] = _package_predicts_actor(path.parent)
         checkpoints.append({
             "path": rel,
             "name": f"{path.parent.name}/{path.name}",
@@ -52,6 +55,7 @@ def list_checkpoints(root: Path = ACTION_CHECKPOINTS_DIR) -> list[dict]:
             "mtime": stat.st_mtime,
             "size_mb": stat.st_size / (1024 * 1024),
             "source": root.name,
+            "predicts_actor": actor_heads[path.parent],
         })
     checkpoints.sort(key=lambda c: (c["is_best"], c["mtime"], c["epoch"]), reverse=True)
     return checkpoints
@@ -280,6 +284,16 @@ def _finite_float(value, *, default: float) -> float:
     except (TypeError, ValueError):
         return default
     return out if math.isfinite(out) else default
+
+
+def _package_predicts_actor(experiment_dir: Path) -> bool:
+    """Whether the packaged run also trained the fusion actor head."""
+    try:
+        with open(experiment_dir / "config.json", encoding="utf-8") as f:
+            config = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return False
+    return isinstance(config, dict) and config.get("predict_actor") is True
 
 
 def _load_best_metadata(experiment_dir: Path) -> dict:

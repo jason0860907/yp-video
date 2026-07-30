@@ -6,7 +6,7 @@
  *  happened to need tracklets rather than on the stage that produces them.
  */
 
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { API, ApiError, apiFetch } from '@/lib/api';
@@ -20,6 +20,7 @@ import { StatTile } from '@/components/ui/StatTile';
 import { VideoMultiSelectList } from '@/components/video/VideoMultiSelectList';
 import { LiveJob } from '@/components/job/LiveJob';
 import { toast } from '@/components/feedback/toast';
+import { useTypedJobs } from '@/lib/useTypedJobs';
 import type { ExtractionVideo, Job } from '@/types/api';
 
 const errMsg = (e: unknown) =>
@@ -33,12 +34,8 @@ export function TrackingPage() {
   const [overwrite, setOverwrite] = useState(false);
   const [stopVllm, setStopVllm] = useState(false);
   const [stride, setStride] = useState(1);
-  const [jobOverrides, setJobOverrides] = useState<Record<string, Job>>({});
+  const { jobs, upsertJob } = useTypedJobs([TRACKING_JOB_TYPE]);
 
-  const jobsQuery = useQuery({
-    queryKey: ['jobs-list'],
-    queryFn: () => apiFetch<Job[]>(API.jobs.list),
-  });
   // The extraction listing is the one that carries every cut with its
   // pipeline state; tracking only reads the rally half of it.
   const videosQuery = useQuery({
@@ -47,16 +44,6 @@ export function TrackingPage() {
   });
   const videos = videosQuery.data ?? [];
   const tracked = videos.filter((v) => v.pipeline.has_tracks);
-
-  const upsertJob = (job: Job) => setJobOverrides((prev) => ({ ...prev, [job.id]: job }));
-  const jobs = useMemo(() => {
-    const merged = new Map<string, Job>();
-    for (const job of jobsQuery.data ?? []) {
-      if (job.type === TRACKING_JOB_TYPE) merged.set(job.id, job);
-    }
-    for (const job of Object.values(jobOverrides)) merged.set(job.id, job);
-    return [...merged.values()].sort((a, b) => (b.created_at ?? 0) - (a.created_at ?? 0));
-  }, [jobsQuery.data, jobOverrides]);
 
   const chosen = videos.filter((v) => selected.has(v.name));
   const blocked = chosen.some((v) => v.pipeline.rally_sources.length === 0)

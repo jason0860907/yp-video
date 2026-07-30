@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -10,6 +11,7 @@ from yp_video.actor.labels import ActorLabel, ActorVerdict
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import write_jsonl
 from yp_video.extraction import store
+from yp_video.extraction.prerequisites import Prerequisites
 from yp_video.web.routers import actor_association
 
 
@@ -155,11 +157,14 @@ class AssociationProgressTests(unittest.TestCase):
                 patch.object(
                     actor_association,
                     "prerequisites",
-                    return_value=type(
-                        "Pipeline",
-                        (),
-                        {"payload": lambda self: {}},
-                    )(),
+                    return_value=Prerequisites(
+                        rally_sources=["annotation"],
+                        has_action=True,
+                        has_tracks=True,
+                        has_masks=True,
+                        tracks_stale=False,
+                        has_records=True,
+                    ),
                 ),
             ):
                 actor_labels.save(
@@ -183,3 +188,54 @@ class AssociationProgressTests(unittest.TestCase):
         self.assertEqual(
             result["auto_counts"], {"ok": 3, "multi": 0, "miss": 1}
         )
+
+    def test_a_video_missing_an_association_input_is_not_listed(self) -> None:
+        """Extraction alone does not put a video on this list. Without actions
+        there are no events, and without rallies there are no tracklet keys for
+        an answer to name — a row would offer work that cannot be done here.
+        """
+        with tempfile.TemporaryDirectory() as raw_dir:
+            root = Path(raw_dir)
+            video = root / "match.mp4"
+            video.touch()
+            records = root / "match.jsonl"
+            action = root / "match_actions.jsonl"
+            write_jsonl(records, {"fps": 30}, [{"id": "a", "frame": 30, "label": "set"}])
+            write_jsonl(action, {"fps": 30}, [{"id": "a", "frame": 30, "label": "set"}])
+            complete = Prerequisites(
+                rally_sources=["annotation"],
+                has_action=True,
+                has_tracks=True,
+                has_masks=True,
+                tracks_stale=False,
+                has_records=True,
+            )
+
+            def listed(pipeline: Prerequisites, record_file: Path) -> list[dict]:
+                with (
+                    patch.object(
+                        actor_association, "iter_all_cuts", return_value=[video]
+                    ),
+                    patch.object(
+                        actor_association, "prerequisites", return_value=pipeline
+                    ),
+                    patch.object(store, "records_path", return_value=record_file),
+                    patch.object(store, "action_annotation_path", return_value=action),
+                    patch.object(
+                        store, "load_rallies", return_value=[{"start": 0.0, "end": 10.0}]
+                    ),
+                    patch.object(actor_labels, "actors_path", return_value=root / "a.json"),
+                    patch.object(actor_labels, "_cache", StatCache()),
+                ):
+                    return actor_association.list_videos()
+
+            # The fixture is listable, so each removal below is the only cause.
+            self.assertEqual(len(listed(complete, records)), 1)
+
+            for missing, value in (("rally_sources", []), ("has_action", False)):
+                with self.subTest(missing=missing):
+                    gap = replace(complete, **{missing: value})
+                    self.assertEqual(listed(gap, records), [])
+
+            with self.subTest(missing="records"):
+                self.assertEqual(listed(complete, root / "absent.jsonl"), [])

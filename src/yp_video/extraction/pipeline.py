@@ -503,9 +503,7 @@ def _apply_actor_fix(
         # revert just clears back to miss.
         people = [person_from_detection(d) for d in detections]
         if contact is not None:
-            association = ActorAssociationService.from_active_shadow().associate(
-                people, *contact
-            )
+            association = ActorAssociationService().associate(people, *contact)
             candidates = association.production_candidates
             record["association"] = association.diagnostic()
         else:

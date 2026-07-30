@@ -11,7 +11,13 @@ import numpy as np
 
 from yp_video.actor import labels as actor_labels
 from yp_video.actor.labels import ActorLabel, ActorVerdict
-from yp_video.actor.policy import ActorPick, EventContext, RulePolicy
+from yp_video.actor.policy import (
+    ActorPick,
+    EventContext,
+    RulePolicy,
+    SpotActorPolicy,
+)
+from yp_video.actor.spot_predictions import SpotAnswer
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import read_jsonl, write_jsonl
 from yp_video.extraction import reassociate
@@ -194,6 +200,44 @@ class ReassociationTests(unittest.TestCase):
         self.assertEqual(counts["labeled"], 2)
         self.assertEqual(self.records.stat().st_mtime_ns, before)
 
+    def test_an_invisible_ball_event_comes_out_endorsable(self) -> None:
+        """An action's ``visible`` is about the BALL — the head still saw who
+        acted, and its answer has to reach the record. An unresolved event
+        carrying no diagnostic is confirmable by nobody, which is how these
+        piled up as a work list that could never reach zero.
+        """
+        # What extraction leaves behind for one: a miss, no point, no box.
+        rows = [
+            {
+                "id": "blind",
+                "frame": 200,
+                "xy": None,
+                "visible": False,
+                "status": "miss",
+                "resolution": "unresolved",
+                "box": None,
+                "crop": None,
+                "detections": [_detection([410, 510, 510, 690])],
+            }
+        ]
+        write_jsonl(self.records, self.meta, rows)
+        policy = SpotActorPolicy({"blind": SpotAnswer(None, 0.8, "occluded")})
+
+        # The head's answer names a tracklet, so the run demands tracking; this
+        # video's tracklets are beside the point here.
+        with (
+            patch.object(reassociate, "tracks_path", return_value=self.records),
+            patch.object(reassociate, "tracklet_index", return_value=None),
+            patch.object(reassociate, "open_track_masks", return_value=None),
+        ):
+            self._run(policy)
+
+        record = read_jsonl(self.records)[1][0]
+        self.assertEqual(record["resolution"], "unresolved")
+        self.assertEqual(record["association"]["kind"], "occluded")
+        endorsable = actor_labels.confirmations_for([record])
+        self.assertEqual(endorsable["blind"].verdict, ActorVerdict.OCCLUDED)
+
     def test_the_policy_name_is_recorded_in_the_header(self) -> None:
         self._run(_StubPolicy({}, {100: "human", 200: "auto"}))
         self.assertEqual(read_jsonl(self.records)[0]["association_policy"], "stub")
@@ -221,11 +265,12 @@ class ReassociationTests(unittest.TestCase):
 
 
 class RulePolicyContractTests(unittest.TestCase):
-    def test_an_unattributable_event_gets_no_pick(self) -> None:
+    def test_an_unusable_contact_point_gets_no_pick(self) -> None:
         """Two states, neither a missing value: no contact point at all, and a
-        point on an INVISIBLE event — where the nearest player is provably not
-        the actor. Extraction has always refused both, and a policy that
-        answered anyway would invent picks on re-association."""
+        point on an event whose BALL was invisible — annotated from memory, so
+        ranking players by distance to it would rank them by a guess. The rule
+        has nothing else to go on, and answering anyway would invent picks on
+        re-association."""
         detections = [_detection([0, 0, 40, 100])]
         for contact, visible in (((20.0, 10.0), False), (None, True), (None, False)):
             with self.subTest(contact=contact, visible=visible):

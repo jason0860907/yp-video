@@ -9,7 +9,7 @@
  *  became the name for three stages that merely feed it.
  */
 
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { API, ApiError, apiFetch } from '@/lib/api';
@@ -23,6 +23,7 @@ import { StatTile } from '@/components/ui/StatTile';
 import { VideoMultiSelectList } from '@/components/video/VideoMultiSelectList';
 import { LiveJob } from '@/components/job/LiveJob';
 import { toast } from '@/components/feedback/toast';
+import { useTypedJobs } from '@/lib/useTypedJobs';
 import type { Job, ReidOptions, ReidVideo } from '@/types/api';
 
 const errMsg = (e: unknown) => (e instanceof ApiError ? e.body : e instanceof Error ? e.message : String(e));
@@ -38,12 +39,8 @@ export function ReidPredictPage() {
   const [stopVllm, setStopVllm] = useState(false);
   // '' = the fixed official checkpoint; else an explicitly selected candidate.
   const [checkpoint, setCheckpoint] = useState('');
-  const [jobOverrides, setJobOverrides] = useState<Record<string, Job>>({});
+  const { jobs, upsertJob } = useTypedJobs([EMBED_JOB_TYPE]);
 
-  const jobsQuery = useQuery({
-    queryKey: ['jobs-list'],
-    queryFn: () => apiFetch<Job[]>(API.jobs.list),
-  });
   const videosQuery = useQuery({
     queryKey: ['reid-videos'],
     queryFn: () => apiFetch<ReidVideo[]>(API.reid.videos),
@@ -57,16 +54,6 @@ export function ReidPredictPage() {
   const checkpoints = optionsQuery.data?.checkpoints ?? [];
   const videos = videosQuery.data ?? [];
   const embedded = videos.filter((v) => v.embedded_models.length > 0);
-
-  const upsertJob = (job: Job) => setJobOverrides((prev) => ({ ...prev, [job.id]: job }));
-  const jobs = useMemo(() => {
-    const merged = new Map<string, Job>();
-    for (const job of jobsQuery.data ?? []) {
-      if (job.type === EMBED_JOB_TYPE) merged.set(job.id, job);
-    }
-    for (const job of Object.values(jobOverrides)) merged.set(job.id, job);
-    return [...merged.values()].sort((a, b) => (b.created_at ?? 0) - (a.created_at ?? 0));
-  }, [jobsQuery.data, jobOverrides]);
 
   // Embedding reads the saved crops, so the only prerequisite is that they
   // exist — a disabled button with a reason beats a 400 after the click.

@@ -1,9 +1,9 @@
-"""The tracklet feature contract, and what it deliberately does NOT inherit.
+"""The tracklet feature contract, and how a checkpoint declares it.
 
-A tracklet is a different domain object from a box, so it gets its own
-contract rather than an overloaded one — and the checkpoint now records
-WHICH contract it was trained against, because the validation is by feature
-name and a v2 checkpoint made no such statement.
+Validation is by feature NAME, so a checkpoint has to say which list those
+names came from. It is the only contract that exists today; that is exactly
+why the declaration matters — a retired one must fail to load rather than be
+silently validated against the survivor.
 """
 
 from __future__ import annotations
@@ -12,12 +12,7 @@ import unittest
 
 import numpy as np
 
-from yp_video.actor.features import (
-    CANDIDATE_FEATURE_NAMES,
-    CONTEXT_FEATURE_NAMES,
-)
 from yp_video.actor.model import (
-    FEATURE_SET_BOX,
     FEATURE_SET_TRACK,
     MODEL_SCHEMA_VERSION,
     AssociationModel,
@@ -158,12 +153,7 @@ class FeatureTests(unittest.TestCase):
     def test_no_feature_is_constant_by_construction(self) -> None:
         """No presence sentinel should be born constant across new data."""
         self.assertNotIn("has_mask", TRACK_CANDIDATE_FEATURE_NAMES)
-        names = (
-            CANDIDATE_FEATURE_NAMES
-            + CONTEXT_FEATURE_NAMES
-            + TRACK_CANDIDATE_FEATURE_NAMES
-            + TRACK_CONTEXT_FEATURE_NAMES
-        )
+        names = TRACK_CANDIDATE_FEATURE_NAMES + TRACK_CONTEXT_FEATURE_NAMES
         self.assertFalse(any("wrist" in name for name in names))
 
 
@@ -180,36 +170,40 @@ class ContractTests(unittest.TestCase):
         restored = AssociationModel.from_payload(payload)
         self.assertEqual(restored.feature_set, FEATURE_SET_TRACK)
 
-    def test_a_track_model_cannot_be_loaded_as_a_box_model(self) -> None:
-        """Both contracts are validated by NAME; without the declaration the
-        two are indistinguishable and the weights would be applied to the
-        wrong features."""
+    def test_columns_are_validated_against_the_declared_contract(self) -> None:
+        """The declaration is not decoration: weights applied to the wrong
+        columns produce confident nonsense rather than an error."""
         payload = _model(
             FEATURE_SET_TRACK,
             len(TRACK_CANDIDATE_FEATURE_NAMES),
             len(TRACK_CONTEXT_FEATURE_NAMES),
         ).payload()
-        payload["feature_set"] = FEATURE_SET_BOX
+        payload["feature_contract"]["candidate"] = ["some", "other", "columns"]
         with self.assertRaisesRegex(ValueError, "contract mismatch"):
             AssociationModel.from_payload(payload)
 
     def test_a_retired_contract_name_is_rejected_not_reinterpreted(self) -> None:
         """A checkpoint naming a contract that no longer exists must say so.
-        The old ``track if ... else box`` fallback answered for any string, so
-        a retired track model was validated against the BOX names and reported as a
-        box mismatch — on a model that had never seen a box."""
+        Retirement is real here: box-v3 checkpoints sit on disk from before the
+        box ranker was removed, and each must fail to LOAD rather than be
+        validated against the tracklet names it has never seen."""
+        for retired in ("track-v2", "box-v3"):
+            payload = _model(
+                FEATURE_SET_TRACK,
+                len(TRACK_CANDIDATE_FEATURE_NAMES),
+                len(TRACK_CONTEXT_FEATURE_NAMES),
+            ).payload()
+            payload["feature_set"] = retired
+            with self.assertRaisesRegex(
+                ValueError, "Unknown association feature set"
+            ):
+                AssociationModel.from_payload(payload)
+
+    def test_an_old_checkpoint_fails_loudly(self) -> None:
         payload = _model(
             FEATURE_SET_TRACK,
             len(TRACK_CANDIDATE_FEATURE_NAMES),
             len(TRACK_CONTEXT_FEATURE_NAMES),
-        ).payload()
-        payload["feature_set"] = "track-v2"
-        with self.assertRaisesRegex(ValueError, "Unknown association feature set"):
-            AssociationModel.from_payload(payload)
-
-    def test_an_old_checkpoint_fails_loudly(self) -> None:
-        payload = _model(
-            FEATURE_SET_BOX, len(CANDIDATE_FEATURE_NAMES), 9
         ).payload()
         payload["schema_version"] = 3
         with self.assertRaisesRegex(ValueError, "Unsupported"):

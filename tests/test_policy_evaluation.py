@@ -8,13 +8,20 @@ dominated by events the rule already gets right.
 
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
+from contextlib import contextmanager
+from pathlib import Path
+from unittest.mock import patch
 
+from yp_video.actor import spot_predictions
 from yp_video.actor.evaluate import _PolicyScore, as_track, is_hard
 from yp_video.actor.labels import ActorLabel, ActorVerdict
 from yp_video.actor.policy import ActorPick, EventContext, SpotActorPolicy
 from yp_video.actor.review import ReviewedEvent
 from yp_video.actor.spot_predictions import SpotAnswer
+from yp_video.core.cache import StatCache
 from yp_video.tracklets.geometry import TrackletIndex, TrackRef
 
 FRAME = 100
@@ -137,10 +144,81 @@ class SpotPolicyTests(unittest.TestCase):
             policy.decide(_event(ActorLabel(ActorVerdict.MANUAL)).context).decided
         )
 
-    def test_an_unattributable_event_is_refused_like_every_policy(self) -> None:
+    def test_a_spot_answer_needs_neither_contact_point_nor_visible_ball(self) -> None:
+        """The head looked at the frames, not at the annotated point. An
+        action whose BALL was invisible still had somebody perform it, and
+        refusing it here would both discard the answer and leave the event
+        unconfirmable forever."""
         policy = SpotActorPolicy({"a": SpotAnswer(TrackRef(2, 7), 0.9, "track")})
-        context = EventContext(frame=FRAME, contact=None, visible=True, event_id="a")
-        self.assertFalse(policy.decide(context).decided)
+        context = EventContext(frame=FRAME, contact=None, visible=False, event_id="a")
+        self.assertEqual(policy.decide(context).track, TrackRef(2, 7))
+
+
+class SpotProvenanceTests(unittest.TestCase):
+    """Which head answered, per video.
+
+    The answers file is overwritten by whichever run predicted last, so
+    without a recorded author an evaluator comparing two heads would silently
+    score a mix of both.
+    """
+
+    @contextmanager
+    def _answers(self, files: dict[str, dict]):
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            for stem, payload in files.items():
+                (root / f"{stem}_actor_predictions.json").write_text(
+                    json.dumps(payload), encoding="utf-8"
+                )
+            with (
+                patch.object(
+                    spot_predictions, "ACTOR_PREDICTIONS_DIR", root
+                ),
+                patch.object(spot_predictions, "_cache", StatCache()),
+            ):
+                yield
+
+    def _payload(self, checkpoint: str | None) -> dict:
+        events = [
+            {"id": "a", "kind": "track", "track": "2:7", "confidence": 0.9}
+        ]
+        payload: dict = {"video": "match", "events": events}
+        if checkpoint is not None:
+            payload["checkpoint"] = checkpoint
+        return payload
+
+    def test_runs_are_listed_by_the_head_that_wrote_them(self) -> None:
+        with self._answers(
+            {
+                "one": self._payload("head_a"),
+                "two": self._payload("head_b"),
+                "three": self._payload("head_a"),
+            }
+        ):
+            self.assertEqual(
+                spot_predictions.available_runs(["one", "two", "three"]),
+                {"head_a", "head_b"},
+            )
+
+    def test_answers_from_before_the_stamp_are_named_not_guessed(self) -> None:
+        with self._answers({"one": self._payload(None)}):
+            self.assertEqual(
+                spot_predictions.available_runs(["one"]),
+                {spot_predictions.UNRECORDED_RUN},
+            )
+
+    def test_a_video_another_head_answered_is_absent_not_abstaining(
+        self,
+    ) -> None:
+        """None and an empty policy are different claims. A video this head
+        never saw must not be scored as one it abstained on every event of —
+        that would read as a coverage failure it did not commit."""
+        with self._answers(
+            {"one": self._payload("head_a"), "two": self._payload("head_b")}
+        ):
+            self.assertIsNotNone(spot_predictions.policy_for("one", "head_a"))
+            self.assertIsNone(spot_predictions.policy_for("two", "head_a"))
+            self.assertIsNone(spot_predictions.policy_for("absent", "head_a"))
 
 
 if __name__ == "__main__":
