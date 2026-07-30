@@ -71,7 +71,6 @@ export const statusLabel = (job: Job): string => {
 const STALE_QUERIES: Record<string, string[][]> = {
   vlm_detect: [['system-videos'], ['annotate-results']],
   rally_spot_predict: [['spot-predict-videos'], ['annotate-results']],
-  spot_prelabel: [['action-videos']],
   spot_prelabel_batch: [['action-videos']],
   player_detection: [['extraction-videos'], ['association-videos'], ['extraction-records']],
   actor_association_predict: [['extraction-videos'], ['association-videos'], ['extraction-records'], ['reid-videos']],

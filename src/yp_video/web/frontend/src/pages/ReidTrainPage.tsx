@@ -95,7 +95,7 @@ export function ReidTrainPage() {
 
   const startExport = async () => {
     try {
-      const started = await apiFetch<Job>(API.reidTrain.start, {
+      const started = await apiFetch<Job>(API.reidTrain.export, {
         method: 'POST',
         body: { ...form, name: form.name.trim() || null },
       });

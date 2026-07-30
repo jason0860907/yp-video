@@ -212,8 +212,8 @@ class ReidExportRequest(StrictModel):
     overwrite: bool = False
 
 
-@router.post("/start", response_model=JobSummary)
-async def start(req: ReidExportRequest) -> dict:
+@router.post("/export", response_model=JobSummary)
+async def start_export(req: ReidExportRequest) -> dict:
     """Write the dataset to REID_DATASETS_DIR as a cancellable job."""
     plan = _plan(req.split_mode, req.test_ratio, req.seed, req.masked)
     if not plan.samples:

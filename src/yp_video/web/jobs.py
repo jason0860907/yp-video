@@ -42,7 +42,6 @@ class JobType(str, Enum):
     RALLY_SPOT_PREDICT = "rally_spot_predict"
     ACTION_TRAIN = "action_train"
     FUSION_MODEL_TRAIN = "fusion_model_train"
-    SPOT_PRELABEL = "spot_prelabel"
     SPOT_PRELABEL_BATCH = "spot_prelabel_batch"
     REID_DATASET_EXPORT = "reid_dataset_export"
     REID_TRAIN = "reid_train"

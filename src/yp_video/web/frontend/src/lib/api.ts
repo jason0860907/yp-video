@@ -125,7 +125,6 @@ export const API = {
     labels: '/action-annotate/labels',
     videos: '/action-annotate/videos',
     spot: '/action-annotate/spot',
-    prelabel: '/action-annotate/prelabel',
     prelabelBatch: '/action-annotate/prelabel-batch',
     annotations: '/action-annotate/annotations',
     annotation: (name: string) => `/action-annotate/annotations/${encodeURIComponent(name)}`,
@@ -181,7 +180,8 @@ export const API = {
   },
   reidTrain: {
     status: '/reid-train/status',
-    start: '/reid-train/start',
+    // POST starts the dataset-export job; GET /export (exportPlan) only plans.
+    export: '/reid-train/export',
     train: '/reid-train/train',
     runs: '/reid-train/runs',
     performance: (model?: string) =>
