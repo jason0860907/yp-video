@@ -39,13 +39,11 @@ embedding.
 
 from __future__ import annotations
 
-import json
 import queue
 import threading
 import time
 from pathlib import Path
 
-from yp_video.actor import labels as actor_labels
 from yp_video.actor.labels import ActorLabel, ActorVerdict
 from yp_video.actor.resolution import ActorResolution, actor_resolution
 from yp_video.actor.service import ActorAssociationService
@@ -70,7 +68,6 @@ from yp_video.person.detector import (
     person_from_detection,
 )
 from yp_video.reid.embedder import base_embedder_name, build_embedders
-from yp_video.tracklets.store import TrackMasks, open_track_masks
 from yp_video.reid.store import (
     clear_embedding_refreshes,
     embedded_models,
@@ -81,6 +78,7 @@ from yp_video.reid.store import (
     mark_actor_embedding_stale,
     save_embedding_matrix,
 )
+
 
 def load_events(stem: str) -> list[dict]:
     """Action events with a frame, sorted by frame.
@@ -324,7 +322,8 @@ def embed_video(
             on_progress(0, len(inputs), f"loading {name} weights..." if not embedder.loaded else f"embedding ({name})...")
         progress: ProgressFn | None = None
         if on_progress:
-            progress = lambda done, total, msg, name=name: on_progress(done, total, f"{name} · {msg}")
+            def progress(done, total, msg, *, _name=name, _cb=on_progress):
+                _cb(done, total, f"{_name} · {msg}")
         matrix = embedder.embed_paths(inputs, on_progress=progress, checkpoint=checkpoint)
         full = np.full((len(records), matrix.shape[1]), np.nan, dtype=np.float32)
         if len(owners):
@@ -341,8 +340,8 @@ def _masked_record_crop(stem: str, record: dict, crop):
     box comes back to crop coordinates via the display-box origin."""
     import cv2
 
-    from yp_video.person.seg import crop_masker
     from yp_video.extraction.store import masked_crop_dir
+    from yp_video.person.seg import crop_masker
 
     dx0, dy0 = record["box"][:2]
     bx = record.get("actor_box") or record["box"]
@@ -369,8 +368,8 @@ def _mask_crops(
     """
     import cv2
 
-    from yp_video.person.seg import crop_masker
     from yp_video.extraction.store import masked_crop_dir
+    from yp_video.person.seg import crop_masker
 
     mdir = masked_crop_dir(stem)
 

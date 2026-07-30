@@ -21,6 +21,9 @@ import random
 from collections.abc import Callable
 from pathlib import Path
 
+from yp_video.action import prelabel
+from yp_video.action.frames import inspect_action_frame_cache
+from yp_video.action.predict import SpotInferenceError, run_spot_inference
 from yp_video.config import (
     RALLY_ANNOTATIONS_DIR,
     RALLY_SPOT_CHECKPOINTS_DIR,
@@ -28,9 +31,6 @@ from yp_video.config import (
     cut_kind_of,
     find_cut,
 )
-from yp_video.action import prelabel
-from yp_video.action.frames import inspect_action_frame_cache
-from yp_video.action.predict import SpotInferenceError, run_spot_inference
 from yp_video.core.ffmpeg import FFmpegError, probe_video_metadata
 from yp_video.core.jsonl import read_jsonl, write_jsonl
 

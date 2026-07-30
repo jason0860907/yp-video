@@ -11,7 +11,6 @@ reading the action file made it wait for a stage it does not depend on.
 
 from __future__ import annotations
 
-import json
 import tempfile
 import unittest
 from contextlib import contextmanager

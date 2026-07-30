@@ -37,14 +37,14 @@ from yp_video.contracts.reid import (
     DatasetManifest,
 )
 from yp_video.core.jsonl import read_jsonl_cached
-from yp_video.reid.identity import LinksFor, load_assignments
-from yp_video.reid.sessions import SessionGroup
 from yp_video.extraction.store import (
     crop_dir,
     labelable,
     masked_crop_dir,
     records_path,
 )
+from yp_video.reid.identity import LinksFor, load_assignments
+from yp_video.reid.sessions import SessionGroup
 
 DATASETS_DIR = REID_DATASETS_DIR
 

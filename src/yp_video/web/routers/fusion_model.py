@@ -19,8 +19,8 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from yp_video.actor import spot_associate
 from yp_video.actor import labels as association_labels
+from yp_video.actor import spot_associate
 from yp_video.config import ACTION_CHECKPOINTS_DIR, SPOT_DIR
 from yp_video.web.jobs import JobStatus, job_manager
 from yp_video.web.routers import action_train

@@ -64,9 +64,9 @@ from pathlib import Path
 
 from yp_video.actor.resolution import ActorResolution, actor_resolution
 from yp_video.config import ASSOCIATION_ANNOTATIONS_DIR
-from yp_video.tracklets.geometry import TrackRef
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import atomic_write
+from yp_video.tracklets.geometry import TrackRef
 
 SCHEMA_VERSION = 2
 #: The name this package owns inside the shared annotations directory.

@@ -20,9 +20,10 @@ from __future__ import annotations
 import logging
 from dataclasses import asdict, dataclass
 from pathlib import Path
+
 from yp_video.actor import labels as actor_labels
-from yp_video.actor.policy import ActorPick, ActorPolicy, EventContext
 from yp_video.actor.labels import ActorVerdict
+from yp_video.actor.policy import ActorPick, ActorPolicy, EventContext
 from yp_video.actor.resolution import ActorResolution
 from yp_video.core.jsonl import read_jsonl, write_jsonl
 from yp_video.core.progress import ProgressFn

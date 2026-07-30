@@ -20,13 +20,13 @@ from typing import Protocol, Sequence
 
 import numpy as np
 
-from yp_video.core.progress import ProgressFn
 from yp_video.actor.model import FEATURE_SET_TRACK, AssociationModel
-from yp_video.actor.ranking import DecisionReason, RULE_BASED, rule_decision
+from yp_video.actor.ranking import RULE_BASED, DecisionReason, rule_decision
 from yp_video.actor.track_features import (
     candidates_near,
     extract_track_features,
 )
+from yp_video.core.progress import ProgressFn
 from yp_video.person.detector import person_from_detection
 from yp_video.tracklets.geometry import TrackletIndex, TrackRef
 

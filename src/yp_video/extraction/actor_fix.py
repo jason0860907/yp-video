@@ -37,10 +37,11 @@ from typing import Literal
 
 from yp_video.actor import labels as actor_labels
 from yp_video.actor.labels import ActorLabel, ActorVerdict
-from yp_video.tracklets.geometry import TrackRef
-from yp_video.extraction import pipeline, store as extraction_store
+from yp_video.extraction import pipeline
+from yp_video.extraction import store as extraction_store
 from yp_video.reid import store
 from yp_video.reid.embedder import base_embedder_name
+from yp_video.tracklets.geometry import TrackRef
 
 log = logging.getLogger(__name__)
 

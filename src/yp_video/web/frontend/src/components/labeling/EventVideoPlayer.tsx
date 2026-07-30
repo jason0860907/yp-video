@@ -260,7 +260,6 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
   useEffect(() => {
     if (!playing || currentRallyId == null) return;
     setExpanded(String(currentRallyId));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playing, currentRallyId]);
 
   const masksQuery = useQuery({
@@ -446,7 +445,6 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
   useEffect(() => {
     if (!playing || !currentActionId) return;
     scrollActionIntoView(currentActionId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playing, currentActionId]);
 
   // Actions grouped per rally, plus the ones outside any rally — mirrors the

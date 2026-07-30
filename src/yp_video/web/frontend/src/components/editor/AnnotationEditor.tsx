@@ -108,7 +108,8 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
   const togglePlay = () => {
     const el = videoRef.current;
     if (!el) return;
-    el.paused ? void el.play() : el.pause();
+    if (el.paused) void el.play();
+    else el.pause();
   };
 
   // Presigned video URLs expire and range requests can hang; reload the src
@@ -197,7 +198,8 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
       switch (e.key) {
         case ' ':
           e.preventDefault();
-          el.paused ? void el.play() : el.pause();
+          if (el.paused) void el.play();
+          else el.pause();
           break;
         case '[':
           e.preventDefault();

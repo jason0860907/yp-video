@@ -17,7 +17,6 @@ from yp_video.contracts.action import (
     frame_filename,
 )
 
-
 FRAME_PATTERN = FRAME_FFMPEG_PATTERN
 META_NAME = ".frame-cache.json"
 _EXTRACT_SEMAPHORE = threading.Semaphore(2)

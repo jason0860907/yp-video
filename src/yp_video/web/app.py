@@ -15,6 +15,7 @@ from yp_video.web.r2_client import r2_client
 from yp_video.web.routers import (
     action_annotate,
     action_train,
+    actor_association,
     annotate,
     cut,
     detect,
@@ -22,7 +23,6 @@ from yp_video.web.routers import (
     extraction,
     fusion_model,
     jobs,
-    actor_association,
     reid,
     reid_train,
     spot_predict,

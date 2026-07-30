@@ -33,7 +33,6 @@ from yp_video.app_library import (
 )
 from yp_video.config import RALLY_ANNOTATIONS_DIR, find_cut
 
-
 AppExportError = AppLibraryExportError
 
 

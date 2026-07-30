@@ -23,8 +23,8 @@ from pydantic import BaseModel, Field
 
 from yp_video.config import cut_kind_of, find_cut, iter_all_cuts
 from yp_video.extraction import done, links, pipeline
-from yp_video.extraction.prerequisites import prerequisites
 from yp_video.extraction import store as extraction_store
+from yp_video.extraction.prerequisites import prerequisites
 from yp_video.reid import checkpoints, identity, store
 from yp_video.reid.embedder import (
     DEFAULT_EMBEDDER,

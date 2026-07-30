@@ -12,6 +12,7 @@ from yp_video.actor.track_features import (
     TRACK_CONTEXT_FEATURE_NAMES,
 )
 
+
 #: Anything carrying the two numeric blocks. The contract a model was trained
 #: against is recorded in ``feature_set``, not enforced by this type.
 class FeatureVectors(Protocol):

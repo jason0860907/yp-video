@@ -27,8 +27,8 @@ from .action import (
     SegmentLabelEvent,
 )
 from .detector import (
-    DetectorInput,
     ActionSegment,
+    DetectorInput,
     ErrorPayload,
     ErrorResult,
     Rally,

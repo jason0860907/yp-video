@@ -53,4 +53,14 @@ packages = ["src/yp_video"]
 [dependency-groups]
 dev = [
     "pyright>=1.1.408",
+    "ruff>=0.9",
 ]
+
+[tool.ruff]
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+# Pinned explicitly (newer ruff defaults keep growing): real errors (E/F)
+# plus import hygiene — dead imports and unsorted import blocks are exactly
+# what kept slipping into the repo unnoticed.
+select = ["E4", "E7", "E9", "F", "I"]

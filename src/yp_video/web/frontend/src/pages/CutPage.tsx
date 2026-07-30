@@ -37,7 +37,8 @@ export function CutPage() {
   const togglePlay = () => {
     const el = videoRef.current;
     if (!el) return;
-    el.paused ? void el.play() : el.pause();
+    if (el.paused) void el.play();
+    else el.pause();
   };
 
   const videosQuery = useQuery({ queryKey: ['cut-videos'], queryFn: () => apiFetch<string[]>(API.cut.videos) });
@@ -76,7 +77,8 @@ export function CutPage() {
       switch (e.key) {
         case ' ':
           e.preventDefault();
-          el.paused ? void el.play() : el.pause();
+          if (el.paused) void el.play();
+          else el.pause();
           break;
         case '[':
           e.preventDefault();

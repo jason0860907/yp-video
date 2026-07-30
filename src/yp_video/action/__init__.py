@@ -16,6 +16,13 @@ job/progress/GPU-lock orchestration and call into this package; the reusable,
 non-HTTP logic lives here so it can be used outside the web layer.
 """
 
+from .frames import (
+    ActionFrameCacheError,
+    action_frame_dir,
+    ensure_action_frame_cache,
+    ensure_action_frame_caches,
+    inspect_action_frame_cache,
+)
 from .prelabel import (
     ACTION_LABELS,
     build_command,
@@ -27,13 +34,6 @@ from .prelabel import (
     resolve_checkpoint,
     resolve_checkpoint_path,
     spot_available,
-)
-from .frames import (
-    ActionFrameCacheError,
-    action_frame_dir,
-    ensure_action_frame_cache,
-    ensure_action_frame_caches,
-    inspect_action_frame_cache,
 )
 
 __all__ = [

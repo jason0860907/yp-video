@@ -4,7 +4,6 @@ import asyncio
 import json
 import logging
 import os
-import subprocess
 import tempfile
 import traceback
 from pathlib import Path
@@ -15,6 +14,8 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, Field, field_validator
 
+from yp_video.action import prelabel
+from yp_video.action.frames import inspect_action_frame_cache
 from yp_video.config import (
     ACTION_ANNOTATIONS_DIR,
     ACTION_PRE_ANNOTATIONS_DIR,
@@ -24,18 +25,17 @@ from yp_video.config import (
     find_cut,
     iter_all_cuts,
 )
-from yp_video.action import prelabel
-from yp_video.action.frames import inspect_action_frame_cache
 from yp_video.contracts.action import (
     ACTION_CONTRACT_VERSION,
     ACTION_CONTRACT_VERSION_ENV,
     ACTION_LABELS_ORDERED,
     SPOT_PROGRESS_PREFIX,
 )
-from yp_video.core.annotation_ids import action_id, rally_id
+from yp_video.core.annotation_ids import action_id
 from yp_video.core.ffmpeg import parse_optional_float as _parse_optional_float
 from yp_video.core.jsonl import read_jsonl
 from yp_video.core.rallies import load_rallies, rally_sources
+from yp_video.web.action_waveform import audio_waveform, video_metadata
 from yp_video.web.job_helpers import (
     TERMINAL_ITEM_STATUSES,
     ProgressParser,
@@ -51,7 +51,6 @@ from yp_video.web.job_helpers import (
 )
 from yp_video.web.jobs import job_manager
 from yp_video.web.r2_client import serve_video_or_r2_redirect, sync_to_r2
-from yp_video.web.action_waveform import audio_waveform, video_metadata
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -391,7 +390,6 @@ def list_videos() -> list[dict]:
     results = []
     for video in sorted(iter_all_cuts(), key=lambda p: p.name):
         final_path = _annotation_path(video.name)
-        pre_path = _pre_annotation_path(video.name)
         ann_path = _active_annotation_path(video.name)
         ann = None
         event_count = 0

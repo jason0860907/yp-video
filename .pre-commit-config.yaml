@@ -11,3 +11,8 @@ repos:
         language: system
         pass_filenames: false
         files: ^src/yp_video/contracts/.*\.py$
+      - id: ruff
+        name: ruff check
+        entry: .venv/bin/ruff check --fix
+        language: system
+        types: [python]

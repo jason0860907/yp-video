@@ -24,8 +24,8 @@ from yp_video.extraction import links
 from yp_video.tracklets.geometry import (
     LINK_MIN_CONTAINMENT,
     BoxQuery,
-    TrackRef,
     TrackletIndex,
+    TrackRef,
     containment,
     link_boxes,
 )

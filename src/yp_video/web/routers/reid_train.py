@@ -28,7 +28,11 @@ from yp_video.config import (
     REID_PYTHON,
     REID_TRAIN_MODULE,
 )
-from yp_video.contracts.reid import REID_CONTRACT_VERSION, REID_CONTRACT_VERSION_ENV, REID_PROGRESS_PREFIX
+from yp_video.contracts.reid import (
+    REID_CONTRACT_VERSION,
+    REID_CONTRACT_VERSION_ENV,
+    REID_PROGRESS_PREFIX,
+)
 from yp_video.core.cache import StatCache
 from yp_video.extraction import store as extraction_store
 from yp_video.extraction.links import track_keys
@@ -41,7 +45,11 @@ from yp_video.reid import (
 )
 from yp_video.reid.checkpoints import reid_engine_available
 from yp_video.reid.embedder import build_embedders, threshold_calibration
-from yp_video.web.job_helpers import ProgressParser, fail_job_from_exc, stream_subprocess
+from yp_video.web.job_helpers import (
+    ProgressParser,
+    fail_job_from_exc,
+    stream_subprocess,
+)
 from yp_video.web.jobs import JobStatus, job_manager
 
 log = logging.getLogger(__name__)

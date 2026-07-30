@@ -21,7 +21,8 @@ from yp_video.actor.labels import ActorLabel
 from yp_video.core.jsonl import read_jsonl_cached
 from yp_video.extraction.links import track_keys
 from yp_video.extraction.store import labelable, records_path
-from yp_video.reid import identity, store as reid_store
+from yp_video.reid import identity
+from yp_video.reid import store as reid_store
 
 
 def confirmable_actors(

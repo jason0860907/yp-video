@@ -16,19 +16,20 @@ import concurrent.futures
 import json
 import logging
 import os
-from pathlib import Path
 import re
 import tempfile
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 
 import aiohttp
 import requests
 from tqdm import tqdm
 
+from yp_video.config import load_prompt, load_vllm_env
 from yp_video.core.ffmpeg import FFmpegError, extract_clip, get_video_duration
-from yp_video.config import load_vllm_env, load_prompt
 
 _VLLM_CONFIG = load_vllm_env()
 # Two prompts: broadcast footage (the original) vs. amateur side-court
@@ -436,8 +437,10 @@ async def _run_pipeline_async(
             clip_path, idx, start_time, end_time = item
 
             if fatal:
-                try: os.remove(clip_path)
-                except OSError: pass
+                try:
+                    os.remove(clip_path)
+                except OSError:
+                    pass
                 continue
 
             analysis = None
@@ -451,8 +454,10 @@ async def _run_pipeline_async(
                 # errors → server is down, abort the whole run.
                 if not isinstance(e, TimeoutError):
                     fatal.append(ConnectionError(f"vLLM server unreachable: {e}"))
-                    try: os.remove(clip_path)
-                    except OSError: pass
+                    try:
+                        os.remove(clip_path)
+                    except OSError:
+                        pass
                     return
             except Exception:  # noqa: BLE001 — one bad clip (e.g. malformed response) shouldn't kill the run
                 logging.getLogger(__name__).warning(
@@ -460,8 +465,10 @@ async def _run_pipeline_async(
                     idx, start_time, end_time, exc_info=True,
                 )
             finally:
-                try: os.remove(clip_path)
-                except OSError: pass
+                try:
+                    os.remove(clip_path)
+                except OSError:
+                    pass
 
             async with state_lock:
                 if analysis is not None:

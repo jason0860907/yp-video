@@ -2,9 +2,8 @@
 
 import asyncio
 import logging
-from pathlib import Path
 
-from yp_video.config import load_vllm_env, PROJECT_ROOT
+from yp_video.config import PROJECT_ROOT, load_vllm_env
 
 log = logging.getLogger(__name__)
 

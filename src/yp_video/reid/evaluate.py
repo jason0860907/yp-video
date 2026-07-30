@@ -28,8 +28,13 @@ from dataclasses import asdict, dataclass
 
 import numpy as np
 
+from yp_video.reid.identity import (
+    LinksFor,
+    cluster_sweep,
+    load_assignments,
+    load_embeddings,
+)
 from yp_video.reid.metrics import cmc, mean_ap
-from yp_video.reid.identity import LinksFor, cluster_sweep, load_assignments, load_embeddings
 from yp_video.reid.sessions import SessionGroup
 
 # A fully-merged corpus would make the NxN distance matrix and the pairwise

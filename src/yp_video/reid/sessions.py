@@ -24,8 +24,7 @@ from dataclasses import dataclass, field
 
 from yp_video.config import REID_ANNOTATIONS_DIR
 from yp_video.reid.identity import LinksFor, load_assignments
-from yp_video.reid.store import load_done
-from yp_video.reid.store import PLAYERS_SUFFIX
+from yp_video.reid.store import PLAYERS_SUFFIX, load_done
 
 
 @dataclass(frozen=True)

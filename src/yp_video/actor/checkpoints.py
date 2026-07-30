@@ -14,10 +14,10 @@ import shutil
 import uuid
 from pathlib import Path
 
+from yp_video.actor.model import AssociationModel
 from yp_video.config import ASSOCIATION_DIR
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import atomic_write
-from yp_video.actor.model import AssociationModel
 
 CHECKPOINTS_DIR = ASSOCIATION_DIR / "checkpoints"
 MODEL_FILE = "model.json"

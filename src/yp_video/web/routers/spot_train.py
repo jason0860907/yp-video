@@ -17,6 +17,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from yp_video import rally_spot
+from yp_video.action.frames import ensure_action_frame_caches
 from yp_video.config import (
     ACTION_CHECKPOINTS_DIR,
     RALLY_SPOT_CHECKPOINTS_DIR,
@@ -29,7 +30,6 @@ from yp_video.contracts.action import (
     ACTION_CONTRACT_VERSION,
     ACTION_CONTRACT_VERSION_ENV,
 )
-from yp_video.action.frames import ensure_action_frame_caches
 from yp_video.web.job_helpers import (
     fail_job_from_exc,
     stop_vllm_for_job,

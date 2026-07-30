@@ -16,7 +16,11 @@ import json
 from pathlib import Path
 
 from yp_video.config import REID_CHECKPOINTS_DIR, REID_PYTHON, VIDEOS_DIR
-from yp_video.contracts.reid import CHECKPOINT_MANIFEST_NAME, CHECKPOINT_TYPE, REID_CONTRACT_VERSION
+from yp_video.contracts.reid import (
+    CHECKPOINT_MANIFEST_NAME,
+    CHECKPOINT_TYPE,
+    REID_CONTRACT_VERSION,
+)
 
 # The paper release is the stable production baseline. Training runs are
 # candidates until an explicit promotion workflow is introduced; their

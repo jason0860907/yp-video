@@ -15,6 +15,11 @@ from pathlib import Path
 
 from yp_video.actor import labels as actor_labels
 from yp_video.actor.labels import ActorVerdict
+from yp_video.actor.track_features import (
+    TrackFeatures,
+    candidates_near,
+    extract_track_features,
+)
 from yp_video.config import REID_ANNOTATIONS_DIR
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import read_jsonl_cached
@@ -23,11 +28,6 @@ from yp_video.extraction.store import (
     action_source_paths,
     labelable,
     records_path,
-)
-from yp_video.actor.track_features import (
-    TrackFeatures,
-    candidates_near,
-    extract_track_features,
 )
 from yp_video.tracklets.store import (
     open_track_masks,
