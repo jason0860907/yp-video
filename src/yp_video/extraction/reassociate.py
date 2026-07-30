@@ -222,17 +222,11 @@ def reassociate_video(
             # right", so computing it is what honouring the label means;
             # skipping it would leave the video's endorsed picks blank.
 
-            xy = action.get("xy")
-            context = EventContext(
-                frame=int(action["frame"]),
-                event_id=str(record.get("id")),
-                contact=(
-                    (float(xy[0]) * frame_w, float(xy[1]) * frame_h)
-                    if xy and frame_w and frame_h
-                    else None
-                ),
-                visible=bool(action.get("visible", True)),
-                detections=record.get("detections") or [],
+            context = EventContext.for_event(
+                record,
+                action=action,
+                width=frame_w,
+                height=frame_h,
                 tracks=tracks_index,
                 masks=masks,
             )

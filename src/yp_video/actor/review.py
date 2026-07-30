@@ -13,8 +13,11 @@ human already answered.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
+
+import numpy as np
 
 from yp_video.actor import labels as actor_labels
 from yp_video.actor.labels import ActorLabel, ActorVerdict
@@ -25,7 +28,7 @@ from yp_video.extraction.store import (
     labelable_actions,
     records_path,
 )
-from yp_video.tracklets.geometry import TrackRef
+from yp_video.tracklets.geometry import TrackletIndex, TrackRef
 from yp_video.tracklets.store import open_track_masks, tracklet_index, tracks_path
 
 
@@ -77,6 +80,47 @@ class ReviewSummary:
 
     done: int
     started: int
+
+
+@dataclass(frozen=True)
+class VideoEvents:
+    """One video's labelable events with everything consumers join them to."""
+
+    stem: str
+    meta: dict
+    records: list[dict]
+    tracks: TrackletIndex
+    width: int
+    height: int
+    verdicts: dict[str, ActorLabel]
+    masks: Mapping[str, np.ndarray | None] | None
+
+
+@contextmanager
+def open_video_events(stem: str) -> Iterator[VideoEvents]:
+    """The per-video join every consumer shares.
+
+    Labelable records, the tracklet index, frame geometry, the human verdicts
+    and the open mask archive — opened once, and the archive is closed on
+    exit, so consume the events inside the ``with`` block.
+    """
+    meta, records = read_jsonl_cached(records_path(stem))
+    width, height = meta.get("frame_size") or [0, 0]
+    masks = open_track_masks(stem)
+    try:
+        yield VideoEvents(
+            stem=stem,
+            meta=meta,
+            records=labelable(records, stem, float(meta.get("fps") or 0)),
+            tracks=tracklet_index(stem),
+            width=int(width or 0),
+            height=int(height or 0),
+            verdicts=actor_labels.load(stem),
+            masks=masks,
+        )
+    finally:
+        if masks is not None:
+            masks.close()
 
 
 def review_progress(stem: str, fps: float = 0) -> ReviewProgress:
@@ -132,43 +176,25 @@ def iter_reviewed(stems: Sequence[str] | None = None) -> Iterator[ReviewedEvent]
     """
     selected = list(stems) if stems is not None else actor_labels.labeled_stems()
     for stem in selected:
-        record_file, track_file = records_path(stem), tracks_path(stem)
-        if not (record_file.exists() and track_file.exists()):
+        if not (records_path(stem).exists() and tracks_path(stem).exists()):
             continue
-        meta, records = read_jsonl_cached(record_file)
-        records = labelable(records, stem, float(meta.get("fps") or 0))
-        tracks = tracklet_index(stem)
-        width, height = meta.get("frame_size") or [0, 0]
-        verdicts = actor_labels.load(stem)
-        if not verdicts:
-            continue
-
-        masks = open_track_masks(stem)
-        try:
-            for record in records:
-                label = verdicts.get(str(record.get("id")))
+        with open_video_events(stem) as video:
+            if not video.verdicts:
+                continue
+            for record in video.records:
+                label = video.verdicts.get(str(record.get("id")))
                 if label is None:
                     continue
-                xy = record.get("xy")
                 yield ReviewedEvent(
                     stem=stem,
                     event_id=str(record.get("id")),
                     record=record,
                     label=label,
-                    context=EventContext(
-                        frame=int(record["frame"]),
-                        event_id=str(record.get("id")),
-                        contact=(
-                            (float(xy[0]) * width, float(xy[1]) * height)
-                            if xy and width and height
-                            else None
-                        ),
-                        visible=bool(record.get("visible", True)),
-                        detections=record.get("detections") or [],
-                        tracks=tracks,
-                        masks=masks,
+                    context=EventContext.for_event(
+                        record,
+                        width=video.width,
+                        height=video.height,
+                        tracks=video.tracks,
+                        masks=video.masks,
                     ),
                 )
-        finally:
-            if masks is not None:
-                masks.close()

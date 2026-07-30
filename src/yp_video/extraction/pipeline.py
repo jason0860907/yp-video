@@ -45,6 +45,7 @@ import time
 from pathlib import Path
 
 from yp_video.actor.labels import ActorLabel, ActorVerdict
+from yp_video.actor.policy import contact_point
 from yp_video.actor.resolution import ActorResolution, actor_resolution
 from yp_video.actor.service import ActorAssociationService
 from yp_video.core.jsonl import read_jsonl, read_jsonl_cached, write_jsonl
@@ -225,7 +226,7 @@ def detect_video(
                 }
             )
             if ok:
-                pt = (xy[0] * frame_w, xy[1] * frame_h) if xy else None
+                pt = contact_point(xy, frame_w, frame_h)
                 # ALL person boxes, unfiltered — the actor picker and the
                 # association training set both need the ones a policy would
                 # reject.
@@ -466,8 +467,9 @@ def _apply_actor_fix(
     record["actor_revision"] = int(record.get("actor_revision") or 0) + 1
 
     frame_w, frame_h = meta.get("frame_size") or [0, 0]
-    xy = record.get("xy")  # None for invisible / point-less events
-    contact = (xy[0] * frame_w, xy[1] * frame_h) if xy else None
+    # None for invisible / point-less events — or a record whose metadata
+    # lost its frame size, which used to slip through this check.
+    contact = contact_point(record.get("xy"), frame_w, frame_h)
     detections = record.get("detections") or []
 
     revert = label is None

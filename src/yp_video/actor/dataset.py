@@ -15,6 +15,8 @@ from pathlib import Path
 
 from yp_video.actor import labels as actor_labels
 from yp_video.actor.labels import ActorVerdict
+from yp_video.actor.policy import contact_point
+from yp_video.actor.review import open_video_events
 from yp_video.actor.track_features import (
     TrackFeatures,
     candidates_near,
@@ -22,16 +24,12 @@ from yp_video.actor.track_features import (
 )
 from yp_video.config import REID_ANNOTATIONS_DIR
 from yp_video.core.cache import StatCache
-from yp_video.core.jsonl import read_jsonl_cached
 from yp_video.extraction.store import (
     RECORDS_DIR,
     action_source_paths,
-    labelable,
     records_path,
 )
 from yp_video.tracklets.store import (
-    open_track_masks,
-    tracklet_index,
     tracks_masks_path,
     tracks_path,
 )
@@ -103,28 +101,24 @@ def build_track_dataset(stems: Sequence[str] | None = None) -> TrackDataset:
         sources.extend(action_source_paths(stem))
         if mask_file.exists():
             sources.append(mask_file)
-        meta, records = read_jsonl_cached(record_file)
-        records = labelable(records, stem, float(meta.get("fps") or 0))
-        tracks = tracklet_index(stem)
-        width, height = meta.get("frame_size") or [0, 0]
-        truth = actor_labels.load(stem)
 
         # One open archive per video; every event reads the same silhouettes.
-        masks = open_track_masks(stem)
-        try:
-            for record in records:
+        with open_video_events(stem) as video:
+            for record in video.records:
                 event_id = str(record.get("id"))
-                label = truth.get(event_id)
+                label = video.verdicts.get(event_id)
                 if label is None:
                     continue
                 verdicts[label.verdict.value] += 1
-                if not width or not height or not record.get("xy"):
+                contact = contact_point(
+                    record.get("xy"), video.width, video.height
+                )
+                if contact is None:
                     skipped["missing_contact_geometry"] += 1
                     continue
-                xy = record["xy"]
-                x, y = float(xy[0]) * width, float(xy[1]) * height
+                x, y = contact
                 candidates = candidates_near(
-                    tracks, record["frame"], masks=masks
+                    video.tracks, record["frame"], masks=video.masks
                 )
                 features = extract_track_features(
                     candidates,
@@ -150,7 +144,7 @@ def build_track_dataset(stems: Sequence[str] | None = None) -> TrackDataset:
                         # labels name no tracklet, and discarding them left a
                         # training set that was almost entirely events the
                         # rule got wrong.
-                        named = tracks.at_box(
+                        named = video.tracks.at_box(
                             label.frame
                             if label.frame is not None
                             else record["frame"],
@@ -175,9 +169,6 @@ def build_track_dataset(stems: Sequence[str] | None = None) -> TrackDataset:
                 examples.append(
                     TrackExample(stem, event_id, features, target, label.verdict)
                 )
-        finally:
-            if masks is not None:
-                masks.close()
 
     return TrackDataset(
         examples=tuple(examples),

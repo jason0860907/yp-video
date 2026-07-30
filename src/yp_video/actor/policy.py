@@ -33,6 +33,20 @@ from yp_video.tracklets.geometry import TrackletIndex, TrackRef
 Box = tuple[float, float, float, float]
 
 
+def contact_point(
+    xy: Sequence[float] | None, width: float, height: float
+) -> tuple[float, float] | None:
+    """The annotated contact point in pixels, or None without full geometry.
+
+    The one definition: a normalized point with no frame size is no point at
+    all. Four call sites used to inline this with three different None checks,
+    one of which forgot the frame-size half.
+    """
+    if not xy or not width or not height:
+        return None
+    return (float(xy[0]) * width, float(xy[1]) * height)
+
+
 @dataclass(frozen=True)
 class EventContext:
     """Everything a policy may look at for one action event."""
@@ -72,6 +86,35 @@ class EventContext:
         does not read the contact point has no business consulting it.
         """
         return self.contact is not None and self.visible
+
+    @classmethod
+    def for_event(
+        cls,
+        record: dict,
+        *,
+        width: float,
+        height: float,
+        action: dict | None = None,
+        tracks: TrackletIndex | None = None,
+        masks: "Mapping[str, np.ndarray | None] | None" = None,
+    ) -> "EventContext":
+        """The context for one labelable event.
+
+        ``record`` carries the extraction-side fields (id, detections);
+        ``action`` the action-side ones (frame, xy, visible) and defaults to
+        ``record`` itself — reassociation is the caller that joins a fresh
+        action row onto a stored record.
+        """
+        action = record if action is None else action
+        return cls(
+            frame=int(action["frame"]),
+            event_id=str(record.get("id")),
+            contact=contact_point(action.get("xy"), width, height),
+            visible=bool(action.get("visible", True)),
+            detections=record.get("detections") or [],
+            tracks=tracks,
+            masks=masks,
+        )
 
 
 @dataclass(frozen=True)
