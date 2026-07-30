@@ -19,12 +19,21 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from yp_video.action import training
 from yp_video.actor import labels as association_labels
 from yp_video.actor import spot_associate
-from yp_video.config import ACTION_CHECKPOINTS_DIR, SPOT_DIR
+from yp_video.config import ACTION_CHECKPOINTS_DIR, SPOT_DIR, SPOT_PYTHON
+from yp_video.web.action_training import (
+    AnnotationActionTrainRequest,
+    TrainingFlavor,
+    start_training_job,
+)
 from yp_video.web.jobs import JobSummary, JobType, job_manager
-from yp_video.web.routers import action_train
-from yp_video.web.spot_runs import performance_payload
+from yp_video.web.spot_runs import (
+    checkpoint_package_options,
+    performance_payload,
+    resumable_run_options,
+)
 
 router = APIRouter()
 
@@ -80,7 +89,7 @@ RECIPES = (
     },
 )
 
-FUSION_TRAINING = action_train.TrainingFlavor(
+FUSION_TRAINING = TrainingFlavor(
     job_type=JobType.FUSION_MODEL_TRAIN,
     job_name="Fusion Model Train",
     package_type="actor-association-spot",
@@ -91,20 +100,20 @@ FUSION_TRAINING = action_train.TrainingFlavor(
 
 @router.get("/status")
 def status() -> dict:
-    action_status = action_train.status()
+    annotation_stats = training.annotation_stats()
     reviewed = set(association_labels.labeled_stems())
     per_video = [
         {
             **row,
             "has_association_label": row["video"] in reviewed,
         }
-        for row in action_status["action_annotations"]["per_video"]
+        for row in annotation_stats["per_video"]
     ]
     joint_videos = sum(
         1 for row in per_video if row["has_association_label"]
     )
     action_annotations = {
-        **action_status["action_annotations"],
+        **annotation_stats,
         "per_video": per_video,
     }
     checkpoints = [
@@ -115,16 +124,11 @@ def status() -> dict:
     return {
         "recipes": list(RECIPES),
         "checkpoints": checkpoints,
-        "spot_available": action_status["spot_available"],
-        "init_checkpoints": action_status["init_checkpoints"],
-        "resumable_runs": [
-            row
-            for row in action_status["resumable_runs"]
-            if any(
-                token in row["label"]
-                for token in ("yp_fusion_", "yp_actor_only")
-            )
-        ],
+        "spot_available": SPOT_DIR.exists() and SPOT_PYTHON.exists(),
+        "init_checkpoints": checkpoint_package_options(ACTION_CHECKPOINTS_DIR),
+        # Fusion runs are named yp_fusion_* / yp_actor_only_* at creation;
+        # selecting by run-name prefix, not display-label substrings.
+        "resumable_runs": resumable_run_options(("yp_fusion_", "yp_actor_only")),
         "action_annotations": action_annotations,
         "supervision": {
             "action_videos": len(per_video),
@@ -218,7 +222,7 @@ async def train(req: FusionTrainRequest) -> dict:
             "Run name may contain only letters, numbers, dot, underscore and dash",
         )
 
-    action_request = action_train.AnnotationActionTrainRequest(
+    action_request = AnnotationActionTrainRequest(
         source="action_annotations",
         dataset=str(resume_config.get("dataset") or "yp_actions"),
         save_dir=str(resume_dir or SPOT_DIR / "exp" / name),
@@ -264,7 +268,7 @@ async def train(req: FusionTrainRequest) -> dict:
         reviewed = set(association_labels.labeled_stems())
         label_items = [
             item
-            for item in action_train._action_label_items()
+            for item in training.label_items()
             if item[0].stem.removesuffix("_actions") in reviewed
         ]
         if not label_items:
@@ -274,7 +278,7 @@ async def train(req: FusionTrainRequest) -> dict:
                 "Association labels",
             )
         require_actor_targets = True
-    return await action_train.start_training_job(
+    return await start_training_job(
         action_request,
         flavor=FUSION_TRAINING,
         label_items=label_items,

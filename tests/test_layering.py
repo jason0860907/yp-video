@@ -96,6 +96,22 @@ class LayeringTests(unittest.TestCase):
             _violations(SRC / "extraction" / "store.py", STORE_FORBIDDEN), []
         )
 
+    def test_routers_do_not_import_each_other(self) -> None:
+        """A router is an HTTP surface, not a library.
+
+        fusion-model once imported action-train's underscore-private label
+        machinery; shared behaviour belongs in a web/ module (job_helpers,
+        action_training, spot_runs) or below the web layer entirely.
+        """
+        offenders: list[str] = []
+        for path in sorted((SRC / "web" / "routers").glob("*.py")):
+            offenders.extend(
+                f"{path.relative_to(SRC)} → {imported}"
+                for imported in _imported_modules(path)
+                if _covers("yp_video.web.routers", imported)
+            )
+        self.assertEqual(offenders, [], "\n".join(offenders))
+
     def test_the_rule_would_actually_catch_a_violation(self) -> None:
         """A layering test that can't fail is decoration.
 

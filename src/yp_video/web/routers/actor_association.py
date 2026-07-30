@@ -24,6 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from yp_video.action import prelabel
 from yp_video.action.frames import ensure_action_frame_caches
+from yp_video.action.training import materialize_holdout_split
 from yp_video.actor import candidates as actor_candidates
 from yp_video.actor import dataset as actor_dataset
 from yp_video.actor import evaluate as actor_evaluate
@@ -32,6 +33,7 @@ from yp_video.actor import policy as actor_policy
 from yp_video.actor import review as actor_review
 from yp_video.actor import spot_associate, spot_predictions
 from yp_video.actor.ranking import RULE_BASED
+from yp_video.actor.training_labels import prepare_action_training_labels
 from yp_video.config import (
     ACTION_CHECKPOINTS_DIR,
     ACTION_FRAMES_DIR,
@@ -66,7 +68,6 @@ from yp_video.web.job_helpers import (
     terminal_prefix,
 )
 from yp_video.web.jobs import JobSummary, JobType, job_manager
-from yp_video.web.routers import action_train as action_train_router
 from yp_video.web.spot_runs import PackageExporter, export_checkpoint_package
 
 log = logging.getLogger(__name__)
@@ -482,14 +483,14 @@ async def _start_association_training(
                 cache_root=ACTION_FRAMES_DIR,
             )
             label_summary = await asyncio.to_thread(
-                action_train_router._prepare_action_training_labels,
+                prepare_action_training_labels,
                 items=items,
                 frame_dir=ACTION_FRAMES_DIR,
                 save_dir=save_dir,
                 camera_view="all",
             )
             split = await asyncio.to_thread(
-                action_train_router._materialize_holdout_split,
+                materialize_holdout_split,
                 Path(label_summary["label_dir"]),
                 [label.name for label, _video in val_items],
             )

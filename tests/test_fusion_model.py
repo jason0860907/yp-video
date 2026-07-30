@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 from fastapi import HTTPException
 
+from yp_video.actor import training_labels
 from yp_video.core.jsonl import write_jsonl
 from yp_video.web.routers import fusion_model
 
@@ -16,21 +17,22 @@ class FusionModelStatusTests(unittest.TestCase):
     def test_registry_exposes_current_and_future_recipes_honestly(self) -> None:
         with (
             patch.object(
-                fusion_model.action_train,
-                "status",
+                fusion_model.training,
+                "annotation_stats",
                 return_value={
-                    "spot_available": True,
-                    "init_checkpoints": [],
-                    "resumable_runs": [],
-                    "action_annotations": {
-                        "videos": 2,
-                        "events": 20,
-                        "per_video": [
-                            {"video": "joint", "events": 10},
-                            {"video": "action_only", "events": 10},
-                        ],
-                    },
+                    "videos": 2,
+                    "events": 20,
+                    "per_video": [
+                        {"video": "joint", "events": 10},
+                        {"video": "action_only", "events": 10},
+                    ],
                 },
+            ),
+            patch.object(
+                fusion_model, "checkpoint_package_options", return_value=[]
+            ),
+            patch.object(
+                fusion_model, "resumable_run_options", return_value=[]
             ),
             patch.object(
                 fusion_model.association_labels,
@@ -101,13 +103,13 @@ class FusionModelTrainTests(unittest.IsolatedAsyncioTestCase):
         )
         with (
             patch.object(
-                fusion_model.action_train,
+                fusion_model,
                 "start_training_job",
                 start,
             ),
             patch.object(
-                fusion_model.action_train,
-                "_action_label_items",
+                fusion_model.training,
+                "label_items",
                 return_value=[label_item],
             ),
             patch.object(
@@ -164,7 +166,7 @@ class FusionModelTrainTests(unittest.IsolatedAsyncioTestCase):
                     Path(raw_dir) / "checkpoints",
                 ),
                 patch.object(
-                    fusion_model.action_train,
+                    fusion_model,
                     "start_training_job",
                     start,
                 ),
@@ -191,7 +193,7 @@ class FusionModelTrainTests(unittest.IsolatedAsyncioTestCase):
     async def test_manual_validation_videos_map_to_the_holdout_contract(self) -> None:
         start = AsyncMock(return_value={"id": "holdout-job"})
         with patch.object(
-            fusion_model.action_train,
+            fusion_model,
             "start_training_job",
             start,
         ):
@@ -254,23 +256,23 @@ class FusionLabelScopeTests(unittest.TestCase):
             )
             with (
                 patch.object(
-                    fusion_model.action_train,
+                    training_labels,
                     "inspect_action_frame_cache",
                     return_value={"frame_count": 100},
                 ),
                 patch.object(
-                    fusion_model.action_train,
+                    training_labels,
                     "cut_kind_of",
                     return_value="sideline",
                 ),
                 patch.object(
-                    fusion_model.action_train.actor_candidates,
+                    training_labels.candidates,
                     "build",
                     return_value=([], {}),
                 ),
             ):
                 with self.assertRaises(RuntimeError) as caught:
-                    fusion_model.action_train._prepare_action_training_labels(
+                    training_labels.prepare_action_training_labels(
                         items=[(label, video)],
                         frame_dir=root / "frames",
                         save_dir=root / "run",

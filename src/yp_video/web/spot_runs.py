@@ -264,11 +264,12 @@ def last_resumable_epoch(run_dir: Path) -> int | None:
     return max(epochs) if epochs else None
 
 
-def resumable_run_options(prefix: str | None = None) -> list[dict]:
+def resumable_run_options(prefix: str | tuple[str, ...] | None = None) -> list[dict]:
     """Runs under ``exp/`` that ``--resume`` can continue (have optimizer state).
 
-    ``prefix`` restricts to one trainer's runs (action and rally share the
-    ``exp/`` dir but use distinct run-name prefixes).
+    ``prefix`` restricts to one trainer's runs (the trainers share the
+    ``exp/`` dir but use distinct run-name prefixes); a tuple matches any of
+    its prefixes, exactly as ``str.startswith`` does.
     """
     exp_dir = SPOT_DIR / "exp"
     if not exp_dir.exists():
