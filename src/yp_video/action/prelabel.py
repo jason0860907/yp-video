@@ -13,9 +13,9 @@ from yp_video.config import (
     SPOT_INFERENCE_MODULE,
     SPOT_PACKAGE_DIR,
     SPOT_PYTHON,
-    VIDEOS_DIR,
 )
 from yp_video.contracts.action import ACTION_LABELS
+from yp_video.core.checkpoints import checkpoint_ref, is_under, resolve_ref
 
 _CHECKPOINT_RE = re.compile(r"checkpoint_(\d+)\.pt$")
 _BEST_CHECKPOINT = "checkpoint_best.pt"
@@ -80,7 +80,7 @@ def resolve_checkpoint(
             raise FileNotFoundError(f"No SPOT checkpoint found under {root}")
 
     resolved = path.resolve()
-    if not _is_under(resolved, root):
+    if not is_under(resolved, root):
         raise ValueError(f"SPOT checkpoint must live under {root}")
     if not resolved.exists():
         raise FileNotFoundError(f"SPOT checkpoint not found: {resolved}")
@@ -98,42 +98,8 @@ def _iter_checkpoint_paths(root: Path) -> list[Path]:
 def resolve_checkpoint_path(
     value: str | Path, root: Path = ACTION_CHECKPOINTS_DIR
 ) -> Path:
-    """Resolve a possibly-relative checkpoint path to an absolute one.
-
-    Absolute paths pass through unchanged. A relative path that starts with
-    ``root``'s own path relative to ``VIDEOS_DIR`` (the ``checkpoint_ref``
-    format, e.g. ``rally-spot/checkpoints/<run>/...``) is taken relative to
-    ``VIDEOS_DIR``; any other relative path is taken relative to ``root``.
-    Performs no existence/containment checks — callers validate.
-    """
-    path = Path(str(value)).expanduser()
-    if path.is_absolute():
-        return path
-    root_rel = root.relative_to(VIDEOS_DIR).parts
-    if path.parts[: len(root_rel)] == root_rel:
-        return VIDEOS_DIR / path
-    return root / path
-
-
-def _is_under(path: Path, root: Path) -> bool:
-    try:
-        path.resolve().relative_to(root.resolve())
-        return True
-    except ValueError:
-        return False
-
-
-def checkpoint_ref(path: Path) -> str:
-    """Display ref for a checkpoint: path relative to ``VIDEOS_DIR`` if possible.
-
-    All action checkpoints live under ``ACTION_CHECKPOINTS_DIR`` (itself under
-    ``VIDEOS_DIR``), so this normally yields ``action/checkpoints/<run>/...``.
-    """
-    resolved = path.resolve()
-    try:
-        return str(resolved.relative_to(VIDEOS_DIR.resolve()))
-    except ValueError:
-        return str(resolved)
+    """``core.checkpoints.resolve_ref`` with this package's default root."""
+    return resolve_ref(value, root)
 
 
 def build_command(

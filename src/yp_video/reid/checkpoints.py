@@ -5,9 +5,10 @@ via their manifest (see contracts/reid.py). This module only reads: packages
 are written exclusively by yp-reid (training and import_weights), which is
 what keeps one writer per format.
 
-Mirrors action/prelabel.py's checkpoint handling: ``list_checkpoints`` for
-the UI, ``default_checkpoint`` for unconfigured callers, ``resolve_checkpoint``
-with containment checks for anything user-supplied.
+Same surface as action/prelabel.py's checkpoint handling: ``list_checkpoints``
+for the UI, ``default_checkpoint`` for unconfigured callers,
+``resolve_checkpoint`` with containment checks for anything user-supplied.
+The shared path grammar (refs, containment) lives in core/checkpoints.py.
 """
 
 from __future__ import annotations
@@ -15,12 +16,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from yp_video.config import REID_CHECKPOINTS_DIR, REID_PYTHON, VIDEOS_DIR
+from yp_video.config import REID_CHECKPOINTS_DIR, REID_PYTHON
 from yp_video.contracts.reid import (
     CHECKPOINT_MANIFEST_NAME,
     CHECKPOINT_TYPE,
     REID_CONTRACT_VERSION,
 )
+from yp_video.core.checkpoints import checkpoint_ref, is_under, resolve_ref
 
 # The paper release is the stable production baseline. Training runs are
 # candidates until an explicit promotion workflow is introduced; their
@@ -105,25 +107,11 @@ def resolve_checkpoint(value: str | Path | None) -> Path:
         if package is None:
             raise FileNotFoundError(f"No ReID checkpoint package under {REID_CHECKPOINTS_DIR}")
         return package
-    path = Path(str(value)).expanduser()
-    if not path.is_absolute():
-        root_rel = REID_CHECKPOINTS_DIR.relative_to(VIDEOS_DIR).parts
-        path = VIDEOS_DIR / path if path.parts[: len(root_rel)] == root_rel else REID_CHECKPOINTS_DIR / path
-    resolved = path.resolve()
-    try:
-        resolved.relative_to(REID_CHECKPOINTS_DIR.resolve())
-    except ValueError:
-        raise ValueError(f"ReID checkpoint must live under {REID_CHECKPOINTS_DIR}") from None
+    resolved = resolve_ref(value, REID_CHECKPOINTS_DIR).resolve()
+    if not is_under(resolved, REID_CHECKPOINTS_DIR):
+        raise ValueError(f"ReID checkpoint must live under {REID_CHECKPOINTS_DIR}")
     read_manifest(resolved)
     return resolved
-
-
-def checkpoint_ref(package: Path) -> str:
-    """Display/API ref: path relative to VIDEOS_DIR (``reid/checkpoints/<run>``)."""
-    try:
-        return str(package.resolve().relative_to(VIDEOS_DIR.resolve()))
-    except ValueError:
-        return str(package.resolve())
 
 
 def reid_engine_available() -> bool:
