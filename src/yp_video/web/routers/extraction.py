@@ -36,7 +36,7 @@ from yp_video.extraction import store as extraction_store
 from yp_video.extraction.prerequisites import prerequisites
 from yp_video.person.detector import DETECTOR_NAME
 from yp_video.web.job_helpers import init_batch_items, spawn_batch_video_job
-from yp_video.web.jobs import JobType, job_manager
+from yp_video.web.jobs import JobSummary, JobType, job_manager
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -91,7 +91,7 @@ class DetectRequest(BaseModel):
     stop_vllm: bool = False
 
 
-@router.post("/detect")
+@router.post("/detect", response_model=JobSummary)
 async def detect(req: DetectRequest) -> dict:
     video_paths: list[Path] = []
     skipped: list[str] = []

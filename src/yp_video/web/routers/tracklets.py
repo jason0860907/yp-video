@@ -29,7 +29,7 @@ from yp_video.extraction import store as extraction_store
 from yp_video.tracklets import store as tracks_store
 from yp_video.tracklets import tracking
 from yp_video.web.job_helpers import init_batch_items, spawn_batch_video_job
-from yp_video.web.jobs import JobType, job_manager
+from yp_video.web.jobs import JobSummary, JobType, job_manager
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -47,7 +47,7 @@ class TrackRequest(BaseModel):
     stride: int = Field(1, ge=1, le=10)
 
 
-@router.post("/run")
+@router.post("/run", response_model=JobSummary)
 async def run(req: TrackRequest) -> dict:
     """Dense per-rally detection + ByteTrack (see tracklets/tracking.py)."""
     video_paths: list[Path] = []

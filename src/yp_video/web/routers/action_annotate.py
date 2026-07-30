@@ -49,7 +49,7 @@ from yp_video.web.job_helpers import (
     terminal_prefix,
     update_batch_item,
 )
-from yp_video.web.jobs import JobType, job_manager
+from yp_video.web.jobs import JobSummary, JobType, job_manager
 from yp_video.web.r2_client import serve_video_or_r2_redirect, sync_to_r2
 
 log = logging.getLogger(__name__)
@@ -505,7 +505,7 @@ async def save_annotations(req: SaveActionAnnotationsRequest) -> dict:
     return {"saved": str(output_path), "count": len(events)}
 
 
-@router.post("/prelabel")
+@router.post("/prelabel", response_model=JobSummary)
 async def start_spot_prelabel(req: SpotPrelabelRequest) -> dict:
     if not prelabel.spot_available():
         raise HTTPException(503, "SPOT is not available at ~/yp-spot")
@@ -652,7 +652,7 @@ async def start_spot_prelabel(req: SpotPrelabelRequest) -> dict:
     return job.to_dict()
 
 
-@router.post("/prelabel-batch")
+@router.post("/prelabel-batch", response_model=JobSummary)
 async def start_spot_prelabel_batch(req: SpotPrelabelBatchRequest) -> dict:
     if not prelabel.spot_available():
         raise HTTPException(503, "SPOT is not available at ~/yp-spot")

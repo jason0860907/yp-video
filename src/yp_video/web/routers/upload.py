@@ -15,7 +15,7 @@ from yp_video.web.job_helpers import (
     finalize_batch_job,
     terminal_prefix,
 )
-from yp_video.web.jobs import JobType, job_manager, threadsafe_update
+from yp_video.web.jobs import JobSummary, JobType, job_manager, threadsafe_update
 from yp_video.web.r2_client import r2_client
 
 router = APIRouter()
@@ -324,7 +324,7 @@ async def _run_batch_transfer_inner(
     await finalize_batch_job(job.id, total, failed, noun="files")
 
 
-@router.post("/start")
+@router.post("/start", response_model=JobSummary)
 async def start_upload(req: UploadRequest):
     """Start a single upload job for all selected files."""
     if not r2_client.configured:
@@ -351,7 +351,7 @@ async def start_upload(req: UploadRequest):
     return job.to_dict()
 
 
-@router.post("/download")
+@router.post("/download", response_model=JobSummary)
 async def start_download(req: DownloadRequest):
     """Start a single download job for all selected files."""
     if not r2_client.configured:

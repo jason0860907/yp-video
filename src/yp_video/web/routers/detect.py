@@ -20,7 +20,7 @@ from yp_video.web.job_helpers import (
     init_batch_items,
     update_batch_item,
 )
-from yp_video.web.jobs import JobType, job_manager
+from yp_video.web.jobs import JobSummary, JobType, job_manager
 from yp_video.web.r2_client import sync_directory_to_r2, sync_to_r2
 from yp_video.web.vllm_manager import vllm_manager
 
@@ -46,7 +46,7 @@ class ConvertRequest(BaseModel):
 
 
 
-@router.post("/start")
+@router.post("/start", response_model=JobSummary)
 async def start_detection(req: DetectRequest):
     """Start a single VLM detection job that processes all selected videos."""
     await vllm_manager.sync_status()

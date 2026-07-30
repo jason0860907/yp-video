@@ -65,7 +65,7 @@ from yp_video.web.job_helpers import (
     stream_subprocess,
     terminal_prefix,
 )
-from yp_video.web.jobs import JobType, job_manager
+from yp_video.web.jobs import JobSummary, JobType, job_manager
 from yp_video.web.routers import action_train as action_train_router
 from yp_video.web.spot_runs import PackageExporter, export_checkpoint_package
 
@@ -345,7 +345,7 @@ def _association_training_items(
     return items
 
 
-@router.post("/train")
+@router.post("/train", response_model=JobSummary)
 async def train(req: AssociationTrainRequest) -> dict:
     async with _train_start_lock:
         return await _train_locked(req)
@@ -675,7 +675,7 @@ class PredictRequest(BaseModel):
     stop_vllm: bool = False
 
 
-@router.post("/predict")
+@router.post("/predict", response_model=JobSummary)
 async def predict(req: PredictRequest) -> dict:
     """Re-decide the automatic actor picks, without re-detecting anybody.
 

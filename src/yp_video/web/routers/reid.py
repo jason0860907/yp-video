@@ -33,7 +33,7 @@ from yp_video.reid.embedder import (
     threshold_calibration,
 )
 from yp_video.web.job_helpers import init_batch_items, spawn_batch_video_job
-from yp_video.web.jobs import JobType, job_manager
+from yp_video.web.jobs import JobSummary, JobType, job_manager
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -99,7 +99,7 @@ class EmbedRequest(BaseModel):
     checkpoint: str | None = None
 
 
-@router.post("/embed")
+@router.post("/embed", response_model=JobSummary)
 async def embed(req: EmbedRequest) -> dict:
     """Saved crops → one embedding matrix per model (see pipeline.embed_video).
 

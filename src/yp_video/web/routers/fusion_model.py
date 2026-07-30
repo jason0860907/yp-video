@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 from yp_video.actor import labels as association_labels
 from yp_video.actor import spot_associate
 from yp_video.config import ACTION_CHECKPOINTS_DIR, SPOT_DIR
-from yp_video.web.jobs import JobType, job_manager
+from yp_video.web.jobs import JobSummary, JobType, job_manager
 from yp_video.web.routers import action_train
 from yp_video.web.spot_runs import performance_payload
 
@@ -176,7 +176,7 @@ class FusionTrainRequest(BaseModel):
     stop_vllm: bool = False
 
 
-@router.post("/train")
+@router.post("/train", response_model=JobSummary)
 async def train(req: FusionTrainRequest) -> dict:
     if req.recipe != ASSOCIATION_ACTION:
         recipe = next(row for row in RECIPES if row["id"] == req.recipe)

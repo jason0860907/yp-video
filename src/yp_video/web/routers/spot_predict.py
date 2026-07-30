@@ -49,7 +49,7 @@ from yp_video.web.job_helpers import (
     stream_subprocess,
     update_batch_item,
 )
-from yp_video.web.jobs import JobType, job_manager
+from yp_video.web.jobs import JobSummary, JobType, job_manager
 from yp_video.web.r2_client import sync_to_r2
 
 log = logging.getLogger(__name__)
@@ -148,7 +148,7 @@ def _save_rally_pre_annotation(
     return {"video": video_path.stem, "rallies": len(segments)}
 
 
-@router.post("/start")
+@router.post("/start", response_model=JobSummary)
 async def start(req: RallyPredictRequest) -> dict:
     if not req.videos:
         raise HTTPException(400, "No videos selected")

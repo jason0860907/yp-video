@@ -50,7 +50,7 @@ from yp_video.web.job_helpers import (
     fail_job_from_exc,
     stream_subprocess,
 )
-from yp_video.web.jobs import JobStatus, JobType, job_manager
+from yp_video.web.jobs import JobStatus, JobSummary, JobType, job_manager
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -211,7 +211,7 @@ class ReidExportRequest(BaseModel):
     overwrite: bool = False
 
 
-@router.post("/start")
+@router.post("/start", response_model=JobSummary)
 async def start(req: ReidExportRequest) -> dict:
     """Write the dataset to REID_DATASETS_DIR as a cancellable job."""
     plan = _plan(req.split_mode, req.test_ratio, req.seed, req.masked)
@@ -303,7 +303,7 @@ class ReidTrainRequest(BaseModel):
     overwrite: bool = False
 
 
-@router.post("/train")
+@router.post("/train", response_model=JobSummary)
 async def train(req: ReidTrainRequest) -> dict:
     """Fine-tune yp-reid on an exported dataset, as a GPU-locked job.
 

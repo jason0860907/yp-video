@@ -50,7 +50,7 @@ from yp_video.web.job_helpers import (
     stream_subprocess,
     terminal_prefix,
 )
-from yp_video.web.jobs import JobType, job_manager
+from yp_video.web.jobs import JobSummary, JobType, job_manager
 from yp_video.web.spot_runs import (
     PackageExporter,
     TrainProgress,
@@ -869,7 +869,7 @@ def _build_command(
     return cmd, save_dir, params
 
 
-@router.post("/start")
+@router.post("/start", response_model=JobSummary)
 async def start(req: ActionTrainRequest) -> dict:
     return await start_training_job(req)
 

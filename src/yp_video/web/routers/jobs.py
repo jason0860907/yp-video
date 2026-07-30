@@ -6,12 +6,12 @@ import json
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
-from yp_video.web.jobs import job_manager
+from yp_video.web.jobs import JobSummary, job_manager
 
 router = APIRouter()
 
 
-@router.get("")
+@router.get("", response_model=list[JobSummary])
 def list_jobs():
     """List all jobs."""
     return job_manager.list_jobs()
@@ -23,7 +23,7 @@ def active_count():
     return {"count": job_manager.active_count()}
 
 
-@router.get("/{job_id}")
+@router.get("/{job_id}", response_model=JobSummary)
 def get_job(job_id: str):
     """Get one job summary. Logs have their own bounded endpoint."""
     job = job_manager.get_job(job_id)

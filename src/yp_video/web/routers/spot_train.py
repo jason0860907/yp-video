@@ -36,7 +36,7 @@ from yp_video.web.job_helpers import (
     stream_subprocess,
     terminal_prefix,
 )
-from yp_video.web.jobs import JobType, job_manager
+from yp_video.web.jobs import JobSummary, JobType, job_manager
 from yp_video.web.spot_runs import (
     PackageExporter,
     TrainProgress,
@@ -268,7 +268,7 @@ def _export_rally_checkpoint_package(
     )
 
 
-@router.post("/start")
+@router.post("/start", response_model=JobSummary)
 async def start(req: RallyTrainRequest) -> dict:
     if not SPOT_DIR.exists() or not SPOT_PYTHON.exists():
         raise HTTPException(503, f"SPOT is not available at {SPOT_DIR}")

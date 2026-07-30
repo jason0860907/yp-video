@@ -9,6 +9,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 
+from pydantic import BaseModel
+
 log = logging.getLogger(__name__)
 MAX_LOG_LINES = 5_000
 MAX_RETAINED_JOBS = 200
@@ -49,6 +51,27 @@ class JobType(str, Enum):
     DOWNLOAD = "download"
     R2_UPLOAD = "r2_upload"
     R2_DOWNLOAD = "r2_download"
+
+
+class JobSummary(BaseModel):
+    """The wire shape of ``Job.to_dict()``.
+
+    Declared once and used as the ``response_model`` of every endpoint that
+    returns a job — the start endpoints, the /api/jobs list and each SSE
+    event share it, so the frontend types against a single schema.
+    """
+
+    id: str
+    type: JobType
+    name: str
+    status: JobStatus
+    progress: float
+    message: str
+    params: dict
+    error: str | None
+    log_count: int
+    created_at: float
+    started_at: float | None
 
 
 @dataclass
