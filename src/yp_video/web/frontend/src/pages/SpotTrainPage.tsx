@@ -10,11 +10,10 @@ import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { StatTile } from '@/components/ui/StatTile';
-import { JobProgress } from '@/components/job/JobProgress';
-import { TrainDetail } from '@/components/train/TrainDetail';
+import { TrainJobCard } from '@/components/train/TrainJobCard';
 import { TrainPerfCard } from '@/components/train/TrainPerfCard';
 import { toast } from '@/components/feedback/toast';
-import type { Job, RallyTrainStatus, TrainProgress } from '@/types/api';
+import type { Job, RallyTrainStatus } from '@/types/api';
 
 interface Form {
   extract_fps: number;
@@ -282,18 +281,14 @@ export function SpotTrainPage() {
       </div>
 
       {/* Training job */}
-      {job && (
-        <Card>
-          <SectionLabel>Training job</SectionLabel>
-          <JobProgress job={job} showLogs truncateMsg={false} />
-          <TrainDetail
-            progress={job.params?.rally_train_progress as TrainProgress | undefined}
-            epochsFallback={form.num_epochs}
-            mapLabel="Seg mAP"
-            eventNoun="rallies"
-          />
-        </Card>
-      )}
+      <TrainJobCard
+        job={job}
+        progressKey="rally_train_progress"
+        epochsFallback={form.num_epochs}
+        onCancel={() => void cancel()}
+        mapLabel="Seg mAP"
+        eventNoun="rallies"
+      />
 
       {/* Per-epoch curve + per-video mAP for the selected (or latest) run */}
       {perf && perf.entries.length > 0 && <TrainPerfCard data={perf} onSelectRun={setPerfRun} />}

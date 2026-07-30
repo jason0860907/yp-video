@@ -10,11 +10,10 @@ import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { StatTile } from '@/components/ui/StatTile';
-import { JobProgress } from '@/components/job/JobProgress';
-import { TrainDetail } from '@/components/train/TrainDetail';
+import { TrainJobCard } from '@/components/train/TrainJobCard';
 import { TrainPerfCard } from '@/components/train/TrainPerfCard';
 import { toast } from '@/components/feedback/toast';
-import type { ActionTrainStatus, Job, TrainProgress } from '@/types/api';
+import type { ActionTrainStatus, Job } from '@/types/api';
 
 interface Form {
   dataset: string;
@@ -374,13 +373,12 @@ export function ActionTrainPage() {
       </div>
 
       {/* Training job */}
-      {job && (
-        <Card>
-          <SectionLabel>Training job</SectionLabel>
-          <JobProgress job={job} showLogs truncateMsg={false} />
-          <TrainDetail progress={job.params?.action_train_progress as TrainProgress | undefined} epochsFallback={form.num_epochs} />
-        </Card>
-      )}
+      <TrainJobCard
+        job={job}
+        progressKey="action_train_progress"
+        epochsFallback={form.num_epochs}
+        onCancel={() => void cancel()}
+      />
 
       {/* Per-epoch curve + per-video mAP for the selected (or latest) run */}
       {perf && perf.entries.length > 0 && <TrainPerfCard data={perf} onSelectRun={setPerfRun} />}

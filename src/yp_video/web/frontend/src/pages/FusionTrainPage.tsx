@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { API, apiFetch, errMsg } from '@/lib/api';
 import { cn } from '@/lib/cn';
-import { isTerminal } from '@/lib/job';
 import { useSingleJob } from '@/lib/useSingleJob';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -11,8 +10,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { StatTile } from '@/components/ui/StatTile';
 import { Field, SelectArch, fieldCls } from '@/components/train/Field';
-import { JobProgress } from '@/components/job/JobProgress';
-import { TrainDetail } from '@/components/train/TrainDetail';
+import { TrainJobCard } from '@/components/train/TrainJobCard';
 import { TrainPerfCard } from '@/components/train/TrainPerfCard';
 import { toast } from '@/components/feedback/toast';
 import type {
@@ -20,7 +18,6 @@ import type {
   FusionModelStatus,
   FusionRecipeId,
   Job,
-  TrainProgress,
 } from '@/types/api';
 
 interface TrainForm {
@@ -688,26 +685,12 @@ export function FusionTrainPage() {
         </Card>
       </div>
 
-      {trainJob ? (
-        <Card>
-          <div className="mb-2.5 flex items-center justify-between gap-3">
-            <SectionLabel className="mb-0">Training job</SectionLabel>
-            {!isTerminal(trainJob.status) ? (
-              <Button size="sm" onClick={() => void cancelTrain()}>
-                Cancel
-              </Button>
-            ) : null}
-          </div>
-          <JobProgress job={trainJob} showLogs truncateMsg={false} />
-          <TrainDetail
-            progress={
-              trainJob.params?.fusion_model_train_progress as
-                TrainProgress | undefined
-            }
-            epochsFallback={trainForm.num_epochs}
-          />
-        </Card>
-      ) : null}
+      <TrainJobCard
+        job={trainJob}
+        progressKey="fusion_model_train_progress"
+        epochsFallback={trainForm.num_epochs}
+        onCancel={() => void cancelTrain()}
+      />
       {performanceQuery.data?.entries.length ? (
         <TrainPerfCard
           data={performanceQuery.data}
