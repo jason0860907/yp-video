@@ -29,9 +29,9 @@ import { confirm } from '@/components/feedback/confirm';
 import { GroupBoard, type BoardHandle } from '@/components/reid/GroupBoard';
 import { EventVideoPlayer, type PlayerHandle } from '@/components/labeling/EventVideoPlayer';
 import { useGroupBoard } from '@/components/reid/useGroupBoard';
-import { type Rally, type SidebarAction, type TrackData } from '@/components/labeling/shared';
+import { useVideoLabelingData } from '@/components/labeling/useVideoLabelingData';
 import { LiveJob } from '@/components/job/LiveJob';
-import type { ActionAnnotationData, Job, ReidClusters, ReidOptions, ReidPlayers, ReidRecord, ReidVideo } from '@/types/api';
+import type { Job, ReidClusters, ReidOptions, ReidPlayers, ReidRecord, ReidVideo } from '@/types/api';
 
 // Embedders and their threshold-slider calibration both come from
 // /reid/options (types/api.ts ReidOptions) — cosine-distance scales differ
@@ -116,61 +116,9 @@ export function ReidLabelPage() {
     return true;
   });
 
-  const resultsQuery = useQuery({
-    queryKey: ['extraction-records', picked],
-    queryFn: () => apiFetch<{ meta: Record<string, unknown>; records: ReidRecord[] }>(API.extraction.records(picked)),
-    enabled: Boolean(picked),
-  });
-  const records = useMemo(() => resultsQuery.data?.records ?? [], [resultsQuery.data]);
+  const { resultsQuery, records, meta, tracksQuery, actionEvents } = useVideoLabelingData(picked);
   const recordById = useMemo(() => new Map(records.map((r) => [r.id, r])), [records]);
-  const meta = (resultsQuery.data?.meta ?? {}) as {
-    fps?: number;
-    frame_size?: [number, number];
-    rallies?: Rally[];
-  };
-
-  // Tracklets + event→tracklet links; null = no tracking run yet (404).
-  const tracksQuery = useQuery({
-    queryKey: ['tracklets', picked],
-    queryFn: async (): Promise<TrackData | null> => {
-      try {
-        return await apiFetch<TrackData>(API.tracklets.get(picked));
-      } catch (e) {
-        if (e instanceof ApiError && e.status === 404) return null;
-        throw e;
-      }
-    },
-    enabled: Boolean(picked),
-    staleTime: 60_000,
-  });
   const trackLinks = useMemo(() => tracksQuery.data?.links ?? {}, [tracksQuery.data]);
-
-  // Full action annotation — the sidebar lists every action's time, including
-  // score / non-visible events the ReID extraction skipped.
-  const actionsQuery = useQuery({
-    queryKey: ['reid-action-events', picked],
-    queryFn: () => apiFetch<ActionAnnotationData>(API.actionAnnotate.annotation(picked)),
-    enabled: Boolean(picked),
-  });
-  const actionEvents = useMemo<SidebarAction[]>(
-    () =>
-      (actionsQuery.data?.events ?? []).flatMap((raw) => {
-        const x = raw as Record<string, unknown>;
-        if (x.frame == null) return [];
-        const frame = Math.max(0, Math.round(Number(x.frame) || 0));
-        return [
-          {
-            // Same id fallback as the extraction pipeline, so matches line up.
-            id: typeof x.id === 'string' && x.id ? x.id : `f${frame}`,
-            frame,
-            time: typeof x.time === 'number' ? x.time : null,
-            label: typeof x.label === 'string' ? x.label : undefined,
-            visible: x.visible !== false,
-          },
-        ];
-      }),
-    [actionsQuery.data],
-  );
 
   const clustersQuery = useQuery({
     queryKey: ['reid-clusters', picked, threshold, embedder],

@@ -39,8 +39,8 @@ export interface JobLogs {
 export interface ActionTrainStatus {
   active_job?: Job;
   spot_available?: boolean;
-  init_checkpoints?: Array<{ value: string; label: string }>;
-  resumable_runs?: Array<{ value: string; label: string }>;
+  init_checkpoints?: SelectOption[];
+  resumable_runs?: SelectOption[];
   action_annotations?: {
     videos?: number;
     events?: number;
@@ -90,8 +90,8 @@ export interface FusionModelStatus {
   recipes: FusionRecipe[];
   checkpoints: AssociationCheckpoint[];
   spot_available: boolean;
-  init_checkpoints: Array<{ value: string; label: string }>;
-  resumable_runs: Array<{ value: string; label: string }>;
+  init_checkpoints: SelectOption[];
+  resumable_runs: SelectOption[];
   action_annotations?: ActionTrainStatus['action_annotations'];
   supervision: {
     action_videos: number;
@@ -188,8 +188,8 @@ export interface TrainProgress {
 export interface RallyTrainStatus {
   active_job?: Job;
   spot_available?: boolean;
-  init_checkpoints?: Array<{ value: string; label: string }>;
-  resumable_runs?: Array<{ value: string; label: string }>;
+  init_checkpoints?: SelectOption[];
+  resumable_runs?: SelectOption[];
   rally_annotations?: {
     videos?: number;
     rallies?: number;
@@ -228,6 +228,12 @@ export interface VllmStatus {
 }
 
 export type CutKind = 'broadcast' | 'sideline';
+
+/** A <select> option as the backend serves it (checkpoints, resumable runs). */
+export interface SelectOption {
+  value: string;
+  label: string;
+}
 
 export interface VideoMeta {
   name: string;
@@ -687,7 +693,7 @@ export interface ReidAssociationStatus {
   checkpoints: ReidAssociationCheckpoint[];
   association_checkpoints: AssociationCheckpoint[];
   spot_available?: boolean;
-  init_checkpoints?: Array<{ value: string; label: string }>;
+  init_checkpoints?: SelectOption[];
   frame_dir?: string;
   active_job: Job | null;
 }

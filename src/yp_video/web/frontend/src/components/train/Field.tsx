@@ -34,3 +34,98 @@ export function SelectArch({ value, options, onChange }: { value: string; option
     </select>
   );
 }
+
+interface TrainSelectOption {
+  value: string;
+  label: string;
+}
+
+/** Init-checkpoint select, disabled while resuming (weights come from the
+ *  run checkpoint instead — the tooltip says so). */
+export function InitCheckpointSelect({
+  value,
+  onChange,
+  options,
+  resuming,
+  emptyLabel = '— From scratch —',
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  options: TrainSelectOption[];
+  resuming: boolean;
+  /** Text of the empty option; null hides it (a trainer that requires a
+   *  checkpoint seeds the first one instead of offering from-scratch). */
+  emptyLabel?: string | null;
+}) {
+  return (
+    <Field label="Init checkpoint" className="col-span-2">
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        title={resuming ? 'Ignored while resuming (weights load from the run checkpoint)' : value}
+        disabled={resuming}
+        className={cn(fieldCls, 'cursor-pointer appearance-none', resuming && 'opacity-50')}
+      >
+        {emptyLabel != null && <option value="">{emptyLabel}</option>}
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </Field>
+  );
+}
+
+/** Resume-run select — empty means a fresh run. */
+export function ResumeRunSelect({
+  value,
+  onChange,
+  options,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  options: TrainSelectOption[];
+}) {
+  return (
+    <Field label="Resume from run" className="col-span-3">
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        title={value}
+        className={cn(fieldCls, 'cursor-pointer appearance-none')}
+      >
+        <option value="">— New run (train from scratch / init checkpoint) —</option>
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </Field>
+  );
+}
+
+export type CameraView = 'all' | 'broadcast' | 'sideline';
+
+export function CameraViewSelect({
+  value,
+  onChange,
+}: {
+  value: CameraView;
+  onChange: (v: CameraView) => void;
+}) {
+  return (
+    <Field label="Camera view">
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value as CameraView)}
+        className={cn(fieldCls, 'cursor-pointer appearance-none')}
+      >
+        <option value="all">All Views</option>
+        <option value="broadcast">Broadcast</option>
+        <option value="sideline">Sideline</option>
+      </select>
+    </Field>
+  );
+}

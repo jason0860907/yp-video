@@ -1,20 +1,25 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { API, apiFetch, errMsg } from '@/lib/api';
-import { fieldCls } from '@/components/train/Field';
 import { cn } from '@/lib/cn';
+import { fieldCls } from '@/components/train/Field';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { SectionLabel } from '@/components/ui/SectionLabel';
 import { StatTile } from '@/components/ui/StatTile';
 import { VideoMultiSelectList } from '@/components/video/VideoMultiSelectList';
-import { LiveJob } from '@/components/job/LiveJob';
+import { JobsCard } from '@/components/job/JobsCard';
+import {
+  PredictConfigCard,
+  SpotProblemBanner,
+  type NumField,
+} from '@/components/spot/PredictConfigCard';
+import { useSpotStatus } from '@/components/spot/useSpotStatus';
 import { toast } from '@/components/feedback/toast';
 import { confirm } from '@/components/feedback/confirm';
 import { useTypedJobs } from '@/lib/useTypedJobs';
-import type { ActionVideo, Job, SpotInfo } from '@/types/api';
+import type { ActionVideo, Job } from '@/types/api';
 
 interface PredSettings {
   checkpoint: string;
@@ -43,7 +48,7 @@ const DEFAULTS: PredSettings = {
   stop_vllm: false,
 };
 
-const NUM_FIELDS: Array<{ key: keyof PredSettings; label: string; min: number; max?: number; step: number }> = [
+const NUM_FIELDS: Array<NumField<PredSettings>> = [
   { key: 'min_score', label: 'Min score', min: 0, max: 1, step: 0.05 },
   { key: 'batch_size', label: 'Batch', min: 1, max: 128, step: 1 },
   { key: 'clip_len', label: 'Clip len', min: 8, max: 256, step: 8 },
@@ -66,32 +71,14 @@ export function ActionPredictPage() {
     queryKey: ['action-videos'],
     queryFn: () => apiFetch<ActionVideo[]>(API.actionAnnotate.videos),
   });
-  const spotQuery = useQuery({
-    queryKey: ['spot-info'],
-    queryFn: () => apiFetch<SpotInfo>(API.actionAnnotate.spot),
-  });
+  const { spot, checkpoints, ready: spotReady, problem: spotProblem } = useSpotStatus(
+    ['spot-info'],
+    API.actionAnnotate.spot,
+  );
 
   const videos = videosQuery.data ?? [];
-  const spot = spotQuery.data;
-
-  // Seed checkpoint from the server default once available.
-  useEffect(() => {
-    if (spot?.default_checkpoint && !settings.checkpoint) {
-      setSettings((s) => ({ ...s, checkpoint: spot.default_checkpoint! }));
-    }
-  }, [spot?.default_checkpoint, settings.checkpoint]);
-
   const labeledCount = videos.filter(hasLabels).length;
   const runningCount = jobs.filter((j) => j.status === 'running').length;
-  const checkpoints = spot?.checkpoints ?? [];
-  const spotReady = Boolean(spot?.available && checkpoints.length);
-  // Only claim SPOT is unavailable once the status request has settled —
-  // rendering the pending state as "not ready" flashes a false alarm on load.
-  const spotProblem = spotQuery.isPending
-    ? null
-    : spotQuery.isError
-      ? `status check failed: ${errMsg(spotQuery.error)}`
-      : spot?.error || (spot?.available ? (checkpoints.length ? null : 'no checkpoint found') : `${spot?.spot_dir || 'yp-spot directory'} not ready`);
 
   const run = async () => {
     const names = [...selected];
@@ -162,86 +149,32 @@ export function ActionPredictPage() {
         <StatTile label="Running" value={runningCount} tintClass={runningCount ? 'text-primary-light' : 'text-text-muted'} />
       </div>
 
-      {spotProblem && (
-        <div className="rounded-xl border border-amber-500/25 bg-amber-500/[0.06] px-4 py-3 text-sm text-amber-300">
-          SPOT unavailable: {spotProblem}
-        </div>
-      )}
+      <SpotProblemBanner problem={spotProblem} />
 
       <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)]">
-        {/* Config */}
-        <Card>
-          <SectionLabel>Config</SectionLabel>
-          <label className="mb-1.5 block text-[10.5px] uppercase tracking-wide text-text-muted">Checkpoint</label>
-          <select
-            value={settings.checkpoint}
-            onChange={(e) => setSettings((s) => ({ ...s, checkpoint: e.target.value }))}
-            className={cn(fieldCls, 'mb-3 cursor-pointer appearance-none')}
-          >
-            {checkpoints.length === 0 && <option value="">No checkpoint</option>}
-            {checkpoints.map((c) => (
-              <option key={c.path} value={c.path}>
-                {c.name} · {c.is_best ? 'best' : `epoch ${c.epoch}`}
-                {c.predicts_actor ? ' · fusion' : ''}
-              </option>
-            ))}
-          </select>
-
-          <div className="grid grid-cols-2 gap-2.5">
-            {NUM_FIELDS.map((f) => (
-              <div key={f.key}>
-                <label className="mb-1 block text-[10px] uppercase tracking-wide text-text-muted">{f.label}</label>
-                <input
-                  type="number"
-                  value={settings[f.key] as number}
-                  min={f.min}
-                  max={f.max}
-                  step={f.step}
-                  onChange={(e) => setSettings((s) => ({ ...s, [f.key]: Number(e.target.value) }))}
-                  className={cn(fieldCls, 'font-mono tabular-nums')}
-                />
-              </div>
-            ))}
-            <div>
-              <label className="mb-1 block text-[10px] uppercase tracking-wide text-text-muted">Decoder</label>
-              <select
-                value={settings.decoder}
-                onChange={(e) => setSettings((s) => ({ ...s, decoder: e.target.value as PredSettings['decoder'] }))}
-                className={cn(fieldCls, 'cursor-pointer appearance-none')}
-              >
-                <option value="nvdec">NVDEC (GPU)</option>
-                <option value="opencv">OpenCV</option>
-              </select>
-            </div>
+        <PredictConfigCard
+          settings={settings}
+          onChange={(patch) => setSettings((s) => ({ ...s, ...patch }))}
+          checkpoints={checkpoints}
+          defaultCheckpoint={spot?.default_checkpoint}
+          numFields={NUM_FIELDS}
+          overwriteLabel="Overwrite existing action labels"
+          runDisabled={!spotReady}
+          onRun={run}
+        >
+          <div>
+            <label className="mb-1 block text-[10px] uppercase tracking-wide text-text-muted">Decoder</label>
+            <select
+              value={settings.decoder}
+              onChange={(e) => setSettings((s) => ({ ...s, decoder: e.target.value as PredSettings['decoder'] }))}
+              className={cn(fieldCls, 'cursor-pointer appearance-none')}
+            >
+              <option value="nvdec">NVDEC (GPU)</option>
+              <option value="opencv">OpenCV</option>
+            </select>
           </div>
+        </PredictConfigCard>
 
-          <div className="mt-3 space-y-2">
-            <label className="flex cursor-pointer items-center gap-2 text-xs text-text-secondary">
-              <input
-                type="checkbox"
-                checked={settings.overwrite}
-                onChange={(e) => setSettings((s) => ({ ...s, overwrite: e.target.checked }))}
-                className="h-3.5 w-3.5 accent-primary"
-              />
-              Overwrite existing action labels
-            </label>
-            <label className="flex cursor-pointer items-center gap-2 text-xs text-text-secondary">
-              <input
-                type="checkbox"
-                checked={settings.stop_vllm}
-                onChange={(e) => setSettings((s) => ({ ...s, stop_vllm: e.target.checked }))}
-                className="h-3.5 w-3.5 accent-primary"
-              />
-              Stop vLLM first
-            </label>
-          </div>
-
-          <Button intent="primary" onClick={run} disabled={!spotReady} className="mt-4 w-full">
-            Run SPOT
-          </Button>
-        </Card>
-
-        {/* Videos */}
         <Card>
           <VideoMultiSelectList
             videos={videos}
@@ -262,17 +195,7 @@ export function ActionPredictPage() {
         </Card>
       </div>
 
-      {/* Jobs */}
-      {jobs.length > 0 && (
-        <Card>
-          <SectionLabel>Action Predict jobs</SectionLabel>
-          <div className="space-y-3">
-            {jobs.map((job) => (
-              <LiveJob key={job.id} job={job} onUpdate={upsertJob} />
-            ))}
-          </div>
-        </Card>
-      )}
+      <JobsCard title="Action Predict jobs" jobs={jobs} onUpdate={upsertJob} />
     </div>
   );
 }

@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { API, apiFetch, apiUrl, errMsg } from '@/lib/api';
 import { cn } from '@/lib/cn';
-import { Field, SelectArch, fieldCls } from '@/components/train/Field';
+import { CameraViewSelect, Field, InitCheckpointSelect, ResumeRunSelect, SelectArch, fieldCls } from '@/components/train/Field';
+import { useTrainPerformance } from '@/components/train/useTrainPerformance';
 import { useSingleJob } from '@/lib/useSingleJob';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -13,7 +14,7 @@ import { JobProgress } from '@/components/job/JobProgress';
 import { TrainDetail } from '@/components/train/TrainDetail';
 import { TrainPerfCard } from '@/components/train/TrainPerfCard';
 import { toast } from '@/components/feedback/toast';
-import type { ActionPerfData, ActionTrainStatus, Job, TrainProgress } from '@/types/api';
+import type { ActionTrainStatus, Job, TrainProgress } from '@/types/api';
 
 interface Form {
   dataset: string;
@@ -91,7 +92,6 @@ const NUM_FIELDS: Array<{ key: keyof Form; label: string; min?: number; max?: nu
 
 export function ActionTrainPage() {
   const [form, setForm] = useState<Form>(BASE_FORM);
-  const [perfRun, setPerfRun] = useState<string>();
 
   const statusQuery = useQuery({
     queryKey: ['action-train-status'],
@@ -103,18 +103,12 @@ export function ActionTrainPage() {
     activeJob: status?.active_job,
     label: 'Action training',
   });
-
   // Per-epoch validation curve + per-video breakdown; refresh while training.
-  const perfQuery = useQuery({
-    queryKey: ['action-train-performance', perfRun],
-    queryFn: () =>
-      apiFetch<ActionPerfData>(perfRun ? `${API.actionTrain.performance}?run=${encodeURIComponent(perfRun)}` : API.actionTrain.performance),
-    refetchInterval: running ? 30_000 : false,
-    // Keep the card mounted while a newly selected run loads — otherwise the
-    // page collapses and the browser jumps back to the top.
-    placeholderData: keepPreviousData,
-  });
-  const perf = perfQuery.data;
+  const { perf, setPerfRun } = useTrainPerformance(
+    'action-train-performance',
+    API.actionTrain.performance,
+    running,
+  );
 
   // Seed init_checkpoint from server options.
   useEffect(() => {
@@ -225,37 +219,18 @@ export function ActionTrainPage() {
             <Field label="Dataset">
               <input value={form.dataset} onChange={(e) => set('dataset', e.target.value)} className={fieldCls} />
             </Field>
-            <Field label="Init checkpoint" className="col-span-2">
-              <select
-                value={form.init_checkpoint}
-                onChange={(e) => set('init_checkpoint', e.target.value)}
-                title={isResuming ? 'Ignored while resuming (weights load from the run checkpoint)' : form.init_checkpoint}
-                disabled={isResuming}
-                className={cn(fieldCls, 'cursor-pointer appearance-none', isResuming && 'opacity-50')}
-              >
-                {initCheckpoints.length === 0 && <option value="">No checkpoints found</option>}
-                {initCheckpoints.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Resume from run" className="col-span-3">
-              <select
-                value={form.resume_run}
-                onChange={(e) => set('resume_run', e.target.value)}
-                title={form.resume_run}
-                className={cn(fieldCls, 'cursor-pointer appearance-none')}
-              >
-                <option value="">— New run (train from scratch / init checkpoint) —</option>
-                {resumableRuns.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </Field>
+            <InitCheckpointSelect
+              value={form.init_checkpoint}
+              onChange={(v) => set('init_checkpoint', v)}
+              options={initCheckpoints}
+              resuming={isResuming}
+              emptyLabel={initCheckpoints.length === 0 ? 'No checkpoints found' : null}
+            />
+            <ResumeRunSelect
+              value={form.resume_run}
+              onChange={(v) => set('resume_run', v)}
+              options={resumableRuns}
+            />
             <Field label="Feature">
               <SelectArch value={form.feature_arch} options={SELECTS.feature_arch} onChange={(v) => set('feature_arch', v)} />
             </Field>
@@ -303,13 +278,7 @@ export function ActionTrainPage() {
                 <option value="holdout">Holdout (val-set.txt)</option>
               </select>
             </Field>
-            <Field label="Camera view">
-              <select value={form.camera_view} onChange={(e) => set('camera_view', e.target.value as Form['camera_view'])} className={cn(fieldCls, 'cursor-pointer appearance-none')}>
-                <option value="all">All Views</option>
-                <option value="broadcast">Broadcast</option>
-                <option value="sideline">Sideline</option>
-              </select>
-            </Field>
+            <CameraViewSelect value={form.camera_view} onChange={(v) => set('camera_view', v)} />
             {showSplit && (
               <>
                 <Field label="Val ratio">

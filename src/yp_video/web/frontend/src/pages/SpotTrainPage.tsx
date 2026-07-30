@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { API, apiFetch, errMsg } from '@/lib/api';
 import { cn } from '@/lib/cn';
-import { Field, SelectArch, fieldCls } from '@/components/train/Field';
+import { CameraViewSelect, Field, InitCheckpointSelect, ResumeRunSelect, SelectArch, fieldCls } from '@/components/train/Field';
+import { useTrainPerformance } from '@/components/train/useTrainPerformance';
 import { useSingleJob } from '@/lib/useSingleJob';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -13,7 +14,7 @@ import { JobProgress } from '@/components/job/JobProgress';
 import { TrainDetail } from '@/components/train/TrainDetail';
 import { TrainPerfCard } from '@/components/train/TrainPerfCard';
 import { toast } from '@/components/feedback/toast';
-import type { ActionPerfData, Job, RallyTrainStatus, TrainProgress } from '@/types/api';
+import type { Job, RallyTrainStatus, TrainProgress } from '@/types/api';
 
 interface Form {
   extract_fps: number;
@@ -81,7 +82,6 @@ const NUM_FIELDS: Array<{ key: keyof Form; label: string; min?: number; max?: nu
 
 export function SpotTrainPage() {
   const [form, setForm] = useState<Form>(BASE_FORM);
-  const [perfRun, setPerfRun] = useState<string>();
 
   const statusQuery = useQuery({
     queryKey: ['spot-train-status'],
@@ -93,17 +93,11 @@ export function SpotTrainPage() {
     activeJob: status?.active_job,
     label: 'SPOT rally training',
   });
-
-  const perfQuery = useQuery({
-    queryKey: ['spot-train-performance', perfRun],
-    queryFn: () =>
-      apiFetch<ActionPerfData>(perfRun ? `${API.spotTrain.performance}?run=${encodeURIComponent(perfRun)}` : API.spotTrain.performance),
-    refetchInterval: running ? 30_000 : false,
-    // Keep the card mounted while a newly selected run loads — otherwise the
-    // page collapses and the browser jumps back to the top.
-    placeholderData: keepPreviousData,
-  });
-  const perf = perfQuery.data;
+  const { perf, setPerfRun } = useTrainPerformance(
+    'spot-train-performance',
+    API.spotTrain.performance,
+    running,
+  );
 
   const set = <K extends keyof Form>(key: K, value: Form[K]) => setForm((f) => ({ ...f, [key]: value }));
 
@@ -180,50 +174,24 @@ export function SpotTrainPage() {
                 ))}
               </select>
             </Field>
-            <Field label="Init checkpoint" className="col-span-2">
-              <select
-                value={form.init_checkpoint}
-                onChange={(e) => set('init_checkpoint', e.target.value)}
-                title={isResuming ? 'Ignored while resuming (weights load from the run checkpoint)' : form.init_checkpoint}
-                disabled={isResuming}
-                className={cn(fieldCls, 'cursor-pointer appearance-none', isResuming && 'opacity-50')}
-              >
-                <option value="">— From scratch —</option>
-                {initCheckpoints.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Resume from run" className="col-span-3">
-              <select
-                value={form.resume_run}
-                onChange={(e) => set('resume_run', e.target.value)}
-                title={form.resume_run}
-                className={cn(fieldCls, 'cursor-pointer appearance-none')}
-              >
-                <option value="">— New run (train from scratch / init checkpoint) —</option>
-                {resumableRuns.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </Field>
+            <InitCheckpointSelect
+              value={form.init_checkpoint}
+              onChange={(v) => set('init_checkpoint', v)}
+              options={initCheckpoints}
+              resuming={isResuming}
+            />
+            <ResumeRunSelect
+              value={form.resume_run}
+              onChange={(v) => set('resume_run', v)}
+              options={resumableRuns}
+            />
             <Field label="Feature">
               <SelectArch value={form.feature_arch} options={SELECTS.feature_arch} onChange={(v) => set('feature_arch', v)} />
             </Field>
             <Field label="Temporal">
               <SelectArch value={form.temporal_arch} options={SELECTS.temporal_arch} onChange={(v) => set('temporal_arch', v)} />
             </Field>
-            <Field label="Camera view">
-              <select value={form.camera_view} onChange={(e) => set('camera_view', e.target.value as Form['camera_view'])} className={cn(fieldCls, 'cursor-pointer appearance-none')}>
-                <option value="all">All Views</option>
-                <option value="broadcast">Broadcast</option>
-                <option value="sideline">Sideline</option>
-              </select>
-            </Field>
+            <CameraViewSelect value={form.camera_view} onChange={(v) => set('camera_view', v)} />
 
             {NUM_FIELDS.map((f) => (
               <Field key={f.key} label={f.label}>
