@@ -1,10 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { API, ApiError, apiFetch } from '@/lib/api';
+import { API, apiFetch, errMsg } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { Field, SelectArch, fieldCls } from '@/components/train/Field';
-import { isTerminal } from '@/lib/job';
-import { useSSE } from '@/lib/useSSE';
+import { useSingleJob } from '@/lib/useSingleJob';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -80,44 +79,31 @@ const NUM_FIELDS: Array<{ key: keyof Form; label: string; min?: number; max?: nu
   { key: 'start_val_epoch', label: 'Start val', min: 0, max: 1000 },
 ];
 
-const errMsg = (e: unknown) => (e instanceof ApiError ? e.body : e instanceof Error ? e.message : String(e));
-
 export function SpotTrainPage() {
   const [form, setForm] = useState<Form>(BASE_FORM);
-  const [job, setJob] = useState<Job | null>(null);
   const [perfRun, setPerfRun] = useState<string>();
 
   const statusQuery = useQuery({
     queryKey: ['spot-train-status'],
     queryFn: () => apiFetch<RallyTrainStatus>(API.spotTrain.status),
-    refetchInterval: job && !isTerminal(job.status) ? false : 20_000,
   });
   const status = statusQuery.data;
+
+  const { job, setJob, running, cancel } = useSingleJob({
+    activeJob: status?.active_job,
+    label: 'SPOT rally training',
+  });
 
   const perfQuery = useQuery({
     queryKey: ['spot-train-performance', perfRun],
     queryFn: () =>
       apiFetch<ActionPerfData>(perfRun ? `${API.spotTrain.performance}?run=${encodeURIComponent(perfRun)}` : API.spotTrain.performance),
-    refetchInterval: job && !isTerminal(job.status) ? 30_000 : false,
+    refetchInterval: running ? 30_000 : false,
     // Keep the card mounted while a newly selected run loads — otherwise the
     // page collapses and the browser jumps back to the top.
     placeholderData: keepPreviousData,
   });
   const perf = perfQuery.data;
-
-  // Adopt any active job on first load.
-  useEffect(() => {
-    const active = status?.active_job;
-    if (active && !job) setJob(active);
-  }, [status?.active_job, job]);
-
-  useSSE<Job>(job && !isTerminal(job.status) ? API.jobs.eventsSSE(job.id) : null, (data) => {
-    setJob(data);
-    if (isTerminal(data.status)) {
-      if (data.status === 'completed') toast.success('SPOT rally training complete');
-      if (data.status === 'failed') toast.error(`SPOT rally training failed: ${data.error || data.message}`);
-    }
-  });
 
   const set = <K extends keyof Form>(key: K, value: Form[K]) => setForm((f) => ({ ...f, [key]: value }));
 
@@ -125,7 +111,6 @@ export function SpotTrainPage() {
   const usable = Math.max(0, Number(ann?.with_local_video) || 0);
   const trainingVideos = form.video_limit > 0 ? Math.min(form.video_limit, usable) : usable;
   const ready = usable > 0;
-  const running = !!job && (job.status === 'running' || job.status === 'pending');
   const canStart = !running && ready && Boolean(status?.spot_available);
   const initCheckpoints = status?.init_checkpoints ?? [];
   const resumableRuns = status?.resumable_runs ?? [];
@@ -163,16 +148,6 @@ export function SpotTrainPage() {
       toast.success('SPOT rally training started');
     } catch (e) {
       toast.error(`SPOT rally training failed to start: ${errMsg(e)}`);
-    }
-  };
-
-  const cancel = async () => {
-    if (!job?.id) return;
-    try {
-      await apiFetch(API.jobs.cancel(job.id), { method: 'POST' });
-      toast.warning('SPOT rally training cancelled');
-    } catch (e) {
-      toast.error(`Cancel failed: ${errMsg(e)}`);
     }
   };
 

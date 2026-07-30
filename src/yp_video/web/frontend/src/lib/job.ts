@@ -67,7 +67,7 @@ export const statusLabel = (job: Job): string => {
 // Query keys each job type's side effects make stale — the single registry,
 // so every page that watches a job invalidates the same set and new job types
 // get wired up here instead of in per-page onSettled handlers. Keyed by the
-// backend's create_job() type string.
+// backend's JobType enum values (web/jobs.py).
 const STALE_QUERIES: Record<string, string[][]> = {
   vlm_detect: [['system-videos'], ['annotate-results']],
   rally_spot_predict: [['spot-predict-videos'], ['annotate-results']],
@@ -75,11 +75,14 @@ const STALE_QUERIES: Record<string, string[][]> = {
   spot_prelabel_batch: [['action-videos']],
   player_detection: [['extraction-videos'], ['association-videos'], ['extraction-records']],
   actor_association_predict: [['extraction-videos'], ['association-videos'], ['extraction-records'], ['reid-videos']],
+  actor_association_train: [['actor-association-status'], ['association-train-history'], ['association-videos']],
   player_tracking: [['extraction-videos'], ['reid-videos'], ['tracklets'], ['tracklet-masks']],
   player_embed: [['reid-videos'], ['reid-clusters'], ['reid-players']],
-  rally_spot_train: [['spot-train-status'], ['spot-predict-info']],
-  action_train: [['action-train-status'], ['spot-info']],
-  fusion_model_train: [['fusion-model-status'], ['spot-info'], ['actor-association-status']],
+  rally_spot_train: [['spot-train-status'], ['spot-train-performance'], ['spot-predict-info']],
+  action_train: [['action-train-status'], ['action-train-performance'], ['spot-info']],
+  fusion_model_train: [['fusion-model-status'], ['fusion-model-performance'], ['spot-info'], ['actor-association-status']],
+  reid_dataset_export: [['reid-train-status']],
+  reid_train: [['reid-train-status'], ['reid-train-performance'], ['reid-clusters']],
   download: [['cut-videos']],
   r2_upload: [['upload-status']],
   r2_download: [['upload-status']],

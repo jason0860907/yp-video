@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 
 import { toast } from '@/components/feedback/toast';
 import { JobProgress } from '@/components/job/JobProgress';
@@ -9,10 +9,9 @@ import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { VideoMultiSelectList } from '@/components/video/VideoMultiSelectList';
-import { API, ApiError, apiFetch } from '@/lib/api';
+import { API, apiFetch, errMsg } from '@/lib/api';
 import { cn } from '@/lib/cn';
-import { isTerminal } from '@/lib/job';
-import { useSSE } from '@/lib/useSSE';
+import { useSingleJob } from '@/lib/useSingleJob';
 import type {
   AssociationVideo,
   Job,
@@ -85,24 +84,15 @@ const INITIAL_FORM: Form = {
   stop_vllm: false,
 };
 
-const errMsg = (error: unknown) =>
-  error instanceof ApiError
-    ? error.body
-    : error instanceof Error
-      ? error.message
-      : String(error);
-
 const fieldClass =
   'w-full rounded-lg border border-border-light bg-surface-50 px-2.5 py-1.5 text-xs text-text-primary focus:border-primary/50 focus:outline-none';
 
 export function AssociationTrainPage() {
-  const queryClient = useQueryClient();
   const initialized = useRef(false);
   const startingRef = useRef(false);
   const [trainVideos, setTrainVideos] = useState<Set<string>>(new Set());
   const [valVideos, setValVideos] = useState<Set<string>>(new Set());
   const [form, setForm] = useState<Form>(INITIAL_FORM);
-  const [job, setJob] = useState<Job | null>(null);
   const [starting, setStarting] = useState(false);
   const [metricHistory, setMetricHistory] = useState<AssociationHistoryPoint[]>([]);
 
@@ -113,23 +103,27 @@ export function AssociationTrainPage() {
   const statusQuery = useQuery({
     queryKey: ['actor-association-status'],
     queryFn: () => apiFetch<ReidAssociationStatus>(API.association.status),
-    refetchInterval: job && !isTerminal(job.status) ? false : 20_000,
   });
 
   const videos = videosQuery.data ?? [];
   const status = statusQuery.data;
+
+  const { job, setJob, running: training } = useSingleJob({
+    activeJob: status?.active_job,
+    label: 'yp-association training',
+  });
   const historyQuery = useQuery({
     queryKey: ['association-train-history', job?.params?.save_dir],
     queryFn: () => apiFetch<AssociationHistoryResponse>(API.association.trainHistory),
     enabled: Boolean(job),
-    refetchInterval: job && !isTerminal(job.status) ? 5_000 : false,
+    refetchInterval: training ? 5_000 : false,
     retry: false,
   });
   const logsQuery = useQuery({
     queryKey: ['association-train-logs', job?.id],
     queryFn: () => apiFetch<JobLogs>(API.jobs.logs(job!.id)),
     enabled: Boolean(job?.id),
-    refetchInterval: job && !isTerminal(job.status) ? 3_000 : false,
+    refetchInterval: training ? 3_000 : false,
   });
 
   useEffect(() => {
@@ -147,10 +141,6 @@ export function AssociationTrainPage() {
   }, [videosQuery.data]);
 
   useEffect(() => {
-    if (status?.active_job && !job) setJob(status.active_job);
-  }, [job, status?.active_job]);
-
-  useEffect(() => {
     const fromApi = historyQuery.data?.history ?? [];
     const fromLogs = historyFromLogs(logsQuery.data?.lines ?? []);
     const latest = historyPoint(
@@ -164,22 +154,6 @@ export function AssociationTrainPage() {
     job?.params?.association_train_progress,
     logsQuery.data,
   ]);
-
-  useSSE<Job>(
-    job && !isTerminal(job.status) ? API.jobs.eventsSSE(job.id) : null,
-    (next) => {
-      setJob(next);
-      if (!isTerminal(next.status)) return;
-      if (next.status === 'completed') {
-        toast.success(next.message || 'yp-association training completed');
-      } else if (next.status === 'failed') {
-        toast.error(`yp-association training failed: ${next.error ?? 'unknown error'}`);
-      }
-      void queryClient.invalidateQueries({
-        queryKey: ['actor-association-status'],
-      });
-    },
-  );
 
   const set = <K extends keyof Form>(key: K, value: Form[K]) =>
     setForm((previous) => ({ ...previous, [key]: value }));
@@ -213,7 +187,6 @@ export function AssociationTrainPage() {
     };
   }, [trainVideos, valVideos, videos]);
 
-  const training = Boolean(job && !isTerminal(job.status));
   const busy = starting || training;
   const canTrain =
     !busy

@@ -9,9 +9,9 @@
  *  explicit promotion workflow changes that policy.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { API, ApiError, apiFetch, apiUrl } from '@/lib/api';
+import { API, apiFetch, apiUrl, errMsg } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -23,11 +23,9 @@ import { StatTile } from '@/components/ui/StatTile';
 import { Field, SelectArch, fieldCls } from '@/components/train/Field';
 import { JobProgress } from '@/components/job/JobProgress';
 import { toast } from '@/components/feedback/toast';
-import { useSSE } from '@/lib/useSSE';
-import { isTerminal } from '@/lib/job';
+import { useSingleJob } from '@/lib/useSingleJob';
 import type { Job, ReidModelEval, ReidPerfData, ReidRun, ReidTrainStatus, ReidVideoEval } from '@/types/api';
 
-const errMsg = (e: unknown) => (e instanceof ApiError ? e.body : e instanceof Error ? e.message : String(e));
 const pct = (v: number) => `${(v * 100).toFixed(1)}%`;
 
 interface ExportForm {
@@ -71,7 +69,6 @@ const BASE_TRAIN_FORM: TrainForm = {
 export function ReidTrainPage() {
   const [form, setForm] = useState<ExportForm>(BASE_FORM);
   const [trainForm, setTrainForm] = useState<TrainForm>(BASE_TRAIN_FORM);
-  const [job, setJob] = useState<Job | null>(null);
   const [openModel, setOpenModel] = useState<string | null>(null);
   const set = <K extends keyof ExportForm>(key: K, value: ExportForm[K]) => setForm((f) => ({ ...f, [key]: value }));
   const setTrain = <K extends keyof TrainForm>(key: K, value: TrainForm[K]) =>
@@ -80,9 +77,13 @@ export function ReidTrainPage() {
   const statusQuery = useQuery({
     queryKey: ['reid-train-status'],
     queryFn: () => apiFetch<ReidTrainStatus>(API.reidTrain.status),
-    refetchInterval: job && !isTerminal(job.status) ? false : 20_000,
   });
   const status = statusQuery.data;
+
+  const { job, setJob, running: busy, cancel: cancelJob } = useSingleJob({
+    activeJob: status?.active_job,
+    label: (settled) => (settled.type === 'reid_train' ? 'Training' : 'Export'),
+  });
 
   const perfQuery = useQuery({
     queryKey: ['reid-train-performance'],
@@ -90,22 +91,6 @@ export function ReidTrainPage() {
     enabled: Boolean(status?.totals.ready_videos),
     placeholderData: keepPreviousData,
     staleTime: 60_000,
-  });
-
-  // Adopt a job that was already running when the page mounted.
-  useEffect(() => {
-    if (status?.active_job && !job) setJob(status.active_job);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status?.active_job]);
-
-  useSSE<Job>(job && !isTerminal(job.status) ? API.jobs.eventsSSE(job.id) : null, (data) => {
-    setJob(data);
-    if (isTerminal(data.status)) {
-      const noun = data.type === 'reid_train' ? 'Training' : 'Export';
-      if (data.status === 'completed') toast.success(data.message || `${noun} finished`);
-      else if (data.status === 'failed') toast.error(`${noun} failed: ${data.error ?? 'unknown error'}`);
-      void statusQuery.refetch();
-    }
   });
 
   const startExport = async () => {
@@ -164,19 +149,8 @@ export function ReidTrainPage() {
     }
   };
 
-  const cancelJob = async () => {
-    if (!job?.id) return;
-    try {
-      await apiFetch(API.jobs.cancel(job.id), { method: 'POST' });
-      toast.warning('Job cancelled');
-    } catch (e) {
-      toast.error(`Cancel failed: ${errMsg(e)}`);
-    }
-  };
-
   const models = perfQuery.data?.models ?? [];
   const isolated = (status?.sessions ?? []).filter((s) => s.is_isolated);
-  const busy = Boolean(job && !isTerminal(job.status));
 
   return (
     <div className="mx-auto max-w-screen-2xl">

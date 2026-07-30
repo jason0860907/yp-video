@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { API, ApiError, apiFetch } from '@/lib/api';
+import { API, apiFetch, errMsg } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { formatBytes } from '@/lib/format';
-import { isTerminal } from '@/lib/job';
-import { useSSE } from '@/lib/useSSE';
+import { useSingleJob } from '@/lib/useSingleJob';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -35,7 +34,6 @@ interface FileRow {
 }
 type Mode = 'upload' | 'download';
 
-const errMsg = (e: unknown) => (e instanceof ApiError ? e.body : e instanceof Error ? e.message : String(e));
 
 const subPathOf = (f: FileRow) => (f.group && f.path.startsWith(`${f.group}/`) ? f.path.slice(f.group.length + 1) : f.path || f.name);
 const subDirOf = (f: FileRow) => {
@@ -52,8 +50,14 @@ export function UploadPage() {
   const [loadingFiles, setLoadingFiles] = useState(false);
   const [filesError, setFilesError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const [job, setJob] = useState<Job | null>(null);
   const [busy, setBusy] = useState(false);
+  const { job, setJob } = useSingleJob({
+    label: 'Transfer',
+    onSettled: () => {
+      setBusy(false);
+      void loadFiles();
+    },
+  });
 
   const statusQuery = useQuery({
     queryKey: ['upload-status'],
@@ -95,16 +99,6 @@ export function UploadPage() {
     void loadFiles();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [configured, category, mode]);
-
-  useSSE<Job>(job && !isTerminal(job.status) ? API.jobs.eventsSSE(job.id) : null, (data) => {
-    setJob(data);
-    if (isTerminal(data.status)) {
-      setBusy(false);
-      if (data.status === 'failed') toast.error(`Transfer failed: ${data.error || 'Unknown error'}`);
-      else toast.success(data.message || 'Transfer complete!');
-      void loadFiles();
-    }
-  });
 
   const setSelection = (pred: (f: FileRow) => boolean) => setFiles((prev) => prev.map((f) => ({ ...f, selected: pred(f) })));
   const toggleFolder = (key: string, on: boolean) => setFiles((prev) => prev.map((f) => (folderKeyOf(f) === key ? { ...f, selected: on } : f)));

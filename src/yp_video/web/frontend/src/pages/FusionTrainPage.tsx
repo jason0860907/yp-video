@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { API, ApiError, apiFetch } from '@/lib/api';
+import { API, apiFetch, errMsg } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { isTerminal } from '@/lib/job';
-import { useSSE } from '@/lib/useSSE';
+import { useSingleJob } from '@/lib/useSingleJob';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -85,17 +85,9 @@ const TRAIN_NUMBERS: Array<{
 const warningCls =
   'rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-400';
 
-const errMsg = (error: unknown) =>
-  error instanceof ApiError
-    ? error.body
-    : error instanceof Error
-      ? error.message
-      : String(error);
-
 export function FusionTrainPage() {
   const [recipe, setRecipe] = useState<FusionRecipeId>('association_action');
   const [trainForm, setTrainForm] = useState<TrainForm>(TRAIN_DEFAULTS);
-  const [trainJob, setTrainJob] = useState<Job | null>(null);
   const [perfRun, setPerfRun] = useState('');
   const [datasetScope, setDatasetScope] = useState<
     'joint_only' | 'partial_labels'
@@ -110,8 +102,19 @@ export function FusionTrainPage() {
   const statusQuery = useQuery({
     queryKey: ['fusion-model-status'],
     queryFn: () => apiFetch<FusionModelStatus>(API.fusionModel.status),
-    refetchInterval: trainJob && !isTerminal(trainJob.status) ? false : 20_000,
   });
+  const status = statusQuery.data;
+
+  const {
+    job: trainJob,
+    setJob: setTrainJob,
+    running: trainingRunning,
+    cancel: cancelTrain,
+  } = useSingleJob({
+    activeJob: status?.active_job,
+    label: 'Fusion training',
+  });
+
   const performanceQuery = useQuery({
     queryKey: ['fusion-model-performance', perfRun],
     queryFn: () =>
@@ -120,12 +123,10 @@ export function FusionTrainPage() {
           ? `${API.fusionModel.performance}?run=${encodeURIComponent(perfRun)}`
           : API.fusionModel.performance,
       ),
-    refetchInterval:
-      trainJob && !isTerminal(trainJob.status) ? 30_000 : false,
+    refetchInterval: trainingRunning ? 30_000 : false,
     placeholderData: keepPreviousData,
   });
 
-  const status = statusQuery.data;
   const chosenRecipe = status?.recipes.find((item) => item.id === recipe);
   const recipeBlocked = Boolean(chosenRecipe && !chosenRecipe.available);
   const annotations = status?.action_annotations;
@@ -148,7 +149,6 @@ export function FusionTrainPage() {
   const selectedValidationEvents = validationChoices
     .filter((video) => validationVideos.has(video.video))
     .reduce((total, video) => total + video.events, 0);
-  const trainingRunning = Boolean(trainJob && !isTerminal(trainJob.status));
   const canTrain =
     Boolean(status?.spot_available) &&
     !recipeBlocked &&
@@ -156,10 +156,6 @@ export function FusionTrainPage() {
     (isResuming ||
       validationMode === 'ratio' ||
       selectedValidationCount > 0);
-
-  useEffect(() => {
-    if (status?.active_job && !trainJob) setTrainJob(status.active_job);
-  }, [status?.active_job, trainJob]);
 
   useEffect(() => {
     if (validationSeeded.current || !annotations?.per_video?.length) return;
@@ -172,24 +168,6 @@ export function FusionTrainPage() {
     );
     validationSeeded.current = true;
   }, [annotations?.per_video]);
-
-  useSSE<Job>(
-    trainJob && !isTerminal(trainJob.status)
-      ? API.jobs.eventsSSE(trainJob.id)
-      : null,
-    (job) => {
-      setTrainJob(job);
-      if (isTerminal(job.status)) {
-        void statusQuery.refetch();
-        void performanceQuery.refetch();
-        if (job.status === 'completed')
-          toast.success('Fusion training complete');
-        if (job.status === 'failed') {
-          toast.error(`Fusion training failed: ${job.error || job.message}`);
-        }
-      }
-    },
-  );
 
   const setTrain = <K extends keyof TrainForm>(key: K, value: TrainForm[K]) =>
     setTrainForm((form) => ({ ...form, [key]: value }));
@@ -228,16 +206,6 @@ export function FusionTrainPage() {
       toast.success('Fusion training started');
     } catch (error) {
       toast.error(`Fusion training failed to start: ${errMsg(error)}`);
-    }
-  };
-
-  const cancelTrain = async () => {
-    if (!trainJob) return;
-    try {
-      await apiFetch(API.jobs.cancel(trainJob.id), { method: 'POST' });
-      toast.warning('Fusion training cancelled');
-    } catch (error) {
-      toast.error(`Cancel failed: ${errMsg(error)}`);
     }
   };
 

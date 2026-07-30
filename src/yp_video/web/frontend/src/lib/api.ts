@@ -37,6 +37,11 @@ export class ApiError extends Error {
   }
 }
 
+/** The user-facing text of any thrown value. Lives next to ApiError because
+ *  its whole job is unwrapping one; twenty-one file-local copies preceded it. */
+export const errMsg = (e: unknown): string =>
+  e instanceof ApiError ? e.body : e instanceof Error ? e.message : String(e);
+
 /** Fetch a JSON endpoint relative to /api. Throws {@link ApiError} on non-2xx. */
 export async function apiFetch<T = unknown>(path: string, options: ApiOptions = {}): Promise<T> {
   const { body, headers, ...rest } = options;

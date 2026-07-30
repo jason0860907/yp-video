@@ -1,10 +1,9 @@
 import { useEffect, useState } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { API, ApiError, apiFetch, apiUrl } from '@/lib/api';
+import { API, apiFetch, apiUrl, errMsg } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { Field, SelectArch, fieldCls } from '@/components/train/Field';
-import { isTerminal } from '@/lib/job';
-import { useSSE } from '@/lib/useSSE';
+import { useSingleJob } from '@/lib/useSingleJob';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -90,37 +89,32 @@ const NUM_FIELDS: Array<{ key: keyof Form; label: string; min?: number; max?: nu
   { key: 'start_val_epoch', label: 'Start val', min: 0, max: 1000 },
 ];
 
-const errMsg = (e: unknown) => (e instanceof ApiError ? e.body : e instanceof Error ? e.message : String(e));
-
 export function ActionTrainPage() {
   const [form, setForm] = useState<Form>(BASE_FORM);
-  const [job, setJob] = useState<Job | null>(null);
   const [perfRun, setPerfRun] = useState<string>();
 
   const statusQuery = useQuery({
     queryKey: ['action-train-status'],
     queryFn: () => apiFetch<ActionTrainStatus>(API.actionTrain.status),
-    refetchInterval: job && !isTerminal(job.status) ? false : 20_000,
   });
   const status = statusQuery.data;
+
+  const { job, setJob, running, cancel } = useSingleJob({
+    activeJob: status?.active_job,
+    label: 'Action training',
+  });
 
   // Per-epoch validation curve + per-video breakdown; refresh while training.
   const perfQuery = useQuery({
     queryKey: ['action-train-performance', perfRun],
     queryFn: () =>
       apiFetch<ActionPerfData>(perfRun ? `${API.actionTrain.performance}?run=${encodeURIComponent(perfRun)}` : API.actionTrain.performance),
-    refetchInterval: job && !isTerminal(job.status) ? 30_000 : false,
+    refetchInterval: running ? 30_000 : false,
     // Keep the card mounted while a newly selected run loads — otherwise the
     // page collapses and the browser jumps back to the top.
     placeholderData: keepPreviousData,
   });
   const perf = perfQuery.data;
-
-  // Adopt any active job on first load.
-  useEffect(() => {
-    const active = status?.active_job;
-    if (active && !job) setJob(active);
-  }, [status?.active_job, job]);
 
   // Seed init_checkpoint from server options.
   useEffect(() => {
@@ -133,14 +127,6 @@ export function ActionTrainPage() {
     const fd = status?.action_annotations?.frame_dir;
     if (fd && !form.frame_dir) setForm((f) => ({ ...f, frame_dir: fd }));
   }, [status?.action_annotations?.frame_dir, form.frame_dir]);
-
-  useSSE<Job>(job && !isTerminal(job.status) ? API.jobs.eventsSSE(job.id) : null, (data) => {
-    setJob(data);
-    if (isTerminal(data.status)) {
-      if (data.status === 'completed') toast.success('Action training complete');
-      if (data.status === 'failed') toast.error(`Action training failed: ${data.error || data.message}`);
-    }
-  });
 
   const set = <K extends keyof Form>(key: K, value: Form[K]) => setForm((f) => ({ ...f, [key]: value }));
 
@@ -159,7 +145,6 @@ export function ActionTrainPage() {
     .slice()
     .sort((a, b) => b.events - a.events);
   const ready = stats.actions > 0;
-  const running = !!job && (job.status === 'running' || job.status === 'pending');
   const canStart = !running && ready && Boolean(status?.spot_available);
   const showSplit = form.training_mode === 'split';
   const showHoldout = form.training_mode === 'holdout';
@@ -208,16 +193,6 @@ export function ActionTrainPage() {
       toast.success('Action training started');
     } catch (e) {
       toast.error(`Action training failed to start: ${errMsg(e)}`);
-    }
-  };
-
-  const cancel = async () => {
-    if (!job?.id) return;
-    try {
-      await apiFetch(API.jobs.cancel(job.id), { method: 'POST' });
-      toast.warning('Action training cancelled');
-    } catch (e) {
-      toast.error(`Cancel failed: ${errMsg(e)}`);
     }
   };
 
