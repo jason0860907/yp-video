@@ -22,11 +22,15 @@ from urllib.parse import unquote
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from yp_video.action import prelabel
+from yp_video.action.frames import ensure_action_frame_caches
+from yp_video.actor import candidates as actor_candidates
 from yp_video.actor import dataset as actor_dataset
 from yp_video.actor import evaluate as actor_evaluate
 from yp_video.actor import labels as actor_labels
 from yp_video.actor import policy as actor_policy
 from yp_video.actor import review as actor_review
+from yp_video.actor import spot_associate, spot_predictions
 from yp_video.actor.ranking import RULE_BASED
 from yp_video.config import (
     ACTION_CHECKPOINTS_DIR,
@@ -43,20 +47,15 @@ from yp_video.contracts.action import (
     ACTOR_FILE_GLOB,
     ACTOR_LABEL_SUBDIR,
 )
-from yp_video.action.frames import ensure_action_frame_caches
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import read_jsonl_cached, read_jsonl_header
-from yp_video.action import actor_labels as spot_actor_labels
-from yp_video.action import prelabel
-from yp_video.actor import spot_associate
-from yp_video.actor import spot_predictions
 from yp_video.extraction import actor_fix, links, reassociate
-from yp_video.extraction.prerequisites import prerequisites
 from yp_video.extraction import store as extraction_store
+from yp_video.extraction.prerequisites import prerequisites
 from yp_video.reid import store as reid_store
+from yp_video.reid.embedder import DEFAULT_EMBEDDER, base_embedder_name
 from yp_video.tracklets import store as tracks_store
 from yp_video.tracklets.geometry import TrackRef
-from yp_video.reid.embedder import DEFAULT_EMBEDDER, base_embedder_name
 from yp_video.web.job_helpers import (
     ProgressParser,
     fail_job_from_exc,
@@ -349,7 +348,7 @@ def _association_training_items(
                 f"No reviewed actors for {name}; review it in Association Label first",
             )
         _meta, events = read_jsonl_cached(label_path)
-        actor_rows, _tally = spot_actor_labels.build(path.stem, events)
+        actor_rows, _tally = actor_candidates.build(path.stem, events)
         if not actor_rows:
             raise HTTPException(
                 400,

@@ -37,6 +37,11 @@ FORBIDDEN: dict[str, tuple[str, ...]] = {
                   "yp_video.web"),
     "actor": ("yp_video.reid", "yp_video.web", "yp_video.extraction"),
     "reid": ("yp_video.actor", "yp_video.web", "yp_video.extraction"),
+    # The yp-spot integration is a stage `actor` builds on (frame cache,
+    # checkpoints), never the reverse: an action→actor import once made the
+    # two packages a cycle in disguise.
+    "action": ("yp_video.person", "yp_video.tracklets", "yp_video.actor",
+               "yp_video.reid", "yp_video.extraction", "yp_video.web"),
 }
 
 #: The one thing the roof publishes downward: where extraction output lives.

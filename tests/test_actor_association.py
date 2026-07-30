@@ -275,7 +275,7 @@ class AssociationTrainingSelectionTests(unittest.TestCase):
             patch.object(router.actor_labels, "load", return_value={"event": object()}),
             patch.object(router, "read_jsonl_cached", return_value=({}, [{}])),
             patch.object(
-                router.spot_actor_labels,
+                router.actor_candidates,
                 "build",
                 return_value=([{"id": "event"}], {"track": 1}),
             ),
@@ -493,7 +493,7 @@ class SpotActorInferenceContractTests(unittest.TestCase):
                     return_value=({}, [{"id": "event"}]),
                 ),
                 patch.object(
-                    router.spot_associate.actor_labels,
+                    router.spot_associate.candidates,
                     "candidates_only",
                     return_value=[{"id": "event", "frame": 10}],
                 ),
@@ -664,7 +664,7 @@ class SpotActorInferenceContractTests(unittest.TestCase):
                     return_value=({}, [{"id": "event"}]),
                 ),
                 patch.object(
-                    router.spot_associate.actor_labels,
+                    router.spot_associate.candidates,
                     "candidates_only",
                     return_value=[{"id": "event", "frame": 10}],
                 ),

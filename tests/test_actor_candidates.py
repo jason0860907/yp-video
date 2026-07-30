@@ -14,11 +14,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from yp_video.action import actor_labels
+from yp_video.actor import candidates as actor_labels
 from yp_video.actor import labels as verdict_labels
 from yp_video.actor.labels import ActorLabel, ActorVerdict
-from yp_video.core.cache import StatCache
 from yp_video.contracts.action import ACTOR_WINDOW_OFFSETS
+from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import write_jsonl
 from yp_video.tracklets.geometry import TrackRef
 

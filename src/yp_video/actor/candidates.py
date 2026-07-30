@@ -1,8 +1,8 @@
 """Build the actor-candidate supervision yp-spot trains its actor head on.
 
 The action label file says WHEN something happened and WHERE the ball was
-touched; who did it lives two packages away, in ``actor`` (the human verdict)
-and ``tracklets`` (who was on court). This module is the only place the three
+touched; who did it is this package's verdict (``labels``) joined with
+``tracklets`` (who was on court). This module is the only place the three
 meet, and it exists so the training-label exporter stays a copier.
 
 The unit of supervision is a CHOICE, not a box: the candidate set is every
@@ -20,8 +20,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 
-from yp_video.actor import labels as actor_labels
-from yp_video.actor.labels import ActorLabel, ActorVerdict
+from yp_video.actor import labels
+from yp_video.actor.labels import ActorVerdict
 from yp_video.contracts.action import ACTOR_WINDOW_OFFSETS, ActorTargetKind
 from yp_video.core.jsonl import read_jsonl_cached
 from yp_video.extraction.store import records_path
@@ -131,7 +131,7 @@ def build(stem: str, events: Iterable[dict]) -> tuple[list[dict], dict[str, int]
     Events nobody has ruled on produce NO row at all — this file carries
     supervision, and an event's absence from it is what "unlabelled" means.
     """
-    verdicts = actor_labels.load(stem)
+    verdicts = labels.load(stem)
     tally = {kind.value: 0 for kind in ActorTargetKind}
     tally["unlabelled"] = 0
     tally["legacy_box"] = 0

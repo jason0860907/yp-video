@@ -20,8 +20,9 @@ import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
-from yp_video.action import actor_labels, prelabel
+from yp_video.action import prelabel
 from yp_video.action.frames import ensure_action_frame_cache
+from yp_video.actor import candidates
 from yp_video.actor.spot_predictions import (
     ACTOR_PREDICTIONS_DIR,
     SpotAnswer,
@@ -79,7 +80,7 @@ def run(
     if on_progress is not None:
         on_progress(0, total_steps, "building candidates from tracking...")
     _meta, events = read_jsonl(labels)
-    rows = actor_labels.candidates_only(stem, events)
+    rows = candidates.candidates_only(stem, events)
     if not rows:
         raise RuntimeError(
             f"{stem} has no tracked candidates — run Rally Tracking first"
@@ -365,8 +366,3 @@ def list_association_checkpoints() -> list[dict]:
         )
     out.sort(key=lambda row: row.get("mtime") or 0, reverse=True)
     return out
-
-
-# Transitional Python alias for callers outside the web API. The public HTTP
-# contract is now `association_checkpoints`.
-list_actor_checkpoints = list_association_checkpoints

@@ -264,7 +264,7 @@ class FusionLabelScopeTests(unittest.TestCase):
                     return_value="sideline",
                 ),
                 patch.object(
-                    fusion_model.action_train.actor_labels,
+                    fusion_model.action_train.actor_candidates,
                     "build",
                     return_value=([], {}),
                 ),

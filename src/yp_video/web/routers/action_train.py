@@ -16,6 +16,12 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from yp_video.action.frames import (
+    ensure_action_frame_caches,
+    inspect_action_frame_cache,
+)
+from yp_video.action.prelabel import resolve_checkpoint_path
+from yp_video.actor import candidates as actor_candidates
 from yp_video.config import (
     ACTION_ANNOTATIONS_DIR,
     ACTION_AUDIO_DIR,
@@ -37,9 +43,6 @@ from yp_video.contracts.action import (
     ACTOR_FILE_SUFFIX,
     ACTOR_LABEL_SUBDIR,
 )
-from yp_video.action import actor_labels
-from yp_video.action.frames import ensure_action_frame_caches, inspect_action_frame_cache
-from yp_video.action.prelabel import resolve_checkpoint_path
 from yp_video.core.jsonl import read_jsonl, write_jsonl
 from yp_video.web.job_helpers import (
     fail_job_from_exc,
@@ -414,7 +417,7 @@ def _prepare_action_training_labels(
         # Who acted, where the video can say so. Written to its OWN file: only
         # a handful of videos carry actor work, and the action labels are read
         # by every spotting run over every video.
-        actor_rows, tally = actor_labels.build(stem, records)
+        actor_rows, tally = actor_candidates.build(stem, records)
         if require_actor_targets and not actor_rows:
             raise RuntimeError(
                 f"{stem} was selected for joint Association + Action training "
