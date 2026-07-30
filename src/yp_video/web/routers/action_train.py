@@ -50,7 +50,7 @@ from yp_video.web.job_helpers import (
     stream_subprocess,
     terminal_prefix,
 )
-from yp_video.web.jobs import JobStatus, job_manager
+from yp_video.web.jobs import JobType, job_manager
 from yp_video.web.spot_runs import (
     PackageExporter,
     TrainProgress,
@@ -79,7 +79,7 @@ class TrainingFlavor:
 
 
 ACTION_TRAINING = TrainingFlavor(
-    job_type="action_train",
+    job_type=JobType.ACTION_TRAIN,
     job_name="Action Train",
     package_type="yp-video-action-checkpoint",
     progress_key="action_train_progress",
@@ -685,13 +685,6 @@ def _action_checkpoint_stats() -> dict:
     }
 
 
-def _active_job() -> dict | None:
-    for job in job_manager.jobs.values():
-        if job.type == "action_train" and job.status == JobStatus.RUNNING:
-            return job.to_dict()
-    return None
-
-
 @router.get("/status")
 def status() -> dict:
     return {
@@ -703,7 +696,7 @@ def status() -> dict:
         "vnl_1_5": _vnl_stats(),
         "action_annotations": _action_annotation_stats(),
         "action_checkpoints": _action_checkpoint_stats(),
-        "active_job": _active_job(),
+        "active_job": active.to_dict() if (active := job_manager.active_job(JobType.ACTION_TRAIN)) else None,
     }
 
 

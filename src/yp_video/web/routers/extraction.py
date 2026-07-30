@@ -36,12 +36,11 @@ from yp_video.extraction import store as extraction_store
 from yp_video.extraction.prerequisites import prerequisites
 from yp_video.person.detector import DETECTOR_NAME
 from yp_video.web.job_helpers import init_batch_items, spawn_batch_video_job
-from yp_video.web.jobs import job_manager
+from yp_video.web.jobs import JobType, job_manager
 
 log = logging.getLogger(__name__)
 router = APIRouter()
 
-DETECT_JOB_TYPE = "player_detection"
 
 # Slimmed UI payload, rebuilt when the detector output OR either annotation
 # source changes. Values are shared across requests — read-only, like
@@ -119,7 +118,7 @@ async def detect(req: DetectRequest) -> dict:
         raise HTTPException(400, "All selected videos already have detections (enable overwrite)")
 
     job = job_manager.create_job(
-        DETECT_JOB_TYPE,
+        JobType.PLAYER_DETECTION,
         {
             "videos": [p.name for p in video_paths],
             "skipped_existing": skipped,

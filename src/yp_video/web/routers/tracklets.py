@@ -29,7 +29,7 @@ from yp_video.extraction import store as extraction_store
 from yp_video.tracklets import store as tracks_store
 from yp_video.tracklets import tracking
 from yp_video.web.job_helpers import init_batch_items, spawn_batch_video_job
-from yp_video.web.jobs import job_manager
+from yp_video.web.jobs import JobType, job_manager
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -72,7 +72,7 @@ async def run(req: TrackRequest) -> dict:
         raise HTTPException(400, "All selected videos already have tracking (enable overwrite)")
 
     job = job_manager.create_job(
-        "player_tracking",
+        JobType.PLAYER_TRACKING,
         {
             "videos": [p.name for p in video_paths],
             "skipped_existing": skipped,

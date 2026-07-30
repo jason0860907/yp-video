@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 from yp_video.actor import labels as association_labels
 from yp_video.actor import spot_associate
 from yp_video.config import ACTION_CHECKPOINTS_DIR, SPOT_DIR
-from yp_video.web.jobs import JobStatus, job_manager
+from yp_video.web.jobs import JobType, job_manager
 from yp_video.web.routers import action_train
 from yp_video.web.spot_runs import performance_payload
 
@@ -81,24 +81,12 @@ RECIPES = (
 )
 
 FUSION_TRAINING = action_train.TrainingFlavor(
-    job_type="fusion_model_train",
+    job_type=JobType.FUSION_MODEL_TRAIN,
     job_name="Fusion Model Train",
     package_type="actor-association-spot",
     progress_key="fusion_model_train_progress",
     subject="association + action",
 )
-
-
-def _active_job() -> dict | None:
-    return next(
-        (
-            job.to_dict()
-            for job in job_manager.jobs.values()
-            if job.type == FUSION_TRAINING.job_type
-            and job.status in (JobStatus.PENDING, JobStatus.RUNNING)
-        ),
-        None,
-    )
 
 
 @router.get("/status")
@@ -143,7 +131,7 @@ def status() -> dict:
             "joint_videos": joint_videos,
             "action_only_videos": len(per_video) - joint_videos,
         },
-        "active_job": _active_job(),
+        "active_job": active.to_dict() if (active := job_manager.active_job(JobType.FUSION_MODEL_TRAIN)) else None,
     }
 
 

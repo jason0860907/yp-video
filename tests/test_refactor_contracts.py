@@ -20,7 +20,7 @@ from yp_video.contracts.reid import (
 )
 from yp_video.extraction import actor_fix, cropping, pipeline
 from yp_video.reid import checkpoints, store
-from yp_video.web.jobs import MAX_LOG_LINES, Job, JobManager, JobStatus
+from yp_video.web.jobs import JobType, MAX_LOG_LINES, Job, JobManager, JobStatus
 from yp_video.web.routers import extraction as extraction_router
 from yp_video.web.routers.action_train import (
     ActionTrainRequest,
@@ -144,7 +144,7 @@ class ActorResolutionTests(unittest.TestCase):
 class JobPayloadTests(unittest.TestCase):
     def test_summary_and_sse_do_not_contain_log_bodies(self) -> None:
         manager = JobManager()
-        job = manager.create_job("test")
+        job = manager.create_job(JobType.DOWNLOAD)
         job.logs.extend(f"line {index}" for index in range(MAX_LOG_LINES + 2))
 
         summary = job.to_dict()

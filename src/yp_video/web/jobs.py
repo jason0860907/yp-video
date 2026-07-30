@@ -22,6 +22,35 @@ class JobStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
+class JobType(str, Enum):
+    """Every ``create_job()`` type, in one place.
+
+    The frontend keys its cache-invalidation registry (lib/job.ts
+    ``STALE_QUERIES``) by these values; a type string that only exists at a
+    call site is invisible there, so new types get registered here first.
+    ``create_job`` validates against this enum — an unregistered string
+    fails at the call site instead of becoming a silent no-op in the UI.
+    """
+
+    VLM_DETECT = "vlm_detect"
+    PLAYER_DETECTION = "player_detection"
+    PLAYER_TRACKING = "player_tracking"
+    PLAYER_EMBED = "player_embed"
+    RALLY_SPOT_TRAIN = "rally_spot_train"
+    RALLY_SPOT_PREDICT = "rally_spot_predict"
+    ACTION_TRAIN = "action_train"
+    FUSION_MODEL_TRAIN = "fusion_model_train"
+    SPOT_PRELABEL = "spot_prelabel"
+    SPOT_PRELABEL_BATCH = "spot_prelabel_batch"
+    REID_DATASET_EXPORT = "reid_dataset_export"
+    REID_TRAIN = "reid_train"
+    ACTOR_ASSOCIATION_TRAIN = "actor_association_train"
+    ACTOR_ASSOCIATION_PREDICT = "actor_association_predict"
+    DOWNLOAD = "download"
+    R2_UPLOAD = "r2_upload"
+    R2_DOWNLOAD = "r2_download"
+
+
 @dataclass
 class Job:
     id: str
@@ -94,10 +123,12 @@ class JobManager:
         self.inference_lock = asyncio.Lock()
         self._vllm_using_gpu = False
 
-    def create_job(self, job_type: str, params: dict | None = None, name: str = "") -> Job:
+    def create_job(
+        self, job_type: "JobType | str", params: dict | None = None, name: str = ""
+    ) -> Job:
         job = Job(
             id=str(uuid.uuid4())[:8],
-            type=job_type,
+            type=JobType(job_type).value,
             name=name,
             params=params or {},
         )
@@ -141,6 +172,19 @@ class JobManager:
 
     def active_count(self) -> int:
         return sum(1 for j in self.jobs.values() if j.status == JobStatus.RUNNING)
+
+    def active_job(self, *types: "JobType") -> Job | None:
+        """The pending-or-running job among these types, if any.
+
+        PENDING counts as active: a job between ``create_job()`` and its
+        first running update already occupies its slot, and the UI must see
+        (and be able to cancel) whatever blocks the next start.
+        """
+        active = (JobStatus.PENDING, JobStatus.RUNNING)
+        return next(
+            (j for j in self.jobs.values() if j.type in types and j.status in active),
+            None,
+        )
 
     async def update_job(
         self,

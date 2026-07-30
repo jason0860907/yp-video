@@ -65,15 +65,13 @@ from yp_video.web.job_helpers import (
     stream_subprocess,
     terminal_prefix,
 )
-from yp_video.web.jobs import JobStatus, job_manager
+from yp_video.web.jobs import JobType, job_manager
 from yp_video.web.routers import action_train as action_train_router
 from yp_video.web.spot_runs import PackageExporter, export_checkpoint_package
 
 log = logging.getLogger(__name__)
 router = APIRouter()
 
-TRAIN_JOB_TYPE = "actor_association_train"
-PREDICT_JOB_TYPE = "actor_association_predict"
 _evaluation_cache: StatCache = StatCache()
 _train_start_lock = asyncio.Lock()
 
@@ -129,18 +127,6 @@ def list_videos() -> list[dict]:
     return results
 
 
-def _active_job() -> dict | None:
-    return next(
-        (
-            job.to_dict()
-            for job in job_manager.jobs.values()
-            if job.type == TRAIN_JOB_TYPE
-            and job.status in (JobStatus.PENDING, JobStatus.RUNNING)
-        ),
-        None,
-    )
-
-
 @router.get("/status")
 def status() -> dict:
     """Which models exist, and whether a training job is running.
@@ -174,7 +160,7 @@ def status() -> dict:
             if row["family"] == spot_associate.INDEPENDENT_FORMAT
         ],
         "frame_dir": str(ACTION_FRAMES_DIR),
-        "active_job": _active_job(),
+        "active_job": active.to_dict() if (active := job_manager.active_job(JobType.ACTOR_ASSOCIATION_TRAIN)) else None,
     }
 
 
@@ -218,10 +204,10 @@ def train_history(run: str | None = None) -> dict:
             ACTION_CHECKPOINTS_DIR / run / "metrics.jsonl",
         )
     else:
-        active = _active_job()
+        active = job_manager.active_job(JobType.ACTOR_ASSOCIATION_TRAIN)
         if active is None:
             return {"run": None, "history": []}
-        save_dir = (active.get("params") or {}).get("save_dir")
+        save_dir = active.params.get("save_dir")
         if not isinstance(save_dir, str):
             return {"run": None, "history": []}
         root = Path(save_dir)
@@ -366,11 +352,11 @@ async def train(req: AssociationTrainRequest) -> dict:
 
 
 async def _train_locked(req: AssociationTrainRequest) -> dict:
-    active = _active_job()
+    active = job_manager.active_job(JobType.ACTOR_ASSOCIATION_TRAIN)
     if active is not None:
         raise HTTPException(
             409,
-            f"Association training is already active: {active['name']}",
+            f"Association training is already active: {active.name}",
         )
     name = req.run_name or f"yp_actor_{time.strftime('%Y%m%d-%H%M%S')}"
     if not re.fullmatch(r"[A-Za-z0-9_.-]+", name) or name.startswith("."):
@@ -471,7 +457,7 @@ async def _start_association_training(
     init_checkpoint: Path | None,
 ) -> dict:
     job = job_manager.create_job(
-        TRAIN_JOB_TYPE,
+        JobType.ACTOR_ASSOCIATION_TRAIN,
         {
             "save_dir": str(save_dir),
             "checkpoint_dir": str(checkpoint_dir),
@@ -731,7 +717,7 @@ async def predict(req: PredictRequest) -> dict:
         raise HTTPException(400, "Select at least one video")
 
     job = job_manager.create_job(
-        PREDICT_JOB_TYPE,
+        JobType.ACTOR_ASSOCIATION_PREDICT,
         {
             "policy": plan.name,
             "videos": [p.name for p in video_paths],

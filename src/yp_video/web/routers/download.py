@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from yp_video.config import RAW_VIDEOS_DIR
 from yp_video.web.job_helpers import batch_message, finalize_batch_job
-from yp_video.web.jobs import job_manager, threadsafe_update
+from yp_video.web.jobs import JobType, job_manager, threadsafe_update
 
 router = APIRouter()
 
@@ -120,7 +120,7 @@ async def start_download(req: DownloadRequest) -> DownloadResponse:
         else f"YT download — {req.videos[0].title}" if n == 1
         else "YT download"
     )
-    job = job_manager.create_job("download", {"count": n, "quality": req.quality}, name=label)
+    job = job_manager.create_job(JobType.DOWNLOAD, {"count": n, "quality": req.quality}, name=label)
 
     download_sessions[session_id] = {
         "videos": req.videos,

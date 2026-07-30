@@ -49,7 +49,7 @@ from yp_video.web.job_helpers import (
     terminal_prefix,
     update_batch_item,
 )
-from yp_video.web.jobs import job_manager
+from yp_video.web.jobs import JobType, job_manager
 from yp_video.web.r2_client import serve_video_or_r2_redirect, sync_to_r2
 
 log = logging.getLogger(__name__)
@@ -527,7 +527,7 @@ async def start_spot_prelabel(req: SpotPrelabelRequest) -> dict:
         raise HTTPException(400, str(exc)) from exc
 
     job = job_manager.create_job(
-        "spot_prelabel",
+        JobType.SPOT_PRELABEL,
         {
             "video": video.name,
             "checkpoint": prelabel.checkpoint_ref(checkpoint),
@@ -669,7 +669,7 @@ async def start_spot_prelabel_batch(req: SpotPrelabelBatchRequest) -> dict:
     total = len(entries)
     items = init_batch_items([video.name for video, _ann_path in entries])
     job = job_manager.create_job(
-        "spot_prelabel_batch",
+        JobType.SPOT_PRELABEL_BATCH,
         {
             "videos": [video.name for video, _ann_path in entries],
             "checkpoint": prelabel.checkpoint_ref(checkpoint),

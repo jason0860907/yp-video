@@ -50,25 +50,16 @@ from yp_video.web.job_helpers import (
     fail_job_from_exc,
     stream_subprocess,
 )
-from yp_video.web.jobs import JobStatus, job_manager
+from yp_video.web.jobs import JobStatus, JobType, job_manager
 
 log = logging.getLogger(__name__)
 router = APIRouter()
 
-JOB_TYPE = "reid_dataset_export"
-TRAIN_JOB_TYPE = "reid_train"
 
 # Evaluation is a few numpy ops over matrices that are already on disk, so it
 # stays a plain request — but it re-runs on every page load and tab switch,
 # so it caches on the files it derives from.
 _eval_cache: StatCache = StatCache()
-
-
-def _active_job() -> dict | None:
-    for job in job_manager.jobs.values():
-        if job.type in (JOB_TYPE, TRAIN_JOB_TYPE) and job.status in (JobStatus.PENDING, JobStatus.RUNNING):
-            return job.to_dict()
-    return None
 
 
 def _session_payload(group: sessions.SessionGroup) -> dict:
@@ -118,7 +109,7 @@ def status() -> dict:
         "split_modes": list(dataset.SPLIT_MODES),
         "reid_engine_available": reid_engine_available(),
         "runs": checkpoints.list_checkpoints(),
-        "active_job": _active_job(),
+        "active_job": active.to_dict() if (active := job_manager.active_job(JobType.REID_DATASET_EXPORT, JobType.REID_TRAIN)) else None,
     }
 
 
@@ -235,7 +226,7 @@ async def start(req: ReidExportRequest) -> dict:
         raise HTTPException(409, f"Dataset {name} already exists (enable overwrite)")
 
     job = job_manager.create_job(
-        JOB_TYPE,
+        JobType.REID_DATASET_EXPORT,
         {"name": name, "counts": plan.counts, "config": plan.config, "dropped": plan.dropped},
         name=f"ReID dataset ({plan.counts['n_samples']} crops)",
     )
@@ -356,7 +347,7 @@ async def train(req: ReidTrainRequest) -> dict:
         cmd += ["--init-checkpoint", str(init_package)]
 
     job = job_manager.create_job(
-        TRAIN_JOB_TYPE,
+        JobType.REID_TRAIN,
         {"dataset": req.dataset, "run_name": run_name, "epochs": req.epochs,
          "batch_size": req.batch_size, "lr": req.lr, "init_checkpoint": req.init_checkpoint},
         name=f"ReID train ({req.dataset} → {run_name})",

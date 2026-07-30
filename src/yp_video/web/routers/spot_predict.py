@@ -49,7 +49,7 @@ from yp_video.web.job_helpers import (
     stream_subprocess,
     update_batch_item,
 )
-from yp_video.web.jobs import job_manager
+from yp_video.web.jobs import JobType, job_manager
 from yp_video.web.r2_client import sync_to_r2
 
 log = logging.getLogger(__name__)
@@ -177,7 +177,7 @@ async def start(req: RallyPredictRequest) -> dict:
 
     total = len(video_paths)
     job = job_manager.create_job(
-        "rally_spot_predict",
+        JobType.RALLY_SPOT_PREDICT,
         {
             "videos": [p.name for p in video_paths],
             "skipped_existing": skipped,

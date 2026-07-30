@@ -33,7 +33,7 @@ from yp_video.reid.embedder import (
     threshold_calibration,
 )
 from yp_video.web.job_helpers import init_batch_items, spawn_batch_video_job
-from yp_video.web.jobs import job_manager
+from yp_video.web.jobs import JobType, job_manager
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -126,7 +126,7 @@ async def embed(req: EmbedRequest) -> dict:
         video_paths.append(path)
 
     job = job_manager.create_job(
-        "player_embed",
+        JobType.PLAYER_EMBED,
         {"videos": [p.name for p in video_paths], "items": init_batch_items([p.name for p in video_paths])},
         name=f"Embeddings ({len(video_paths)} videos)",
     )

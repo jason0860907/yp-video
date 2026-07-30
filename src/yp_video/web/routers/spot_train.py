@@ -36,7 +36,7 @@ from yp_video.web.job_helpers import (
     stream_subprocess,
     terminal_prefix,
 )
-from yp_video.web.jobs import JobStatus, job_manager
+from yp_video.web.jobs import JobType, job_manager
 from yp_video.web.spot_runs import (
     PackageExporter,
     TrainProgress,
@@ -149,13 +149,6 @@ def _init_checkpoint_options() -> list[dict]:
     ]
 
 
-def _active_job() -> dict | None:
-    for job in job_manager.jobs.values():
-        if job.type == "rally_spot_train" and job.status == JobStatus.RUNNING:
-            return job.to_dict()
-    return None
-
-
 @router.get("/status")
 def status() -> dict:
     items, missing = rally_spot.select_training_items(0)
@@ -171,7 +164,7 @@ def status() -> dict:
         "init_checkpoints": _init_checkpoint_options(),
         "resumable_runs": resumable_run_options(RALLY_RUN_PREFIX),
         "rally_checkpoints": _rally_checkpoint_stats(),
-        "active_job": _active_job(),
+        "active_job": active.to_dict() if (active := job_manager.active_job(JobType.RALLY_SPOT_TRAIN)) else None,
     }
 
 
@@ -287,7 +280,7 @@ async def start(req: RallyTrainRequest) -> dict:
     frame_root = rally_spot.frame_cache_root(req.extract_fps)
 
     job = job_manager.create_job(
-        "rally_spot_train",
+        JobType.RALLY_SPOT_TRAIN,
         {
             "extract_fps": req.extract_fps,
             "video_limit": req.video_limit,

@@ -349,11 +349,12 @@ class NeuralAssociationTrainTests(unittest.IsolatedAsyncioTestCase):
             train_videos=["train.mp4"],
             val_videos=["val.mp4"],
         )
+        blocking = SimpleNamespace(name="Association Train (already-running)")
         with (
             patch.object(
-                router,
-                "_active_job",
-                return_value={"name": "Association Train (already-running)"},
+                router.job_manager,
+                "active_job",
+                return_value=blocking,
             ),
             patch.object(router, "_association_training_items") as prepare,
         ):

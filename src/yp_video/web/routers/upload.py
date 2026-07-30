@@ -15,7 +15,7 @@ from yp_video.web.job_helpers import (
     finalize_batch_job,
     terminal_prefix,
 )
-from yp_video.web.jobs import job_manager, threadsafe_update
+from yp_video.web.jobs import JobType, job_manager, threadsafe_update
 from yp_video.web.r2_client import r2_client
 
 router = APIRouter()
@@ -335,7 +335,7 @@ async def start_upload(req: UploadRequest):
     if not valid:
         raise HTTPException(400, "No valid files to upload")
 
-    job = job_manager.create_job("r2_upload", {
+    job = job_manager.create_job(JobType.R2_UPLOAD, {
         "category": req.category,
         "count": len(valid),
     }, name=f"Upload ({len(valid)} files)")
@@ -361,7 +361,7 @@ async def start_download(req: DownloadRequest):
         raise HTTPException(400, "No files to download")
 
     base_dir = _get_base_dir(req.category)
-    job = job_manager.create_job("r2_download", {
+    job = job_manager.create_job(JobType.R2_DOWNLOAD, {
         "category": req.category,
         "count": len(req.files),
     }, name=f"Download ({len(req.files)} files)")

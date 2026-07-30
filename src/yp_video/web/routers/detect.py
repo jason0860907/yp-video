@@ -20,7 +20,7 @@ from yp_video.web.job_helpers import (
     init_batch_items,
     update_batch_item,
 )
-from yp_video.web.jobs import job_manager
+from yp_video.web.jobs import JobType, job_manager
 from yp_video.web.r2_client import sync_directory_to_r2, sync_to_r2
 from yp_video.web.vllm_manager import vllm_manager
 
@@ -63,7 +63,7 @@ async def start_detection(req: DetectRequest):
         video_paths.append(resolved)
 
     total = len(req.videos)
-    job = job_manager.create_job("vlm_detect", {
+    job = job_manager.create_job(JobType.VLM_DETECT, {
         "videos": req.videos,
         "batch_size": req.batch_size,
         "items": init_batch_items(req.videos),
