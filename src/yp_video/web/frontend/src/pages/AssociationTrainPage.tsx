@@ -178,7 +178,6 @@ export function AssociationTrainPage() {
       void queryClient.invalidateQueries({
         queryKey: ['actor-association-status'],
       });
-      void queryClient.invalidateQueries({ queryKey: ['association-status'] });
     },
   );
 

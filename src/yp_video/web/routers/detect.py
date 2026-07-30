@@ -7,21 +7,22 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from yp_video.config import (
-    SEG_ANNOTATIONS_DIR,
     RALLY_PRE_ANNOTATIONS_DIR,
+    SEG_ANNOTATIONS_DIR,
     find_cut,
+    load_vllm_env,
 )
-from yp_video.web.jobs import job_manager
 from yp_video.web.job_helpers import (
     batch_message,
     batch_progress,
+    fail_job_from_exc,
     finalize_batch_job,
     init_batch_items,
     update_batch_item,
 )
-from yp_video.web.r2_client import sync_to_r2, sync_directory_to_r2
+from yp_video.web.jobs import job_manager
+from yp_video.web.r2_client import sync_directory_to_r2, sync_to_r2
 from yp_video.web.vllm_manager import vllm_manager
-from yp_video.config import load_vllm_env
 
 router = APIRouter()
 
@@ -52,6 +53,15 @@ async def start_detection(req: DetectRequest):
     if vllm_manager.status != "running":
         raise HTTPException(400, "vLLM server is not running. Start it first.")
 
+    # Resolve every video before the job exists: a bad name must be a 404
+    # here, not an exception inside the background task.
+    video_paths: list[Path] = []
+    for name in req.videos:
+        resolved = find_cut(name)
+        if resolved is None:
+            raise HTTPException(404, f"Cut video not found: {name}")
+        video_paths.append(resolved)
+
     total = len(req.videos)
     job = job_manager.create_job("vlm_detect", {
         "videos": req.videos,
@@ -60,8 +70,16 @@ async def start_detection(req: DetectRequest):
     }, name=f"Rally Predict ({total} videos)")
 
     async def run_all():
-        from yp_video.core.vlm_segment import process_video, build_clip_specs
+        # An exception escaping the task would leave the job in "running"
+        # forever (and the GPU indicator lit) with nobody to notice.
+        try:
+            await process_all()
+        except Exception as exc:
+            await fail_job_from_exc(job.id, exc)
+
+    async def process_all():
         from yp_video.core.ffmpeg import get_video_duration
+        from yp_video.core.vlm_segment import process_video
         from yp_video.web.vllm_manager import vllm_manager
 
         await job_manager.update_job(
@@ -73,10 +91,7 @@ async def start_detection(req: DetectRequest):
             items = job.params["items"]
             failed = 0
 
-            for i, video_name in enumerate(req.videos):
-                resolved = find_cut(video_name)
-                if resolved is None:
-                    raise HTTPException(404, f"Cut video not found: {video_name}")
+            for i, (video_name, resolved) in enumerate(zip(req.videos, video_paths)):
                 video_path = str(resolved)
                 output_file = str(SEG_ANNOTATIONS_DIR / f"{Path(video_name).stem}.jsonl")
 

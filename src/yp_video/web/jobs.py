@@ -125,6 +125,12 @@ class JobManager:
         job = self.jobs.get(job_id)
         return list(job.logs) if job is not None else None
 
+    def append_log(self, job_id: str, line: str) -> None:
+        """Null-safe log append — the job may have been pruned meanwhile."""
+        job = self.jobs.get(job_id)
+        if job is not None:
+            job.logs.append(line)
+
     def get_job(self, job_id: str) -> Job | None:
         return self.jobs.get(job_id)
 
@@ -200,8 +206,10 @@ class JobManager:
             job._subscribers.remove(q)
 
     async def cancel_job(self, job_id: str) -> bool:
+        # PENDING is cancellable too: routers count pending jobs as active,
+        # so the UI must be able to cancel what it reports as running.
         job = self.jobs.get(job_id)
-        if not job or job.status != JobStatus.RUNNING:
+        if not job or job.status not in (JobStatus.PENDING, JobStatus.RUNNING):
             return False
         if job._task:
             job._task.cancel()
@@ -217,11 +225,17 @@ class JobManager:
         return True
 
     def attach_task(self, jobs: "list[Job] | Job", task: asyncio.Task) -> None:
-        """Attach a cancellable task to one or more jobs."""
+        """Attach a cancellable task to one or more jobs.
+
+        A job cancelled while still PENDING (before its task existed) must
+        not be resurrected: cancel the late-arriving task immediately.
+        """
         if isinstance(jobs, Job):
             jobs = [jobs]
         for job in jobs:
             job.set_task(task)
+            if job.status is JobStatus.CANCELLED:
+                task.cancel()
 
     @property
     def vllm_using_gpu(self) -> bool:
@@ -254,33 +268,6 @@ def threadsafe_update(
         )
 
     return update
-
-
-def make_progress_callback(
-    job_id: str,
-    loop: asyncio.AbstractEventLoop,
-    message_template: str = "Progress ({done}/{total})",
-    *,
-    manager: "JobManager | None" = None,
-) -> Callable[..., None]:
-    """Create a thread-safe ``(done, total[, msg]) -> None`` progress callback.
-
-    The optional third positional ``msg`` lets the caller override the
-    formatted template — useful when the natural progress unit is "videos
-    completed" (filling the template) but in between completions the caller
-    wants to surface "currently processing X" without bumping the count.
-    Pass a fractional ``done`` (e.g. 2.4 of 227) to render sub-item progress.
-    """
-    update = threadsafe_update(job_id, loop, manager=manager)
-
-    def callback(done: float, total: float, msg: str | None = None) -> None:
-        rendered = msg if msg is not None else message_template.format(
-            done=int(done) if done == int(done) else done,
-            total=int(total) if total == int(total) else total,
-        )
-        update(progress=done / total if total else 0, message=rendered)
-
-    return callback
 
 
 # Module-level instance

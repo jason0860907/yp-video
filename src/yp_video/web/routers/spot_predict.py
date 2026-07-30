@@ -19,6 +19,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from yp_video import rally_spot
+from yp_video.action import prelabel
 from yp_video.config import (
     RALLY_ANNOTATIONS_DIR,
     RALLY_PRE_ANNOTATIONS_DIR,
@@ -29,7 +30,6 @@ from yp_video.config import (
     find_cut,
     iter_all_cuts,
 )
-from yp_video.action import prelabel
 from yp_video.contracts.action import (
     ACTION_CONTRACT_VERSION,
     ACTION_CONTRACT_VERSION_ENV,
@@ -280,8 +280,8 @@ async def start(req: RallyPredictRequest) -> dict:
                     predictions_file = tmp_dir / video_path.stem / "predictions.json"
                     if not predictions_file.exists():
                         failed += 1
-                        job_manager.get_job(job.id).logs.append(
-                            f"[{video_path.stem}] no predictions written"
+                        job_manager.append_log(
+                            job.id, f"[{video_path.stem}] no predictions written"
                         )
                         await update_batch_item(
                             job.id, items, i, status="failed",
@@ -314,8 +314,8 @@ async def start(req: RallyPredictRequest) -> dict:
                     except Exception as exc:  # noqa: BLE001
                         failed += 1
                         log.exception("Rally conversion failed for %s", video_path.stem)
-                        job_manager.get_job(job.id).logs.append(
-                            f"[{video_path.stem}] {type(exc).__name__}: {exc}"
+                        job_manager.append_log(
+                            job.id, f"[{video_path.stem}] {type(exc).__name__}: {exc}"
                         )
                         await update_batch_item(
                             job.id, items, i, status="failed",

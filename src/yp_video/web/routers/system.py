@@ -7,13 +7,13 @@ from pydantic import BaseModel, Field
 
 from yp_video.actor.review import review_summary
 from yp_video.config import (
-    RALLY_ANNOTATIONS_DIR,
     ACTION_ANNOTATIONS_DIR,
     ACTION_PRE_ANNOTATIONS_DIR,
+    RALLY_ANNOTATIONS_DIR,
     RALLY_PRE_ANNOTATIONS_DIR,
+    RAW_VIDEOS_DIR,
     REID_ANNOTATIONS_DIR,
     SEG_ANNOTATIONS_DIR,
-    RAW_VIDEOS_DIR,
     count_files,
     cut_kind_of,
     iter_all_cuts,
@@ -93,7 +93,6 @@ def list_videos() -> list[dict]:
             # seg-annotations is written incrementally, so a partial/aborted
             # run would leave a file there and falsely look done.
             "has_detection": (RALLY_PRE_ANNOTATIONS_DIR / f"{stem}_annotations.jsonl").exists(),
-            "has_pre_annotation": (RALLY_PRE_ANNOTATIONS_DIR / f"{stem}_annotations.jsonl").exists(),
             "has_annotation": (RALLY_ANNOTATIONS_DIR / f"{stem}_annotations.jsonl").exists(),
         })
     return results

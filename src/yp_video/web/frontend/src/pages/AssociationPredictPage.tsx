@@ -52,7 +52,7 @@ export function AssociationPredictPage() {
     queryFn: () => apiFetch<AssociationVideo[]>(API.association.videos),
   });
   const statusQuery = useQuery({
-    queryKey: ['association-status'],
+    queryKey: ['actor-association-status'],
     queryFn: () => apiFetch<ReidAssociationStatus>(API.association.status),
   });
 
