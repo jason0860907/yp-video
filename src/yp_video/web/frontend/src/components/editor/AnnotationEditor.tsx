@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { API, apiFetch, apiPostBlob, errMsg } from '@/lib/api';
 import { cn } from '@/lib/cn';
-import { formatTime, parseTime } from '@/lib/format';
+import { formatTime, formatTimePrecise, parseTime } from '@/lib/format';
 import { copyText, downloadBlob } from '@/lib/download';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -11,6 +11,52 @@ import { toast } from '@/components/feedback/toast';
 import { useVideoRecovery } from '@/lib/useVideoRecovery';
 import { DownloadClipsModal } from './DownloadClipsModal';
 import { RallyTimeline } from './RallyTimeline';
+
+/** One keyboard key, rendered as a keycap so it reads apart from prose. */
+function Kbd({ children }: { children: ReactNode }) {
+  return (
+    <kbd className="inline-block min-w-[1.1rem] rounded border border-border bg-surface-200/60 px-1 py-px text-center font-mono text-[10px] not-italic text-text-secondary">
+      {children}
+    </kbd>
+  );
+}
+
+//: The boundary nudge steps offered per field, smallest useful to largest.
+const NUDGE_STEPS: { label: string; delta: number }[] = [
+  { label: '−1s', delta: -1 },
+  { label: '−0.1s', delta: -0.1 },
+  { label: '+0.1s', delta: 0.1 },
+  { label: '+1s', delta: 1 },
+];
+//: [minus key, plus key] per field, for the button tooltips.
+const NUDGE_KEYS = { start: ['a', 's'], end: ['d', 'f'] } as const;
+
+/** A time input that commits on blur/Enter (Escape reverts).
+ *
+ *  Editing holds a draft string: a controlled input that re-parses and
+ *  re-formats every keystroke eats partial values — "1:" becomes 01:00
+ *  before the seconds can be typed. The draft seeds from the precise form
+ *  so committing an untouched field cannot truncate fractional seconds. */
+function TimeField({ seconds, onCommit }: { seconds: number; onCommit: (value: number) => void }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  return (
+    <input
+      value={draft ?? formatTimePrecise(seconds)}
+      onFocus={() => setDraft(formatTimePrecise(seconds))}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => {
+        if (draft !== null && draft.trim() !== '') onCommit(parseTime(draft));
+        setDraft(null);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') e.currentTarget.blur();
+        else if (e.key === 'Escape') setDraft(null);
+      }}
+      title="mm:ss(.mmm) or bare seconds — Enter/blur applies, Escape reverts"
+      className="w-[4.2rem] border-0 border-b border-ink/10 bg-transparent text-center font-heading text-[11px] tabular-nums text-text-primary focus:border-primary-light focus:outline-none focus:ring-0"
+    />
+  );
+}
 
 export interface EditorAnnotation {
   rally_id: number | null;
@@ -34,6 +80,10 @@ interface AnnotationEditorProps {
   videoStreamPath: (videoPath: string) => string;
   rowExtras?: (a: EditorAnnotation) => ReactNode;
   previewBackoff?: number;
+  /** Runs after an EXPLICIT save only. Autosave fires every couple of
+   *  seconds while editing, and this hook is where the page pushes the whole
+   *  match to the app — per keystroke that hammered a slow tunnel with full
+   *  publishes (and surfaced as Cloudflare 524s mid-labeling). */
   onSaved?: (videoName: string) => Promise<void> | void;
 }
 
@@ -187,6 +237,34 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
     if (play) void el.play();
   };
 
+  // Nudge the selected rally's boundary and park the video on it, paused —
+  // the frame on screen IS the boundary being placed.
+  const nudge = useCallback((field: 'start' | 'end', delta: number) => {
+    setSelectedIdx((idx) => {
+      if (idx < 0) {
+        toast.warning('Select a rally first');
+        return idx;
+      }
+      setAnnotations((prev) => {
+        const a = prev[idx];
+        if (!a) return prev;
+        const value = Math.max(0, Math.round((a[field] + delta) * 1000) / 1000);
+        if (field === 'start' ? value >= a.end : value <= a.start) {
+          toast.warning('Start must stay before end');
+          return prev;
+        }
+        const el = videoRef.current;
+        if (el) {
+          el.pause();
+          el.currentTime = value;
+        }
+        setDirty(true);
+        return prev.map((row, i) => (i === idx ? { ...row, [field]: value } : row));
+      });
+      return idx;
+    });
+  }, []);
+
   // ── Keyboard ──
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -228,11 +306,33 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
             return idx;
           });
           break;
+        // Boundary nudges for the selected rally, on the left home row:
+        // a/s move start, d/f move end — 0.1 s steps, Shift makes them 1 s.
+        case 'a':
+        case 'A':
+          e.preventDefault();
+          nudge('start', e.shiftKey ? -1 : -0.1);
+          break;
+        case 's':
+        case 'S':
+          e.preventDefault();
+          nudge('start', e.shiftKey ? 1 : 0.1);
+          break;
+        case 'd':
+        case 'D':
+          e.preventDefault();
+          nudge('end', e.shiftKey ? -1 : -0.1);
+          break;
+        case 'f':
+        case 'F':
+          e.preventDefault();
+          nudge('end', e.shiftKey ? 1 : 0.1);
+          break;
       }
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [addAnnotation, doMarkStart]);
+  }, [addAnnotation, doMarkStart, nudge]);
 
   const onTimeUpdate = () => {
     const el = videoRef.current;
@@ -248,6 +348,14 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
     }
   };
 
+  // Mirror of the annotations state, for the freshness check in save():
+  // every edit creates a new array, so object identity says whether the
+  // response still describes what is on screen.
+  const latestAnnotations = useRef(annotations);
+  useEffect(() => {
+    latestAnnotations.current = annotations;
+  }, [annotations]);
+
   const save = useCallback(
     async ({ silent = false }: { silent?: boolean } = {}) => {
       if (!videoName) {
@@ -255,12 +363,34 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
         return;
       }
       setSaving(true);
+      const sent = annotations;
       try {
-        await apiFetch(saveEndpoint, { method: 'POST', body: { video: videoName, duration, annotations } });
-        setDirty(false);
-        clearDraft(saveEndpoint, videoName); // server now holds the truth; drop the local backup
-        if (!silent) toast.success('Annotations saved!');
-        if (onSaved) await onSaved(videoName);
+        // Only the contract's fields: rows loaded from a pre-annotation carry
+        // extras (`score` — model confidence), and the server forbids unknown
+        // fields. A human save is a verdict; the model's confidence in its
+        // own guess is not part of it.
+        const body = {
+          video: videoName,
+          duration,
+          annotations: sent.map(({ rally_id, start, end, label }) => ({ rally_id, start, end, label })),
+        };
+        const saved = await apiFetch<{ saved: string; count: number; annotations: EditorAnnotation[] }>(
+          saveEndpoint,
+          { method: 'POST', body },
+        );
+        // Adopt the rows as written — the server assigns ids to new rallies,
+        // and without adopting them every autosave would mint fresh ones.
+        // Only if nothing changed while the request was in flight; otherwise
+        // the newer edit stays and the next save reconciles.
+        if (latestAnnotations.current === sent) {
+          setAnnotations(saved.annotations);
+          setDirty(false);
+          clearDraft(saveEndpoint, videoName); // server now holds the truth; drop the local backup
+        }
+        if (!silent) {
+          toast.success('Annotations saved!');
+          if (onSaved) await onSaved(videoName);
+        }
       } catch (e) {
         // Keep dirty=true and the draft intact so the work survives — autosave
         // will retry on the next edit, and the draft survives a reload.
@@ -320,8 +450,8 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
     }
   };
 
-  const updateField = (idx: number, field: 'start' | 'end', value: string) => {
-    setAnnotations((prev) => prev.map((a, i) => (i === idx ? { ...a, [field]: parseTime(value) } : a)));
+  const updateField = (idx: number, field: 'start' | 'end', value: number) => {
+    setAnnotations((prev) => prev.map((a, i) => (i === idx ? { ...a, [field]: value } : a)));
     setDirty(true);
   };
 
@@ -329,6 +459,8 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
 
   // Playhead-relative highlight: the row currently under the playhead.
   const playingIdx = annotations.findIndex((a) => currentTime >= a.start && currentTime < a.end);
+
+  const selectedAnnotation = selectedIdx >= 0 ? annotations[selectedIdx] : undefined;
 
   return (
     <div className="flex flex-col gap-5 lg:flex-row lg:items-start">
@@ -378,6 +510,66 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
                 End ]
               </Button>
             </div>
+          </div>
+          {/* Boundary nudges for the selected rally, next to the frame they
+              move — selecting a row in the list arms this bar. */}
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-border bg-surface-100 px-3 py-2">
+            {selectedAnnotation ? (
+              <>
+                <span className="w-6 text-center font-heading text-[11px] text-primary-light">
+                  R{selectedAnnotation.rally_id ?? '·'}
+                </span>
+                {(['start', 'end'] as const).map((field) => (
+                  <div key={field} className="flex items-center gap-1">
+                    <span className="text-[10px] uppercase tracking-wider text-text-muted">{field}</span>
+                    {NUDGE_STEPS.map(({ label, delta }) => (
+                      <button
+                        key={label}
+                        type="button"
+                        onClick={() => nudge(field, delta)}
+                        title={`${field} ${label} — key: ${Math.abs(delta) === 1 ? 'Shift+' : ''}${NUDGE_KEYS[field][delta > 0 ? 1 : 0]}`}
+                        className="rounded border border-border bg-surface-50 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-text-secondary transition-colors hover:border-primary/40 hover:text-text-primary"
+                      >
+                        {label}
+                      </button>
+                    ))}
+                    <span className="font-heading text-[10px] tabular-nums text-text-muted/70">
+                      {formatTimePrecise(selectedAnnotation[field])}
+                    </span>
+                  </div>
+                ))}
+                <span className="ml-auto flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-text-muted/80">
+                  <span>
+                    <Kbd>a</Kbd> <Kbd>s</Kbd> start −/＋0.1s
+                  </span>
+                  <span>
+                    <Kbd>d</Kbd> <Kbd>f</Kbd> end −/＋0.1s
+                  </span>
+                  <span>
+                    hold <Kbd>Shift</Kbd> for 1s steps
+                  </span>
+                </span>
+              </>
+            ) : (
+              <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-text-muted">
+                <span>
+                  <Kbd>Space</Kbd> play/pause
+                </span>
+                <span>
+                  <Kbd>←</Kbd> <Kbd>→</Kbd> seek ±5s
+                </span>
+                <span>
+                  <Kbd>[</Kbd> mark start
+                </span>
+                <span>
+                  <Kbd>]</Kbd> add rally
+                </span>
+                <span>
+                  <Kbd>Del</Kbd> delete selected
+                </span>
+                <span className="text-text-muted/60">— select a rally to nudge: <Kbd>a</Kbd><Kbd>s</Kbd> start, <Kbd>d</Kbd><Kbd>f</Kbd> end</span>
+              </span>
+            )}
           </div>
           {markStart != null && (
             <div className="mt-3 flex items-center gap-2.5 rounded-xl border border-primary/20 bg-primary/10 p-3">
@@ -435,7 +627,12 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
                       playing && 'ring-1 ring-accent/50',
                     )}
                   >
-                    <span className="w-4 select-none text-right font-heading text-[10px] text-text-muted/60">{i + 1}</span>
+                    <span
+                      className="w-4 select-none text-right font-heading text-[10px] text-text-muted/60"
+                      title={a.rally_id === null ? 'New rally — gets its id on save' : `rally_id ${a.rally_id}`}
+                    >
+                      {a.rally_id ?? '·'}
+                    </span>
                     <button
                       type="button"
                       onClick={(e) => {
@@ -451,17 +648,9 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
                       rally
                     </button>
                     <div className="ml-auto flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-                      <input
-                        value={formatTime(a.start)}
-                        onChange={(e) => updateField(i, 'start', e.target.value)}
-                        className="w-11 border-0 border-b border-ink/10 bg-transparent text-center font-heading text-[11px] tabular-nums text-text-primary focus:border-primary-light focus:outline-none focus:ring-0"
-                      />
+                      <TimeField seconds={a.start} onCommit={(value) => updateField(i, 'start', value)} />
                       <span className="text-[10px] text-text-muted/40">→</span>
-                      <input
-                        value={formatTime(a.end)}
-                        onChange={(e) => updateField(i, 'end', e.target.value)}
-                        className="w-11 border-0 border-b border-ink/10 bg-transparent text-center font-heading text-[11px] tabular-nums text-text-primary focus:border-primary-light focus:outline-none focus:ring-0"
-                      />
+                      <TimeField seconds={a.end} onCommit={(value) => updateField(i, 'end', value)} />
                     </div>
                     <span className="rounded bg-surface-200/40 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-text-muted">{(a.end - a.start).toFixed(1)}s</span>
                     {rowExtras?.(a)}
