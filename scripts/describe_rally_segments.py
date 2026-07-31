@@ -29,9 +29,14 @@ from pathlib import Path
 
 import requests
 
-from yp_video.config import ANNOTATIONS_DIR, VIDEOS_DIR, find_cut, load_tokens_env, load_vllm_env
+from yp_video.config import (
+    ANNOTATIONS_DIR,
+    VIDEOS_DIR,
+    find_cut,
+    load_tokens_env,
+    load_vllm_env,
+)
 from yp_video.core.ffmpeg import FFmpegError, extract_clip
-
 
 DESCRIPTIONS_DIR = VIDEOS_DIR / "rally-descriptions"
 

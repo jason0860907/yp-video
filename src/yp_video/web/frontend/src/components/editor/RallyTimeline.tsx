@@ -105,7 +105,7 @@ export function RallyTimeline({ videoRef, annotations, duration, markStart, onSe
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.font = `${11 * dpr}px 'IBM Plex Mono', ui-monospace, monospace`;
-      annRef.current.forEach((a, i) => {
+      annRef.current.forEach((a) => {
         const x1 = a.start * pps * dpr;
         const x2 = a.end * pps * dpr;
         const grad = ctx.createLinearGradient(x1, 0, x1, h);
@@ -117,7 +117,7 @@ export function RallyTimeline({ videoRef, annotations, duration, markStart, onSe
         ctx.fill();
         if (x2 - x1 > 16 * dpr) {
           ctx.fillStyle = brand.fg;
-          ctx.fillText(`R${i + 1}`, (x1 + x2) / 2, h / 2);
+          ctx.fillText(`R${a.rally_id ?? '?'}`, (x1 + x2) / 2, h / 2);
         }
       });
 

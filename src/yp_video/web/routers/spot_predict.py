@@ -36,6 +36,7 @@ from yp_video.contracts.action import (
 )
 from yp_video.core.ffmpeg import probe_video_metadata
 from yp_video.core.jsonl import write_jsonl
+from yp_video.core.rallies import number_rallies
 from yp_video.web.job_helpers import (
     ProgressParser,
     batch_items_params,
@@ -124,18 +125,21 @@ def _save_rally_pre_annotation(
     predictions = prelabel.load_predictions(predictions_file)
     events = (predictions[0].get("events") or []) if predictions else []
     metadata = probe_video_metadata(video_path)
-    segments = rally_spot.events_to_rally_segments(
-        events,
-        native_fps=float(metadata["fps"]),
-        min_score=req.min_score,
-        max_gap_s=req.max_gap_s,
-        min_duration_s=req.min_duration_s,
+    segments, max_rally_id = number_rallies(
+        rally_spot.events_to_rally_segments(
+            events,
+            native_fps=float(metadata["fps"]),
+            min_score=req.min_score,
+            max_gap_s=req.max_gap_s,
+            min_duration_s=req.min_duration_s,
+        )
     )
     write_jsonl(
         _pre_annotation_path(video_path.stem),
         {
             "video": str(video_path),
             "duration": float(metadata["duration"]),
+            "max_rally_id": max_rally_id,
             "source": {
                 "type": "rally-spot",
                 "checkpoint": prelabel.checkpoint_ref(checkpoint),

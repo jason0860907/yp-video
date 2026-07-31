@@ -19,6 +19,7 @@ Priority is reviewed truth, then the trained model, then the bootstrap:
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import NamedTuple
 
@@ -27,7 +28,7 @@ from yp_video.config import (
     RALLY_PRE_ANNOTATIONS_DIR,
     RALLY_SPOT_PRE_ANNOTATIONS_DIR,
 )
-from yp_video.core.annotation_ids import rally_id, stable_id
+from yp_video.core.annotation_ids import stable_id
 from yp_video.core.jsonl import read_jsonl_cached
 
 
@@ -66,13 +67,56 @@ def rally_sources(stem: str) -> list[str]:
     return [s.tag for s in RALLY_SOURCES if (s.directory / name).exists()]
 
 
+def resolve_rally_ids(records: Sequence[Mapping]) -> list[int]:
+    """The stored rally ids, verified — the file is the ledger.
+
+    Every record must carry a distinct positive integer ``rally_id``. Ids are
+    assigned once, at write time (the rally editor's save and the two
+    pre-annotation producers), and never recomputed from position: tracklet
+    keys and human labels reference these numbers, so a reader that invented
+    ids from sort order would silently re-point them all.
+    """
+    ids: list[int] = []
+    for record in records:
+        raw = record.get("rally_id")
+        if not isinstance(raw, int) or isinstance(raw, bool) or raw < 1:
+            raise ValueError(
+                f"Rally record without a valid rally_id: {raw!r} — "
+                "run scripts/freeze_rally_ids.py on files from before ids were stored"
+            )
+        ids.append(raw)
+    if len(set(ids)) != len(ids):
+        seen: set[int] = set()
+        duplicates = sorted({i for i in ids if i in seen or seen.add(i)})
+        raise ValueError(f"Duplicate rally_id(s): {duplicates}")
+    return ids
+
+
+def number_rallies(segments: Sequence[Mapping]) -> tuple[list[dict], int]:
+    """Fresh ids for a model-produced pass: rows stamped 1..N, and N.
+
+    A pre-annotation is regenerated wholesale on every model run, so its ids
+    are born here rather than carried over — re-running the model IS
+    re-deciding the rallies, and the fingerprint mechanism reports the change
+    to anything tracked against the old pass. A human save then freezes
+    whatever the editor loaded (see web/routers/annotate.py).
+    """
+    rows = [
+        {**segment, "rally_id": index}
+        for index, segment in enumerate(
+            sorted(segments, key=lambda s: (s.get("start", 0), s.get("end", 0))),
+            start=1,
+        )
+    ]
+    return rows, len(rows)
+
+
 def load_rallies(stem: str) -> list[dict]:
     """The video's rally spans as ``{rally_id, start, end, label}``, in seconds.
 
-    ``rally_id`` is positional (see core/annotation_ids.rally_id), so the
-    ordering here — by (start, end, label) — is what makes the ids stable
-    between readers. Every consumer must come through this function for that
-    to hold.
+    Sorted by (start, end, label) for the readers' benefit; ``rally_id`` comes
+    from the FILE (see resolve_rally_ids), never from that ordering. Every
+    consumer must come through this function.
     """
     path = rally_annotation_path(stem)
     if path is None:
@@ -83,21 +127,21 @@ def load_rallies(stem: str) -> list[dict]:
             float(r.get("start", r.get("start_time", 0)) or 0),
             float(r.get("end", r.get("end_time", 0)) or 0),
             str(r.get("label", "rally")),
-            r,
+            rid,
         )
-        for r in records
+        for r, rid in zip(records, resolve_rally_ids(records))
     ]
-    # Key explicitly: a plain sort would fall through to comparing the raw
-    # record dicts whenever two spans share (start, end, label).
+    # Key explicitly: a plain sort would fall through to comparing ids
+    # whenever two spans share (start, end, label) — harmless, but implicit.
     parsed.sort(key=lambda item: item[:3])
     return [
         {
-            "rally_id": rally_id(stem, record, index),
+            "rally_id": rid,
             "start": start,
             "end": end,
             "label": label,
         }
-        for index, (start, end, label, record) in enumerate(parsed)
+        for start, end, label, rid in parsed
     ]
 
 

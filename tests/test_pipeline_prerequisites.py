@@ -27,8 +27,11 @@ def _write_rallies(directory: Path, stem: str, spans: list[tuple[float, float]])
     path = directory / core_rallies.annotation_name(stem)
     write_jsonl(
         path,
-        {"video": stem},
-        [{"start": s, "end": e, "label": "rally"} for s, e in spans],
+        {"video": stem, "max_rally_id": len(spans)},
+        [
+            {"start": s, "end": e, "label": "rally", "rally_id": i}
+            for i, (s, e) in enumerate(spans, start=1)
+        ],
     )
     return path
 
@@ -70,8 +73,8 @@ class RallySourceTests(unittest.TestCase):
                     ["annotation", "spot-pre-annotation", "pre-annotation"],
                 )
 
-    def test_rally_ids_are_positional_over_sorted_spans(self) -> None:
-        """Ids come from order, so the order has to be defined in one place."""
+    def test_stored_ids_survive_the_start_sort(self) -> None:
+        """The file is the ledger: order is presentation, ids are identity."""
         with tempfile.TemporaryDirectory() as raw_dir:
             root = Path(raw_dir)
             with _sources(root) as dirs:
@@ -80,8 +83,10 @@ class RallySourceTests(unittest.TestCase):
                 )
                 spans = core_rallies.load_rallies("m")
 
-            self.assertEqual([r["rally_id"] for r in spans], [1, 2, 3])
             self.assertEqual([r["start"] for r in spans], [10.0, 30.0, 50.0])
+            # The fixture numbered them in WRITE order, so the sorted view
+            # keeps those numbers rather than renumbering by position.
+            self.assertEqual([r["rally_id"] for r in spans], [2, 1, 3])
 
     def test_identical_spans_do_not_crash_the_sort(self) -> None:
         """A plain sort would fall through to comparing the record dicts."""

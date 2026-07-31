@@ -237,7 +237,7 @@ export function ActionTimeline({
         <div className="relative cursor-pointer select-none" style={{ width: cssWidth }} onPointerDown={seek}>
           {/* Rally lane */}
           <div className="relative h-8 border-b border-border">
-            {rallies.map((rally, i) => {
+            {rallies.map((rally) => {
               const left = xOf(rally.start);
               const width = Math.max(2, xOf(rally.end) - left);
               const active = rally.rally_id === selectedRallyId;
@@ -246,9 +246,9 @@ export function ActionTimeline({
                   key={rally.rally_id}
                   className={cn('absolute inset-y-1 flex items-center justify-center overflow-hidden rounded-sm border-x text-[10px] font-mono', active ? 'bg-primary/[0.22] text-primary-text' : 'bg-primary/[0.09] text-text-muted')}
                   style={{ left, width, borderColor: active ? 'rgb(var(--primary) / 0.55)' : 'rgb(var(--primary) / 0.2)' }}
-                  title={`R${i + 1} ${fmt(rally.start)}–${fmt(rally.end)}`}
+                  title={`R${rally.rally_id} ${fmt(rally.start)}–${fmt(rally.end)}`}
                 >
-                  {width > 16 && `R${i + 1}`}
+                  {width > 16 && `R${rally.rally_id}`}
                 </div>
               );
             })}

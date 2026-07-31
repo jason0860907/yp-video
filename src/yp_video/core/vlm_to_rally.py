@@ -20,6 +20,7 @@ from pathlib import Path
 
 from yp_video.config import RALLY_PRE_ANNOTATIONS_DIR, SEG_ANNOTATIONS_DIR
 from yp_video.core.jsonl import read_jsonl, write_jsonl
+from yp_video.core.rallies import number_rallies
 from yp_video.core.sampling import get_video_duration_cv2 as get_video_duration
 
 
@@ -153,11 +154,13 @@ def convert_vlm_to_rally(
     # Detect rallies using sliding window params from VLM metadata
     clip_duration = meta.get("clip_duration", 6.0)
     slide_interval = meta.get("slide_interval", 2.0)
-    rallies = detect_rallies(clips, clip_duration, slide_interval, min_duration, min_score)
+    rallies, max_rally_id = number_rallies(
+        detect_rallies(clips, clip_duration, slide_interval, min_duration, min_score)
+    )
 
     write_jsonl(
         output_path,
-        {"video": str(video_path), "duration": duration},
+        {"video": str(video_path), "duration": duration, "max_rally_id": max_rally_id},
         rallies,
     )
     return len(rallies)

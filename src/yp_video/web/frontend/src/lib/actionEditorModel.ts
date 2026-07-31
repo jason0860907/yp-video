@@ -78,12 +78,19 @@ export function normalizeActionEditor(
 ): ActionEditor {
   const fps = Number(data.fps) || 30;
   const rallies: ActionRally[] = (data.rallies ?? [])
-    .map((rally, index) => ({
-      rally_id: normalizeRallyId(rally.rally_id) ?? index + 1,
-      start: Number(rally.start) || 0,
-      end: Number(rally.end) || 0,
-      label: rally.label || 'rally',
-    }))
+    // The server contract (core/rallies.load_rallies) always supplies ids; a
+    // row without one is unjoinable, and inventing a positional id here could
+    // collide with a real one.
+    .flatMap((rally) => {
+      const id = normalizeRallyId(rally.rally_id);
+      if (id === null) return [];
+      return [{
+        rally_id: id,
+        start: Number(rally.start) || 0,
+        end: Number(rally.end) || 0,
+        label: rally.label || 'rally',
+      }];
+    })
     .sort(
       (left, right) =>
         left.start - right.start ||

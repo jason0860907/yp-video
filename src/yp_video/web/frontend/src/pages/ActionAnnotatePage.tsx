@@ -703,9 +703,9 @@ export function ActionAnnotatePage() {
             <div className="mb-2 flex items-center gap-2">
               <select value={selectedRallyId} onChange={(e) => selectRally(e.target.value === 'all' ? 'all' : Number(e.target.value))} className={cn(fieldCls, 'flex-1 text-xs')}>
                 <option value="all">All rallies ({ed.events.length})</option>
-                {ed.rallies.map((r, i) => (
+                {ed.rallies.map((r) => (
                   <option key={r.rally_id} value={r.rally_id}>
-                    R{i + 1} · {formatActionTime(r.start)}-{formatActionTime(r.end)} · {eventsByRally(r.rally_id).length}
+                    R{r.rally_id} · {formatActionTime(r.start)}-{formatActionTime(r.end)} · {eventsByRally(r.rally_id).length}
                   </option>
                 ))}
               </select>
@@ -725,7 +725,7 @@ export function ActionAnnotatePage() {
                 <EmptyState icon={<DotIcon />} title="No rally annotations" />
               ) : (
                 <>
-                  {ed.rallies.map((rally, i) => {
+                  {ed.rallies.map((rally) => {
                     const entries = eventsByRally(rally.rally_id);
                     const isOpen = expanded === String(rally.rally_id);
                     const sel = selectedRallyId === rally.rally_id;
@@ -741,7 +741,7 @@ export function ActionAnnotatePage() {
                             live && 'ring-1 ring-accent/50',
                           )}
                         >
-                          <span className="w-4 select-none text-right font-heading text-[10px] text-text-muted/60">{i + 1}</span>
+                          <span className="w-4 select-none text-right font-heading text-[10px] text-text-muted/60">{rally.rally_id}</span>
                           <button
                             type="button"
                             onClick={(e) => {
