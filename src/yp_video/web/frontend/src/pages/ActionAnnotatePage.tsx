@@ -703,9 +703,9 @@ export function ActionAnnotatePage() {
             <div className="mb-2 flex items-center gap-2">
               <select value={selectedRallyId} onChange={(e) => selectRally(e.target.value === 'all' ? 'all' : Number(e.target.value))} className={cn(fieldCls, 'flex-1 text-xs')}>
                 <option value="all">All rallies ({ed.events.length})</option>
-                {ed.rallies.map((r) => (
+                {ed.rallies.map((r, i) => (
                   <option key={r.rally_id} value={r.rally_id}>
-                    R{r.rally_id} · {formatActionTime(r.start)}-{formatActionTime(r.end)} · {eventsByRally(r.rally_id).length}
+                    R{i + 1} · {formatActionTime(r.start)}-{formatActionTime(r.end)} · {eventsByRally(r.rally_id).length} · #{r.rally_id}
                   </option>
                 ))}
               </select>
@@ -725,7 +725,7 @@ export function ActionAnnotatePage() {
                 <EmptyState icon={<DotIcon />} title="No rally annotations" />
               ) : (
                 <>
-                  {ed.rallies.map((rally) => {
+                  {ed.rallies.map((rally, ri) => {
                     const entries = eventsByRally(rally.rally_id);
                     const isOpen = expanded === String(rally.rally_id);
                     const sel = selectedRallyId === rally.rally_id;
@@ -741,7 +741,13 @@ export function ActionAnnotatePage() {
                             live && 'ring-1 ring-accent/50',
                           )}
                         >
-                          <span className="w-4 select-none text-right font-heading text-[10px] text-text-muted/60">{rally.rally_id}</span>
+                          <span className="w-4 select-none text-right font-heading text-[10px] text-text-muted/60">{ri + 1}</span>
+                          <span
+                            className="w-7 select-none font-mono text-[9px] text-text-muted/40"
+                            title={`rally_id ${rally.rally_id} — stable id, not the time order`}
+                          >
+                            #{rally.rally_id}
+                          </span>
                           <button
                             type="button"
                             onClick={(e) => {
@@ -767,6 +773,7 @@ export function ActionAnnotatePage() {
                     <div className="space-y-1.5">
                       <div onClick={() => setExpanded(OUTSIDE_RALLY_KEY)} className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-amber-500/20 bg-amber-500/[0.04] px-3 py-2.5 hover:bg-amber-500/[0.08]">
                         <span className="w-4 select-none text-right font-heading text-[10px] text-text-muted/60">out</span>
+                        <span className="w-7 select-none" />
                         <button
                           type="button"
                           onClick={(e) => {

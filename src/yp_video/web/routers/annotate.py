@@ -73,8 +73,8 @@ def _read_jsonl_as_dict(path: Path) -> dict:
         for record, rid in zip(records, ids)
     ]
     rows.sort(key=lambda r: (
-        float(r.get("start", r.get("start_time", 0)) or 0),
-        float(r.get("end", r.get("end_time", 0)) or 0),
+        float(r.get("start", 0) or 0),
+        float(r.get("end", 0) or 0),
         str(r.get("label", "rally")),
     ))
     meta["results"] = rows

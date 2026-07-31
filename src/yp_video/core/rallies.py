@@ -124,8 +124,8 @@ def load_rallies(stem: str) -> list[dict]:
     _meta, records = read_jsonl_cached(path)  # read-only; new dicts built below
     parsed = [
         (
-            float(r.get("start", r.get("start_time", 0)) or 0),
-            float(r.get("end", r.get("end_time", 0)) or 0),
+            float(r.get("start", 0) or 0),
+            float(r.get("end", 0) or 0),
             str(r.get("label", "rally")),
             rid,
         )

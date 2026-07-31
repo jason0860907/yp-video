@@ -627,11 +627,12 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
                       playing && 'ring-1 ring-accent/50',
                     )}
                   >
+                    <span className="w-4 select-none text-right font-heading text-[10px] text-text-muted/60">{i + 1}</span>
                     <span
-                      className="w-4 select-none text-right font-heading text-[10px] text-text-muted/60"
-                      title={a.rally_id === null ? 'New rally — gets its id on save' : `rally_id ${a.rally_id}`}
+                      className="w-7 select-none font-mono text-[9px] text-text-muted/40"
+                      title={a.rally_id === null ? 'New rally — gets its id on save' : `rally_id ${a.rally_id} — stable id, not the time order`}
                     >
-                      {a.rally_id ?? '·'}
+                      {a.rally_id === null ? 'new' : `#${a.rally_id}`}
                     </span>
                     <button
                       type="button"

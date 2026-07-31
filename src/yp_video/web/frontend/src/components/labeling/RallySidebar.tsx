@@ -264,7 +264,7 @@ export const RallySidebar = memo(function RallySidebar({
             <span className="text-xs font-medium text-text-primary">All rallies</span>
             <span className="ml-auto font-mono text-[10px] tabular-nums text-text-muted">{totalActions} action</span>
           </div>
-          {rallies.map((rally) => {
+          {rallies.map((rally, ri) => {
             const entries = byRally.get(rally.rally_id) ?? [];
             const isOpen = expanded === String(rally.rally_id);
             const active = rally.rally_id === activeRallyId;
@@ -280,7 +280,13 @@ export const RallySidebar = memo(function RallySidebar({
                     active && 'ring-1 ring-accent/50',
                   )}
                 >
-                  <span className="w-4 select-none text-right font-heading text-[10px] text-text-muted/60">{rally.rally_id}</span>
+                  <span className="w-4 select-none text-right font-heading text-[10px] text-text-muted/60">{ri + 1}</span>
+                  <span
+                    className="w-7 select-none font-mono text-[9px] text-text-muted/40"
+                    title={`rally_id ${rally.rally_id} — stable id, not the time order`}
+                  >
+                    #{rally.rally_id}
+                  </span>
                   <button
                     type="button"
                     onClick={(e) => {
@@ -328,6 +334,7 @@ export const RallySidebar = memo(function RallySidebar({
                 className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-amber-500/20 bg-amber-500/[0.04] px-3 py-2.5 hover:bg-amber-500/[0.08]"
               >
                 <span className="w-4 select-none text-right font-heading text-[10px] text-text-muted/60">out</span>
+                <span className="w-7 select-none" />
                 <button
                   type="button"
                   onClick={(e) => {
