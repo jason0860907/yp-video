@@ -43,7 +43,7 @@ export function AssociationLabelPage() {
   // Unlike ReID Label's Done — a human "I'm finished" flag that counts can't
   // derive — an actor review IS finished exactly when no event is left
   // unreviewed, so this one is computed rather than stored.
-  const [pickStatus, setPickStatus] = useState<'all' | 'unlabeled' | 'labeled' | 'done'>('all');
+  const [pickStatus, setPickStatus] = useState<'all' | 'unlabeled' | 'labeled' | 'done' | 'box_only'>('all');
   const [selectedRally, setSelectedRally] = useState<number | 'all'>('all');
   const playerRef = useRef<PlayerHandle>(null);
 
@@ -58,6 +58,7 @@ export function AssociationLabelPage() {
     if (pickStatus === 'unlabeled' && (v.reviewed > 0 || done)) return false;
     if (pickStatus === 'labeled' && (v.reviewed === 0 || done)) return false;
     if (pickStatus === 'done' && !done) return false;
+    if (pickStatus === 'box_only' && v.box_only === 0) return false;
     return true;
   });
 
@@ -192,6 +193,7 @@ export function AssociationLabelPage() {
               <option value="unlabeled">Unlabeled</option>
               <option value="labeled">In progress</option>
               <option value="done">Done</option>
+              <option value="box_only">Needs re-pick</option>
             </select>
           </Field>
           <Field label="Video">
@@ -214,6 +216,11 @@ export function AssociationLabelPage() {
                   ) : v.reviewed > 0 ? (
                     <Badge tone="warning">{v.unreviewed} left</Badge>
                   ) : null}
+                  {v.box_only > 0 && (
+                    <span title="Verdicts naming no tracklet — re-pick these players so tracklet training can use them">
+                      <Badge tone="warning">{v.box_only} box</Badge>
+                    </span>
+                  )}
                   <PipelineChips pipeline={v.pipeline} />
                 </>
               )}

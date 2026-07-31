@@ -20,12 +20,7 @@ from typing import Protocol, Sequence
 
 import numpy as np
 
-from yp_video.actor.model import FEATURE_SET_TRACK, AssociationModel
 from yp_video.actor.ranking import RULE_BASED, DecisionReason, rule_decision
-from yp_video.actor.track_features import (
-    candidates_near,
-    extract_track_features,
-)
 from yp_video.core.progress import ProgressFn
 from yp_video.person.detector import person_from_detection
 from yp_video.tracklets.geometry import TrackletIndex, TrackRef
@@ -200,83 +195,6 @@ class RulePolicy(ImmediatePolicy):
         )
 
 
-class TrackletPolicy(ImmediatePolicy):
-    """A learned ranker choosing among the tracklets alive near the event.
-
-    Answers with a tracklet, never a box: which pixels that tracklet means for
-    this event is a question the masks answer, and they are not this layer's.
-    """
-
-    needs_tracklets = True
-
-    def __init__(self, model: AssociationModel):
-        if model.feature_set != FEATURE_SET_TRACK:
-            raise ValueError(
-                f"{model.name!r} is a {model.feature_set!r} model; "
-                f"a tracklet policy needs {FEATURE_SET_TRACK!r}"
-            )
-        self._model = model
-
-    @property
-    def name(self) -> str:
-        return f"learned:{self._model.name}"
-
-    def decide(self, context: EventContext) -> ActorPick:
-        if not context.contact_usable or context.tracks is None:
-            return ActorPick()
-        assert context.contact is not None
-        x, y = context.contact
-        candidates = candidates_near(
-            context.tracks, context.frame, masks=context.masks
-        )
-        features = extract_track_features(
-            candidates,
-            x,
-            y,
-            context.frame,
-            detections=context.detections,
-            visible=context.visible,
-        )
-        # AssociationModel.decision() speaks PersonBox, which a tracklet is
-        # not; only the two probability blocks are shared, so the threshold
-        # pair is applied here against an INDEX instead.
-        probabilities, none_probability = self._model.probabilities(features)
-        top = int(np.argmax(probabilities)) if len(probabilities) else None
-        confidence = float(probabilities[top]) if top is not None else None
-        selected = (
-            top
-            if top is not None
-            and confidence is not None
-            and confidence >= self._model.threshold
-            and none_probability < self._model.none_threshold
-            else None
-        )
-        return ActorPick(
-            track=features.refs[selected] if selected is not None else None,
-            candidates=len(candidates),
-            diagnostic={
-                "version": self.name,
-                "decision": (
-                    DecisionReason.SELECTED.value
-                    if selected is not None
-                    else DecisionReason.NO_CANDIDATE.value
-                    if top is None
-                    else DecisionReason.AMBIGUOUS.value
-                ),
-                "candidate_count": len(candidates),
-                "confidence": (
-                    round(confidence, 4) if confidence is not None else None
-                ),
-                "none_probability": round(none_probability, 4),
-                "top": (
-                    {"track": features.refs[top].key}
-                    if top is not None
-                    else None
-                ),
-            },
-        )
-
-
 class SpotActorPolicy(ImmediatePolicy):
     """The yp-spot actor head's choice, read back per event.
 
@@ -358,18 +276,3 @@ class SpotPlan:
             video, self._checkpoint, on_progress=on_progress
         )
         return SpotActorPolicy(answers, name=self._checkpoint.parent.name)
-
-
-def build_policy(checkpoint: str | None) -> PolicyPlan:
-    """``None`` is the rule; anything else names a trained checkpoint.
-
-    A checkpoint from a retired feature contract raises here rather than
-    quietly falling back to the rule: the caller asked for a specific model,
-    and answering with a different one would be recorded as that model's
-    output.
-    """
-    from yp_video.actor import checkpoints
-
-    if checkpoint is None or checkpoint == RULE_BASED:
-        return RulePolicy()
-    return TrackletPolicy(checkpoints.load(checkpoint))

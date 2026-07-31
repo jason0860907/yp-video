@@ -103,6 +103,16 @@ class ActorLabel:
     def is_tracklet(self) -> bool:
         return self.track is not None
 
+    @property
+    def box_only(self) -> bool:
+        """A verdict naming a person but no tracklet.
+
+        Real supervision for extraction, unanswerable in tracklet terms: the
+        candidate exporter skips it and evaluation counts it unscorable, so
+        the one fix is re-picking the player where tracking now exists.
+        """
+        return self.verdict is not ActorVerdict.OCCLUDED and self.track is None
+
     def payload(self) -> dict:
         """The JSON form — defaults stay absent so the file reads clean."""
         out: dict = {"verdict": self.verdict.value}

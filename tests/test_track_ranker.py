@@ -1,10 +1,4 @@
-"""The tracklet feature contract, and how a checkpoint declares it.
-
-Validation is by feature NAME, so a checkpoint has to say which list those
-names came from. It is the only contract that exists today; that is exactly
-why the declaration matters — a retired one must fail to load rather than be
-silently validated against the survivor.
-"""
+"""The tracklet feature contract the track dataset is built on."""
 
 from __future__ import annotations
 
@@ -12,11 +6,6 @@ import unittest
 
 import numpy as np
 
-from yp_video.actor.model import (
-    FEATURE_SET_TRACK,
-    MODEL_SCHEMA_VERSION,
-    AssociationModel,
-)
 from yp_video.actor.track_features import (
     TRACK_CANDIDATE_FEATURE_NAMES,
     TRACK_CONTEXT_FEATURE_NAMES,
@@ -44,21 +33,6 @@ def _half_mask(*, fill: str, shape=(96, 48)) -> np.ndarray:
     else:
         mask[:, shape[1] // 2 :] = True
     return mask
-
-
-def _model(feature_set: str, n_candidate: int, n_context: int) -> AssociationModel:
-    return AssociationModel(
-        name="m",
-        candidate_mean=np.zeros(n_candidate),
-        candidate_scale=np.ones(n_candidate),
-        context_mean=np.zeros(n_context),
-        context_scale=np.ones(n_context),
-        candidate_weights=np.zeros(n_candidate),
-        none_weights=np.zeros(n_context),
-        threshold=0.5,
-        none_threshold=0.5,
-        feature_set=feature_set,
-    )
 
 
 class CandidateSetTests(unittest.TestCase):
@@ -155,59 +129,6 @@ class FeatureTests(unittest.TestCase):
         self.assertNotIn("has_mask", TRACK_CANDIDATE_FEATURE_NAMES)
         names = TRACK_CANDIDATE_FEATURE_NAMES + TRACK_CONTEXT_FEATURE_NAMES
         self.assertFalse(any("wrist" in name for name in names))
-
-
-class ContractTests(unittest.TestCase):
-    def test_a_checkpoint_declares_which_contract_it_learned(self) -> None:
-        model = _model(
-            FEATURE_SET_TRACK,
-            len(TRACK_CANDIDATE_FEATURE_NAMES),
-            len(TRACK_CONTEXT_FEATURE_NAMES),
-        )
-        payload = model.payload()
-        self.assertEqual(payload["feature_set"], FEATURE_SET_TRACK)
-        self.assertEqual(payload["schema_version"], MODEL_SCHEMA_VERSION)
-        restored = AssociationModel.from_payload(payload)
-        self.assertEqual(restored.feature_set, FEATURE_SET_TRACK)
-
-    def test_columns_are_validated_against_the_declared_contract(self) -> None:
-        """The declaration is not decoration: weights applied to the wrong
-        columns produce confident nonsense rather than an error."""
-        payload = _model(
-            FEATURE_SET_TRACK,
-            len(TRACK_CANDIDATE_FEATURE_NAMES),
-            len(TRACK_CONTEXT_FEATURE_NAMES),
-        ).payload()
-        payload["feature_contract"]["candidate"] = ["some", "other", "columns"]
-        with self.assertRaisesRegex(ValueError, "contract mismatch"):
-            AssociationModel.from_payload(payload)
-
-    def test_a_retired_contract_name_is_rejected_not_reinterpreted(self) -> None:
-        """A checkpoint naming a contract that no longer exists must say so.
-        Retirement is real here: box-v3 checkpoints sit on disk from before the
-        box ranker was removed, and each must fail to LOAD rather than be
-        validated against the tracklet names it has never seen."""
-        for retired in ("track-v2", "box-v3"):
-            payload = _model(
-                FEATURE_SET_TRACK,
-                len(TRACK_CANDIDATE_FEATURE_NAMES),
-                len(TRACK_CONTEXT_FEATURE_NAMES),
-            ).payload()
-            payload["feature_set"] = retired
-            with self.assertRaisesRegex(
-                ValueError, "Unknown association feature set"
-            ):
-                AssociationModel.from_payload(payload)
-
-    def test_an_old_checkpoint_fails_loudly(self) -> None:
-        payload = _model(
-            FEATURE_SET_TRACK,
-            len(TRACK_CANDIDATE_FEATURE_NAMES),
-            len(TRACK_CONTEXT_FEATURE_NAMES),
-        ).payload()
-        payload["schema_version"] = 3
-        with self.assertRaisesRegex(ValueError, "Unsupported"):
-            AssociationModel.from_payload(payload)
 
 
 if __name__ == "__main__":

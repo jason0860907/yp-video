@@ -393,6 +393,9 @@ export interface ReidRecord {
   resolution: 'unresolved' | 'auto' | 'manual' | 'occluded';
   /** The human verdict on this event's actor; drives association training. */
   actor_review?: 'unreviewed' | 'confirmed_auto' | 'manual' | 'occluded';
+  /** Present (true) only when the verdict names a person but no tracklet —
+   *  tracklet training skips such an event until the player is re-picked. */
+  actor_review_box_only?: boolean;
   /** What decided this actor, in that policy's own terms. `version` names
    *  which one — the rule, `learned:<checkpoint>`, or `spot:<run>` — and the
    *  optional fields are the ones only some policies can fill. */
@@ -593,6 +596,9 @@ export interface AssociationVideo {
   unreviewed: number;
   /** verdict -> count; keys are absent when the count is zero. */
   verdicts: Partial<Record<'manual' | 'occluded' | 'confirmed_auto', number>>;
+  /** Reviewed verdicts naming no tracklet — need re-picking before tracklet
+   *  training can use them. */
+  box_only: number;
   /** What the automatic policy produced, for context on the remainder. */
   auto_counts: { ok: number; multi: number; miss: number };
   pipeline: PipelineState;
@@ -639,25 +645,6 @@ export interface ReidAssociationDatasetSummary {
   skipped: Record<string, number>;
 }
 
-export interface ReidAssociationCheckpoint {
-  name: string;
-  /** Which feature contract it was trained on, such as track-v3. */
-  feature_set: string;
-  /** Why this checkpoint cannot be run, or null when it can. A retired
-   *  feature contract is the usual reason: the file stays on disk and stays
-   *  listed, with the reason, rather than vanishing from the page. */
-  unusable_because: string | null;
-  created_at: number;
-  threshold: number;
-  metrics: {
-    grouped_oof?: ReidAssociationMetrics;
-  };
-  training: {
-    examples: number;
-    stems: string[];
-  };
-}
-
 /** A visual association checkpoint accepted by Association Predict. */
 export interface AssociationCheckpoint {
   path: string;
@@ -690,7 +677,6 @@ export interface AssociationCheckpoint {
 }
 
 export interface ReidAssociationStatus {
-  checkpoints: ReidAssociationCheckpoint[];
   association_checkpoints: AssociationCheckpoint[];
   spot_available?: boolean;
   init_checkpoints?: SelectOption[];

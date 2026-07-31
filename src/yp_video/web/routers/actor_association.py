@@ -115,6 +115,7 @@ def list_videos() -> list[dict]:
                 "reviewed": progress.reviewed,
                 "unreviewed": progress.unreviewed,
                 "verdicts": progress.verdicts,
+                "box_only": progress.box_only,
                 # The automatic policy's own outcome, for context on how much
                 # of the remainder is likely to just need confirming. These
                 # are detector-run diagnostics; unlike progress above they
@@ -142,10 +143,6 @@ def status() -> dict:
     """
     association_checkpoints = spot_associate.list_association_checkpoints()
     return {
-        # Kept as an empty field until the hand-written frontend response type
-        # is retired. Association no longer trains or offers the linear
-        # tracklet ranker.
-        "checkpoints": [],
         # Visual models answer by looking at pixels and choosing among the
         # tracked candidates; this also includes supported legacy actor heads.
         "association_checkpoints": association_checkpoints,
@@ -907,6 +904,8 @@ def fix(
     record = current[0] if current else result.record
     label = command.label
     record["actor_review"] = label.verdict.value if label else "unreviewed"
+    if label is not None and label.box_only:
+        record["actor_review_box_only"] = True
     for detection in record.get("detections") or []:
         detection.pop("keypoints", None)
     track_link = None

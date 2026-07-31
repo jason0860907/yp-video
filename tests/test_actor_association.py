@@ -8,21 +8,14 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-import numpy as np
 from fastapi import HTTPException
 from pydantic import TypeAdapter
 
-from yp_video.actor import checkpoints as association_checkpoints
 from yp_video.actor import labels as actor_labels
 from yp_video.actor import review as actor_review
 from yp_video.actor.labels import ActorLabel, ActorVerdict
-from yp_video.actor.model import FEATURE_SET_TRACK, AssociationModel
 from yp_video.actor.ranking import DecisionReason, rule_decision
 from yp_video.actor.service import ActorAssociationService
-from yp_video.actor.track_features import (
-    TRACK_CANDIDATE_FEATURE_NAMES,
-    TRACK_CONTEXT_FEATURE_NAMES,
-)
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import write_jsonl
 from yp_video.extraction import actor_fix, done
@@ -913,103 +906,7 @@ class ConfirmEndpointTests(unittest.TestCase):
 
 
 class LearnedAssociationTests(unittest.TestCase):
-    """A trained checkpoint is a file, and stays one until it is named."""
-
-    def _track_model(self, name: str = "candidate") -> AssociationModel:
-        n_candidate = len(TRACK_CANDIDATE_FEATURE_NAMES)
-        n_context = len(TRACK_CONTEXT_FEATURE_NAMES)
-        return AssociationModel(
-            name=name,
-            candidate_mean=np.zeros(n_candidate),
-            candidate_scale=np.ones(n_candidate),
-            context_mean=np.zeros(n_context),
-            context_scale=np.ones(n_context),
-            candidate_weights=np.zeros(n_candidate),
-            none_weights=np.zeros(n_context),
-            threshold=0.5,
-            none_threshold=0.5,
-            feature_set=FEATURE_SET_TRACK,
-        )
-
-    @contextmanager
-    def _repository(self):
-        with tempfile.TemporaryDirectory() as raw_dir:
-            with (
-                patch.object(
-                    association_checkpoints,
-                    "CHECKPOINTS_DIR",
-                    Path(raw_dir) / "checkpoints",
-                ),
-                patch.object(
-                    association_checkpoints, "_model_cache", StatCache()
-                ),
-            ):
-                yield Path(raw_dir) / "checkpoints"
-
-    def test_a_saved_candidate_survives_a_round_trip(self) -> None:
-        model = self._track_model()
-        restored = AssociationModel.from_payload(model.payload())
-
-        self.assertEqual(restored.name, model.name)
-        self.assertEqual(restored.feature_set, FEATURE_SET_TRACK)
-        self.assertTrue(
-            np.allclose(restored.candidate_weights, model.candidate_weights)
-        )
-
-    def test_saving_a_candidate_activates_nothing(self) -> None:
-        """There is no "current model" setting to drift out of sync with what
-        produced a record. A model decides only where it is named, and its
-        name is written into the record it produced."""
-        model = self._track_model()
-        with self._repository():
-            association_checkpoints.save_candidate(
-                model,
-                {
-                    "name": model.name,
-                    "metrics": {},
-                    "training": {"examples": 1, "stems": []},
-                },
-            )
-            listed = association_checkpoints.list_candidates()
-
-            self.assertEqual([row["name"] for row in listed], [model.name])
-            self.assertIsNone(
-                association_checkpoints.usable_rejection(model.name)
-            )
-            self.assertFalse(
-                any(key.startswith("active") for key in listed[0])
-            )
-
-    def test_a_retired_contract_is_listed_with_its_reason(self) -> None:
-        """box-v3 checkpoints sit on disk from before the box ranker was
-        removed. Hiding them would be a worse answer than showing them with
-        the reason they cannot run — the page has to explain the file."""
-        model = self._track_model("legacy")
-        with self._repository() as root:
-            association_checkpoints.save_candidate(
-                model,
-                {
-                    "name": model.name,
-                    "metrics": {},
-                    "training": {"examples": 1, "stems": []},
-                },
-            )
-            payload = json.loads(
-                (root / "legacy" / "model.json").read_text(encoding="utf-8")
-            )
-            payload["feature_set"] = "box-v3"
-            (root / "legacy" / "model.json").write_text(
-                json.dumps(payload), encoding="utf-8"
-            )
-
-            self.assertEqual(
-                [row["name"] for row in association_checkpoints.list_candidates()],
-                ["legacy"],
-            )
-            reason = association_checkpoints.usable_rejection("legacy")
-
-        self.assertIsNotNone(reason)
-        self.assertIn("box-v3", reason or "")
+    """The learned path lives in yp-spot; extraction never activates it."""
 
     def test_extraction_associates_on_the_rule_alone(self) -> None:
         """Extraction associates from detection boxes, before tracking has

@@ -64,6 +64,9 @@ class ReviewProgress:
     reviewed: int
     unreviewed: int
     verdicts: dict[str, int]
+    #: Reviewed, but the verdict names no tracklet (ActorLabel.box_only) —
+    #: counted apart because these need re-picking before training sees them.
+    box_only: int = 0
 
     @property
     def started(self) -> bool:
@@ -131,16 +134,19 @@ def review_progress(stem: str, fps: float = 0) -> ReviewProgress:
     }
     labels = actor_labels.load(stem)
     verdicts: dict[str, int] = {}
+    box_only = 0
     for event_id, label in labels.items():
         if event_id not in current_ids:
             continue
         verdicts[label.verdict.value] = verdicts.get(label.verdict.value, 0) + 1
+        box_only += label.box_only
     reviewed_ids = current_ids & set(labels)
     return ReviewProgress(
         event_count=len(current_ids),
         reviewed=len(reviewed_ids),
         unreviewed=len(current_ids - reviewed_ids),
         verdicts=verdicts,
+        box_only=box_only,
     )
 
 

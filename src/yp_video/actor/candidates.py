@@ -148,7 +148,7 @@ def build(stem: str, events: Iterable[dict]) -> tuple[list[dict], dict[str, int]
         if label is None:
             tally["unlabelled"] += 1
             continue
-        if label.verdict is not ActorVerdict.OCCLUDED and label.track is None:
+        if label.box_only:
             # A verdict from before tracklet labelling existed: it picked a
             # detection box, so it names a person but not a tracklet. Skipped
             # rather than called `untracked`, because nothing about the frame

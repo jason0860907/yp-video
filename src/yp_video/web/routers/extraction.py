@@ -166,20 +166,19 @@ def records(name: str) -> dict:
         stem, sources, lambda: _slim_records(path, stem)
     )
     labels = actor_labels.load(stem)
-    return {
-        "meta": meta,
-        "records": [
-            {
-                **record,
-                "actor_review": (
-                    labels[record["id"]].verdict.value
-                    if record["id"] in labels
-                    else "unreviewed"
-                ),
-            }
-            for record in rows
-        ],
-    }
+    records = []
+    for record in rows:
+        label = labels.get(record["id"])
+        row = {
+            **record,
+            "actor_review": label.verdict.value if label else "unreviewed",
+        }
+        # Sparse on purpose: present only where the verdict names no tracklet,
+        # so the label pages can flag what needs re-picking.
+        if label is not None and label.box_only:
+            row["actor_review_box_only"] = True
+        records.append(row)
+    return {"meta": meta, "records": records}
 
 
 def _slim_records(path: Path, stem: str) -> list[dict]:

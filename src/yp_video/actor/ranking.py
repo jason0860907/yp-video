@@ -66,7 +66,7 @@ class AssociationDecision:
     """What the rule decided, in the shape the extraction records store.
 
     Rule-shaped by construction: it names a BOX. A learned policy answers with
-    a tracklet and writes its own diagnostic (see policy.TrackletPolicy);
+    a tracklet and writes its own diagnostic (see policy.SpotActorPolicy);
     letting one type carry both is what previously allowed a box-shaped answer
     to pass as an answer to the tracklet question.
     """

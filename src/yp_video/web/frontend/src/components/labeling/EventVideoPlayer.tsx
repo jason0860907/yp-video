@@ -302,6 +302,12 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
     () => new Map(records.map((r) => [r.id, verdictOf(r)])),
     [records],
   );
+  // Verdicts naming no tracklet — the sidebar flags them for re-picking,
+  // since tracklet training cannot use them as they stand.
+  const boxOnlyIds = useMemo<ReadonlySet<string>>(
+    () => new Set(records.filter((r) => r.actor_review_box_only).map((r) => r.id)),
+    [records],
+  );
   // Only the events the automatic policy declined WITH a reason land here, so
   // the map is small and the sidebar can look up by id without filtering.
   const hints = useMemo<ReadonlyMap<string, ActorHint>>(() => {
@@ -824,15 +830,22 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
                   {/* What this event already says, so the buttons below read
                       as a change of state rather than a guess. */}
                   <span
-                    title={VERDICT[verdictOf(pickTarget)].title}
+                    title={
+                      pickTarget.actor_review_box_only
+                        ? `${VERDICT[verdictOf(pickTarget)].title} — but it names no tracklet, so tracklet training skips this event. Re-pick the player to fix it.`
+                        : VERDICT[verdictOf(pickTarget)].title
+                    }
                     className={cn(
                       'flex-shrink-0 rounded-full px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider ring-1',
                       verdictOf(pickTarget) === 'unreviewed'
                         ? 'bg-surface-200/40 text-text-muted ring-border'
-                        : 'bg-primary/15 text-primary-light ring-primary/30',
+                        : pickTarget.actor_review_box_only
+                          ? 'bg-amber-400/10 text-amber-400/90 ring-amber-400/25'
+                          : 'bg-primary/15 text-primary-light ring-primary/30',
                     )}
                   >
                     {VERDICT[verdictOf(pickTarget)].glyph} {VERDICT[verdictOf(pickTarget)].label}
+                    {pickTarget.actor_review_box_only ? ' · box' : ''}
                   </span>
                   <span className="ml-auto flex items-center gap-3">
                     {detectionFallback && nearEvent && (
@@ -919,6 +932,7 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
           matches={matches}
           verdicts={verdicts}
           hints={hints}
+          boxOnlyIds={boxOnlyIds}
           activeRallyId={currentRallyId}
           activeActionIds={activeActionIds}
           expanded={expanded}

@@ -30,7 +30,6 @@ import os
 import shutil
 from collections import Counter
 from dataclasses import dataclass, replace
-from pathlib import Path
 
 from yp_video.actor import labels as actor_labels
 from yp_video.actor.labels import ActorLabel
