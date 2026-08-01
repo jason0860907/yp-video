@@ -20,6 +20,7 @@ import { Field, fieldCls } from '@/components/train/Field';
 import { cn } from '@/lib/cn';
 import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
+import { CopyFilenameButton } from '@/components/video/CopyFilenameButton';
 import { KindBadge } from '@/components/video/KindBadge';
 import { PipelineChips, STAGE_HINT } from '@/components/video/PipelineChips';
 import { VideoCombobox } from '@/components/video/VideoCombobox';
@@ -43,7 +44,7 @@ export function AssociationLabelPage() {
   // Unlike ReID Label's Done — a human "I'm finished" flag that counts can't
   // derive — an actor review IS finished exactly when no event is left
   // unreviewed, so this one is computed rather than stored.
-  const [pickStatus, setPickStatus] = useState<'all' | 'unlabeled' | 'labeled' | 'done' | 'box_only'>('all');
+  const [pickStatus, setPickStatus] = useState<'all' | 'unlabeled' | 'labeled' | 'done' | 'unresolved'>('all');
   const [selectedRally, setSelectedRally] = useState<number | 'all'>('all');
   const playerRef = useRef<PlayerHandle>(null);
 
@@ -58,7 +59,7 @@ export function AssociationLabelPage() {
     if (pickStatus === 'unlabeled' && (v.reviewed > 0 || done)) return false;
     if (pickStatus === 'labeled' && (v.reviewed === 0 || done)) return false;
     if (pickStatus === 'done' && !done) return false;
-    if (pickStatus === 'box_only' && v.box_only === 0) return false;
+    if (pickStatus === 'unresolved' && v.unresolved === 0) return false;
     return true;
   });
 
@@ -171,7 +172,7 @@ export function AssociationLabelPage() {
   return (
     <div className="mx-auto max-w-screen-2xl space-y-5">
       <Card>
-        <div className="grid grid-cols-1 items-end gap-3 lg:grid-cols-[8.5rem_8.5rem_minmax(18rem,1fr)]">
+        <div className="grid grid-cols-1 items-end gap-3 lg:grid-cols-[8.5rem_8.5rem_minmax(18rem,1fr)_auto]">
           <Field label="Kind">
             <select
               value={kindFilter}
@@ -193,7 +194,7 @@ export function AssociationLabelPage() {
               <option value="unlabeled">Unlabeled</option>
               <option value="labeled">In progress</option>
               <option value="done">Done</option>
-              <option value="box_only">Needs re-pick</option>
+              <option value="unresolved">Needs re-pick</option>
             </select>
           </Field>
           <Field label="Video">
@@ -216,9 +217,9 @@ export function AssociationLabelPage() {
                   ) : v.reviewed > 0 ? (
                     <Badge tone="warning">{v.unreviewed} left</Badge>
                   ) : null}
-                  {v.box_only > 0 && (
-                    <span title="Verdicts naming no tracklet — re-pick these players so tracklet training can use them">
-                      <Badge tone="warning">{v.box_only} box</Badge>
+                  {v.unresolved > 0 && (
+                    <span title="Verdicts resolving to no tracklet — re-pick these players so tracklet training can use them">
+                      <Badge tone="warning">{v.unresolved} re-pick</Badge>
                     </span>
                   )}
                   <PipelineChips pipeline={v.pipeline} />
@@ -226,6 +227,7 @@ export function AssociationLabelPage() {
               )}
             />
           </Field>
+          <CopyFilenameButton name={picked} />
         </div>
       </Card>
 

@@ -139,11 +139,10 @@ def build_track_dataset(stems: Sequence[str] | None = None) -> TrackDataset:
                         # the same step turns the rule's box into a tracklet
                         # in production (links.py) and in scoring
                         # (evaluate.as_track), so dropping it here was the
-                        # anomaly. And it was not a small one — a confirmation
-                        # snapshots the RULE's box, so 91% of confirmed_auto
-                        # labels name no tracklet, and discarding them left a
-                        # training set that was almost entirely events the
-                        # rule got wrong.
+                        # anomaly. Confirm snapshots still store the rule's
+                        # box with no track key (labels.confirmations_for),
+                        # so this path is what keeps every future bulk
+                        # confirmation usable as a positive example.
                         named = video.tracks.at_box(
                             label.frame
                             if label.frame is not None

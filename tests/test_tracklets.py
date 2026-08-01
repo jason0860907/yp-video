@@ -19,6 +19,7 @@ from unittest.mock import patch
 import numpy as np
 
 from yp_video.actor.labels import ActorLabel, ActorVerdict
+from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import write_jsonl
 from yp_video.extraction import links
 from yp_video.tracklets.geometry import (
@@ -300,6 +301,73 @@ class EventTrackPrecedenceTests(unittest.TestCase):
         label = ActorLabel(ActorVerdict.MANUAL, track=TrackRef(9, 9), box=(104, 100, 148, 200))
         with self._video({"e1": label}):
             self.assertEqual(links._event_tracks("match")["e1"], TrackRef(1, 1))
+
+
+class UnresolvedLabelsTests(unittest.TestCase):
+    """The re-pick worklist: a labeled event resolvable to no tracklet.
+
+    Membership is about what resolves TODAY, not what the label stored — a
+    confirm snapshot (box, no track key) that sits on a tracked player is
+    fine, and only a label the geometry can do nothing with is work.
+    """
+
+    ACTOR = _tracklet(1, 1, [100], [100, 100, 140, 200])
+    ON_TRACK = {
+        "id": "e1",
+        "frame": 100,
+        "box": [90, 90, 160, 210],
+        "actor_box": [100, 100, 140, 200],
+    }
+    ON_NOBODY = {
+        "id": "e1",
+        "frame": 100,
+        "box": [400, 90, 470, 210],
+        "actor_box": [410, 100, 450, 200],
+    }
+
+    @contextmanager
+    def _video(self, labels, record, tracked=True):
+        with tempfile.TemporaryDirectory() as raw_dir:
+            root = Path(raw_dir)
+            tracks, records = root / "t.jsonl", root / "r.jsonl"
+            if tracked:
+                write_jsonl(tracks, {"stride": 1}, [self.ACTOR])
+            write_jsonl(records, {"video": "match"}, [record])
+            with (
+                patch.object(links, "tracks_path", return_value=tracks),
+                patch.object(links, "records_path", return_value=records),
+                patch.object(
+                    links,
+                    "tracklet_index",
+                    return_value=TrackletIndex([self.ACTOR]),
+                ),
+                patch.object(links.actor_labels, "load", return_value=labels),
+                patch.object(links, "_links_cache", StatCache()),
+            ):
+                yield
+
+    def test_a_confirm_snapshot_that_resolves_is_not_work(self) -> None:
+        label = ActorLabel(
+            ActorVerdict.CONFIRMED_AUTO, box=(100, 100, 140, 200)
+        )
+        with self._video({"e1": label}, self.ON_TRACK):
+            self.assertEqual(links.unresolved_labels("match"), set())
+
+    def test_a_label_resolving_to_nothing_is_the_worklist(self) -> None:
+        label = ActorLabel(ActorVerdict.MANUAL, box=(410, 100, 450, 200))
+        with self._video({"e1": label}, self.ON_NOBODY):
+            self.assertEqual(links.unresolved_labels("match"), {"e1"})
+
+    def test_occluded_is_a_full_answer_not_work(self) -> None:
+        with self._video({"e1": ActorLabel(ActorVerdict.OCCLUDED)}, self.ON_NOBODY):
+            self.assertEqual(links.unresolved_labels("match"), set())
+
+    def test_an_untracked_video_has_no_re_pick_work(self) -> None:
+        """Nothing resolves before tracking exists. The remedy is running
+        tracking, not re-picking players — that gap is the pipeline's."""
+        label = ActorLabel(ActorVerdict.MANUAL, box=(410, 100, 450, 200))
+        with self._video({"e1": label}, self.ON_NOBODY, tracked=False):
+            self.assertEqual(links.unresolved_labels("match"), set())
 
 
 if __name__ == "__main__":

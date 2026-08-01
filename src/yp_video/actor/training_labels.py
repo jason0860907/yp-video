@@ -58,7 +58,7 @@ def prepare_action_training_labels(
     events = 0
     total_frames = 0
     span_frames = 0
-    actor_targets = {"track": 0, "occluded": 0, "untracked": 0, "legacy_box": 0}
+    actor_targets = {"track": 0, "occluded": 0, "untracked": 0, "unresolved_box": 0}
     adjusted: list[dict] = []
     for path, video_path in items:
         try:

@@ -31,7 +31,7 @@ from yp_video.actor import labels as actor_labels
 from yp_video.config import cut_kind_of, find_cut, iter_all_cuts
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import read_jsonl, read_jsonl_cached
-from yp_video.extraction import pipeline
+from yp_video.extraction import links, pipeline
 from yp_video.extraction import store as extraction_store
 from yp_video.extraction.prerequisites import prerequisites
 from yp_video.person.detector import DETECTOR_NAME
@@ -166,6 +166,7 @@ def records(name: str) -> dict:
         stem, sources, lambda: _slim_records(path, stem)
     )
     labels = actor_labels.load(stem)
+    unresolved = links.unresolved_labels(stem)
     records = []
     for record in rows:
         label = labels.get(record["id"])
@@ -173,10 +174,10 @@ def records(name: str) -> dict:
             **record,
             "actor_review": label.verdict.value if label else "unreviewed",
         }
-        # Sparse on purpose: present only where the verdict names no tracklet,
-        # so the label pages can flag what needs re-picking.
-        if label is not None and label.box_only:
-            row["actor_review_box_only"] = True
+        # Sparse on purpose: present only where the verdict resolves to no
+        # tracklet today, so the label pages can flag what needs re-picking.
+        if record["id"] in unresolved:
+            row["actor_review_unresolved"] = True
         records.append(row)
     return {"meta": meta, "records": records}
 

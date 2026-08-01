@@ -37,8 +37,10 @@ class _PolicyScore:
             count["occluded_rejected"] += int(not decided)
             return
         if event.truth is None:
-            # A verdict naming no tracklet — the legacy box labels. They are
-            # not answerable in these terms and must not dilute the rate.
+            # A verdict naming no tracklet directly — a legacy box pick or a
+            # confirm snapshot. Scoring these would need the same geometric
+            # resolution training now applies (dataset.build_track_dataset);
+            # until truth resolves the same way, they must not dilute the rate.
             count["unscorable"] += 1
             return
         count["positive"] += 1

@@ -114,21 +114,26 @@ class ActorCandidateExportTests(unittest.TestCase):
         self.assertEqual(row["target_kind"], "untracked")
         self.assertNotIn("target", row)
 
-    def test_a_legacy_box_verdict_is_dropped_not_reinterpreted(self) -> None:
-        """Verdicts from before tracklet labelling name a person but not a
-        tracklet. Calling them 'untracked' would teach the model that the label
-        FORMAT is a visual condition, and there is nothing in the frame to
-        learn that from — even when the box does sit on a candidate."""
-        on_a_candidate = self._build(
+    def test_a_box_verdict_resolves_to_the_tracklet_it_sits_on(self) -> None:
+        """A verdict naming a person by box alone — a legacy hand-drawn pick,
+        or a confirm snapshot of the rule's box — resolves by the same overlap
+        rule production and evaluation use, so the exporter answers the
+        tracklet question rather than dropping real supervision."""
+        row = self._build(
             "a", ActorLabel(ActorVerdict.MANUAL, box=(105.0, 55.0, 205.0, 255.0))
         )
-        self.assertEqual(on_a_candidate, {})
-        self.assertEqual(self.tally["legacy_box"], 1)
+        self.assertEqual(row["target_kind"], "track")
+        self.assertEqual(row["candidates"][row["target"]]["track"], "2:7")
 
-        on_nobody = self._build(
+    def test_a_box_on_nobody_is_dropped_not_reinterpreted(self) -> None:
+        """No tracklet sits under this box. Calling it 'untracked' would teach
+        the model that the label FORMAT is a visual condition, and there is
+        nothing in the frame to learn that from."""
+        row = self._build(
             "b", ActorLabel(ActorVerdict.MANUAL, box=(10.0, 10.0, 40.0, 60.0))
         )
-        self.assertEqual(on_nobody, {})
+        self.assertEqual(row, {})
+        self.assertEqual(self.tally["unresolved_box"], 1)
 
     def test_an_unreviewed_event_produces_no_row(self) -> None:
         """This file carries supervision. An event's absence from it is what

@@ -302,10 +302,10 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
     () => new Map(records.map((r) => [r.id, verdictOf(r)])),
     [records],
   );
-  // Verdicts naming no tracklet — the sidebar flags them for re-picking,
-  // since tracklet training cannot use them as they stand.
-  const boxOnlyIds = useMemo<ReadonlySet<string>>(
-    () => new Set(records.filter((r) => r.actor_review_box_only).map((r) => r.id)),
+  // Verdicts resolving to no tracklet — the sidebar flags them for
+  // re-picking, since tracklet training cannot use them as they stand.
+  const unresolvedIds = useMemo<ReadonlySet<string>>(
+    () => new Set(records.filter((r) => r.actor_review_unresolved).map((r) => r.id)),
     [records],
   );
   // Only the events the automatic policy declined WITH a reason land here, so
@@ -831,21 +831,21 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
                       as a change of state rather than a guess. */}
                   <span
                     title={
-                      pickTarget.actor_review_box_only
-                        ? `${VERDICT[verdictOf(pickTarget)].title} — but it names no tracklet, so tracklet training skips this event. Re-pick the player to fix it.`
+                      pickTarget.actor_review_unresolved
+                        ? `${VERDICT[verdictOf(pickTarget)].title} — but it resolves to no tracklet, so tracklet training skips this event. Re-pick the player to fix it.`
                         : VERDICT[verdictOf(pickTarget)].title
                     }
                     className={cn(
                       'flex-shrink-0 rounded-full px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider ring-1',
                       verdictOf(pickTarget) === 'unreviewed'
                         ? 'bg-surface-200/40 text-text-muted ring-border'
-                        : pickTarget.actor_review_box_only
+                        : pickTarget.actor_review_unresolved
                           ? 'bg-amber-400/10 text-amber-400/90 ring-amber-400/25'
                           : 'bg-primary/15 text-primary-light ring-primary/30',
                     )}
                   >
                     {VERDICT[verdictOf(pickTarget)].glyph} {VERDICT[verdictOf(pickTarget)].label}
-                    {pickTarget.actor_review_box_only ? ' · box' : ''}
+                    {pickTarget.actor_review_unresolved ? ' · re-pick' : ''}
                   </span>
                   <span className="ml-auto flex items-center gap-3">
                     {detectionFallback && nearEvent && (
@@ -932,7 +932,7 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
           matches={matches}
           verdicts={verdicts}
           hints={hints}
-          boxOnlyIds={boxOnlyIds}
+          unresolvedIds={unresolvedIds}
           activeRallyId={currentRallyId}
           activeActionIds={activeActionIds}
           expanded={expanded}

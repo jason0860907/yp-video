@@ -110,10 +110,10 @@ class ScoringTests(unittest.TestCase):
         self.assertEqual(payload["occluded_rejection_rate"], 0.5)
         self.assertEqual(payload["positive"], 0)
 
-    def test_a_legacy_box_verdict_does_not_dilute_the_rate(self) -> None:
-        """It names a person but no tracklet, so it is not answerable in these
-        terms; counting it as a miss would punish every policy for the label
-        format."""
+    def test_a_box_verdict_does_not_dilute_the_rate(self) -> None:
+        """It names a person but no tracklet directly (a legacy pick, or a
+        confirm snapshot), so it is not answerable in these terms; counting it
+        as a miss would punish every policy for the label format."""
         score = _PolicyScore()
         score.add(_event(ActorLabel(ActorVerdict.MANUAL, box=(1.0, 2.0, 3.0, 4.0))), None)
         payload = score.payload()

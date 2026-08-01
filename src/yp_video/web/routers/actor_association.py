@@ -48,6 +48,7 @@ from yp_video.contracts.action import (
     ACTION_CONTRACT_VERSION_ENV,
     ACTOR_FILE_GLOB,
     ACTOR_LABEL_SUBDIR,
+    ASSOCIATION_PACKAGE_TYPE,
 )
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import read_jsonl_cached, read_jsonl_header
@@ -69,7 +70,11 @@ from yp_video.web.job_helpers import (
 )
 from yp_video.web.jobs import JobSummary, JobType, job_manager
 from yp_video.web.schemas import StrictModel
-from yp_video.web.spot_runs import PackageExporter, export_checkpoint_package
+from yp_video.web.spot_runs import (
+    PackageExporter,
+    export_checkpoint_package,
+    performance_payload,
+)
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -115,7 +120,9 @@ def list_videos() -> list[dict]:
                 "reviewed": progress.reviewed,
                 "unreviewed": progress.unreviewed,
                 "verdicts": progress.verdicts,
-                "box_only": progress.box_only,
+                # The re-pick worklist (links.unresolved_labels): labels no
+                # tracklet can be derived for today, whatever their verdict.
+                "unresolved": len(links.unresolved_labels(path.stem)),
                 # The automatic policy's own outcome, for context on how much
                 # of the remainder is likely to just need confirming. These
                 # are detector-run diagnostics; unlike progress above they
@@ -163,60 +170,13 @@ def status() -> dict:
     }
 
 
-def _association_history(path: Path) -> list[dict]:
-    if not path.is_file():
-        return []
-    history = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(record.get("epoch"), int):
-            continue
-        train_metrics = record.get("train") or {}
-        val_metrics = record.get("val") or {}
-        losses = record.get("loss") or {}
-        history.append(
-            {
-                "epoch": record["epoch"] + 1,
-                "train_player_top1": train_metrics.get("player_top1"),
-                "val_player_top1": val_metrics.get("player_top1"),
-                "train_overall_exact": train_metrics.get("overall_exact"),
-                "val_overall_exact": val_metrics.get("overall_exact"),
-                "train_loss": losses.get("train"),
-                "val_loss": losses.get("val"),
-                "best": bool(record.get("best")),
-            }
-        )
-    return history
-
-
-@router.get("/train-history")
-def train_history(run: str | None = None) -> dict:
-    """Per-epoch metrics for an active or packaged Association run."""
-    if run is not None:
-        if not re.fullmatch(r"[A-Za-z0-9_.-]+", run) or run.startswith("."):
-            raise HTTPException(400, "Invalid Association run name")
-        candidates = (
-            SPOT_DIR / "exp" / run / "metrics.jsonl",
-            ACTION_CHECKPOINTS_DIR / run / "metrics.jsonl",
-        )
-    else:
-        active = job_manager.active_job(JobType.ACTOR_ASSOCIATION_TRAIN)
-        if active is None:
-            return {"run": None, "history": []}
-        save_dir = active.params.get("save_dir")
-        if not isinstance(save_dir, str):
-            return {"run": None, "history": []}
-        root = Path(save_dir)
-        run = root.name
-        candidates = (root / "metrics.jsonl",)
-    path = next((candidate for candidate in candidates if candidate.is_file()), None)
-    return {
-        "run": run,
-        "history": _association_history(path) if path is not None else [],
-    }
+@router.get("/train-performance")
+def train_performance(run: str | None = None) -> dict:
+    """Per-epoch metrics for independent association runs, in the shared
+    performance shape — the same card every other Train page renders."""
+    return performance_payload(
+        ACTION_CHECKPOINTS_DIR, run, package_types=(ASSOCIATION_PACKAGE_TYPE,)
+    )
 
 
 @router.get("/performance")
@@ -403,7 +363,7 @@ def _export_association_package(
         run_dir=run_dir,
         package_dir=package_dir,
         checkpoints_root=ACTION_CHECKPOINTS_DIR,
-        package_type="yp-video-association-checkpoint",
+        package_type=ASSOCIATION_PACKAGE_TYPE,
         label_subdir="action-annotations",
         label_glob="*_actions.jsonl",
         training={
@@ -549,6 +509,8 @@ async def _start_association_training(
                 ),
             )
 
+            best_state: dict = {}
+
             def on_metrics(match: re.Match) -> dict:
                 record = json.loads(match.group(1))
                 epoch = int(record["epoch"])
@@ -558,6 +520,39 @@ async def _start_association_training(
                 top1 = validation.get("player_top1")
                 overall = validation.get("overall_exact")
                 progress = 0.2 + 0.79 * ((epoch + 1) / req.num_epochs)
+                loss = record.get("loss") or {}
+                # The shared live-progress schema (see spot_runs.TrainProgress):
+                # one Train page job card renders every trainer, so this
+                # trainer reports itself as its one task.
+                task_metrics = {
+                    "actor": {
+                        "primary_metric": "player_top1",
+                        "train": {
+                            "loss": loss.get("train"),
+                            "metrics": record.get("train") or {},
+                        },
+                        "validation": {
+                            "loss": loss.get("val"),
+                            "metrics": validation,
+                        },
+                    }
+                }
+                snapshot = {
+                    "epoch": epoch,
+                    "epoch_display": epoch + 1,
+                    "epochs": req.num_epochs,
+                    "completed_epoch": epoch,
+                    "latest_train_loss": loss.get("train"),
+                    "latest_val_loss": loss.get("val"),
+                    "latest_val_map": None,
+                    "latest_task_metrics": task_metrics,
+                }
+                if record.get("best"):
+                    best_state.update(
+                        best_epoch=epoch,
+                        best_value=top1,
+                        best_task_metrics=task_metrics,
+                    )
                 return {
                     "progress": min(progress, 0.99),
                     "message": (
@@ -567,14 +562,8 @@ async def _start_association_training(
                     ),
                     "params": {
                         "association_train_progress": {
-                            "epoch": epoch,
-                            "epoch_display": epoch + 1,
-                            "epochs": req.num_epochs,
-                            "train_loss": (record.get("loss") or {}).get("train"),
-                            "val_loss": (record.get("loss") or {}).get("val"),
-                            "train": record.get("train"),
-                            "val": validation,
-                            "best": bool(record.get("best")),
+                            **snapshot,
+                            **best_state,
                         }
                     },
                 }
@@ -904,8 +893,11 @@ def fix(
     record = current[0] if current else result.record
     label = command.label
     record["actor_review"] = label.verdict.value if label else "unreviewed"
-    if label is not None and label.box_only:
-        record["actor_review_box_only"] = True
+    # Sparse, recomputed AFTER the fix landed: present only when the fresh
+    # label still resolves to no tracklet (see links.unresolved_labels) — a
+    # box pick that lands on a tracked player clears the flag by resolving.
+    if label is not None and req.event_id in links.unresolved_labels(stem):
+        record["actor_review_unresolved"] = True
     for detection in record.get("detections") or []:
         detection.pop("keypoints", None)
     track_link = None

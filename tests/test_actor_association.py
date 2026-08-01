@@ -20,6 +20,7 @@ from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import write_jsonl
 from yp_video.extraction import actor_fix, done
 from yp_video.person.detector import PersonBox
+from yp_video.action.spot_runs import _normalize_metrics_entry
 from yp_video.web.routers import actor_association as router
 
 
@@ -358,50 +359,27 @@ class NeuralAssociationTrainTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("already active", str(caught.exception.detail))
         prepare.assert_not_called()
 
-    def test_history_exposes_each_epoch_in_display_order(self) -> None:
-        with tempfile.TemporaryDirectory() as raw_dir:
-            path = Path(raw_dir) / "metrics.jsonl"
-            path.write_text(
-                "\n".join(
-                    (
-                        json.dumps(
-                            {
-                                "epoch": 0,
-                                "loss": {"train": 2.0, "val": 3.0},
-                                "train": {
-                                    "player_top1": 0.7,
-                                    "overall_exact": 0.6,
-                                },
-                                "val": {
-                                    "player_top1": 0.4,
-                                    "overall_exact": 0.3,
-                                },
-                                "best": True,
-                            }
-                        ),
-                        "not-json",
-                    )
-                ),
-                encoding="utf-8",
-            )
-
-            history = router._association_history(path)
-
-        self.assertEqual(
-            history,
-            [
-                {
-                    "epoch": 1,
-                    "train_player_top1": 0.7,
-                    "val_player_top1": 0.4,
-                    "train_overall_exact": 0.6,
-                    "val_overall_exact": 0.3,
-                    "train_loss": 2.0,
-                    "val_loss": 3.0,
-                    "best": True,
-                }
-            ],
+    def test_association_epochs_normalize_into_the_shared_task_shape(self) -> None:
+        """The independent trainer's per-epoch records carry no mAP — they
+        must surface as an `actor` task so the one shared performance card
+        renders this trainer too."""
+        entry = _normalize_metrics_entry(
+            {
+                "epoch": 0,
+                "loss": {"train": 2.0, "val": 3.0},
+                "train": {"player_top1": 0.7, "overall_exact": 0.6},
+                "val": {"player_top1": 0.4, "overall_exact": 0.3},
+                "best": True,
+            }
         )
+
+        actor = entry["tasks"]["actor"]
+        self.assertEqual(actor["primary_metric"], "player_top1")
+        self.assertEqual(actor["validation"]["metrics"]["player_top1"], 0.4)
+        self.assertEqual(actor["train"]["metrics"]["player_top1"], 0.7)
+        self.assertEqual(entry["train_loss"], 2.0)
+        self.assertEqual(entry["val_loss"], 3.0)
+        self.assertEqual(entry["val_mAP"], 0)
 
     def test_predict_contract_no_longer_accepts_a_linear_checkpoint(self) -> None:
         adapter = TypeAdapter(router.PredictRequest)

@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from yp_video.actor import labels as actor_labels
-from yp_video.actor.labels import ActorLabel
+from yp_video.actor.labels import ActorLabel, ActorVerdict
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import read_jsonl_cached
 from yp_video.extraction.store import (
@@ -126,6 +126,38 @@ def _event_tracks(stem: str) -> dict[str, TrackRef]:
         )
     out.update(link_boxes(index, queries, stride=int(tmeta.get("stride") or 1)))
     return out
+
+
+def unresolved_labels(stem: str) -> set[str]:
+    """The re-pick worklist: labeled events no tracklet can be derived for.
+
+    A verdict that names a person (so, not occluded) but resolves to no
+    tracklet TODAY — neither by the key it stored nor by the geometry
+    fallback. These are the labels tracklet training drops, whatever their
+    verdict: a legacy hand-drawn box, a detection-fallback pick, or a confirm
+    whose box no longer sits on anything tracked. Recomputed like the links
+    themselves, so a better tracking run shrinks the list by itself.
+
+    Empty while the video has no tracking run at all: nothing is resolvable
+    then, but the remedy is running tracking, not re-picking players — that
+    gap is the pipeline's to report.
+    """
+    records = records_path(stem)
+    if not tracks_path(stem).exists() or not records.exists():
+        return set()
+    meta, rows = read_jsonl_cached(records)
+    current = {
+        str(row["id"])
+        for row in labelable(rows, stem, float(meta.get("fps") or 0))
+    }
+    linked = event_tracks(stem)
+    return {
+        event_id
+        for event_id, label in actor_labels.load(stem).items()
+        if event_id in current
+        and label.verdict is not ActorVerdict.OCCLUDED
+        and event_id not in linked
+    }
 
 
 def track_keys(stem: str) -> dict[str, str]:

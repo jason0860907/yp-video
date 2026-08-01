@@ -41,7 +41,7 @@ export const OUTSIDE = '__outside__';
  *  work with a head start, and it reads as the model's opinion rather than a
  *  verdict: dimmer, italic, and prefixed with who is speaking. Only a human
  *  writes a verdict. */
-function VerdictPill({ verdict, hint, boxOnly }: { verdict?: ActorVerdict; hint?: ActorHint | null; boxOnly?: boolean }) {
+function VerdictPill({ verdict, hint, unresolved }: { verdict?: ActorVerdict; hint?: ActorHint | null; unresolved?: boolean }) {
   if (!verdict || verdict === 'unreviewed') {
     if (!hint) return <span />;
     return (
@@ -57,15 +57,15 @@ function VerdictPill({ verdict, hint, boxOnly }: { verdict?: ActorVerdict; hint?
       </span>
     );
   }
-  // A verdict that names no tracklet is real but unusable for tracklet
+  // A verdict that resolves to no tracklet is real but unusable for tracklet
   // training — warn, and say what makes the warning go away.
-  if (boxOnly) {
+  if (unresolved) {
     return (
       <span
-        title={`${VERDICT[verdict].title} — but it names no tracklet, so tracklet training skips this event. Re-pick the player to fix it.`}
+        title={`${VERDICT[verdict].title} — but it resolves to no tracklet, so tracklet training skips this event. Re-pick the player to fix it.`}
         className="max-w-full justify-self-end truncate rounded-full bg-amber-400/10 px-2 py-0.5 text-[11px] text-amber-400/90 ring-1 ring-amber-400/25"
       >
-        {VERDICT[verdict].label} · box
+        {VERDICT[verdict].label} · re-pick
       </span>
     );
   }
@@ -95,8 +95,8 @@ interface ReidEventPanelProps {
   /** What the automatic policy thought about the events it declined. Only
    *  ever shown where a verdict is absent. */
   hints: ReadonlyMap<string, ActorHint>;
-  /** Events whose verdict names no tracklet — flagged for re-picking. */
-  boxOnlyIds: ReadonlySet<string>;
+  /** Events whose verdict resolves to no tracklet — flagged for re-picking. */
+  unresolvedIds: ReadonlySet<string>;
   selectedEventId: string | null;
   fps: number;
   /** Actions within ±½ s of the playhead — those rows light up. */
@@ -107,7 +107,7 @@ interface ReidEventPanelProps {
 
 /** Read-only twin of the Action Label event panel: action dot + label,
  *  matched player, frame and time — click a row to park the video there. */
-function ReidEventPanel({ entries, empty, matches, verdicts, hints, boxOnlyIds, selectedEventId, fps, activeActionIds, onJump, onJumpToCrop }: ReidEventPanelProps) {
+function ReidEventPanel({ entries, empty, matches, verdicts, hints, unresolvedIds, selectedEventId, fps, activeActionIds, onJump, onJumpToCrop }: ReidEventPanelProps) {
   if (!entries.length) return <div className="ml-6 rounded-xl border border-border bg-surface-100 px-3 py-2 text-xs text-text-muted">{empty}</div>;
   return (
     <div className="ml-6 space-y-1.5 rounded-xl border border-border bg-surface-100 p-2">
@@ -158,7 +158,7 @@ function ReidEventPanel({ entries, empty, matches, verdicts, hints, boxOnlyIds, 
                 {m.assigned ? m.player : `~${m.player}`}
               </button>
             ) : (
-              <VerdictPill verdict={verdicts.get(a.id)} hint={hints.get(a.id)} boxOnly={boxOnlyIds.has(a.id)} />
+              <VerdictPill verdict={verdicts.get(a.id)} hint={hints.get(a.id)} unresolved={unresolvedIds.has(a.id)} />
             )}
             <span className="text-center font-heading text-[11px] tabular-nums text-text-primary">f{a.frame}</span>
             <span className="text-center font-heading text-[10px] tabular-nums text-text-muted">{fmtTime(a.time != null ? a.time : a.frame / (fps || 30))}</span>
@@ -178,8 +178,8 @@ export interface RallySidebarProps {
   matches: ReidPlayers['matches'];
   verdicts: ReadonlyMap<string, ActorVerdict>;
   hints: ReadonlyMap<string, ActorHint>;
-  /** Events whose verdict names no tracklet — flagged for re-picking. */
-  boxOnlyIds: ReadonlySet<string>;
+  /** Events whose verdict resolves to no tracklet — flagged for re-picking. */
+  unresolvedIds: ReadonlySet<string>;
   /** The rally under the playhead — the list's only frame-derived scalar. */
   activeRallyId: number | null;
   /** Actions within ±½ s of the playhead; identity-stable between changes. */
@@ -209,7 +209,7 @@ function pendingIn(entries: SidebarAction[], confirmable?: ReadonlySet<string>) 
 
 export const RallySidebar = memo(function RallySidebar({
   rallies, byRally, outside, totalActions, fps, matches, verdicts, hints,
-  boxOnlyIds, activeRallyId, activeActionIds, expanded, selectedRally,
+  unresolvedIds, activeRallyId, activeActionIds, expanded, selectedRally,
   selectedEventId, listRef, onSelectAll, onJumpRally, onSetExpanded,
   onJumpEvent, onJumpToCrop, confirmableIds, onConfirmRally,
 }: RallySidebarProps) {
@@ -231,17 +231,17 @@ export const RallySidebar = memo(function RallySidebar({
       </button>
     );
   };
-  // Where the box-only work is, visible while the rally is still collapsed —
+  // Where the re-pick work is, visible while the rally is still collapsed —
   // the per-event pills only exist once it is expanded.
-  const boxOnlyChip = (entries: SidebarAction[]) => {
-    const n = entries.reduce((sum, a) => sum + (boxOnlyIds.has(a.id) ? 1 : 0), 0);
+  const unresolvedChip = (entries: SidebarAction[]) => {
+    const n = entries.reduce((sum, a) => sum + (unresolvedIds.has(a.id) ? 1 : 0), 0);
     if (!n) return null;
     return (
       <span
-        title={`${n} verdict${n === 1 ? '' : 's'} here name${n === 1 ? 's' : ''} no tracklet — expand and re-pick those players so tracklet training can use them`}
+        title={`${n} verdict${n === 1 ? '' : 's'} here resolve${n === 1 ? 's' : ''} to no tracklet — expand and re-pick those players so tracklet training can use them`}
         className="flex items-center gap-1 rounded-full bg-amber-400/10 px-2 py-0.5 text-[11px] font-medium text-amber-400/90 ring-1 ring-amber-400/25"
       >
-        {n} box
+        {n} re-pick
       </span>
     );
   };
@@ -300,7 +300,7 @@ export const RallySidebar = memo(function RallySidebar({
                     <span className={cn('transition-transform', isOpen && 'rotate-90')}>▸</span> actions <span className="opacity-70">{entries.length}</span>
                   </button>
                   {confirmButton(entries)}
-                  {boxOnlyChip(entries)}
+                  {unresolvedChip(entries)}
                   <span className="ml-auto font-mono text-[11px] tabular-nums text-text-muted">
                     {fmtTime(rally.start)} → {fmtTime(rally.end)}
                   </span>
@@ -315,7 +315,7 @@ export const RallySidebar = memo(function RallySidebar({
                     matches={matches}
                     verdicts={verdicts}
                     hints={hints}
-                    boxOnlyIds={boxOnlyIds}
+                    unresolvedIds={unresolvedIds}
                     selectedEventId={selectedEventId}
                     fps={fps}
                     activeActionIds={activeActionIds}
@@ -346,7 +346,7 @@ export const RallySidebar = memo(function RallySidebar({
                   <span className={cn('transition-transform', expanded === OUTSIDE && 'rotate-90')}>▸</span> outside <span className="opacity-70">{outside.length}</span>
                 </button>
                 {confirmButton(outside)}
-                {boxOnlyChip(outside)}
+                {unresolvedChip(outside)}
                 <span className="ml-auto font-heading text-[11px] text-text-muted">outside rally</span>
               </div>
               {expanded === OUTSIDE && (
@@ -356,7 +356,7 @@ export const RallySidebar = memo(function RallySidebar({
                   matches={matches}
                   verdicts={verdicts}
                   hints={hints}
-                  boxOnlyIds={boxOnlyIds}
+                  unresolvedIds={unresolvedIds}
                   selectedEventId={selectedEventId}
                   fps={fps}
                   activeActionIds={activeActionIds}

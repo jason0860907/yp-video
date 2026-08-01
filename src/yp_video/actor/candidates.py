@@ -25,6 +25,7 @@ from yp_video.actor.labels import ActorVerdict
 from yp_video.contracts.action import ACTOR_WINDOW_OFFSETS, ActorTargetKind
 from yp_video.core.jsonl import read_jsonl_cached
 from yp_video.extraction.store import records_path
+from yp_video.tracklets.geometry import TrackletIndex
 from yp_video.tracklets.store import tracks_path
 
 
@@ -134,27 +135,25 @@ def build(stem: str, events: Iterable[dict]) -> tuple[list[dict], dict[str, int]
     verdicts = labels.load(stem)
     tally = {kind.value: 0 for kind in ActorTargetKind}
     tally["unlabelled"] = 0
-    tally["legacy_box"] = 0
+    tally["unresolved_box"] = 0
     if not verdicts:
         tally["unlabelled"] = sum(1 for _ in events)
         return [], tally
 
     size = _frame_size(stem)
     paths = track_paths(stem)
+    # Built from the same file track_paths reads, so a test (or caller)
+    # redirecting tracks_path redirects both views of the tracklets.
+    tracks = tracks_path(stem)
+    index = (
+        TrackletIndex(read_jsonl_cached(tracks)[1]) if tracks.exists() else None
+    )
     rows: list[dict] = []
 
     for event in events:
         label = verdicts.get(str(event.get("id")))
         if label is None:
             tally["unlabelled"] += 1
-            continue
-        if label.box_only:
-            # A verdict from before tracklet labelling existed: it picked a
-            # detection box, so it names a person but not a tracklet. Skipped
-            # rather than called `untracked`, because nothing about the frame
-            # made it untracked — the label format did, and there is no visual
-            # evidence for the model to learn that from.
-            tally["legacy_box"] += 1
             continue
 
         frame = int(event.get("frame", -1))
@@ -174,13 +173,31 @@ def build(stem: str, events: Iterable[dict]) -> tuple[list[dict], dict[str, int]
         if label.verdict is ActorVerdict.OCCLUDED:
             kind, target = ActorTargetKind.OCCLUDED, None
         else:
-            index = keys.index(label.track.key) if label.track.key in keys else None
-            if index is None:
+            named = label.track
+            if named is None and index is not None:
+                # A verdict that names a person by box alone — a legacy
+                # hand-drawn pick, or a confirm snapshot of the rule's box.
+                # Resolved by the same overlap rule production and evaluation
+                # use (tracklets.geometry), so the exporter answers the same
+                # question they do rather than dropping the label.
+                named = index.at_box(
+                    label.frame if label.frame is not None else frame,
+                    label.box,
+                )
+            if named is None:
+                # No tracklet sits under the box. Skipped rather than called
+                # `untracked`: nothing in the frame says the actor was
+                # untracked — the label just cannot be resolved, and there is
+                # no visual evidence for the model to learn that from.
+                tally["unresolved_box"] += 1
+                continue
+            position = keys.index(named.key) if named.key in keys else None
+            if position is None:
                 # Somebody acted and the candidate set does not contain them:
                 # tracking dropped the player, or never reached this frame.
                 kind, target = ActorTargetKind.UNTRACKED, None
             else:
-                kind, target = ActorTargetKind.TRACK, index
+                kind, target = ActorTargetKind.TRACK, position
 
         tally[kind.value] += 1
         rows.append(
