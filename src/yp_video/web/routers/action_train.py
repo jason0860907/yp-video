@@ -11,12 +11,13 @@ from fastapi import APIRouter
 
 from yp_video.action import training
 from yp_video.config import ACTION_CHECKPOINTS_DIR, SPOT_DIR, SPOT_PYTHON
+from yp_video.contracts.action import ACTION_PACKAGE_TYPE
 from yp_video.web.action_training import ActionTrainRequest, start_training_job
 from yp_video.web.jobs import JobSummary, JobType, job_manager
 from yp_video.web.spot_runs import (
+    SPOT_INIT_PACKAGE_TYPES,
     checkpoint_package_options,
     performance_payload,
-    resumable_run_options,
 )
 
 router = APIRouter()
@@ -28,8 +29,9 @@ def status() -> dict:
         "spot_available": SPOT_DIR.exists() and SPOT_PYTHON.exists(),
         "spot_dir": str(SPOT_DIR),
         "spot_python": str(SPOT_PYTHON),
-        "init_checkpoints": checkpoint_package_options(ACTION_CHECKPOINTS_DIR),
-        "resumable_runs": resumable_run_options(),
+        "init_checkpoints": checkpoint_package_options(
+            ACTION_CHECKPOINTS_DIR, package_types=SPOT_INIT_PACKAGE_TYPES
+        ),
         "vnl_1_5": training.vnl_stats(),
         "action_annotations": training.annotation_stats(),
         "action_checkpoints": training.checkpoint_stats(),
@@ -40,7 +42,9 @@ def status() -> dict:
 @router.get("/performance")
 def performance(run: str | None = None) -> dict:
     """Per-epoch validation metrics for an action-checkpoints run."""
-    return performance_payload(ACTION_CHECKPOINTS_DIR, run)
+    return performance_payload(
+        ACTION_CHECKPOINTS_DIR, run, package_types=(ACTION_PACKAGE_TYPE,)
+    )
 
 
 @router.post("/start", response_model=JobSummary)

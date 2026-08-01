@@ -195,7 +195,7 @@ export const API = {
     confirm: (name: string) => `/actor-association/confirm/${encodeURIComponent(name)}`,
     status: '/actor-association/status',
     performance: '/actor-association/performance',
-    trainHistory: '/actor-association/train-history',
+    trainPerformance: '/actor-association/train-performance',
     train: '/actor-association/train',
     predict: '/actor-association/predict',
   },

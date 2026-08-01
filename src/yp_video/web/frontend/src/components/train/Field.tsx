@@ -35,67 +35,66 @@ export function SelectArch({ value, options, onChange }: { value: string; option
   );
 }
 
+/** Numeric input over the shared Field wrapper. */
+export function NumberField({
+  label,
+  value,
+  min,
+  max,
+  step = 1,
+  className,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  min?: number;
+  max?: number;
+  step?: number;
+  className?: string;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <Field label={label} className={className}>
+      <input
+        type="number"
+        value={value}
+        min={min}
+        max={max}
+        step={step}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className={cn(fieldCls, 'font-mono tabular-nums')}
+      />
+    </Field>
+  );
+}
+
 interface TrainSelectOption {
   value: string;
   label: string;
 }
 
-/** Init-checkpoint select, disabled while resuming (weights come from the
- *  run checkpoint instead — the tooltip says so). */
+/** Init-checkpoint select. The empty "no checkpoint" option always exists —
+ *  every trainer can start without one — only its wording is per-trainer. */
 export function InitCheckpointSelect({
   value,
   onChange,
   options,
-  resuming,
   emptyLabel = '— From scratch —',
 }: {
   value: string;
   onChange: (v: string) => void;
   options: TrainSelectOption[];
-  resuming: boolean;
-  /** Text of the empty option; null hides it (a trainer that requires a
-   *  checkpoint seeds the first one instead of offering from-scratch). */
-  emptyLabel?: string | null;
+  emptyLabel?: string;
 }) {
   return (
     <Field label="Init checkpoint" className="col-span-2">
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        title={resuming ? 'Ignored while resuming (weights load from the run checkpoint)' : value}
-        disabled={resuming}
-        className={cn(fieldCls, 'cursor-pointer appearance-none', resuming && 'opacity-50')}
-      >
-        {emptyLabel != null && <option value="">{emptyLabel}</option>}
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
-    </Field>
-  );
-}
-
-/** Resume-run select — empty means a fresh run. */
-export function ResumeRunSelect({
-  value,
-  onChange,
-  options,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  options: TrainSelectOption[];
-}) {
-  return (
-    <Field label="Resume from run" className="col-span-3">
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
         title={value}
         className={cn(fieldCls, 'cursor-pointer appearance-none')}
       >
-        <option value="">— New run (train from scratch / init checkpoint) —</option>
+        <option value="">{emptyLabel}</option>
         {options.map((o) => (
           <option key={o.value} value={o.value}>
             {o.label}

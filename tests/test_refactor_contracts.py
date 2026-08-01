@@ -56,15 +56,6 @@ class DiscriminatedRequestTests(unittest.TestCase):
             )
         with self.assertRaises(ValidationError):
             adapter.validate_python({"source": "vnl_1_5", "resume": True})
-        with self.assertRaises(ValidationError):
-            adapter.validate_python(
-                {
-                    "source": "vnl_1_5",
-                    "resume": True,
-                    "save_dir": "run",
-                    "init_checkpoint": "weights",
-                }
-            )
 
     def test_actor_fix_mode_owns_its_fields(self) -> None:
         adapter = TypeAdapter(ActorFixRequest)

@@ -22,11 +22,10 @@ from fastapi import HTTPException
 
 from yp_video.action import spot_runs as _runs
 from yp_video.action.spot_runs import (  # noqa: F401 — re-exported for routers
+    SPOT_INIT_PACKAGE_TYPES,
     checkpoint_package_options,
     export_checkpoint_package,
-    last_resumable_epoch,
     load_json_file,
-    resumable_run_options,
 )
 from yp_video.web.job_helpers import ProgressParser
 from yp_video.web.jobs import job_manager
@@ -321,11 +320,11 @@ def performance_payload(
     checkpoints_dir: Path,
     run: str | None = None,
     *,
-    run_prefixes: tuple[str, ...] | None = None,
+    package_types: tuple[str, ...] | None = None,
 ) -> dict:
     try:
         return _runs.performance_payload(
-            checkpoints_dir, run, run_prefixes=run_prefixes
+            checkpoints_dir, run, package_types=package_types
         )
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc

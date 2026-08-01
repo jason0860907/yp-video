@@ -20,7 +20,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { StatTile } from '@/components/ui/StatTile';
-import { Field, SelectArch, fieldCls } from '@/components/train/Field';
+import { Field, InitCheckpointSelect, SelectArch, fieldCls } from '@/components/train/Field';
 import { JobProgress } from '@/components/job/JobProgress';
 import { toast } from '@/components/feedback/toast';
 import { useSingleJob } from '@/lib/useSingleJob';
@@ -150,7 +150,6 @@ export function ReidTrainPage() {
   };
 
   const models = perfQuery.data?.models ?? [];
-  const isolated = (status?.sessions ?? []).filter((s) => s.is_isolated);
 
   return (
     <div className="mx-auto max-w-screen-2xl">
@@ -163,17 +162,6 @@ export function ReidTrainPage() {
       />
 
       <div className="mb-5 space-y-3">
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <StatTile label="Ready to train" value={status?.totals.ready_videos ?? '—'} sub="finished videos" />
-          <StatTile label="Assigned events" value={status?.totals.assigned_events ?? '—'} />
-          <StatTile label="Identities" value={status?.totals.identities ?? '—'} />
-          <StatTile
-            label="Sessions"
-            value={status?.totals.sessions ?? '—'}
-            sub={isolated.length ? `${isolated.length} unlinked` : undefined}
-            tintClass={isolated.length ? 'text-amber-400' : 'text-text-primary'}
-          />
-        </div>
         {status?.totals.pending_videos ? (
           <div className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/[0.06] px-3 py-2 text-xs text-amber-300">
             <svg className="mt-0.5 h-4 w-4 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
@@ -262,18 +250,12 @@ export function ReidTrainPage() {
                 onChange={(v) => setTrain('dataset', v)}
               />
             </Field>
-            <Field label="Init checkpoint">
-              <select
-                value={trainForm.init_checkpoint}
-                onChange={(e) => setTrain('init_checkpoint', e.target.value)}
-                className={fieldCls}
-              >
-                <option value="">fresh (OpenAI ViT-L/14)</option>
-                {(status?.runs ?? []).map((r) => (
-                  <option key={r.path} value={r.path}>{r.run_name}</option>
-                ))}
-              </select>
-            </Field>
+            <InitCheckpointSelect
+              value={trainForm.init_checkpoint}
+              onChange={(v) => setTrain('init_checkpoint', v)}
+              options={(status?.runs ?? []).map((r) => ({ value: r.path, label: r.run_name }))}
+              emptyLabel="fresh (OpenAI ViT-L/14)"
+            />
             <Field label="Run name (optional)">
               <input value={trainForm.run_name} onChange={(e) => setTrain('run_name', e.target.value)} placeholder="reid_<timestamp>" className={fieldCls} />
             </Field>

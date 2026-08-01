@@ -23,6 +23,7 @@ from yp_video.action import training
 from yp_video.actor import labels as association_labels
 from yp_video.actor import spot_associate
 from yp_video.config import ACTION_CHECKPOINTS_DIR, SPOT_DIR, SPOT_PYTHON
+from yp_video.contracts.action import FUSION_PACKAGE_TYPE
 from yp_video.web.action_training import (
     AnnotationActionTrainRequest,
     TrainingFlavor,
@@ -31,9 +32,9 @@ from yp_video.web.action_training import (
 from yp_video.web.jobs import JobSummary, JobType, job_manager
 from yp_video.web.schemas import StrictModel
 from yp_video.web.spot_runs import (
+    SPOT_INIT_PACKAGE_TYPES,
     checkpoint_package_options,
     performance_payload,
-    resumable_run_options,
 )
 
 router = APIRouter()
@@ -93,9 +94,13 @@ RECIPES = (
 FUSION_TRAINING = TrainingFlavor(
     job_type=JobType.FUSION_MODEL_TRAIN,
     job_name="Fusion Model Train",
-    package_type="actor-association-spot",
+    package_type=FUSION_PACKAGE_TYPE,
     progress_key="fusion_model_train_progress",
     subject="association + action",
+    # Action Predict loads the headline (action-best) epoch; Association
+    # Predict loads the actor head at ITS best epoch. `location` is absent
+    # on purpose — it only ever rides along with action.
+    serveable_tasks=("action", "actor"),
 )
 
 
@@ -126,10 +131,12 @@ def status() -> dict:
         "recipes": list(RECIPES),
         "checkpoints": checkpoints,
         "spot_available": SPOT_DIR.exists() and SPOT_PYTHON.exists(),
-        "init_checkpoints": checkpoint_package_options(ACTION_CHECKPOINTS_DIR),
-        # Fusion runs are named yp_fusion_* / yp_actor_only_* at creation;
-        # selecting by run-name prefix, not display-label substrings.
-        "resumable_runs": resumable_run_options(("yp_fusion_", "yp_actor_only")),
+        # Only packages the SPOT trainer can warm-start from — the shared
+        # checkpoints dir also holds independent association packages, whose
+        # weights the shape-matching init would silently skip entirely.
+        "init_checkpoints": checkpoint_package_options(
+            ACTION_CHECKPOINTS_DIR, package_types=SPOT_INIT_PACKAGE_TYPES
+        ),
         "action_annotations": action_annotations,
         "supervision": {
             "action_videos": len(per_video),
@@ -143,9 +150,7 @@ def status() -> dict:
 @router.get("/performance")
 def performance(run: str | None = None) -> dict:
     return performance_payload(
-        ACTION_CHECKPOINTS_DIR,
-        run,
-        run_prefixes=("yp_fusion_", "yp_actor_only"),
+        ACTION_CHECKPOINTS_DIR, run, package_types=(FUSION_PACKAGE_TYPE,)
     )
 
 
@@ -156,7 +161,6 @@ class FusionTrainRequest(StrictModel):
         "association_action_rally",
     ] = ASSOCIATION_ACTION
     run_name: str | None = None
-    resume_run: str | None = None
     init_checkpoint: str | None = None
     validation_mode: Literal["manual", "ratio"] = "ratio"
     validation_videos: list[str] = Field(default_factory=list)
@@ -186,35 +190,14 @@ async def train(req: FusionTrainRequest) -> dict:
     if req.recipe != ASSOCIATION_ACTION:
         recipe = next(row for row in RECIPES if row["id"] == req.recipe)
         raise HTTPException(409, recipe["blocked_on"])
-    if (
-        not req.resume_run
-        and req.validation_mode == "manual"
-        and not req.validation_videos
-    ):
+    if req.validation_mode == "manual" and not req.validation_videos:
         raise HTTPException(
             400,
             "Manual validation mode needs at least one validation video",
         )
 
-    resume_dir: Path | None = None
-    resume_config: dict = {}
-    if req.resume_run:
-        resume_dir = Path(req.resume_run).expanduser().resolve()
-        exp_root = (SPOT_DIR / "exp").resolve()
-        if resume_dir.parent != exp_root:
-            raise HTTPException(400, "Fusion resume run must live directly under yp-spot/exp")
-        config_path = resume_dir / "config.json"
-        try:
-            resume_config = json.loads(config_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as exc:
-            raise HTTPException(400, f"Cannot read resume config: {config_path}") from exc
-        if resume_config.get("predict_actor") is not True:
-            raise HTTPException(400, f"{resume_dir.name} has no legacy actor head")
-
     name = (
-        resume_dir.name
-        if resume_dir is not None
-        else req.run_name
+        req.run_name
         or f"yp_fusion_association_action_{time.strftime('%Y%m%d-%H%M%S')}"
     )
     if not re.fullmatch(r"[A-Za-z0-9_.-]+", name) or name.startswith("."):
@@ -225,29 +208,20 @@ async def train(req: FusionTrainRequest) -> dict:
 
     action_request = AnnotationActionTrainRequest(
         source="action_annotations",
-        dataset=str(resume_config.get("dataset") or "yp_actions"),
-        save_dir=str(resume_dir or SPOT_DIR / "exp" / name),
+        dataset="yp_actions",
+        save_dir=str(SPOT_DIR / "exp" / name),
         checkpoint_dir=str(ACTION_CHECKPOINTS_DIR / name),
-        init_checkpoint=None if resume_dir else req.init_checkpoint,
-        resume=resume_dir is not None,
+        init_checkpoint=req.init_checkpoint,
         camera_view=req.camera_view,
         training_mode=(
             "holdout" if req.validation_mode == "manual" else "split"
         ),
         holdout_videos=req.validation_videos,
-        audio_backend=str(
-            resume_config.get("audio_backend") or req.audio_backend
-        ),
-        feature_arch=str(
-            resume_config.get("feature_arch") or req.feature_arch
-        ),
-        temporal_arch=str(
-            resume_config.get("temporal_arch") or req.temporal_arch
-        ),
-        clip_len=int(resume_config.get("clip_len") or req.clip_len),
-        sample_fps=float(
-            resume_config.get("sample_fps") or req.sample_fps
-        ),
+        audio_backend=req.audio_backend,
+        feature_arch=req.feature_arch,
+        temporal_arch=req.temporal_arch,
+        clip_len=req.clip_len,
+        sample_fps=req.sample_fps,
         batch_size=req.batch_size,
         num_epochs=req.num_epochs,
         warm_up_epochs=req.warm_up_epochs,
@@ -265,7 +239,7 @@ async def train(req: FusionTrainRequest) -> dict:
     )
     label_items = None
     require_actor_targets = False
-    if resume_dir is None and req.dataset_scope == "joint_only":
+    if req.dataset_scope == "joint_only":
         reviewed = set(association_labels.labeled_stems())
         label_items = [
             item
@@ -283,6 +257,5 @@ async def train(req: FusionTrainRequest) -> dict:
         action_request,
         flavor=FUSION_TRAINING,
         label_items=label_items,
-        reuse_existing_labels=resume_dir is not None,
         require_actor_targets=require_actor_targets,
     )

@@ -2,10 +2,8 @@ import { useMemo } from 'react';
 import { cn } from '@/lib/cn';
 import { Card } from '@/components/ui/Card';
 import { SectionLabel } from '@/components/ui/SectionLabel';
-import {
-  TaskMetricHistory,
-  TaskMetricsTable,
-} from '@/components/train/TaskMetricsTable';
+import { METRIC_LABELS } from '@/components/train/metricLabels';
+import { TaskMetricsTable } from '@/components/train/TaskMetricsTable';
 import type { ActionPerfData, ActionPerfEntry, ActionVideoMap } from '@/types/api';
 
 // Three related metrics, not arbitrary categories: harmonic is the headline
@@ -30,20 +28,32 @@ const FIELD: Record<MetricKey, keyof ActionPerfEntry> = {
   spatial: 'val_mAP_spatial',
 };
 
+// Palette order matches METRICS so the actor chart's primary series shares the
+// action chart's headline color — the two panels read as one family.
+const SERIES_COLORS = [
+  'text-primary-light',
+  'text-accent-light',
+  'text-text-secondary',
+  'text-amber-400',
+] as const;
+
 interface Point {
   ep: number;
   v: number;
 }
 
 interface Series {
-  key: MetricKey;
+  key: string;
   label: string;
   colorClass: string;
   pts: Point[];
   best: Point;
 }
 
-function toSeries(m: (typeof METRICS)[number], pts: Point[]): Series {
+function toSeries(
+  m: { key: string; label: string; colorClass: string },
+  pts: Point[],
+): Series {
   const best = pts.reduce((a, b) => (b.v > a.v ? b : a), pts[0] ?? { ep: 0, v: 0 });
   return { key: m.key, label: m.label, colorClass: m.colorClass, pts, best };
 }
@@ -72,6 +82,41 @@ function buildSeries(entries: ActionPerfEntry[]): Series[] {
   return series;
 }
 
+/** Per-epoch series for the actor head: every numeric validation metric it
+ *  reports (player_top1, overall_top1, recalls…), primary metric first so it
+ *  takes the headline color. */
+function buildActorSeries(entries: ActionPerfEntry[]): Series[] {
+  const snapshot = [...entries]
+    .reverse()
+    .map((e) => e.tasks?.actor)
+    .find(Boolean);
+  if (!snapshot) return [];
+
+  const metrics = Object.entries(snapshot.validation.metrics)
+    .filter(([, value]) => typeof value === 'number')
+    .map(([metric]) => metric)
+    .sort((a, b) => {
+      if (a === snapshot.primary_metric) return -1;
+      if (b === snapshot.primary_metric) return 1;
+      return a.localeCompare(b);
+    });
+
+  return metrics
+    .map((metric, index) =>
+      toSeries(
+        {
+          key: metric,
+          label: METRIC_LABELS[metric] ?? metric,
+          colorClass: SERIES_COLORS[index % SERIES_COLORS.length]!,
+        },
+        entries
+          .map((e) => ({ ep: e.epoch, v: e.tasks?.actor?.validation.metrics[metric] }))
+          .filter((p): p is Point => typeof p.v === 'number' && Number.isFinite(p.v)),
+      ),
+    )
+    .filter((s) => s.pts.length > 0);
+}
+
 /** Shorten a long broadcast filename to something a bar row can show.
  *  Prefer the segment naming the teams ("A vs. B") over the date/time head. */
 function shortLabel(video: string): string {
@@ -82,9 +127,23 @@ function shortLabel(video: string): string {
   return (head.length > 42 ? head.slice(0, 41) + '…' : head) + setSuffix;
 }
 
-export function TrainPerfCard({ data, onSelectRun }: { data: ActionPerfData; onSelectRun: (run: string) => void }) {
+export function TrainPerfCard({
+  data,
+  onSelectRun,
+}: {
+  data: ActionPerfData;
+  onSelectRun: (run: string) => void;
+}) {
   const entries = useMemo(() => (data.entries ?? []).filter((e) => typeof e.val_mAP === 'number'), [data.entries]);
   const series = useMemo(() => buildSeries(entries), [entries]);
+  const actorSeries = useMemo(() => buildActorSeries(entries), [entries]);
+  // Association runs report no mAP (val_mAP is pinned to 0) but do carry task
+  // metrics — for them the actor chart IS the chart, and the mAP curve plus
+  // its legend would just draw a flat zero.
+  const mapless =
+    entries.length > 0 &&
+    entries.every((e) => !e.val_mAP) &&
+    entries.some((e) => e.tasks && Object.keys(e.tasks).length > 0);
   const latestEntry = entries[entries.length - 1];
   const bestEntry =
     entries.find((entry) => entry.epoch === data.best?.epoch) ?? latestEntry;
@@ -109,14 +168,28 @@ export function TrainPerfCard({ data, onSelectRun }: { data: ActionPerfData; onS
       .sort((a, b) => b.mAP - a.mAP);
   }, [entries, data.best?.epoch]);
 
-  if (!entries.length || !series.length) return null;
+  if (!entries.length || (!series.length && !mapless)) return null;
+
+  // Action left, actor right; a lone chart spans the full width. Location has
+  // no per-epoch story worth a panel, so it stays unplotted.
+  const charts: Array<{ title: string; series: Series[]; bestEpoch?: number }> = [];
+  if (series.length) {
+    charts.push({ title: 'Action · val mAP', series, bestEpoch: data.best?.epoch });
+  }
+  if (actorSeries.length) {
+    charts.push({
+      title: 'Actor · validation',
+      series: actorSeries,
+      bestEpoch: actorSeries[0]!.best.ep,
+    });
+  }
 
   const runs = data.runs ?? [];
   const hasDetail = perVideo.length > 0 || perClass.length > 0;
   const subtitle = [
     data.run,
     data.best && typeof data.best.value === 'number'
-      ? `best mAP ${(data.best.value * 100).toFixed(1)}%${data.best.epoch != null ? ` @ ep${data.best.epoch}` : ''}`
+      ? `best ${mapless ? '' : 'mAP '}${(data.best.value * 100).toFixed(1)}%${data.best.epoch != null ? ` @ ep${data.best.epoch}` : ''}`
       : null,
   ]
     .filter(Boolean)
@@ -145,28 +218,24 @@ export function TrainPerfCard({ data, onSelectRun }: { data: ActionPerfData; onS
           })}
         </div>
       )}
-      <div className="grid items-center gap-8 lg:grid-cols-[minmax(0,3fr)_minmax(0,1fr)]">
-        <EpochChart series={series} entries={entries} bestEpoch={data.best?.epoch} />
-        <div className="space-y-2.5">
-          {series.map((s) => (
-            <div key={s.key} className="flex items-center gap-2 whitespace-nowrap">
-              <span className={cn('h-2 w-2 flex-shrink-0 rounded-full bg-current', s.colorClass)} />
-              <span className="text-[11px] text-text-muted">{s.label}</span>
-              <span className="text-xs font-medium tabular-nums text-text-primary">{(s.best.v * 100).toFixed(1)}%</span>
-              <span className="text-[10px] text-text-muted">ep{s.best.ep}</span>
-            </div>
+      {charts.length > 0 && (
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          {charts.map((chart) => (
+            <EpochChartPanel
+              key={chart.title}
+              title={chart.title}
+              series={chart.series}
+              entries={entries}
+              bestEpoch={chart.bestEpoch}
+              className={charts.length === 1 ? 'xl:col-span-2' : undefined}
+            />
           ))}
         </div>
-      </div>
+      )}
       <TaskMetricsTable
         latest={latestEntry?.tasks}
         best={bestEntry?.tasks}
         title="Task validation metrics"
-      />
-      <TaskMetricHistory
-        entries={entries}
-        bestEpoch={data.best?.epoch}
-        excludeTasks={['action', 'location']}
       />
       {/* A single class (rally runs) carries no comparison — the headline line already shows it. */}
       {perClass.length > 1 && <PerClassChart rows={perClass} bestEpoch={data.best?.epoch} />}
@@ -209,6 +278,41 @@ function PerClassChart({ rows, bestEpoch }: { rows: Array<{ label: string; mAP: 
           );
         })}
       </div>
+    </div>
+  );
+}
+
+/** One epoch chart with its title and best-value legend — the single visual
+ *  style every per-task panel in the card shares. */
+function EpochChartPanel({
+  title,
+  series,
+  entries,
+  bestEpoch,
+  className,
+}: {
+  title: string;
+  series: Series[];
+  entries: ActionPerfEntry[];
+  bestEpoch?: number;
+  className?: string;
+}) {
+  return (
+    <div className={cn('min-w-0', className)}>
+      <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <span className="text-xs font-semibold text-text-primary">{title}</span>
+        <div className="flex flex-wrap gap-x-3 gap-y-1">
+          {series.map((s) => (
+            <span key={s.key} className="flex items-center gap-1.5 whitespace-nowrap">
+              <span className={cn('h-2 w-2 flex-shrink-0 rounded-full bg-current', s.colorClass)} />
+              <span className="text-[11px] text-text-muted">{s.label}</span>
+              <span className="text-xs font-medium tabular-nums text-text-primary">{(s.best.v * 100).toFixed(1)}%</span>
+              <span className="text-[10px] text-text-muted">ep{s.best.ep}</span>
+            </span>
+          ))}
+        </div>
+      </div>
+      <EpochChart series={series} entries={entries} bestEpoch={bestEpoch} />
     </div>
   );
 }

@@ -2,14 +2,13 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { API, apiFetch, errMsg } from '@/lib/api';
 import { cn } from '@/lib/cn';
-import { CameraViewSelect, Field, InitCheckpointSelect, ResumeRunSelect, SelectArch, fieldCls } from '@/components/train/Field';
+import { CameraViewSelect, Field, InitCheckpointSelect, SelectArch, fieldCls } from '@/components/train/Field';
 import { useTrainPerformance } from '@/components/train/useTrainPerformance';
 import { useSingleJob } from '@/lib/useSingleJob';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SectionLabel } from '@/components/ui/SectionLabel';
-import { StatTile } from '@/components/ui/StatTile';
 import { TrainJobCard } from '@/components/train/TrainJobCard';
 import { TrainPerfCard } from '@/components/train/TrainPerfCard';
 import { toast } from '@/components/feedback/toast';
@@ -20,7 +19,6 @@ interface Form {
   video_limit: number;
   camera_view: 'all' | 'broadcast' | 'sideline';
   init_checkpoint: string;
-  resume_run: string; // '' = fresh run; else the exp/ save_dir to --resume
   feature_arch: string;
   temporal_arch: string;
   num_epochs: number;
@@ -43,7 +41,6 @@ const BASE_FORM: Form = {
   video_limit: 100,
   camera_view: 'all',
   init_checkpoint: '',
-  resume_run: '',
   feature_arch: 'rny008_gsm',
   temporal_arch: 'gru',
   num_epochs: 30,
@@ -106,8 +103,6 @@ export function SpotTrainPage() {
   const ready = usable > 0;
   const canStart = !running && ready && Boolean(status?.spot_available);
   const initCheckpoints = status?.init_checkpoints ?? [];
-  const resumableRuns = status?.resumable_runs ?? [];
-  const isResuming = form.resume_run !== '';
   // Rough JPEG footprint of the frame cache this run would need (~15 KB/frame).
   const estCacheGb = ((Number(ann?.total_hours) || 0) * (trainingVideos / Math.max(1, usable)) * 3600 * form.extract_fps * 15) / 1e6;
 
@@ -117,9 +112,7 @@ export function SpotTrainPage() {
         extract_fps: form.extract_fps,
         video_limit: form.video_limit,
         camera_view: form.camera_view,
-        init_checkpoint: form.resume_run !== '' ? null : form.init_checkpoint.trim() || null,
-        resume: form.resume_run !== '',
-        save_dir: form.resume_run || null,
+        init_checkpoint: form.init_checkpoint.trim() || null,
         gpu: form.gpu,
         feature_arch: form.feature_arch,
         temporal_arch: form.temporal_arch,
@@ -148,13 +141,6 @@ export function SpotTrainPage() {
     <div className="mx-auto max-w-screen-2xl space-y-5">
       <PageHeader />
 
-      <div className="grid grid-cols-2 gap-3.5 lg:grid-cols-4">
-        <StatTile label="Annotated videos" value={`${usable}/${ann?.videos ?? 0}`} tintClass="text-primary-light" />
-        <StatTile label="Rallies" value={(ann?.rallies ?? 0).toLocaleString()} tintClass="text-primary-light" />
-        <StatTile label="Rally hours" value={(Number(ann?.rally_hours) || 0).toFixed(1)} tintClass="text-primary-light" />
-        <StatTile label="Checkpoints" value={status?.rally_checkpoints?.runs ?? 0} tintClass="text-primary-light" />
-      </div>
-
       <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
         {/* Training config */}
         <Card>
@@ -177,12 +163,6 @@ export function SpotTrainPage() {
               value={form.init_checkpoint}
               onChange={(v) => set('init_checkpoint', v)}
               options={initCheckpoints}
-              resuming={isResuming}
-            />
-            <ResumeRunSelect
-              value={form.resume_run}
-              onChange={(v) => set('resume_run', v)}
-              options={resumableRuns}
             />
             <Field label="Feature">
               <SelectArch value={form.feature_arch} options={SELECTS.feature_arch} onChange={(v) => set('feature_arch', v)} />
@@ -218,12 +198,21 @@ export function SpotTrainPage() {
                 className={cn(fieldCls, 'font-mono tabular-nums')}
               />
             </Field>
-            <Field label="Val ratio">
-              <input type="number" value={form.val_ratio} min={0.01} max={0.9} step={0.01} onChange={(e) => set('val_ratio', Number(e.target.value))} className={cn(fieldCls, 'font-mono tabular-nums')} />
-            </Field>
-            <Field label="Split seed">
-              <input type="number" value={form.split_seed} onChange={(e) => set('split_seed', Number(e.target.value))} className={cn(fieldCls, 'font-mono tabular-nums')} />
-            </Field>
+          </div>
+
+          <div className="mt-5 border-t border-border pt-4">
+            <SectionLabel>Validation split</SectionLabel>
+            <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3">
+              <Field label="Val ratio">
+                <input type="number" value={form.val_ratio} min={0.01} max={0.9} step={0.01} onChange={(e) => set('val_ratio', Number(e.target.value))} className={cn(fieldCls, 'font-mono tabular-nums')} />
+              </Field>
+              <Field label="Split seed">
+                <input type="number" value={form.split_seed} onChange={(e) => set('split_seed', Number(e.target.value))} className={cn(fieldCls, 'font-mono tabular-nums')} />
+              </Field>
+            </div>
+            <p className="mt-2 text-[11px] text-text-muted">
+              Rally training splits by ratio — per-video holdout is not supported by this trainer yet.
+            </p>
           </div>
 
           <p className="mt-2 text-xs text-text-secondary">

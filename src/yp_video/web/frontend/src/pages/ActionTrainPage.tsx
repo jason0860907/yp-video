@@ -1,15 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { API, apiFetch, apiUrl, errMsg } from '@/lib/api';
+import { API, apiFetch, errMsg } from '@/lib/api';
 import { cn } from '@/lib/cn';
-import { CameraViewSelect, Field, InitCheckpointSelect, ResumeRunSelect, SelectArch, fieldCls } from '@/components/train/Field';
+import { CameraViewSelect, Field, InitCheckpointSelect, SelectArch, fieldCls } from '@/components/train/Field';
 import { useTrainPerformance } from '@/components/train/useTrainPerformance';
 import { useSingleJob } from '@/lib/useSingleJob';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SectionLabel } from '@/components/ui/SectionLabel';
-import { StatTile } from '@/components/ui/StatTile';
 import { TrainJobCard } from '@/components/train/TrainJobCard';
 import { TrainPerfCard } from '@/components/train/TrainPerfCard';
 import { toast } from '@/components/feedback/toast';
@@ -20,7 +20,6 @@ interface Form {
   frame_dir: string;
   checkpoint_dir: string;
   init_checkpoint: string;
-  resume_run: string; // '' = fresh run; else the exp/ save_dir to --resume
   feature_arch: string;
   temporal_arch: string;
   audio_backend: string;
@@ -35,10 +34,7 @@ interface Form {
   criterion: string;
   start_val_epoch: number;
   epoch_num_frames: number | '';
-  training_mode: 'all' | 'split' | 'holdout';
   camera_view: 'all' | 'broadcast' | 'sideline';
-  val_ratio: number;
-  split_seed: number;
   predict_location: boolean;
   stop_vllm: boolean;
 }
@@ -48,7 +44,6 @@ const BASE_FORM: Form = {
   frame_dir: '', // seeded from /action-train/status (the resolved ACTION_FRAMES_DIR)
   checkpoint_dir: '',
   init_checkpoint: '',
-  resume_run: '',
   feature_arch: 'rny008_gsm',
   temporal_arch: 'gru',
   audio_backend: 'logmel',
@@ -63,10 +58,7 @@ const BASE_FORM: Form = {
   criterion: 'map',
   start_val_epoch: 0,
   epoch_num_frames: '',
-  training_mode: 'all',
   camera_view: 'all',
-  val_ratio: 0.2,
-  split_seed: 42,
   predict_location: true,
   stop_vllm: false,
 };
@@ -91,6 +83,8 @@ const NUM_FIELDS: Array<{ key: keyof Form; label: string; min?: number; max?: nu
 
 export function ActionTrainPage() {
   const [form, setForm] = useState<Form>(BASE_FORM);
+  const [holdoutVideos, setHoldoutVideos] = useState<Set<string>>(new Set());
+  const holdoutSeeded = useRef(false);
 
   const statusQuery = useQuery({
     queryKey: ['action-train-status'],
@@ -109,17 +103,19 @@ export function ActionTrainPage() {
     running,
   );
 
-  // Seed init_checkpoint from server options.
-  useEffect(() => {
-    const opts = status?.init_checkpoints ?? [];
-    if (opts.length && !form.init_checkpoint) setForm((f) => ({ ...f, init_checkpoint: opts[0]!.value }));
-  }, [status?.init_checkpoints, form.init_checkpoint]);
-
   // Seed frame_dir from the server's resolved ACTION_FRAMES_DIR.
   useEffect(() => {
     const fd = status?.action_annotations?.frame_dir;
     if (fd && !form.frame_dir) setForm((f) => ({ ...f, frame_dir: fd }));
   }, [status?.action_annotations?.frame_dir, form.frame_dir]);
+
+  // Seed the holdout selection from the saved val-set flags, once.
+  useEffect(() => {
+    const perVideoAll = status?.action_annotations?.per_video;
+    if (holdoutSeeded.current || !perVideoAll?.length) return;
+    setHoldoutVideos(new Set(perVideoAll.filter((v) => v.is_val).map((v) => v.video)));
+    holdoutSeeded.current = true;
+  }, [status?.action_annotations?.per_video]);
 
   const set = <K extends keyof Form>(key: K, value: Form[K]) => setForm((f) => ({ ...f, [key]: value }));
 
@@ -137,31 +133,26 @@ export function ActionTrainPage() {
     .filter((v) => form.camera_view === 'all' || v.view === form.camera_view)
     .slice()
     .sort((a, b) => b.events - a.events);
+  // Validation is always a manual per-video holdout; the list is the same
+  // view-filtered corpus the run trains on.
+  const holdoutChoices = perVideo;
+  const selectedHoldoutCount = holdoutChoices.filter((v) => holdoutVideos.has(v.video)).length;
   const ready = stats.actions > 0;
-  const canStart = !running && ready && Boolean(status?.spot_available);
-  const showSplit = form.training_mode === 'split';
-  const showHoldout = form.training_mode === 'holdout';
-
-  const exportDataset = () => {
-    if (!stats.actions) {
-      toast.warning('No saved action annotations to export yet');
-      return;
-    }
-    window.location.href = apiUrl(API.actionAnnotate.export);
-  };
+  const canStart = !running && ready && Boolean(status?.spot_available) && selectedHoldoutCount > 0;
 
   const start = async () => {
     try {
       const body = {
         source: 'action_annotations',
-        training_mode: form.training_mode,
+        training_mode: 'holdout',
+        holdout_videos: holdoutChoices
+          .filter((v) => holdoutVideos.has(v.video))
+          .map((v) => `${v.video}_actions.jsonl`),
         camera_view: form.camera_view,
         dataset: form.dataset.trim(),
         frame_dir: form.frame_dir.trim(),
         checkpoint_dir: form.checkpoint_dir.trim() || null,
-        init_checkpoint: form.resume_run !== '' ? null : form.init_checkpoint.trim() || null,
-        resume: form.resume_run !== '',
-        save_dir: form.resume_run || null,
+        init_checkpoint: form.init_checkpoint.trim() || null,
         gpu: form.gpu,
         feature_arch: form.feature_arch,
         temporal_arch: form.temporal_arch,
@@ -176,8 +167,6 @@ export function ActionTrainPage() {
         criterion: form.criterion,
         start_val_epoch: form.start_val_epoch,
         epoch_num_frames: form.epoch_num_frames === '' ? null : form.epoch_num_frames,
-        val_ratio: form.val_ratio,
-        split_seed: form.split_seed,
         predict_location: form.predict_location,
         stop_vllm: form.stop_vllm,
       };
@@ -190,25 +179,10 @@ export function ActionTrainPage() {
   };
 
   const initCheckpoints = status?.init_checkpoints ?? [];
-  const resumableRuns = status?.resumable_runs ?? [];
-  const isResuming = form.resume_run !== '';
 
   return (
     <div className="mx-auto max-w-screen-2xl space-y-5">
-      <PageHeader
-        actions={
-          <Button size="sm" onClick={exportDataset}>
-            Export JSONL
-          </Button>
-        }
-      />
-
-      <div className="grid grid-cols-2 gap-3.5 lg:grid-cols-4">
-        <StatTile label="Action videos" value={stats.videos} tintClass="text-primary-light" />
-        <StatTile label="Action labels" value={stats.actions} tintClass="text-primary-light" />
-        <StatTile label="Action frames" value={stats.frames.toLocaleString()} tintClass="text-primary-light" />
-        <StatTile label="Status" value={ready ? 'ready' : 'not ready'} tintClass={ready ? 'text-primary-light' : 'text-amber-400'} />
-      </div>
+      <PageHeader />
 
       <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
         {/* Training config */}
@@ -222,13 +196,6 @@ export function ActionTrainPage() {
               value={form.init_checkpoint}
               onChange={(v) => set('init_checkpoint', v)}
               options={initCheckpoints}
-              resuming={isResuming}
-              emptyLabel={initCheckpoints.length === 0 ? 'No checkpoints found' : null}
-            />
-            <ResumeRunSelect
-              value={form.resume_run}
-              onChange={(v) => set('resume_run', v)}
-              options={resumableRuns}
             />
             <Field label="Feature">
               <SelectArch value={form.feature_arch} options={SELECTS.feature_arch} onChange={(v) => set('feature_arch', v)} />
@@ -269,32 +236,67 @@ export function ActionTrainPage() {
                 className={cn(fieldCls, 'font-mono tabular-nums')}
               />
             </Field>
-
-            <Field label="Data mode">
-              <select value={form.training_mode} onChange={(e) => set('training_mode', e.target.value as Form['training_mode'])} className={cn(fieldCls, 'cursor-pointer appearance-none')}>
-                <option value="all">All Data</option>
-                <option value="split">Train/Test Split</option>
-                <option value="holdout">Holdout (val-set.txt)</option>
-              </select>
-            </Field>
             <CameraViewSelect value={form.camera_view} onChange={(v) => set('camera_view', v)} />
-            {showSplit && (
-              <>
-                <Field label="Val ratio">
-                  <input type="number" value={form.val_ratio} min={0.01} max={0.9} step={0.01} onChange={(e) => set('val_ratio', Number(e.target.value))} className={cn(fieldCls, 'font-mono tabular-nums')} />
-                </Field>
-                <Field label="Split seed">
-                  <input type="number" value={form.split_seed} onChange={(e) => set('split_seed', Number(e.target.value))} className={cn(fieldCls, 'font-mono tabular-nums')} />
-                </Field>
-              </>
-            )}
           </div>
 
-          {showHoldout && (
-            <p className="mt-2 text-xs text-text-secondary">
-              Validation videos are read from <code className="font-mono">videos/action-val-set.txt</code> — one filename per line. Every other labelled video trains.
+          <div className="mt-5 border-t border-border pt-4">
+            <SectionLabel>Validation split</SectionLabel>
+            <div className="mb-2 flex items-center justify-between text-[11px] text-text-muted">
+              <span>
+                {selectedHoldoutCount} validation / {holdoutChoices.length} in this camera view
+              </span>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setHoldoutVideos(
+                      new Set((ann?.per_video ?? []).filter((v) => v.is_val).map((v) => v.video)),
+                    )
+                  }
+                  className="text-primary-light hover:underline"
+                >
+                  Load saved val set
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setHoldoutVideos(new Set())}
+                  className="text-text-muted hover:underline"
+                >
+                  Clear
+                </button>
+              </div>
+            </div>
+            <div className="max-h-64 space-y-1 overflow-auto rounded-lg border border-border bg-surface-50 p-2">
+              {holdoutChoices.map((video) => (
+                <label
+                  key={video.video}
+                  className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 hover:bg-ink/[0.03]"
+                >
+                  <input
+                    type="checkbox"
+                    checked={holdoutVideos.has(video.video)}
+                    onChange={(e) => {
+                      const next = new Set(holdoutVideos);
+                      if (e.target.checked) next.add(video.video);
+                      else next.delete(video.video);
+                      setHoldoutVideos(next);
+                    }}
+                    className="h-3.5 w-3.5 flex-shrink-0 accent-primary"
+                  />
+                  <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">
+                    {video.video}
+                  </span>
+                  <Badge tone="neutral">{video.view}</Badge>
+                  <span className="font-mono text-[10px] tabular-nums text-text-muted">
+                    {video.events}
+                  </span>
+                </label>
+              ))}
+            </div>
+            <p className="mt-2 text-[10px] leading-relaxed text-text-muted">
+              Selected videos are validation only; every other matching action annotation trains.
             </p>
-          )}
+          </div>
 
           <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-text-secondary">
             <label className="inline-flex cursor-pointer items-center gap-2">
@@ -324,7 +326,7 @@ export function ActionTrainPage() {
             {[
               ['Labels', `${stats.videos} vid / ${stats.actions} ev`],
               ['Frames', stats.frames.toLocaleString()],
-              ['Mode', form.training_mode === 'all' ? 'all data' : form.training_mode === 'holdout' ? 'holdout (val-set.txt)' : 'train/test split'],
+              ['Mode', 'manual holdout'],
               ['View', form.camera_view === 'all' ? 'all views' : form.camera_view],
               ['Label dir', status?.action_annotations?.label_dir || '—'],
               ['Frame dir', form.frame_dir || status?.action_annotations?.frame_dir || '—'],

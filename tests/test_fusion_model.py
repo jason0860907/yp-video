@@ -32,9 +32,6 @@ class FusionModelStatusTests(unittest.TestCase):
                 fusion_model, "checkpoint_package_options", return_value=[]
             ),
             patch.object(
-                fusion_model, "resumable_run_options", return_value=[]
-            ),
-            patch.object(
                 fusion_model.association_labels,
                 "labeled_stems",
                 return_value=["joint"],
@@ -84,7 +81,7 @@ class FusionModelStatusTests(unittest.TestCase):
         read.assert_called_once_with(
             fusion_model.ACTION_CHECKPOINTS_DIR,
             "yp_fusion_one",
-            run_prefixes=("yp_fusion_", "yp_actor_only"),
+            package_types=(fusion_model.FUSION_PACKAGE_TYPE,),
         )
 
 
@@ -132,63 +129,10 @@ class FusionModelTrainTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(action_request.checkpoint_dir.endswith("/joint_run"))
         self.assertEqual(flavor.job_type, "fusion_model_train")
         self.assertEqual(flavor.package_type, "actor-association-spot")
-        self.assertFalse(start.await_args.kwargs["reuse_existing_labels"])
         self.assertEqual(start.await_args.kwargs["label_items"], [label_item])
         self.assertTrue(start.await_args.kwargs["require_actor_targets"])
 
-    async def test_resume_preserves_the_joint_run_contract_and_label_snapshot(
-        self,
-    ) -> None:
-        start = AsyncMock(return_value={"id": "resume-job"})
-        with tempfile.TemporaryDirectory() as raw_dir:
-            spot_root = Path(raw_dir) / "yp-spot"
-            run = spot_root / "exp" / "yp_actor_only"
-            run.mkdir(parents=True)
-            (run / "config.json").write_text(
-                json.dumps(
-                    {
-                        "dataset": "yp_actions",
-                        "predict_actor": True,
-                        "audio_backend": "logmel",
-                        "feature_arch": "rny008_gsm",
-                        "temporal_arch": "gru",
-                        "clip_len": 64,
-                        "sample_fps": 30,
-                    }
-                ),
-                encoding="utf-8",
-            )
-            with (
-                patch.object(fusion_model, "SPOT_DIR", spot_root),
-                patch.object(
-                    fusion_model,
-                    "ACTION_CHECKPOINTS_DIR",
-                    Path(raw_dir) / "checkpoints",
-                ),
-                patch.object(
-                    fusion_model,
-                    "start_training_job",
-                    start,
-                ),
-            ):
-                result = await fusion_model.train(
-                    fusion_model.FusionTrainRequest(
-                        resume_run=str(run),
-                        feature_arch="rny002",
-                        audio_backend="none",
-                        num_epochs=60,
-                    )
-                )
 
-        self.assertEqual(result, {"id": "resume-job"})
-        action_request = start.await_args.args[0]
-        self.assertTrue(action_request.resume)
-        self.assertEqual(action_request.save_dir, str(run))
-        self.assertIsNone(action_request.init_checkpoint)
-        self.assertEqual(action_request.feature_arch, "rny008_gsm")
-        self.assertEqual(action_request.audio_backend, "logmel")
-        self.assertEqual(action_request.num_epochs, 60)
-        self.assertTrue(start.await_args.kwargs["reuse_existing_labels"])
 
     async def test_manual_validation_videos_map_to_the_holdout_contract(self) -> None:
         start = AsyncMock(return_value={"id": "holdout-job"})

@@ -40,7 +40,6 @@ export interface ActionTrainStatus {
   active_job?: Job;
   spot_available?: boolean;
   init_checkpoints?: SelectOption[];
-  resumable_runs?: SelectOption[];
   action_annotations?: {
     videos?: number;
     events?: number;
@@ -91,7 +90,6 @@ export interface FusionModelStatus {
   checkpoints: AssociationCheckpoint[];
   spot_available: boolean;
   init_checkpoints: SelectOption[];
-  resumable_runs: SelectOption[];
   action_annotations?: ActionTrainStatus['action_annotations'];
   supervision: {
     action_videos: number;
@@ -162,7 +160,7 @@ export interface ActionPerfData {
 /** Either breakdown flavour; discriminate with `'spatial' in bd`. */
 export type MapBreakdown = ActionMapBreakdown | RallyMapBreakdown;
 
-/** Live training progress — job.params.{action,rally}_train_progress. */
+/** Live training progress — job.params.{action,rally,association}_train_progress. */
 export interface TrainProgress {
   epoch?: number;
   epoch_display?: number;
@@ -189,7 +187,6 @@ export interface RallyTrainStatus {
   active_job?: Job;
   spot_available?: boolean;
   init_checkpoints?: SelectOption[];
-  resumable_runs?: SelectOption[];
   rally_annotations?: {
     videos?: number;
     rallies?: number;
@@ -229,7 +226,7 @@ export interface VllmStatus {
 
 export type CutKind = 'broadcast' | 'sideline';
 
-/** A <select> option as the backend serves it (checkpoints, resumable runs). */
+/** A <select> option as the backend serves it (checkpoints). */
 export interface SelectOption {
   value: string;
   label: string;
@@ -393,9 +390,10 @@ export interface ReidRecord {
   resolution: 'unresolved' | 'auto' | 'manual' | 'occluded';
   /** The human verdict on this event's actor; drives association training. */
   actor_review?: 'unreviewed' | 'confirmed_auto' | 'manual' | 'occluded';
-  /** Present (true) only when the verdict names a person but no tracklet —
-   *  tracklet training skips such an event until the player is re-picked. */
-  actor_review_box_only?: boolean;
+  /** Present (true) only when the verdict names a person but resolves to no
+   *  tracklet today (links.unresolved_labels) — tracklet training skips such
+   *  an event until the player is re-picked or tracking improves. */
+  actor_review_unresolved?: boolean;
   /** What decided this actor, in that policy's own terms. `version` names
    *  which one — the rule, `learned:<checkpoint>`, or `spot:<run>` — and the
    *  optional fields are the ones only some policies can fill. */
@@ -596,9 +594,10 @@ export interface AssociationVideo {
   unreviewed: number;
   /** verdict -> count; keys are absent when the count is zero. */
   verdicts: Partial<Record<'manual' | 'occluded' | 'confirmed_auto', number>>;
-  /** Reviewed verdicts naming no tracklet — need re-picking before tracklet
-   *  training can use them. */
-  box_only: number;
+  /** Reviewed verdicts resolving to no tracklet today — need re-picking (or
+   *  a better tracking run) before tracklet training can use them. Zero when
+   *  the video has no tracking run at all: that gap is the pipeline chip's. */
+  unresolved: number;
   /** What the automatic policy produced, for context on the remainder. */
   auto_counts: { ok: number; multi: number; miss: number };
   pipeline: PipelineState;
@@ -608,9 +607,9 @@ export interface ReidAssociationMetrics {
   reviewed: number;
   positive: number;
   occluded: number;
-  /** Verdicts naming no tracklet — the legacy box labels. Not answerable in
-   *  tracklet terms, so they are excluded from every rate rather than
-   *  counted as failures. */
+  /** Verdicts naming no tracklet directly — legacy box picks and confirm
+   *  snapshots. Not answerable in tracklet terms, so they are excluded from
+   *  every rate rather than counted as failures. */
   unscorable?: number;
   top1_accuracy: number | null;
   auto_coverage: number | null;

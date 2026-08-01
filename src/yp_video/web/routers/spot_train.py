@@ -29,6 +29,7 @@ from yp_video.config import (
 from yp_video.contracts.action import (
     ACTION_CONTRACT_VERSION,
     ACTION_CONTRACT_VERSION_ENV,
+    RALLY_PACKAGE_TYPE,
 )
 from yp_video.web.job_helpers import (
     fail_job_from_exc,
@@ -40,13 +41,12 @@ from yp_video.web.jobs import JobSummary, JobType, job_manager
 from yp_video.web.schemas import StrictModel
 from yp_video.web.spot_runs import (
     PackageExporter,
+    SPOT_INIT_PACKAGE_TYPES,
     TrainProgress,
     checkpoint_package_options,
     export_checkpoint_package,
-    last_resumable_epoch,
     make_train_parsers,
     performance_payload,
-    resumable_run_options,
     validate_checkpoint_dir,
 )
 
@@ -71,7 +71,6 @@ class RallyTrainRequest(StrictModel):
     # None / "" → train from scratch; an explicit path → that checkpoint
     # (a rally or action package — mismatched heads are skipped on load).
     init_checkpoint: str | None = None
-    resume: bool = False
     gpu: int = Field(default=0, ge=0)
     feature_arch: str = "rny008_gsm"
     temporal_arch: str = "gru"
@@ -139,14 +138,16 @@ def _rally_checkpoint_stats() -> dict:
 
 
 def _init_checkpoint_options() -> list[dict]:
-    """Rally packages first, then action packages (backbone warm start)."""
+    """Rally packages first, then SPOT packages (backbone warm start)."""
     return [
         {**option, "label": f"{kind}: {option['label']}"}
-        for kind, checkpoints_dir in (
-            ("rally", RALLY_SPOT_CHECKPOINTS_DIR),
-            ("action", ACTION_CHECKPOINTS_DIR),
+        for kind, checkpoints_dir, package_types in (
+            ("rally", RALLY_SPOT_CHECKPOINTS_DIR, (RALLY_PACKAGE_TYPE,)),
+            ("action", ACTION_CHECKPOINTS_DIR, SPOT_INIT_PACKAGE_TYPES),
         )
-        for option in checkpoint_package_options(checkpoints_dir)
+        for option in checkpoint_package_options(
+            checkpoints_dir, package_types=package_types
+        )
     ]
 
 
@@ -163,7 +164,6 @@ def status() -> dict:
         },
         "frame_caches": _frame_cache_stats(),
         "init_checkpoints": _init_checkpoint_options(),
-        "resumable_runs": resumable_run_options(RALLY_RUN_PREFIX),
         "rally_checkpoints": _rally_checkpoint_stats(),
         "active_job": active.to_dict() if (active := job_manager.active_job(JobType.RALLY_SPOT_TRAIN)) else None,
     }
@@ -172,7 +172,9 @@ def status() -> dict:
 @router.get("/performance")
 def performance(run: str | None = None) -> dict:
     """Per-epoch validation metrics for a rally-spot-checkpoints run."""
-    return performance_payload(RALLY_SPOT_CHECKPOINTS_DIR, run)
+    return performance_payload(
+        RALLY_SPOT_CHECKPOINTS_DIR, run, package_types=(RALLY_PACKAGE_TYPE,)
+    )
 
 
 def _build_command(
@@ -228,14 +230,7 @@ def _build_command(
     ]
     if req.camera_view != "all":
         cmd.extend(["--camera_view", req.camera_view])
-    if req.resume:
-        if last_resumable_epoch(save_dir) is None:
-            raise HTTPException(
-                400,
-                f"Cannot resume: no optimizer checkpoint (optim_*.pt) in {save_dir}",
-            )
-        cmd.append("--resume")
-    elif init_checkpoint is not None:
+    if init_checkpoint is not None:
         cmd.extend(["--init_checkpoint", str(init_checkpoint)])
     if req.epoch_num_frames is not None:
         cmd.extend(["--epoch_num_frames", str(req.epoch_num_frames)])
@@ -254,7 +249,7 @@ def _export_rally_checkpoint_package(
         run_dir=run_dir,
         package_dir=package_dir,
         checkpoints_root=RALLY_SPOT_CHECKPOINTS_DIR,
-        package_type="yp-video-rally-spot-checkpoint",
+        package_type=RALLY_PACKAGE_TYPE,
         label_subdir="rally-annotations",
         label_glob=f"*{rally_spot.RALLY_LABEL_FILE_SUFFIX}",
         training={
@@ -266,6 +261,7 @@ def _export_rally_checkpoint_package(
             "label_summary": label_summary,
         },
         cmd=cmd,
+        serveable_tasks=("rally",),
     )
 
 
