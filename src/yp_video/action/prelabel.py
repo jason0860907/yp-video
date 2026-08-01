@@ -38,6 +38,10 @@ def list_checkpoints(root: Path = ACTION_CHECKPOINTS_DIR) -> list[dict]:
             continue
         match = _CHECKPOINT_RE.match(path.name)
         is_best = path.name == _BEST_CHECKPOINT
+        if match is None and not is_best:
+            # A per-task best (checkpoint_best_<task>.pt) — reachable through
+            # its package's manifest, not a standalone picker entry.
+            continue
         best_metadata = _load_best_metadata(path.parent) if is_best else {}
         epoch = int(match.group(1)) if match else int(best_metadata.get("epoch", -1))
         stat = path.stat()

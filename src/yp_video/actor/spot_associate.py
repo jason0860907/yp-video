@@ -40,7 +40,9 @@ from yp_video.contracts.action import (
     ACTION_CONTRACT_VERSION,
     ACTION_CONTRACT_VERSION_ENV,
     ACTOR_FILE_SUFFIX,
+    FUSION_PACKAGE_TYPE,
 )
+from yp_video.core.checkpoints import checkpoint_ref
 from yp_video.core.jsonl import atomic_write, read_jsonl, write_jsonl
 
 INDEPENDENT_ASSOCIATE_MODULE = "yp_spot.association.predict"
@@ -210,7 +212,7 @@ def checkpoint_family(checkpoint: Path) -> str | None:
         return INDEPENDENT_FORMAT
     if (
         config.get("predict_actor") is True
-        and manifest.get("type") == "actor-association-spot"
+        and manifest.get("type") == FUSION_PACKAGE_TYPE
     ):
         return LEGACY_ACTOR_FORMAT
     return None
@@ -323,13 +325,23 @@ def list_association_checkpoints() -> list[dict]:
         if holdout is None and len(validation_videos) == 1:
             holdout = validation_videos[0]
         best = summary.get("best") or {}
-        actor_validation = (
+        # A fusion package selects its headline epoch by ACTION mAP; the
+        # actor head's own best lives in the manifest's per-task record.
+        # Answering "who acted" with the action-best epoch quietly serves a
+        # compromised actor head, so this row points at the actor-best file.
+        path, epoch = entry["path"], entry.get("epoch")
+        actor_best = (summary.get("best_per_task") or {}).get("actor") or {}
+        if family == LEGACY_ACTOR_FORMAT and actor_best.get("file"):
+            candidate = package / actor_best["file"]
+            if candidate.is_file():
+                path = checkpoint_ref(candidate)
+                epoch = actor_best.get("epoch", epoch)
+        actor_quality = actor_best.get("metrics") or (
             ((best.get("task_metrics") or {}).get("actor") or {}).get(
                 "validation"
             )
             or {}
-        )
-        actor_quality = actor_validation.get("metrics") or {}
+        ).get("metrics") or {}
         metrics = (
             best.get("metrics")
             or (
@@ -347,10 +359,10 @@ def list_association_checkpoints() -> list[dict]:
         )
         out.append(
             {
-                "path": entry["path"],
+                "path": path,
                 "name": package.name,
                 "family": family,
-                "epoch": entry.get("epoch"),
+                "epoch": epoch,
                 "mtime": entry.get("mtime"),
                 "holdout": holdout,
                 "validation_videos": validation_videos,

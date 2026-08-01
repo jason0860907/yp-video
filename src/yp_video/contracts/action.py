@@ -119,6 +119,17 @@ ACTOR_WINDOW_OFFSETS = tuple(
 )
 
 
+# ── Checkpoint packages ───────────────────────────────────────────
+# The manifest ``type`` each trainer stamps on its exported package. Every
+# reader — init-checkpoint pickers, family detection, predict surfaces —
+# matches on these strings, so they live here rather than at each export
+# site, where a rename would silently break every matcher.
+ACTION_PACKAGE_TYPE = "yp-video-action-checkpoint"
+FUSION_PACKAGE_TYPE = "actor-association-spot"
+ASSOCIATION_PACKAGE_TYPE = "yp-video-association-checkpoint"
+RALLY_PACKAGE_TYPE = "yp-video-rally-spot-checkpoint"
+
+
 class ActorTargetKind(str, Enum):
     """Which of the three answers an event carries.
 

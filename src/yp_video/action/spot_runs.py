@@ -12,12 +12,17 @@ reading. The live stdout protocol and job plumbing stay in
 from __future__ import annotations
 
 import json
+import logging
 import re
 import shutil
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 
 from yp_video.config import SPOT_DIR
+from yp_video.contracts.action import ACTION_PACKAGE_TYPE, FUSION_PACKAGE_TYPE
+
+log = logging.getLogger(__name__)
 
 
 def load_json_file(path: Path) -> dict | list | None:
@@ -30,68 +35,78 @@ def load_json_file(path: Path) -> dict | list | None:
         return None
 
 
-# ── Run discovery ──────────────────────────────────────────────────
+# ── Init-checkpoint options ───────────────────────────────────────
 
-# ── Run discovery (resume + init-checkpoint options) ──────────────
+#: Package types whose weights are a SPOT model — what the yp-spot trainers
+#: (Action, Fusion, Rally) can warm-start from. The independent association
+#: package is deliberately absent: its weights are an AssociationModel, and
+#: the SPOT loader's shape-matching init would load zero tensors from it
+#: without a word of complaint.
+SPOT_INIT_PACKAGE_TYPES = (ACTION_PACKAGE_TYPE, FUSION_PACKAGE_TYPE)
 
 
-def last_resumable_epoch(run_dir: Path) -> int | None:
-    """Latest epoch with optimizer state in ``run_dir``, or None if not resumable.
+def checkpoint_package_options(
+    checkpoints_dir: Path, *, package_types: Sequence[str]
+) -> list[dict]:
+    """Selectable init-checkpoint options: packaged runs under ``checkpoints_dir``.
 
-    Mirrors SPOT's ``get_last_epoch`` (globs ``optim_*.pt``): ``--resume`` needs
-    the optimizer/scheduler snapshot, and SPOT prunes all but the latest one.
+    ``package_types`` names what the trainer behind the picker can actually
+    load — several families share one checkpoints directory, so every caller
+    must say which it eats. A package with no readable manifest type is
+    excluded too: what it contains cannot be verified.
     """
-    epochs = [
-        int(m.group(1))
-        for p in run_dir.glob("optim_*.pt")
-        if (m := re.fullmatch(r"optim_(\d+)", p.stem))
-    ]
-    return max(epochs) if epochs else None
-
-
-def resumable_run_options(prefix: str | tuple[str, ...] | None = None) -> list[dict]:
-    """Runs under ``exp/`` that ``--resume`` can continue (have optimizer state).
-
-    ``prefix`` restricts to one trainer's runs (the trainers share the
-    ``exp/`` dir but use distinct run-name prefixes); a tuple matches any of
-    its prefixes, exactly as ``str.startswith`` does.
-    """
-    exp_dir = SPOT_DIR / "exp"
-    if not exp_dir.exists():
-        return []
-    options: list[dict] = []
-    for run_dir in sorted(exp_dir.iterdir(), reverse=True):
-        if not run_dir.is_dir() or (prefix and not run_dir.name.startswith(prefix)):
-            continue
-        last_epoch = last_resumable_epoch(run_dir)
-        if last_epoch is None:
-            continue
-        best = load_json_file(run_dir / "checkpoint_best.json")
-        best_value = best.get("value") if isinstance(best, dict) else None
-        label = f"{run_dir.name} (E{last_epoch + 1}"
-        if isinstance(best_value, (int, float)):
-            label += f", best {best_value:.3f}"
-        label += ")"
-        options.append({"label": label, "value": str(run_dir)})
-    return options
-
-
-def checkpoint_package_options(checkpoints_dir: Path) -> list[dict]:
-    """Selectable init-checkpoint options: packaged runs under ``checkpoints_dir``."""
     options: list[dict] = []
     if checkpoints_dir.exists():
         for run_dir in sorted(checkpoints_dir.iterdir(), reverse=True):
             ckpt = run_dir / "checkpoint_best.pt"
             if not run_dir.is_dir() or not ckpt.is_file():
                 continue
-            best = load_json_file(run_dir / "checkpoint_best.json")
-            value = best.get("value") if isinstance(best, dict) else None
-            label = run_dir.name
-            if isinstance(value, (int, float)):
-                metric = best.get("metric") if isinstance(best, dict) else None
-                label = f"{run_dir.name} ({'mAP' if metric == 'map' else metric or 'best'} {value:.3f})"
-            options.append({"label": label, "value": str(ckpt)})
+            manifest = load_json_file(run_dir / "manifest.json")
+            declared = (
+                manifest.get("type") if isinstance(manifest, dict) else None
+            )
+            if declared not in package_types:
+                continue
+            options.append(
+                {"label": _package_label(run_dir, manifest), "value": str(ckpt)}
+            )
     return options
+
+
+#: How a task's primary metric reads in a one-line picker label.
+_METRIC_LABELS = {
+    "harmonic_mAP": "mAP",
+    "spatial_mAP": "loc mAP",
+    "player_top1": "Top-1",
+}
+
+
+def _package_label(run_dir: Path, manifest: object) -> str:
+    """One line describing a package by what it can actually serve.
+
+    A multi-task package is labelled with EVERY serveable task's own best —
+    ``(action mAP 0.225 · actor Top-1 0.628)`` — because a picker showing
+    only the headline metric silently misdescribes every other task (the
+    actor head's quality is not the action mAP). Packages without a
+    ``best_per_task`` record fall back to the headline metric.
+    """
+    per_task = (
+        manifest.get("best_per_task") if isinstance(manifest, dict) else None
+    )
+    parts = [
+        f"{task} {_METRIC_LABELS.get(entry['metric'], entry['metric'])} "
+        f"{entry['value']:.3f}"
+        for task, entry in (per_task or {}).items()
+        if entry.get("file") and isinstance(entry.get("value"), (int, float))
+    ]
+    if parts:
+        return f"{run_dir.name} ({' · '.join(parts)})"
+    best = load_json_file(run_dir / "checkpoint_best.json")
+    value = best.get("value") if isinstance(best, dict) else None
+    if not isinstance(value, (int, float)):
+        return run_dir.name
+    metric = best.get("metric")
+    return f"{run_dir.name} ({'mAP' if metric == 'map' else metric or 'best'} {value:.3f})"
 
 # ── Checkpoint packages ────────────────────────────────────────────
 
@@ -112,6 +127,64 @@ def _reset_package_dir(package_dir: Path) -> None:
             child.unlink(missing_ok=True)
 
 
+def best_epochs_per_task(run_dir: Path) -> dict[str, dict]:
+    """Each declared task's best validation epoch, from the run's own records.
+
+    Pure selection, no policy of its own: ``metrics.jsonl`` opens with a
+    ``{"_meta": true}`` header where the trainer declares its tasks and each
+    task's primary metric (``task_definitions``), and every epoch record
+    carries each task's validation metrics (``tasks``). Both sides of the
+    selection come from that one file. A task the trainer never declared or
+    never validated is simply absent — which is how a future task (rally)
+    joins without a code change here. A metric named ``loss`` ranks
+    ascending; everything else descending.
+
+    Each entry carries the FULL validation metrics of the winning epoch, so
+    consumers that poll (checkpoint pickers) never have to re-read the
+    multi-megabyte metrics file to describe a package.
+    """
+    metrics_path = run_dir / "metrics.jsonl"
+    if not metrics_path.is_file():
+        return {}
+    definitions: dict = {}
+    epochs: list[dict] = []
+    for line in metrics_path.read_text(encoding="utf-8").splitlines():
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if record.get("_meta") is True:
+            declared = record.get("task_definitions")
+            if isinstance(declared, dict):
+                definitions = declared
+        elif isinstance(record.get("epoch"), int):
+            epochs.append(record)
+
+    out: dict[str, dict] = {}
+    for task, definition in definitions.items():
+        metric = (definition or {}).get("primary_metric")
+        if not metric:
+            continue
+        scored: list[tuple[int, float, dict]] = []
+        for record in epochs:
+            validation = (
+                (record.get("tasks") or {}).get(task) or {}
+            ).get("validation") or {}
+            metrics = validation.get("metrics") or {}
+            value = metrics.get(metric)
+            if value is None and metric == "loss":
+                value = validation.get("loss")
+            if isinstance(value, (int, float)):
+                scored.append((record["epoch"], float(value), metrics))
+        if not scored:
+            continue
+        pick = min if metric.endswith("loss") else max
+        epoch, value, metrics = pick(scored, key=lambda item: item[1])
+        out[task] = {"epoch": epoch, "metric": metric, "value": value,
+                     "metrics": metrics}
+    return out
+
+
 def export_checkpoint_package(
     *,
     run_dir: Path,
@@ -122,6 +195,7 @@ def export_checkpoint_package(
     label_glob: str,
     training: dict,
     cmd: list[str],
+    serveable_tasks: Sequence[str] = (),
 ) -> dict:
     """Copy a finished run's durable artifacts into a checkpoint package.
 
@@ -129,6 +203,13 @@ def export_checkpoint_package(
     dumps) stay in the run dir; the package holds the best checkpoint, config,
     metrics, terminal log, the ``labels/<label_subdir>`` snapshot, and a
     ``manifest.json`` describing how it was trained.
+
+    ``serveable_tasks`` names the tasks a predict surface can load on their
+    own — the caller knows what its package serves, the same way it declares
+    ``package_type``. Every declared task's best epoch is recorded in the
+    manifest, but only a serveable task earns its own weights file: a task
+    that can only ever be loaded alongside another (location rides with
+    action) would duplicate ~80 MB nobody can use.
     """
     best_checkpoint = run_dir / "checkpoint_best.pt"
     if not best_checkpoint.exists():
@@ -163,6 +244,34 @@ def export_checkpoint_package(
 
     best = load_json_file(run_dir / "checkpoint_best.json")
     config = load_json_file(run_dir / "config.json")
+
+    # One best PER TASK, not one per run: a fusion run's action-best and
+    # actor-best epochs rarely coincide, and shipping only the selection
+    # criterion's epoch quietly serves every other task a compromised model.
+    # ``file`` decouples the logical best from the physical weights, so a
+    # task whose best IS the headline epoch points at checkpoint_best.pt
+    # instead of duplicating it.
+    headline_epoch = best.get("epoch") if isinstance(best, dict) else None
+    best_per_task: dict[str, dict] = {}
+    for task, pick in best_epochs_per_task(run_dir).items():
+        entry = dict(pick)
+        if task in serveable_tasks:
+            if pick["epoch"] == headline_epoch:
+                entry["file"] = "checkpoint_best.pt"
+            else:
+                source = run_dir / f"checkpoint_{pick['epoch']:03d}.pt"
+                if source.is_file():
+                    entry["file"] = f"checkpoint_best_{task}.pt"
+                    shutil.copy2(source, package_dir / entry["file"])
+                    copied.append(entry["file"])
+                else:
+                    log.warning(
+                        "%s: %s-best epoch %d has no checkpoint file; the "
+                        "task keeps only the headline best",
+                        run_dir.name, task, pick["epoch"],
+                    )
+        best_per_task[task] = entry
+
     manifest = {
         "type": package_type,
         "version": 1,
@@ -172,6 +281,7 @@ def export_checkpoint_package(
         "package_dir": str(package_dir),
         "checkpoint": "checkpoint_best.pt",
         "best": best if isinstance(best, dict) else None,
+        "best_per_task": best_per_task,
         "config": config if isinstance(config, dict) else None,
         "training": training,
         "command": cmd,
@@ -194,6 +304,7 @@ def export_checkpoint_package(
         "checkpoint": str(package_dir / "checkpoint_best.pt"),
         "files": copied,
         "best": manifest["best"],
+        "best_per_task": best_per_task,
     }
 
 # ── Per-epoch metrics for the performance charts ──────────────────
@@ -205,6 +316,36 @@ def _normalize_metrics_entry(rec: dict) -> dict:
     Handles both the new ``metrics.jsonl`` schema (nested ``mAP``/``loss`` +
     ``lr``/``per_class``) and the legacy ``loss.json`` schema (flat ``val_mAP*``).
     """
+    if isinstance(rec.get("val"), dict) or isinstance(rec.get("train"), dict):
+        # Independent association trainer schema: per-epoch train/val metric
+        # dicts, no mAP. Reshaped into the task-metrics contract so the same
+        # performance card renders actor curves without a bespoke chart.
+        loss = rec.get("loss") or {}
+        return {
+            "epoch": rec.get("epoch"),
+            "lr": rec.get("lr"),
+            "val_mAP": 0,
+            "val_mAP_temporal": 0,
+            "val_mAP_spatial": 0,
+            "train_loss": loss.get("train"),
+            "val_loss": loss.get("val"),
+            "per_class": {},
+            "val_per_video": [],
+            "tasks": {
+                "actor": {
+                    "primary_metric": "player_top1",
+                    "train": {
+                        "loss": loss.get("train"),
+                        "metrics": rec.get("train") or {},
+                    },
+                    "validation": {
+                        "loss": loss.get("val"),
+                        "metrics": rec.get("val") or {},
+                    },
+                }
+            },
+            "selection": {"task": "actor", "metric": "player_top1", "mode": "max"},
+        }
     if "mAP" in rec:  # new metrics.jsonl schema
         m = rec.get("mAP") or {}
         loss = rec.get("loss") or {}
@@ -293,15 +434,15 @@ def performance_payload(
     checkpoints_dir: Path,
     run: str | None = None,
     *,
-    run_prefixes: tuple[str, ...] | None = None,
+    package_types: Sequence[str] | None = None,
 ) -> dict:
     """Per-epoch validation metrics (lr, mAP, per-class, per-video) for a run.
 
     Reads ``metrics.jsonl`` (falling back to the legacy ``loss.json``) from a
     checkpoint package. Defaults to the most recently modified run; pass
     ``run`` to select one by name. ``runs`` lists the runs (newest first).
-    ``run_prefixes`` lets a shared checkpoint root expose only one model
-    family without duplicating the metrics reader.
+    ``package_types`` filters a shared checkpoint root to one model family by
+    manifest type — the same declaration every other package reader keys on.
     """
     if not checkpoints_dir.exists():
         return {"entries": [], "runs": []}
@@ -309,16 +450,18 @@ def performance_payload(
     def has_metrics(d: Path) -> bool:
         return (d / "metrics.jsonl").exists() or (d / "loss.json").exists()
 
+    def family_matches(d: Path) -> bool:
+        if package_types is None:
+            return True
+        manifest = load_json_file(d / "manifest.json")
+        declared = manifest.get("type") if isinstance(manifest, dict) else None
+        return declared in package_types
+
     runs = sorted(
         (
             d
             for d in checkpoints_dir.iterdir()
-            if d.is_dir()
-            and has_metrics(d)
-            and (
-                run_prefixes is None
-                or d.name.startswith(run_prefixes)
-            )
+            if d.is_dir() and has_metrics(d) and family_matches(d)
         ),
         key=lambda d: d.stat().st_mtime,
         reverse=True,
