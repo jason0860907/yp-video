@@ -35,14 +35,14 @@ const NUDGE_KEYS = { start: ['a', 's'], end: ['d', 'f'] } as const;
  *
  *  Editing holds a draft string: a controlled input that re-parses and
  *  re-formats every keystroke eats partial values — "1:" becomes 01:00
- *  before the seconds can be typed. The draft seeds from the precise form
- *  so committing an untouched field cannot truncate fractional seconds. */
+ *  before the seconds can be typed. Rally boundaries live on a 0.1 s grid
+ *  (the nudges step by 0.1), so display and draft both use one decimal. */
 function TimeField({ seconds, onCommit }: { seconds: number; onCommit: (value: number) => void }) {
   const [draft, setDraft] = useState<string | null>(null);
   return (
     <input
-      value={draft ?? formatTimePrecise(seconds)}
-      onFocus={() => setDraft(formatTimePrecise(seconds))}
+      value={draft ?? formatTimePrecise(seconds, 1)}
+      onFocus={() => setDraft(formatTimePrecise(seconds, 1))}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={() => {
         if (draft !== null && draft.trim() !== '') onCommit(parseTime(draft));
@@ -52,7 +52,7 @@ function TimeField({ seconds, onCommit }: { seconds: number; onCommit: (value: n
         if (e.key === 'Enter') e.currentTarget.blur();
         else if (e.key === 'Escape') setDraft(null);
       }}
-      title="mm:ss(.mmm) or bare seconds — Enter/blur applies, Escape reverts"
+      title="mm:ss(.s) or bare seconds — Enter/blur applies, Escape reverts"
       className="w-[4.2rem] border-0 border-b border-ink/10 bg-transparent text-center font-heading text-[11px] tabular-nums text-text-primary focus:border-primary-light focus:outline-none focus:ring-0"
     />
   );
@@ -534,7 +534,7 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
                       </button>
                     ))}
                     <span className="font-heading text-[10px] tabular-nums text-text-muted/70">
-                      {formatTimePrecise(selectedAnnotation[field])}
+                      {formatTimePrecise(selectedAnnotation[field], 1)}
                     </span>
                   </div>
                 ))}

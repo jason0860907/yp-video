@@ -6,6 +6,7 @@ import { cn } from '@/lib/cn';
 import { copyText } from '@/lib/download';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { CopyFilenameButton } from '@/components/video/CopyFilenameButton';
 import { KindBadge } from '@/components/video/KindBadge';
 import { VideoCombobox } from '@/components/video/VideoCombobox';
 import { AnnotationEditor, type EditorData } from '@/components/editor/AnnotationEditor';
@@ -60,11 +61,11 @@ export function AnnotatePage() {
     [results, kindFilter, statusFilter, sourceFilter],
   );
 
-  const load = async () => {
-    if (!picked) return;
+  const load = async (name: string, source: SourceFilter = sourceFilter) => {
+    if (!name) return;
     try {
       const d = await apiFetch<EditorData>(
-        API.annotate.result(picked, sourceFilter === 'auto' ? {} : { source: sourceFilter }),
+        API.annotate.result(name, source === 'auto' ? {} : { source }),
       );
       setData(d);
       setManifestUrl(null);
@@ -109,7 +110,17 @@ export function AnnotatePage() {
             </select>
           </FieldLabel>
           <FieldLabel label="Source">
-            <select value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value as SourceFilter)} className={cn(fieldCls, 'h-9 w-full py-0')}>
+            <select
+              value={sourceFilter}
+              onChange={(e) => {
+                const next = e.target.value as SourceFilter;
+                setSourceFilter(next);
+                // The picked file is already open — re-read it from the newly
+                // chosen store rather than waiting for a re-pick.
+                if (picked) void load(picked, next);
+              }}
+              className={cn(fieldCls, 'h-9 w-full py-0')}
+            >
               <option value="auto">Auto (✅→🤖→⚡)</option>
               <option value="annotation">✅ Annotation</option>
               <option value="spot-pre-annotation">🤖 SPOT pre</option>
@@ -120,7 +131,10 @@ export function AnnotatePage() {
             <VideoCombobox
               items={visible}
               value={picked}
-              onChange={setPicked}
+              onChange={(name) => {
+                setPicked(name);
+                void load(name);
+              }}
               placeholder={`Search ${visible.length} result files…`}
               renderItem={(r) => (
                 <>
@@ -131,9 +145,7 @@ export function AnnotatePage() {
               )}
             />
           </FieldLabel>
-          <Button intent="primary" className="h-9 py-0" onClick={load}>
-            Load
-          </Button>
+          <CopyFilenameButton name={picked} />
         </div>
       </Card>
 

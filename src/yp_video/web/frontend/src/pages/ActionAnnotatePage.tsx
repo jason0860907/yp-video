@@ -3,7 +3,6 @@ import { useQuery } from '@tanstack/react-query';
 import { API, apiFetch, apiUrl, errMsg } from '@/lib/api';
 import { Field, fieldCls } from '@/components/train/Field';
 import { cn } from '@/lib/cn';
-import { copyText } from '@/lib/download';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -12,6 +11,7 @@ import { toast } from '@/components/feedback/toast';
 import { confirm } from '@/components/feedback/confirm';
 import { ActionTimeline } from '@/components/editor/ActionTimeline';
 import { ActionEventPanel } from '@/components/action/ActionEventPanel';
+import { CopyFilenameButton } from '@/components/video/CopyFilenameButton';
 import { KindBadge } from '@/components/video/KindBadge';
 import { VideoCombobox } from '@/components/video/VideoCombobox';
 import { useVideoRecovery } from '@/lib/useVideoRecovery';
@@ -55,7 +55,6 @@ export function ActionAnnotatePage() {
   const [kindFilter, setKindFilter] = useState<'all' | 'broadcast' | 'sideline'>('all');
   const [progressFilter, setProgressFilter] = useState<'all' | 'unlabeled' | 'pre-labeled' | 'labeled'>('all');
   const [picked, setPicked] = useState('');
-  const [loading, setLoading] = useState(false);
 
   const [ed, setEd] = useState<ActionEditor>(EMPTY_ACTION_EDITOR);
   // Every persisted editor mutation advances this counter. Saves capture it
@@ -303,7 +302,6 @@ export function ActionAnnotatePage() {
       clearActionDraft(ed.video); // user explicitly abandoned this video's edits
     }
     setPicked(name);
-    setLoading(true);
     try {
       const data = await apiFetch<ActionAnnotationData>(API.actionAnnotate.annotation(name));
       let next = normalizeActionEditor(data, labels);
@@ -336,8 +334,6 @@ export function ActionAnnotatePage() {
       else toast.success(`Loaded ${next.events.length} event(s)`);
     } catch (e) {
       toast.error(`Load failed: ${errMsg(e)}`);
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -426,17 +422,6 @@ export function ActionAnnotatePage() {
     const t = setTimeout(() => void save(true), ACTION_AUTOSAVE_MS);
     return () => clearTimeout(t);
   }, [ed, save]);
-  const copyVideoName = async () => {
-    const name = ed.video || picked;
-    if (!name) return toast.warning('No video loaded');
-    try {
-      await copyText(name);
-      toast.success(`Copied ${name}`);
-    } catch {
-      toast.error('Copy failed');
-    }
-  };
-
   const jumpToEvent = (idx: number) => {
     const evt = ed.events[idx];
     if (!evt) return;
@@ -543,7 +528,7 @@ export function ActionAnnotatePage() {
             <VideoCombobox
               items={filtered}
               value={picked}
-              onChange={setPicked}
+              onChange={(name) => void load(name)}
               placeholder="Type to search filename…"
               renderItem={(v) => (
                 <>
@@ -555,14 +540,7 @@ export function ActionAnnotatePage() {
               )}
             />
           </Field>
-          <div className="flex items-stretch gap-2">
-            <Button intent="primary" className="h-9 py-0" onClick={() => load(picked)} disabled={loading || !picked}>
-              {loading ? 'Loading…' : 'Load'}
-            </Button>
-            <Button className="h-9 py-0" onClick={copyVideoName}>
-              Copy Filename
-            </Button>
-          </div>
+          <CopyFilenameButton name={ed.video || picked} />
         </div>
       </Card>
 

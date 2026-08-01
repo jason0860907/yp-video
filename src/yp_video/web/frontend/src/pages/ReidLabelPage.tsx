@@ -22,6 +22,7 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SectionLabel } from '@/components/ui/SectionLabel';
+import { CopyFilenameButton } from '@/components/video/CopyFilenameButton';
 import { KindBadge } from '@/components/video/KindBadge';
 import { VideoCombobox } from '@/components/video/VideoCombobox';
 import { toast } from '@/components/feedback/toast';
@@ -257,7 +258,7 @@ export function ReidLabelPage() {
     <div className="mx-auto max-w-screen-2xl space-y-5">
       {/* Picker — same shape as the Action Label / Rally Label pickers */}
       <Card>
-        <div className="grid grid-cols-1 items-end gap-3 lg:grid-cols-[8.5rem_8.5rem_minmax(18rem,1fr)]">
+        <div className="grid grid-cols-1 items-end gap-3 lg:grid-cols-[8.5rem_8.5rem_minmax(18rem,1fr)_auto]">
           <Field label="Kind">
             <select value={kindFilter} onChange={(e) => setKindFilter(e.target.value as typeof kindFilter)} className={cn(fieldCls, 'h-9 w-full py-0')}>
               <option value="all">All kinds</option>
@@ -290,6 +291,7 @@ export function ReidLabelPage() {
               )}
             />
           </Field>
+          <CopyFilenameButton name={picked} />
         </div>
       </Card>
 

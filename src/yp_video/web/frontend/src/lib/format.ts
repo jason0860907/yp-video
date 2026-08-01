@@ -22,12 +22,13 @@ export function parseTime(str: string | number | null | undefined): number {
   return parseFloat(s) || 0;
 }
 
-/** `mm:ss.mmm` */
-export function formatTimePrecise(seconds: number | null | undefined): string {
-  if (seconds == null || isNaN(seconds)) return '00:00.000';
+/** `mm:ss.mmm` by default; pass `decimals` for coarser grids (rally
+ *  boundaries live on 0.1 s, so their editor passes 1). */
+export function formatTimePrecise(seconds: number | null | undefined, decimals = 3): string {
+  if (seconds == null || isNaN(seconds)) return `00:${(0).toFixed(decimals).padStart(decimals + 3, '0')}`;
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
-  return `${pad(m, 2)}:${s.toFixed(3).padStart(6, '0')}`;
+  return `${pad(m, 2)}:${s.toFixed(decimals).padStart(decimals + 3, '0')}`;
 }
 
 export function formatBytes(bytes: number | null | undefined): string {
