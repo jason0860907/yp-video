@@ -7,6 +7,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { KindBadge } from './KindBadge';
+import type { ListQuery } from './VideoCombobox';
 import type { CutKind } from '@/types/api';
 
 export interface VideoListItem {
@@ -44,12 +45,7 @@ interface VideoMultiSelectListProps<T extends VideoListItem> {
   emptySubtitle?: string;
   /** The query the videos came from, so failure and loading render as
    *  themselves — a fetch error must never look like an empty library. */
-  query?: {
-    isPending: boolean;
-    isError: boolean;
-    error: unknown;
-    refetch: () => unknown;
-  };
+  query?: ListQuery;
 }
 
 type KindFilter = 'all' | CutKind;

@@ -195,6 +195,7 @@ export function CutPage() {
               items={videoItems}
               value={video}
               onChange={selectVideo}
+              query={videosQuery}
               placeholder={`Search ${videos.length} videos…`}
               className="flex-1"
             />

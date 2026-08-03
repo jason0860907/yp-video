@@ -1,7 +1,16 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type SyntheticEvent } from 'react';
+/** Action Label panel: place per-frame action events on one video.
+ *
+ *  Extracted from the Action Label page — the picker moved to the parent,
+ *  everything else (frame clock, on-video points, timeline, drafts,
+ *  autosave, keyboard) is unchanged. The `video` prop drives loading; the
+ *  old pick-time "discard unsaved changes?" confirm is now the registered
+ *  dirty guard, so the parent asks BEFORE changing the video or mode.
+ */
+
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type SyntheticEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { API, apiFetch, apiUrl, errMsg } from '@/lib/api';
-import { Field, fieldCls } from '@/components/train/Field';
+import { fieldCls } from '@/components/train/Field';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -11,9 +20,6 @@ import { toast } from '@/components/feedback/toast';
 import { confirm } from '@/components/feedback/confirm';
 import { ActionTimeline } from '@/components/editor/ActionTimeline';
 import { ActionEventPanel } from '@/components/action/ActionEventPanel';
-import { CopyFilenameButton } from '@/components/video/CopyFilenameButton';
-import { KindBadge } from '@/components/video/KindBadge';
-import { VideoCombobox } from '@/components/video/VideoCombobox';
 import { useVideoRecovery } from '@/lib/useVideoRecovery';
 import { useSerializedSave } from '@/lib/useSerializedSave';
 import {
@@ -30,7 +36,6 @@ import {
   clamp,
   formatActionTime,
   hasActiveActionAnnotation,
-  isActionReviewed,
   makeActionId,
   normalizeActionEditor,
   round4,
@@ -41,9 +46,28 @@ import {
 import { useActionWaveform } from '@/lib/useActionWaveform';
 import { ACTION_COLORS, actionColor } from '@/lib/actionColors';
 import type { ActionAnnotationData, ActionEvent, ActionVideo } from '@/types/api';
+import { actionStatus } from '@/lib/labelStatus';
+import { STATUS_OPTIONS, type LabelSource, type LoadedSource, type ModeDescriptor, type PlaybackClock, type RegisterGuard } from './mode';
 
+export const ACTION_MODE: ModeDescriptor = {
+  key: 'action',
+  label: 'Action',
+  statusOptions: STATUS_OPTIONS,
+  status: actionStatus,
+  matches: (row, status) => status === 'all' || actionStatus(row) === status,
+  available: (row) => Boolean(row.action),
+  hint: () => 'No cut video is listed for this annotation — Rally tab only',
+  rowExtras: (row) => {
+    const v = row.action;
+    if (!v || !hasActiveActionAnnotation(v)) return null;
+    return <span className="shrink-0 font-mono text-[10px] tabular-nums text-text-muted">{v.event_count || 0}ev</span>;
+  },
+  doneApi: (video) => API.actionAnnotate.done(video),
+  listKey: 'action-videos',
+  hasSources: true,
+};
 
-export function ActionAnnotatePage() {
+export function ActionPanel({ video, source = 'auto', onLoaded, registerGuard, clock }: { video: string; source?: LabelSource; onLoaded?: (s: LoadedSource) => void; registerGuard?: RegisterGuard; clock?: PlaybackClock }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const [pointMode, setPointMode] = useState(false);
@@ -52,9 +76,6 @@ export function ActionAnnotatePage() {
   const drag = useRef<{ id: string; moved: boolean } | null>(null);
   const suppressClick = useRef(false);
   const [selectedLabel, setSelectedLabel] = useState('serve');
-  const [kindFilter, setKindFilter] = useState<'all' | 'broadcast' | 'sideline'>('all');
-  const [progressFilter, setProgressFilter] = useState<'all' | 'unlabeled' | 'pre-labeled' | 'labeled'>('all');
-  const [picked, setPicked] = useState('');
 
   const [ed, setEd] = useState<ActionEditor>(EMPTY_ACTION_EDITOR);
   // Every persisted editor mutation advances this counter. Saves capture it
@@ -78,7 +99,6 @@ export function ActionAnnotatePage() {
 
   const videosQuery = useQuery({ queryKey: ['action-videos'], queryFn: () => apiFetch<ActionVideo[]>(API.actionAnnotate.videos) });
   const labelsQuery = useQuery({ queryKey: ['action-labels'], queryFn: () => apiFetch<{ labels?: string[] }>(API.actionAnnotate.labels) });
-  const videos = videosQuery.data ?? [];
   const labels = labelsQuery.data?.labels ?? DEFAULT_ACTION_LABELS;
 
   // ── Frame clock ──
@@ -212,6 +232,10 @@ export function ActionAnnotatePage() {
   const onVideoMetadata = (e: SyntheticEvent<HTMLVideoElement>) => {
     const el = e.currentTarget;
     if (el.videoWidth && el.videoHeight) setAspect(el.videoWidth / el.videoHeight);
+    // Resume at the position handed over from another tab's player —
+    // through seekFrame so the frame clock stays in step with the seek.
+    const t = clock?.read(video);
+    if (t) seekFrame(Math.round(t * (edRef.current.fps || 30)));
   };
 
   const onVideoClick = (e: ReactMouseEvent) => {
@@ -281,33 +305,19 @@ export function ActionAnnotatePage() {
     document.addEventListener('pointercancel', onUp, { signal: ac.signal });
   };
 
-  // ── Video list filtering (text search happens inside the combobox) ──
-  const filtered = useMemo(
-    () =>
-      videos.filter((v) => {
-        if (kindFilter !== 'all' && v.kind !== kindFilter) return false;
-        if (progressFilter === 'unlabeled' && hasActiveActionAnnotation(v)) return false;
-        if (progressFilter === 'pre-labeled' && !(hasActiveActionAnnotation(v) && !isActionReviewed(v))) return false;
-        if (progressFilter === 'labeled' && !isActionReviewed(v)) return false;
-        return true;
-      }),
-    [videos, kindFilter, progressFilter],
-  );
-
   const load = async (name: string) => {
     if (!name) return;
-    if (ed.dirty && name !== ed.video) {
-      const ok = await confirm({ title: 'Discard unsaved changes?', body: 'The current action labels have not been saved.', confirmText: 'Discard', variant: 'danger' });
-      if (!ok) return;
-      clearActionDraft(ed.video); // user explicitly abandoned this video's edits
-    }
-    setPicked(name);
     try {
-      const data = await apiFetch<ActionAnnotationData>(API.actionAnnotate.annotation(name));
+      const data = await apiFetch<ActionAnnotationData>(
+        API.actionAnnotate.annotation(name, source === 'auto' ? {} : { source }),
+      );
+      onLoaded?.(data.loaded_source ?? 'none');
       let next = normalizeActionEditor(data, labels);
       // A leftover draft is unsaved work from a previous session: restore the
       // user's events (server stays authoritative for rally/fps structure).
-      const draft = readActionDraft(next.video);
+      // Only in Auto — a forced Source means "show me that store", and the
+      // draft would paint the user's events over it.
+      const draft = source === 'auto' ? readActionDraft(next.video) : null;
       if (draft) {
         next = { ...next, events: sortActionEvents(draft.events.map((e) => withActionRally(e, next))), dirty: true };
       }
@@ -333,9 +343,32 @@ export function ActionAnnotatePage() {
       if (next.dirty) toast.info(`已還原上次未儲存的草稿（${next.events.length} 個動作）`);
       else toast.success(`Loaded ${next.events.length} event(s)`);
     } catch (e) {
+      onLoaded?.('none');
       toast.error(`Load failed: ${errMsg(e)}`);
     }
   };
+
+  // The parent owns picking. The dirty confirm already ran (registered guard
+  // below), so a changed prop is a settled decision to leave. A Source
+  // switch re-reads the same video from the newly chosen store.
+  useEffect(() => {
+    void load(video);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [video, source]);
+
+  // Leaving with unsaved work: same confirm the old pick flow ran, and the
+  // draft is cleared only when the user explicitly abandons the edits.
+  useEffect(() => {
+    if (!registerGuard) return;
+    registerGuard(async () => {
+      const cur = edRef.current;
+      if (!cur.dirty) return true;
+      const ok = await confirm({ title: 'Discard unsaved changes?', body: 'The current action labels have not been saved.', confirmText: 'Discard', variant: 'danger' });
+      if (ok) clearActionDraft(cur.video);
+      return ok;
+    });
+    return () => registerGuard(null);
+  }, [registerGuard]);
 
   const mutate = (fn: (ed: ActionEditor) => ActionEditor) => {
     editRevision.current += 1;
@@ -398,6 +431,8 @@ export function ActionAnnotatePage() {
         setEd(next);
         clearActionDraft(video);
       }
+      // The save wrote the annotation store — that is what's on screen now.
+      onLoaded?.('annotation');
       if (!silent) {
         void videosQuery.refetch();
         toast.success('Action annotations saved');
@@ -505,273 +540,236 @@ export function ActionAnnotatePage() {
   const outside = ed.events.map((e, idx) => ({ e, idx })).filter(({ e }) => !e.rally_id);
 
   return (
-    <div className="mx-auto max-w-screen-2xl space-y-5">
-      {/* Picker */}
-      <Card>
-        <div className="grid grid-cols-1 items-end gap-3 lg:grid-cols-[8.5rem_8.5rem_minmax(18rem,1fr)_auto]">
-          <Field label="Kind">
-            <select value={kindFilter} onChange={(e) => setKindFilter(e.target.value as typeof kindFilter)} className={cn(fieldCls, 'h-9 w-full py-0')}>
-              <option value="all">All kinds</option>
-              <option value="broadcast">Broadcast</option>
-              <option value="sideline">Sideline</option>
-            </select>
-          </Field>
-          <Field label="Status">
-            <select value={progressFilter} onChange={(e) => setProgressFilter(e.target.value as typeof progressFilter)} className={cn(fieldCls, 'h-9 w-full py-0')}>
-              <option value="all">All</option>
-              <option value="unlabeled">Unlabeled</option>
-              <option value="pre-labeled">Pre-labeled</option>
-              <option value="labeled">Labeled</option>
-            </select>
-          </Field>
-          <Field label="Video">
-            <VideoCombobox
-              items={filtered}
-              value={picked}
-              onChange={(name) => void load(name)}
-              placeholder="Type to search filename…"
-              renderItem={(v) => (
-                <>
-                  <KindBadge kind={v.kind} />
-                  <span className={cn('shrink-0 text-[11px]', isActionReviewed(v) ? 'text-primary-light' : hasActiveActionAnnotation(v) ? 'text-amber-300' : 'text-text-muted')}>{isActionReviewed(v) ? '✓' : hasActiveActionAnnotation(v) ? 'P' : '○'}</span>
-                  <span className="min-w-0 flex-1 break-all font-mono">{v.name}</span>
-                  <span className="shrink-0 text-[10px] text-text-muted">{isActionReviewed(v) ? `${v.event_count || 0} labeled` : hasActiveActionAnnotation(v) ? `${v.event_count || 0} pre` : ''}</span>
-                </>
-              )}
-            />
-          </Field>
-          <CopyFilenameButton name={ed.video || picked} />
-        </div>
-      </Card>
-
-      <div className="flex flex-col gap-5 lg:flex-row">
-        {/* Player */}
-        <div className="min-w-0 flex-1 space-y-4">
-          <Card>
-            <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <h3 className="font-heading text-sm font-semibold text-text-primary">Action Labels</h3>
-              <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
-                {labels.map((l, i) => {
-                  const active = l === selectedLabel;
-                  const color = actionColor(l);
-                  return (
-                    <button
-                      key={l}
-                      type="button"
-                      onClick={() => setSelectedLabel(l)}
-                      className={cn('rounded-lg border px-3 py-2 font-heading text-xs font-semibold capitalize transition-colors', active ? 'text-white' : 'text-text-secondary hover:text-text-primary')}
-                      style={{ borderColor: active ? color : 'var(--line)', background: active ? `${color}33` : 'transparent' }}
-                    >
-                      <span className="opacity-60">{i + 1}</span> {l}
-                    </button>
-                  );
-                })}
-              </div>
+    <div className="flex flex-col gap-5 lg:flex-row">
+      {/* Player */}
+      <div className="min-w-0 flex-1 space-y-4">
+        <Card>
+          <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <h3 className="font-heading text-sm font-semibold text-text-primary">Action Labels</h3>
+            <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+              {labels.map((l, i) => {
+                const active = l === selectedLabel;
+                const color = actionColor(l);
+                return (
+                  <button
+                    key={l}
+                    type="button"
+                    onClick={() => setSelectedLabel(l)}
+                    className={cn('rounded-lg border px-3 py-2 font-heading text-xs font-semibold capitalize transition-colors', active ? 'text-white' : 'text-text-secondary hover:text-text-primary')}
+                    style={{ borderColor: active ? color : 'var(--line)', background: active ? `${color}33` : 'transparent' }}
+                  >
+                    <span className="opacity-60">{i + 1}</span> {l}
+                  </button>
+                );
+              })}
             </div>
+          </div>
 
-            <div className="overflow-hidden rounded-2xl bg-black ring-1 ring-white/[0.06]">
-              <div
-                ref={wrapRef}
-                className="relative mx-auto"
-                style={{ aspectRatio: `${aspect}`, maxWidth: `calc(var(--video-max-h, 45vh) * ${aspect})` }}
-              >
-                <video
-                  ref={videoRef}
-                  className={cn('block h-full w-full bg-black object-contain', pointMode && ed.video && 'cursor-crosshair')}
-                  playsInline
-                  preload="metadata"
-                  onClick={onVideoClick}
-                  onContextMenu={onVideoContextMenu}
-                  onLoadedMetadata={onVideoMetadata}
-                />
-                <div className="pointer-events-none absolute inset-0">
-                  {ed.events
-                    .map((e, idx) => ({ e, idx }))
-                    .filter(({ e }) => e.visible && (selectedRallyId === 'all' || e.rally_id === selectedRallyId) && Math.abs(e.frame - frame) <= 2)
-                    .map(({ e, idx }) => {
-                      const color = actionColor(e.label);
-                      return (
-                        <button
-                          key={e.id}
-                          type="button"
-                          onPointerDown={(ev) => startDrag(ev, e, idx)}
-                          onClick={(ev) => {
-                            ev.stopPropagation();
-                            if (!suppressClick.current) jumpToEvent(idx);
-                          }}
-                          className="pointer-events-auto absolute -ml-3 -mt-3 h-6 w-6 cursor-grab touch-none active:cursor-grabbing"
-                          style={{ left: `${e.xy[0] * 100}%`, top: `${e.xy[1] * 100}%` }}
-                          title={`${e.label} frame ${e.frame}`}
-                        >
-                          {e.frame === frame && (
-                            <span className="absolute left-1/2 top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white/90" style={{ boxShadow: `0 0 0 1px ${color}88` }} />
-                          )}
-                          <span className="absolute left-1/2 top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/85" style={{ background: color, boxShadow: `0 0 0 1px ${color}55` }} />
-                        </button>
-                      );
-                    })}
-                </div>
-              </div>
-            </div>
-
-            {/* Zoomable timeline + waveform (All / 10m / 5m / 3m, rally bands R1, R2 …) */}
-            <div className="mt-3">
-              <ActionTimeline
-                duration={ed.duration}
-                fps={ed.fps}
-                numFrames={ed.numFrames}
-                frame={frame}
-                rallies={ed.rallies}
-                events={ed.events}
-                selectedRallyId={selectedRallyId}
-                selectedIdx={selectedIdx}
-                playing={playing}
-                waveform={waveform}
-                colors={ACTION_COLORS}
-                onSeekFrame={seekFrame}
-                onJumpEvent={jumpToEvent}
+          <div className="overflow-hidden rounded-2xl bg-black ring-1 ring-white/[0.06]">
+            <div
+              ref={wrapRef}
+              className="relative mx-auto"
+              style={{ aspectRatio: `${aspect}`, maxWidth: `calc(var(--video-max-h, 45vh) * ${aspect})` }}
+            >
+              <video
+                ref={videoRef}
+                className={cn('block h-full w-full bg-black object-contain', pointMode && ed.video && 'cursor-crosshair')}
+                playsInline
+                preload="metadata"
+                onClick={onVideoClick}
+                onContextMenu={onVideoContextMenu}
+                onLoadedMetadata={onVideoMetadata}
+                onTimeUpdate={(e) => {
+                  if (ed.video) clock?.write(video, e.currentTarget.currentTime);
+                }}
               />
-            </div>
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-              <span className="rounded-lg border border-border bg-surface-200/50 px-2.5 py-1 font-mono text-sm tabular-nums text-text-primary">
-                {formatActionTime(frame / (ed.fps || 30))} / f{frame}
-              </span>
-              <div className="flex items-center gap-2">
-                <Button size="sm" onClick={togglePlay}>
-                  Play
-                </Button>
-                <Button size="sm" onClick={() => stepFrame(-1)}>
-                  ◂
-                </Button>
-                <Button size="sm" onClick={() => stepFrame(1)}>
-                  ▸
-                </Button>
-                <Button size="sm" intent={pointMode ? 'primary' : 'default'} onClick={() => setPointMode((m) => !m)} title="Point mode: click the video to drop the selected action">
-                  {pointMode ? 'Point mode' : 'Review mode'}
-                </Button>
-                <Button size="sm" intent="primary" onClick={() => addEvent(0.5, 0.5)}>
-                  Add center
-                </Button>
-              </div>
-            </div>
-            <div className="mt-2 font-mono text-[11px] tabular-nums text-text-muted">{ed.video ? `${ed.fps.toFixed(3)} fps · ${ed.numFrames} frames` : ''}</div>
-          </Card>
-          <p className="px-1 text-[11px] text-text-muted">
-            <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">1-6</kbd> label ·{' '}
-            <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">← →</kbd> frame ·{' '}
-            <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">Enter</kbd> add ·{' '}
-            <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">P</kbd> point mode ·{' '}
-            <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">Del</kbd> remove
-          </p>
-        </div>
-
-        {/* Rallies + events */}
-        <div className="min-w-0 lg:w-[420px] lg:flex-shrink-0">
-          <Card>
-            <div className="mb-3 flex items-center justify-between gap-2">
-              <SectionLabel className="mb-0">
-                Rallies ({ed.rallies.length} rally · {ed.events.length} action){ed.dirty ? ' ·' : ''}
-              </SectionLabel>
-              <div className="flex items-center gap-2">
-                <Button size="sm" intent="primary" onClick={() => void save()}>
-                  {ed.dirty ? 'Save •' : 'Save'}
-                </Button>
-              </div>
-            </div>
-            <div className="mb-2 flex items-center gap-2">
-              <select value={selectedRallyId} onChange={(e) => selectRally(e.target.value === 'all' ? 'all' : Number(e.target.value))} className={cn(fieldCls, 'flex-1 text-xs')}>
-                <option value="all">All rallies ({ed.events.length})</option>
-                {ed.rallies.map((r, i) => (
-                  <option key={r.rally_id} value={r.rally_id}>
-                    R{i + 1} · {formatActionTime(r.start)}-{formatActionTime(r.end)} · {eventsByRally(r.rally_id).length} · #{r.rally_id}
-                  </option>
-                ))}
-              </select>
-              <Button size="sm" onClick={() => stepRally(-1)} disabled={!ed.rallies.length}>
-                Prev
-              </Button>
-              <Button size="sm" onClick={() => stepRally(1)} disabled={!ed.rallies.length}>
-                Next
-              </Button>
-            </div>
-            <div className="h-px bg-border" />
-
-            <div className="mt-2 max-h-[calc(100vh-18rem)] space-y-1.5 overflow-y-auto pr-1">
-              {!ed.video ? (
-                <EmptyState icon={<DotIcon />} title="No video loaded" />
-              ) : ed.rallies.length === 0 && outside.length === 0 ? (
-                <EmptyState icon={<DotIcon />} title="No rally annotations" />
-              ) : (
-                <>
-                  {ed.rallies.map((rally, ri) => {
-                    const entries = eventsByRally(rally.rally_id);
-                    const isOpen = expanded === String(rally.rally_id);
-                    const sel = selectedRallyId === rally.rally_id;
-                    const t = frame / (ed.fps || 30);
-                    const live = t >= rally.start && t < rally.end;
+              <div className="pointer-events-none absolute inset-0">
+                {ed.events
+                  .map((e, idx) => ({ e, idx }))
+                  .filter(({ e }) => e.visible && (selectedRallyId === 'all' || e.rally_id === selectedRallyId) && Math.abs(e.frame - frame) <= 2)
+                  .map(({ e, idx }) => {
+                    const color = actionColor(e.label);
                     return (
-                      <div key={rally.rally_id} className="space-y-1.5">
-                        <div
-                          onClick={() => selectRally(rally.rally_id)}
-                          className={cn(
-                            'flex cursor-pointer items-center gap-2.5 rounded-xl border px-3 py-2.5 transition-colors',
-                            sel ? 'border-primary/40 bg-primary/[0.1]' : 'border-primary/15 bg-primary/[0.04] hover:bg-primary/[0.08]',
-                            live && 'ring-1 ring-accent/50',
-                          )}
-                        >
-                          <span className="w-4 select-none text-right font-heading text-[10px] text-text-muted/60">{ri + 1}</span>
-                          <span
-                            className="w-7 select-none font-mono text-[9px] text-text-muted/40"
-                            title={`rally_id ${rally.rally_id} — stable id, not the time order`}
-                          >
-                            #{rally.rally_id}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              // Collapse if open; otherwise select + expand + seek to the rally start.
-                              if (isOpen) setExpanded(null);
-                              else selectRally(rally.rally_id);
-                            }}
-                            className="flex items-center gap-1 rounded-full bg-primary/20 px-2 py-0.5 text-[11px] font-medium text-primary-text ring-1 ring-primary/25"
-                          >
-                            <span className={cn('transition-transform', isOpen && 'rotate-90')}>▸</span> actions <span className="opacity-70">{entries.length}</span>
-                          </button>
-                          <span className="ml-auto font-mono text-[11px] tabular-nums text-text-muted">
-                            {formatActionTime(rally.start)} → {formatActionTime(rally.end)}
-                          </span>
-                          <span className="rounded bg-surface-200/40 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-text-muted">{Math.max(0, rally.end - rally.start).toFixed(1)}s</span>
-                        </div>
-                        {isOpen && <ActionEventPanel entries={entries} empty="No actions in this rally" {...{ labels, selectedIdx, fps: ed.fps, frame, onEdit: editEvent, onDelete: deleteEvent, onJump: jumpToEvent }} />}
-                      </div>
+                      <button
+                        key={e.id}
+                        type="button"
+                        onPointerDown={(ev) => startDrag(ev, e, idx)}
+                        onClick={(ev) => {
+                          ev.stopPropagation();
+                          if (!suppressClick.current) jumpToEvent(idx);
+                        }}
+                        className="pointer-events-auto absolute -ml-3 -mt-3 h-6 w-6 cursor-grab touch-none active:cursor-grabbing"
+                        style={{ left: `${e.xy[0] * 100}%`, top: `${e.xy[1] * 100}%` }}
+                        title={`${e.label} frame ${e.frame}`}
+                      >
+                        {e.frame === frame && (
+                          <span className="absolute left-1/2 top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white/90" style={{ boxShadow: `0 0 0 1px ${color}88` }} />
+                        )}
+                        <span className="absolute left-1/2 top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/85" style={{ background: color, boxShadow: `0 0 0 1px ${color}55` }} />
+                      </button>
                     );
                   })}
-                  {outside.length > 0 && (
-                    <div className="space-y-1.5">
-                      <div onClick={() => setExpanded(OUTSIDE_RALLY_KEY)} className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-amber-500/20 bg-amber-500/[0.04] px-3 py-2.5 hover:bg-amber-500/[0.08]">
-                        <span className="w-4 select-none text-right font-heading text-[10px] text-text-muted/60">out</span>
-                        <span className="w-7 select-none" />
+              </div>
+            </div>
+          </div>
+
+          {/* Zoomable timeline + waveform (All / 10m / 5m / 3m, rally bands R1, R2 …) */}
+          <div className="mt-3">
+            <ActionTimeline
+              duration={ed.duration}
+              fps={ed.fps}
+              numFrames={ed.numFrames}
+              frame={frame}
+              rallies={ed.rallies}
+              events={ed.events}
+              selectedRallyId={selectedRallyId}
+              selectedIdx={selectedIdx}
+              playing={playing}
+              waveform={waveform}
+              colors={ACTION_COLORS}
+              onSeekFrame={seekFrame}
+              onJumpEvent={jumpToEvent}
+            />
+          </div>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+            <span className="rounded-lg border border-border bg-surface-200/50 px-2.5 py-1 font-mono text-sm tabular-nums text-text-primary">
+              {formatActionTime(frame / (ed.fps || 30))} / f{frame}
+            </span>
+            <div className="flex items-center gap-2">
+              <Button size="sm" onClick={togglePlay}>
+                Play
+              </Button>
+              <Button size="sm" onClick={() => stepFrame(-1)}>
+                ◂
+              </Button>
+              <Button size="sm" onClick={() => stepFrame(1)}>
+                ▸
+              </Button>
+              <Button size="sm" intent={pointMode ? 'primary' : 'default'} onClick={() => setPointMode((m) => !m)} title="Point mode: click the video to drop the selected action">
+                {pointMode ? 'Point mode' : 'Review mode'}
+              </Button>
+              <Button size="sm" intent="primary" onClick={() => addEvent(0.5, 0.5)}>
+                Add center
+              </Button>
+            </div>
+          </div>
+          <div className="mt-2 font-mono text-[11px] tabular-nums text-text-muted">{ed.video ? `${ed.fps.toFixed(3)} fps · ${ed.numFrames} frames` : ''}</div>
+        </Card>
+        <p className="px-1 text-[11px] text-text-muted">
+          <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">1-6</kbd> label ·{' '}
+          <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">← →</kbd> frame ·{' '}
+          <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">Enter</kbd> add ·{' '}
+          <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">P</kbd> point mode ·{' '}
+          <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">Del</kbd> remove
+        </p>
+      </div>
+
+      {/* Rallies + events */}
+      <div className="min-w-0 lg:w-[420px] lg:flex-shrink-0">
+        <Card>
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <SectionLabel className="mb-0">
+              Rallies ({ed.rallies.length} rally · {ed.events.length} action){ed.dirty ? ' ·' : ''}
+            </SectionLabel>
+            <div className="flex items-center gap-2">
+              <Button size="sm" intent="primary" onClick={() => void save()}>
+                {ed.dirty ? 'Save •' : 'Save'}
+              </Button>
+            </div>
+          </div>
+          <div className="mb-2 flex items-center gap-2">
+            <select value={selectedRallyId} onChange={(e) => selectRally(e.target.value === 'all' ? 'all' : Number(e.target.value))} className={cn(fieldCls, 'flex-1 text-xs')}>
+              <option value="all">All rallies ({ed.events.length})</option>
+              {ed.rallies.map((r, i) => (
+                <option key={r.rally_id} value={r.rally_id}>
+                  R{i + 1} · {formatActionTime(r.start)}-{formatActionTime(r.end)} · {eventsByRally(r.rally_id).length} · #{r.rally_id}
+                </option>
+              ))}
+            </select>
+            <Button size="sm" onClick={() => stepRally(-1)} disabled={!ed.rallies.length}>
+              Prev
+            </Button>
+            <Button size="sm" onClick={() => stepRally(1)} disabled={!ed.rallies.length}>
+              Next
+            </Button>
+          </div>
+          <div className="h-px bg-border" />
+
+          <div className="mt-2 max-h-[calc(100vh-18rem)] space-y-1.5 overflow-y-auto pr-1">
+            {!ed.video ? (
+              <EmptyState icon={<DotIcon />} title="No video loaded" />
+            ) : ed.rallies.length === 0 && outside.length === 0 ? (
+              <EmptyState icon={<DotIcon />} title="No rally annotations" />
+            ) : (
+              <>
+                {ed.rallies.map((rally, ri) => {
+                  const entries = eventsByRally(rally.rally_id);
+                  const isOpen = expanded === String(rally.rally_id);
+                  const sel = selectedRallyId === rally.rally_id;
+                  const t = frame / (ed.fps || 30);
+                  const live = t >= rally.start && t < rally.end;
+                  return (
+                    <div key={rally.rally_id} className="space-y-1.5">
+                      <div
+                        onClick={() => selectRally(rally.rally_id)}
+                        className={cn(
+                          'flex cursor-pointer items-center gap-2.5 rounded-xl border px-3 py-2.5 transition-colors',
+                          sel ? 'border-primary/40 bg-primary/[0.1]' : 'border-primary/15 bg-primary/[0.04] hover:bg-primary/[0.08]',
+                          live && 'ring-1 ring-accent/50',
+                        )}
+                      >
+                        <span className="w-4 select-none text-right font-heading text-[10px] text-text-muted/60">{ri + 1}</span>
+                        <span
+                          className="w-7 select-none font-mono text-[9px] text-text-muted/40"
+                          title={`rally_id ${rally.rally_id} — stable id, not the time order`}
+                        >
+                          #{rally.rally_id}
+                        </span>
                         <button
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            setExpanded(expanded === OUTSIDE_RALLY_KEY ? null : OUTSIDE_RALLY_KEY);
+                            // Collapse if open; otherwise select + expand + seek to the rally start.
+                            if (isOpen) setExpanded(null);
+                            else selectRally(rally.rally_id);
                           }}
-                          className="flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-300 ring-1 ring-amber-500/25"
+                          className="flex items-center gap-1 rounded-full bg-primary/20 px-2 py-0.5 text-[11px] font-medium text-primary-text ring-1 ring-primary/25"
                         >
-                          <span className={cn('transition-transform', expanded === OUTSIDE_RALLY_KEY && 'rotate-90')}>▸</span> outside <span className="opacity-70">{outside.length}</span>
+                          <span className={cn('transition-transform', isOpen && 'rotate-90')}>▸</span> actions <span className="opacity-70">{entries.length}</span>
                         </button>
-                        <span className="ml-auto font-heading text-[11px] text-text-muted">outside rally</span>
+                        <span className="ml-auto font-mono text-[11px] tabular-nums text-text-muted">
+                          {formatActionTime(rally.start)} → {formatActionTime(rally.end)}
+                        </span>
+                        <span className="rounded bg-surface-200/40 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-text-muted">{Math.max(0, rally.end - rally.start).toFixed(1)}s</span>
                       </div>
-                      {expanded === OUTSIDE_RALLY_KEY && <ActionEventPanel entries={outside} empty="No outside actions" {...{ labels, selectedIdx, fps: ed.fps, frame, onEdit: editEvent, onDelete: deleteEvent, onJump: jumpToEvent }} />}
+                      {isOpen && <ActionEventPanel entries={entries} empty="No actions in this rally" {...{ labels, selectedIdx, fps: ed.fps, frame, onEdit: editEvent, onDelete: deleteEvent, onJump: jumpToEvent }} />}
                     </div>
-                  )}
-                </>
-              )}
-            </div>
-          </Card>
-        </div>
+                  );
+                })}
+                {outside.length > 0 && (
+                  <div className="space-y-1.5">
+                    <div onClick={() => setExpanded(OUTSIDE_RALLY_KEY)} className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-amber-500/20 bg-amber-500/[0.04] px-3 py-2.5 hover:bg-amber-500/[0.08]">
+                      <span className="w-4 select-none text-right font-heading text-[10px] text-text-muted/60">out</span>
+                      <span className="w-7 select-none" />
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setExpanded(expanded === OUTSIDE_RALLY_KEY ? null : OUTSIDE_RALLY_KEY);
+                        }}
+                        className="flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-300 ring-1 ring-amber-500/25"
+                      >
+                        <span className={cn('transition-transform', expanded === OUTSIDE_RALLY_KEY && 'rotate-90')}>▸</span> outside <span className="opacity-70">{outside.length}</span>
+                      </button>
+                      <span className="ml-auto font-heading text-[11px] text-text-muted">outside rally</span>
+                    </div>
+                    {expanded === OUTSIDE_RALLY_KEY && <ActionEventPanel entries={outside} empty="No outside actions" {...{ labels, selectedIdx, fps: ed.fps, frame, onEdit: editEvent, onDelete: deleteEvent, onJump: jumpToEvent }} />}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </Card>
       </div>
     </div>
   );

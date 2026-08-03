@@ -27,6 +27,7 @@ from yp_video.actor.policy import ActorPick, ActorPolicy, EventContext
 from yp_video.actor.resolution import ActorResolution
 from yp_video.core.jsonl import read_jsonl, write_jsonl
 from yp_video.core.progress import ProgressFn
+from yp_video.extraction import done
 from yp_video.extraction.cropping import (
     CROP_SCHEMA_VERSION,
     CropTarget,
@@ -238,9 +239,13 @@ def reassociate_video(
             )
 
             if not pick.decided:
-                if record.get("box") is not None:
+                # _clear is idempotent: besides wiping an abstained pick it
+                # retires a stale human claim — a record still saying
+                # manual/occluded after its verdict was deleted, which would
+                # otherwise sit invisible to both Confirm and the policy.
+                if _clear(record):
+                    dirty = True
                     counts.abstained += 1
-                    dirty |= _clear(record)
                 else:
                     counts.unchanged += 1
                 continue
@@ -260,6 +265,14 @@ def reassociate_video(
             )
             if settled:
                 counts.unchanged += 1
+                # The resolution on this path is the POLICY's, even when the
+                # geometry did not move: a leftover 'manual' from a deleted
+                # verdict must not keep masquerading as a human answer.
+                dirty |= _update(
+                    record,
+                    resolution=ActorResolution.AUTO.value,
+                    status="ok" if pick.candidates <= 1 else "multi",
+                )
                 continue
             pending.append(
                 _Pending(row, record, target, ActorResolution.AUTO, pick.candidates)
@@ -326,7 +339,12 @@ def reassociate_video(
         )
     counts.changed = changed
     counts.unchanged += len(pending) - changed
-    return counts.payload()
+    payload = counts.payload()
+    # A video whose review was declared finished keeps that endorsement:
+    # answers this run just invented get confirmed instead of un-reviewing
+    # the video (see extraction/done.confirm_reviewed).
+    payload["confirmed"] = done.confirm_reviewed(stem)
+    return payload
 
 
 def _is_materialized(record: dict, label) -> bool:

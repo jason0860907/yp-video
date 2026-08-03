@@ -121,6 +121,11 @@ EXTRACTION_DIR = VIDEOS_DIR / "extraction"
 ASSOCIATION_DIR = VIDEOS_DIR / "association"
 ASSOCIATION_ANNOTATIONS_DIR = ASSOCIATION_DIR / "annotations"
 
+# Per-video "this mode's labeling is finished" flags, set by the Label page's
+# Done buttons (<stem>_done.json). ReID's Done predates this and lives in its
+# players file instead (reid/store.py).
+LABEL_DONE_DIR = VIDEOS_DIR / "label-done"
+
 # ReID: which player each crop depicts. annotations/ holds the human verdict
 # (<stem>_players.json); everything else under reid/ is derived data.
 REID_DIR = VIDEOS_DIR / "reid"

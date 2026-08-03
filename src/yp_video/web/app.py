@@ -2,6 +2,7 @@
 
 import logging
 import signal
+import threading
 from contextlib import asynccontextmanager
 from logging.handlers import RotatingFileHandler
 
@@ -38,10 +39,14 @@ class _QuietPollFilter(logging.Filter):
     """Suppress uvicorn access logs for high-frequency polling endpoints."""
 
     _QUIET_PATHS = (
-        "/api/system/stats",
         "/api/jobs/active-count",
         "/api/system/vllm/status",
         "/api/system/presence",
+        # The sidebar's LabelProgress polls the four label work lists.
+        "/api/annotate/results",
+        "/api/action-annotate/videos",
+        "/api/actor-association/videos",
+        "/api/reid/videos",
     )
 
     def filter(self, record: logging.LogRecord) -> bool:
@@ -70,6 +75,26 @@ def _configure_logging() -> None:
 _configure_logging()
 logging.getLogger("uvicorn.access").addFilter(_QuietPollFilter())
 
+log = logging.getLogger(__name__)
+
+
+def _warm_worklists() -> None:
+    """Prime the association work list's per-video caches.
+
+    Deriving it cold parses every extraction records file (hundreds of MB) —
+    tens of seconds the first visitor after a restart would otherwise eat.
+    Warm, the endpoint is stat-checks only.
+    """
+    import time
+
+    started = time.perf_counter()
+    try:
+        actor_association.list_videos()
+    except Exception:
+        log.warning("worklist warm-up failed", exc_info=True)
+        return
+    log.info("worklist warm-up done in %.1fs", time.perf_counter() - started)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -90,6 +115,8 @@ async def lifespan(app: FastAPI):
 
     # Detect existing vLLM server
     await vllm_manager.initial_check()
+
+    threading.Thread(target=_warm_worklists, name="warm-worklists", daemon=True).start()
 
     yield
 

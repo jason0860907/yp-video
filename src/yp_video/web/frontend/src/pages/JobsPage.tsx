@@ -12,9 +12,9 @@ import { ProgressBar } from '@/components/job/ProgressBar';
 import { JobItems } from '@/components/job/JobItems';
 import { formatClock } from '@/lib/format';
 import { statusLabel, statusTheme } from '@/lib/job';
-import { formatStatValue, STAT_ROWS } from '@/lib/stats';
+import { LabelProgress } from '@/components/labeling/LabelProgress';
 import { toast } from '@/components/feedback/toast';
-import type { Job, SystemStats, VllmStatus } from '@/types/api';
+import type { Job, VllmStatus } from '@/types/api';
 
 const POLL_MS = 15_000;
 
@@ -25,11 +25,6 @@ export function JobsPage() {
   const vllm = useQuery({
     queryKey: ['vllm-status'],
     queryFn: () => apiFetch<VllmStatus>(API.system.vllmStatus),
-    refetchInterval: POLL_MS,
-  });
-  const stats = useQuery({
-    queryKey: ['system-stats'],
-    queryFn: () => apiFetch<SystemStats>(API.system.stats),
     refetchInterval: POLL_MS,
   });
   const jobs = useQuery({
@@ -161,25 +156,8 @@ export function JobsPage() {
           </Card>
 
           <Card>
-            <SectionLabel>Corpus</SectionLabel>
-            <div className="space-y-1.5 text-[11.5px]">
-              {STAT_ROWS.map(([label, key]) => (
-                <div
-                  key={key}
-                  className="flex items-center justify-between"
-                  title={
-                    key === 'association_labels'
-                      ? 'Done / Started (includes In Progress)'
-                      : undefined
-                  }
-                >
-                  <span className="text-text-secondary">{label}</span>
-                  <span className="font-mono tabular-nums text-text-primary">
-                    {formatStatValue(stats.data, key)}
-                  </span>
-                </div>
-              ))}
-            </div>
+            <SectionLabel>Label progress</SectionLabel>
+            <LabelProgress />
           </Card>
         </div>
       </div>

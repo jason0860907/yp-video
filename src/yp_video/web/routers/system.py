@@ -5,21 +5,12 @@ import time
 from fastapi import APIRouter
 from pydantic import Field
 
-from yp_video.actor.review import review_summary
 from yp_video.config import (
-    ACTION_ANNOTATIONS_DIR,
-    ACTION_PRE_ANNOTATIONS_DIR,
     RALLY_ANNOTATIONS_DIR,
     RALLY_PRE_ANNOTATIONS_DIR,
-    RAW_VIDEOS_DIR,
-    REID_ANNOTATIONS_DIR,
-    SEG_ANNOTATIONS_DIR,
-    count_files,
     cut_kind_of,
     iter_all_cuts,
 )
-from yp_video.reid.store import PLAYERS_SUFFIX
-from yp_video.web.jobs import job_manager
 from yp_video.web.schemas import StrictModel
 from yp_video.web.vllm_manager import vllm_manager
 
@@ -97,24 +88,3 @@ def list_videos() -> list[dict]:
             "has_annotation": (RALLY_ANNOTATIONS_DIR / f"{stem}_annotations.jsonl").exists(),
         })
     return results
-
-
-@router.get("/stats")
-def get_stats():
-    """Get pipeline statistics."""
-    association = review_summary()
-    return {
-        "videos": count_files(RAW_VIDEOS_DIR, "*.mp4"),
-        "cuts": sum(1 for _ in iter_all_cuts()),
-        "detections": count_files(SEG_ANNOTATIONS_DIR, "*.jsonl"),
-        "pre_annotations": count_files(RALLY_PRE_ANNOTATIONS_DIR, "*.jsonl"),
-        "annotations": count_files(RALLY_ANNOTATIONS_DIR, "*.jsonl"),
-        "action_pre_annotations": count_files(ACTION_PRE_ANNOTATIONS_DIR, "*.jsonl"),
-        "actions": count_files(ACTION_ANNOTATIONS_DIR, "*.jsonl"),
-        # Association is review progress rather than a raw file count:
-        # started includes both Done and In Progress.
-        "association_labels": association.started,
-        "association_labels_done": association.done,
-        "reid_labels": count_files(REID_ANNOTATIONS_DIR, f"*{PLAYERS_SUFFIX}"),
-        "active_jobs": job_manager.active_count(),
-    }

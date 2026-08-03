@@ -3,9 +3,9 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { API, apiFetch } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { usePresence } from '@/lib/usePresence';
-import { formatStatValue, STAT_ROWS } from '@/lib/stats';
+import { LabelProgress } from '@/components/labeling/LabelProgress';
 import { Icon } from '@/components/ui/Icon';
-import type { ActiveCount, SystemStats } from '@/types/api';
+import type { ActiveCount } from '@/types/api';
 import { NAV, PATH_SECTION, type NavItem, type NavSection } from './nav';
 import { useNavSections } from './useNavSections';
 
@@ -73,11 +73,6 @@ function NavRow({ item, badge }: { item: NavItem; badge?: number }) {
 }
 
 export function Sidebar() {
-  const stats = useQuery({
-    queryKey: ['system-stats'],
-    queryFn: () => apiFetch<SystemStats>(API.system.stats),
-    refetchInterval: 30_000,
-  });
   const jobs = useQuery({
     queryKey: ['jobs-active-count'],
     queryFn: () => apiFetch<ActiveCount>(API.jobs.activeCount),
@@ -136,24 +131,7 @@ export function Sidebar() {
           </div>
         )}
         <div className="h-px w-full bg-border" />
-        <div className="space-y-1 text-[11px] text-text-muted">
-          {STAT_ROWS.map(([label, key]) => (
-            <div
-              key={key}
-              className="flex items-center justify-between"
-              title={
-                key === 'association_labels'
-                  ? 'Done / Started (includes In Progress)'
-                  : undefined
-              }
-            >
-              <span>{label}</span>
-              <span className="font-mono tabular-nums text-text-secondary">
-                {formatStatValue(stats.data, key)}
-              </span>
-            </div>
-          ))}
-        </div>
+        <LabelProgress />
       </div>
     </aside>
   );

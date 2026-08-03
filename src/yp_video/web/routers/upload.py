@@ -437,15 +437,7 @@ def delete_r2_files(req: DeleteR2Request):
     if not req.files:
         return {"deleted": 0}
 
-    client = r2_client._get_client()
-    deleted = 0
-    # S3 delete_objects accepts up to 1000 keys per call
-    CHUNK = 1000
-    for i in range(0, len(req.files), CHUNK):
-        batch = req.files[i:i + CHUNK]
-        keys = [{"Key": f"{req.category}/{p}"} for p in batch]
-        resp = client.delete_objects(Bucket=r2_client.bucket, Delete={"Objects": keys})
-        deleted += len(resp.get("Deleted", []))
+    deleted = r2_client.delete_objects([f"{req.category}/{p}" for p in req.files])
     return {"deleted": deleted}
 
 

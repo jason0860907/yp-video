@@ -16,6 +16,7 @@ from yp_video.contracts.action import (
     FRAME_HEIGHT,
     frame_filename,
 )
+from yp_video.core.cache import StatCache
 
 FRAME_PATTERN = FRAME_FFMPEG_PATTERN
 META_NAME = ".frame-cache.json"
@@ -254,10 +255,20 @@ def ensure_action_frame_caches(
     }
 
 
+# Keyed on the directory's own stat: adding/removing entries bumps its mtime,
+# and caches land via an atomic tmp-dir replace, so the stat is stable once a
+# cache is in place. Saves a full glob per meta-less cache on every listing.
+_frame_count_cache = StatCache()
+
+
 def _count_frames(directory: Path) -> int:
     if not directory.is_dir():
         return 0
-    return sum(1 for path in directory.glob("*.jpg") if path.name[:6].isdigit())
+    return _frame_count_cache.get(
+        str(directory),
+        [directory],
+        lambda: sum(1 for path in directory.glob("*.jpg") if path.name[:6].isdigit()),
+    )
 
 
 def _read_metadata(directory: Path) -> dict | None:

@@ -83,7 +83,7 @@ export function ReidPredictPage() {
       <PageHeader
         actions={
           <>
-            <Button size="sm" onClick={() => navigate('/reid-label')}>
+            <Button size="sm" onClick={() => navigate('/label?mode=reid')}>
               Open ReID Label
             </Button>
             <Button intent="primary" onClick={run} disabled={Boolean(blocked)}>

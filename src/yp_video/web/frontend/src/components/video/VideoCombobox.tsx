@@ -1,6 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 import type { KeyboardEvent, ReactNode } from 'react';
 import { cn } from '@/lib/cn';
+import { errMsg } from '@/lib/api';
+
+/** The slice of a react-query result that list widgets need to render
+ *  loading and failure as themselves — a fetch in flight or a fetch error
+ *  must never look like an empty library. A query object satisfies it
+ *  structurally; aggregators (useUnionVideos) hand-build one. */
+export interface ListQuery {
+  isPending: boolean;
+  isError: boolean;
+  error: unknown;
+  refetch: () => unknown;
+}
 
 interface VideoComboboxProps<T extends { name: string }> {
   /** Candidates, already narrowed by any page-level filters (kind, status). */
@@ -12,6 +24,8 @@ interface VideoComboboxProps<T extends { name: string }> {
   /** Row content in the dropdown; defaults to the bare name. */
   renderItem?: (item: T) => ReactNode;
   className?: string;
+  /** The query the items came from. */
+  query?: ListQuery;
 }
 
 const inputCls =
@@ -27,6 +41,7 @@ export function VideoCombobox<T extends { name: string }>({
   placeholder = 'Type to search…',
   renderItem,
   className,
+  query: listQuery,
 }: VideoComboboxProps<T>) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -93,7 +108,7 @@ export function VideoCombobox<T extends { name: string }>({
         onFocus={() => setOpen(true)}
         onBlur={close}
         onKeyDown={onKeyDown}
-        placeholder={value || placeholder}
+        placeholder={listQuery?.isPending ? 'Loading videos…' : value || placeholder}
         className={inputCls}
       />
       {value && !open && (
@@ -110,8 +125,30 @@ export function VideoCombobox<T extends { name: string }>({
           ref={listRef}
           className="absolute left-0 right-0 top-full z-50 mt-1 max-h-96 overflow-auto rounded-xl border border-border bg-surface-100 p-1 shadow-2xl"
         >
+          {/* Precedence: items > pending > error > empty — partial data shows
+              immediately, and while loading the honest empty message is
+              "loading", not "no match". */}
           {shown.length === 0 ? (
-            <div className="px-3 py-2 text-xs text-text-muted">No videos match</div>
+            listQuery?.isPending ? (
+              <div className="px-3 py-2 text-xs text-text-muted">Loading videos…</div>
+            ) : listQuery?.isError ? (
+              <div className="flex items-center gap-2 px-3 py-2 text-xs">
+                <span className="min-w-0 flex-1 break-all text-red-400">Failed to load: {errMsg(listQuery.error)}</span>
+                <button
+                  type="button"
+                  // Mousedown (not click) so the retry lands before the input's blur.
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    void listQuery.refetch();
+                  }}
+                  className="shrink-0 rounded-lg border border-border-light px-2 py-1 text-text-secondary hover:text-text-primary"
+                >
+                  Retry
+                </button>
+              </div>
+            ) : (
+              <div className="px-3 py-2 text-xs text-text-muted">No videos match</div>
+            )
           ) : (
             shown.map((item, i) => (
               <button

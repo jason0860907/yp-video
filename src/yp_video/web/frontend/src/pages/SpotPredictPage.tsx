@@ -118,7 +118,7 @@ export function SpotPredictPage() {
       <PageHeader
         actions={
           <>
-            <Button size="sm" onClick={() => navigate('/annotate')}>
+            <Button size="sm" onClick={() => navigate('/label?mode=rally')}>
               Open Rally Label
             </Button>
             <Button intent="primary" onClick={run} disabled={!spotReady}>

@@ -80,7 +80,6 @@ export const API = {
     eventsSSE: (id: string) => `/jobs/${id}/events`,
   },
   system: {
-    stats: '/system/stats',
     videos: '/system/videos',
     presence: '/system/presence',
     vllmStart: '/system/vllm/start',
@@ -120,6 +119,7 @@ export const API = {
     clip: '/annotate/clip',
     clipZip: '/annotate/clip-zip',
     publish: '/annotate/publish',
+    done: (name: string) => `/annotate/done/${encodeURIComponent(name)}`,
   },
   actionAnnotate: {
     labels: '/action-annotate/labels',
@@ -127,10 +127,11 @@ export const API = {
     spot: '/action-annotate/spot',
     prelabelBatch: '/action-annotate/prelabel-batch',
     annotations: '/action-annotate/annotations',
-    annotation: (name: string) => `/action-annotate/annotations/${encodeURIComponent(name)}`,
+    annotation: (name: string, params: QueryParams = {}) => `/action-annotate/annotations/${encodeURIComponent(name)}${q(params)}`,
     waveform: (name: string) => `/action-annotate/waveform/${encodeURIComponent(name)}`,
     export: '/action-annotate/export',
     video: (name: string) => `/action-annotate/video/${encodeURIComponent(name)}`,
+    done: (name: string) => `/action-annotate/done/${encodeURIComponent(name)}`,
   },
   actionTrain: {
     status: '/action-train/status',
@@ -198,5 +199,6 @@ export const API = {
     trainPerformance: '/actor-association/train-performance',
     train: '/actor-association/train',
     predict: '/actor-association/predict',
+    done: (name: string) => `/actor-association/done/${encodeURIComponent(name)}`,
   },
 } as const;

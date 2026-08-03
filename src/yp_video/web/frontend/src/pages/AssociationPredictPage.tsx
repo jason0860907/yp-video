@@ -116,7 +116,7 @@ export function AssociationPredictPage() {
       <PageHeader
         actions={
           <>
-            <Button size="sm" onClick={() => navigate('/association-label')}>
+            <Button size="sm" onClick={() => navigate('/label?mode=association')}>
               Open Association Label
             </Button>
             <Button intent="primary" onClick={run} disabled={Boolean(blocked)}>

@@ -87,8 +87,16 @@ const STALE_QUERIES: Record<string, string[][]> = {
   r2_download: [['upload-status']],
 };
 
-// Stale after any job settles: queue views and the dashboard counts.
-const ALWAYS_STALE: string[][] = [['jobs-list'], ['jobs-active-count'], ['system-stats']];
+// Stale after any job settles: queue views and the label-progress counters
+// (the union work lists feeding LabelProgress and the Label page picker).
+const ALWAYS_STALE: string[][] = [
+  ['jobs-list'],
+  ['jobs-active-count'],
+  ['annotate-results'],
+  ['action-videos'],
+  ['association-videos'],
+  ['reid-videos'],
+];
 
 /** Invalidate every query a settled job may have touched. Runs on any
  *  terminal status — failed batch jobs can still have partial results. */

@@ -50,9 +50,11 @@ from yp_video.contracts.action import (
     ACTOR_LABEL_SUBDIR,
     ASSOCIATION_PACKAGE_TYPE,
 )
+from yp_video.core import label_done
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import read_jsonl_cached, read_jsonl_header
 from yp_video.extraction import actor_fix, links, reassociate
+from yp_video.extraction import done as extraction_done
 from yp_video.extraction import store as extraction_store
 from yp_video.extraction.prerequisites import prerequisites
 from yp_video.reid import store as reid_store
@@ -123,6 +125,9 @@ def list_videos() -> list[dict]:
                 # The re-pick worklist (links.unresolved_labels): labels no
                 # tracklet can be derived for today, whatever their verdict.
                 "unresolved": len(links.unresolved_labels(path.stem)),
+                # The human "I'm finished" flag — a verdict counts can't
+                # derive, same as ReID's (see core/label_done.py).
+                "done": label_done.is_done(path.stem, "association"),
                 # The automatic policy's own outcome, for context on how much
                 # of the remainder is likely to just need confirming. These
                 # are detector-run diagnostics; unlike progress above they
@@ -135,6 +140,27 @@ def list_videos() -> list[dict]:
             }
         )
     return results
+
+
+class DoneRequest(StrictModel):
+    done: bool = True
+
+
+@router.put("/done/{name:path}")
+def set_done(name: str, req: DoneRequest) -> dict:
+    """Persist the human "actor review is finished" verdict for one video.
+
+    Done also sweep-confirms every current automatic answer (same write as
+    the per-rally sweep, video-wide), and reassociation keeps honouring the
+    flag afterwards — a predict re-run confirms the answers it invents
+    instead of un-reviewing a finished video (extraction/done.py).
+    """
+    video = find_cut(Path(unquote(name)).name)
+    if video is None:
+        raise HTTPException(404, "Video not found")
+    flags = label_done.set_done(video.stem, "association", req.done)
+    confirmed = extraction_done.confirm_reviewed(video.stem) if req.done else 0
+    return {"done": flags["association"], "confirmed": confirmed}
 
 
 @router.get("/status")
@@ -719,6 +745,7 @@ async def predict(req: PredictRequest) -> dict:
         done_message=lambda c: (
             f"{c['changed']} moved · {c['unchanged']} unchanged · "
             f"{c['labeled']} labeled kept"
+            + (f" · {c['confirmed']} auto-confirmed (video marked done)" if c.get("confirmed") else "")
         ),
         start_message="re-deciding actors...",
     )

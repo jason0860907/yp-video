@@ -30,19 +30,9 @@ const ICON = {
   annotate: ['M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z'],
   train: ['M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z'],
   predict: ['M13 7h8m0 0v8m0-8l-8 8-4-4-6 6'],
-  pin: [
-    'M15 10.5a3 3 0 11-6 0 3 3 0 016 0z',
-    'M19.5 10.5c0 7.5-7.5 11.25-7.5 11.25S4.5 18 4.5 10.5a7.5 7.5 0 1115 0z',
-  ],
   cloud: ['M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z'],
   jobs: [
     'M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z',
-  ],
-  actor: [
-    'M15.042 21.672L13.684 16.6m0 0l-2.51 2.225.569-9.47 5.227 7.917-3.286-.672zm-7.518-.267A8.25 8.25 0 1120.25 10.5M8.288 14.212A5.25 5.25 0 1117.25 10.5',
-  ],
-  players: [
-    'M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z',
   ],
 };
 
@@ -56,13 +46,15 @@ export const NAV: NavSection[] = [
       { path: '/download', label: 'Download', icon: ICON.download },
       { path: '/cut', label: 'Cut', icon: ICON.cut },
       { path: '/rally-vlm-predict', label: 'Rally VLM Predict', icon: ICON.detect },
+      // Every human labeling surface behind one door: /label picks the video
+      // once and tabs across Rally / Action / Association / ReID.
+      { path: '/label', label: 'Label', icon: ICON.annotate },
     ],
   },
   {
     title: 'Rally',
     collapsible: true,
     items: [
-      { path: '/annotate', label: 'Rally Label', icon: ICON.annotate },
       { path: '/spot-train', label: 'Rally SPOT Train', icon: ICON.train },
       { path: '/spot-predict', label: 'Rally SPOT Predict', icon: ICON.predict },
     ],
@@ -72,7 +64,6 @@ export const NAV: NavSection[] = [
     collapsible: true,
     items: [
       { path: '/action-predict', label: 'Action Predict', icon: ICON.predict },
-      { path: '/action-annotate', label: 'Action Label', icon: ICON.pin },
       { path: '/action-train', label: 'Action Train', icon: ICON.train },
     ],
   },
@@ -91,7 +82,6 @@ export const NAV: NavSection[] = [
     collapsible: true,
     items: [
       { path: '/association-predict', label: 'Association Predict', icon: ICON.predict },
-      { path: '/association-label', label: 'Association Label', icon: ICON.actor },
       { path: '/association-train', label: 'Association Train', icon: ICON.train },
     ],
   },
@@ -107,7 +97,6 @@ export const NAV: NavSection[] = [
     collapsible: true,
     items: [
       { path: '/reid-predict', label: 'ReID Predict', icon: ICON.predict },
-      { path: '/reid-label', label: 'ReID Label', icon: ICON.players },
       { path: '/reid-train', label: 'ReID Train', icon: ICON.train },
     ],
   },

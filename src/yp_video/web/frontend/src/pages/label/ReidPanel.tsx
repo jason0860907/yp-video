@@ -1,30 +1,30 @@
-/** ReID Label: name the players behind extracted action events.
+/** ReID Label panel: name the players behind extracted action events.
  *
  *  Strictly "who is this" — WHICH person performed each action is settled on
- *  Association Label, so the video player here is read-only (no onFixActor)
- *  and nothing on this page can write an actor verdict.
+ *  the Association panel, so the video player here is read-only (no
+ *  onFixActor) and nothing here can write an actor verdict.
  *
- *  This page is orchestration only — queries, top-level controls and the
- *  wiring between its two halves: the video player (components/reid/
- *  EventVideoPlayer) and the identities board (components/reid/GroupBoard,
- *  state machine in useGroupBoard). The two halves jump into each other
- *  through imperative handles: sidebar → board via jumpToCrop, crop →
- *  video via jumpToEvent.
+ *  Orchestration only — queries, top-level controls and the wiring between
+ *  its two halves: the video player (components/labeling/EventVideoPlayer)
+ *  and the identities board (components/reid/GroupBoard, state machine in
+ *  useGroupBoard). The two halves jump into each other through imperative
+ *  handles: sidebar → board via jumpToCrop, crop → video via jumpToEvent.
+ *
+ *  The picker moved to the parent; the old pick-time "discard unsaved
+ *  changes?" confirm is the registered dirty guard, and the effect on the
+ *  `video` prop clears the board exactly where pickVideo used to.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { API, ApiError, apiFetch, apiUrl, errMsg } from '@/lib/api';
-import { Field, fieldCls } from '@/components/train/Field';
 import { cn } from '@/lib/cn';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SectionLabel } from '@/components/ui/SectionLabel';
-import { CopyFilenameButton } from '@/components/video/CopyFilenameButton';
-import { KindBadge } from '@/components/video/KindBadge';
-import { VideoCombobox } from '@/components/video/VideoCombobox';
+import { STAGE_HINT } from '@/components/video/PipelineChips';
 import { toast } from '@/components/feedback/toast';
 import { confirm } from '@/components/feedback/confirm';
 import { GroupBoard, type BoardHandle } from '@/components/reid/GroupBoard';
@@ -33,6 +33,8 @@ import { useGroupBoard } from '@/components/reid/useGroupBoard';
 import { useVideoLabelingData } from '@/components/labeling/useVideoLabelingData';
 import { LiveJob } from '@/components/job/LiveJob';
 import type { Job, ReidClusters, ReidOptions, ReidPlayers, ReidRecord, ReidVideo } from '@/types/api';
+import { reidStatus } from '@/lib/labelStatus';
+import { STATUS_OPTIONS, type ModeDescriptor, type RegisterGuard } from './mode';
 
 // Embedders and their threshold-slider calibration both come from
 // /reid/options (types/api.ts ReidOptions) — cosine-distance scales differ
@@ -53,19 +55,40 @@ const embeddingRetryDelay = (attempt: number, error: Error) =>
 const selectCls =
   'w-auto cursor-pointer appearance-none rounded-lg border border-border-light bg-surface-50 px-3 py-1 text-xs text-text-primary focus:border-primary/50 focus:outline-none';
 
+export const REID_MODE: ModeDescriptor = {
+  key: 'reid',
+  label: 'ReID',
+  statusOptions: STATUS_OPTIONS,
+  status: reidStatus,
+  matches: (row, status) => status === 'all' || reidStatus(row) === status,
+  available: (row) => Boolean(row.reid?.pipeline.has_records),
+  hint: (row) => {
+    const blocked = row.reid?.pipeline.blocked_on;
+    return blocked ? STAGE_HINT[blocked] : 'No extraction records for this video yet';
+  },
+  rowExtras: (row) => {
+    const v = row.reid;
+    if (!v) return null;
+    return (
+      <>
+        <span className="shrink-0 font-mono text-[10px] tabular-nums text-text-muted">{v.event_count}ev</span>
+        {(v.player_count ?? 0) > 0 && <Badge tone="brand">{v.player_count}P</Badge>}
+      </>
+    );
+  },
+  // No doneApi: the panel's own Done button saves the board first and can
+  // record auto actors as confirmed — semantics the page button can't offer.
+  listKey: 'reid-videos',
+};
 
-
-export function ReidLabelPage() {
+export function ReidPanel({ video, registerGuard }: { video: string; registerGuard?: RegisterGuard }) {
   const qc = useQueryClient();
-  const [picked, setPicked] = useState('');
-  const [kindFilter, setKindFilter] = useState<'all' | 'broadcast' | 'sideline'>('all');
-  const [pickStatus, setPickStatus] = useState<'all' | 'unlabeled' | 'labeled' | 'done'>('all');
   const [selectedRally, setSelectedRally] = useState<number | 'all'>('all');
   // Where locked groups live on the groups board: pinned on top as full rows,
   // or docked in a sticky right rail showing just 3 crops per group.
   const [lockedDock, setLockedDock] = useState<'top' | 'right'>('top');
   // Embedder + threshold snap to the server's default the moment
-  // /reid/options lands (see effect below); queries are gated on `picked`,
+  // /reid/options lands (see effect below); queries are gated on `video`,
   // so nothing fires against the empty pre-fetch value.
   const [embedder, setEmbedder] = useState('');
   // Draft follows the slider live; the applied value (= clusters query key)
@@ -108,23 +131,15 @@ export function ReidLabelPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [optionsQuery.data]);
   const extracted = (videosQuery.data ?? []).filter((v) => v.pipeline.has_records);
-  // Picker filters, mirroring the Action Label / Rally Label pickers.
-  const pickable = extracted.filter((v) => {
-    if (kindFilter !== 'all' && v.kind !== kindFilter) return false;
-    if (pickStatus === 'unlabeled' && ((v.player_count ?? 0) > 0 || v.done)) return false;
-    if (pickStatus === 'labeled' && ((v.player_count ?? 0) === 0 || v.done)) return false;
-    if (pickStatus === 'done' && !v.done) return false;
-    return true;
-  });
 
-  const { resultsQuery, records, meta, tracksQuery, actionEvents } = useVideoLabelingData(picked);
+  const { resultsQuery, records, meta, tracksQuery, actionEvents } = useVideoLabelingData(video);
   const recordById = useMemo(() => new Map(records.map((r) => [r.id, r])), [records]);
   const trackLinks = useMemo(() => tracksQuery.data?.links ?? {}, [tracksQuery.data]);
 
   const clustersQuery = useQuery({
-    queryKey: ['reid-clusters', picked, threshold, embedder],
-    queryFn: () => apiFetch<ReidClusters>(API.reid.clusters(picked, threshold, embedder)),
-    enabled: Boolean(picked),
+    queryKey: ['reid-clusters', video, threshold, embedder],
+    queryFn: () => apiFetch<ReidClusters>(API.reid.clusters(video, threshold, embedder)),
+    enabled: Boolean(video),
     retry: retryEmbeddingRefresh,
     retryDelay: embeddingRetryDelay,
   });
@@ -132,9 +147,9 @@ export function ReidLabelPage() {
   const units = useMemo(() => clustersQuery.data?.units ?? {}, [clustersQuery.data]);
 
   const playersQuery = useQuery({
-    queryKey: ['reid-players', picked, embedder],
-    queryFn: () => apiFetch<ReidPlayers>(API.reid.players(picked, embedder)),
-    enabled: Boolean(picked),
+    queryKey: ['reid-players', video, embedder],
+    queryFn: () => apiFetch<ReidPlayers>(API.reid.players(video, embedder)),
+    enabled: Boolean(video),
     retry: retryEmbeddingRefresh,
     retryDelay: embeddingRetryDelay,
   });
@@ -144,19 +159,19 @@ export function ReidLabelPage() {
   // A clusters 404 for a model the video list confirms is missing means "the
   // matrix was never computed" — recoverable right here with a backfill job,
   // no trip to the ReID Predict page. Any other error renders as-is.
-  const pickedVideo = extracted.find((v) => v.name === picked);
+  const pickedVideo = extracted.find((v) => v.name === video);
   const matrixMissing =
     clustersQuery.error instanceof ApiError &&
     clustersQuery.error.status === 404 &&
     !!pickedVideo &&
     !pickedVideo.embedded_models.includes(embedder);
   const [backfillJob, setBackfillJob] = useState<Job | null>(null);
-  useEffect(() => setBackfillJob(null), [picked, embedder]);
+  useEffect(() => setBackfillJob(null), [video, embedder]);
   const startBackfill = async () => {
     try {
       const job = await apiFetch<Job>(API.reid.embed, {
         method: 'POST',
-        body: { videos: [picked], models: [embedder] },
+        body: { videos: [video], models: [embedder] },
       });
       setBackfillJob(job);
     } catch (e) {
@@ -165,7 +180,7 @@ export function ReidLabelPage() {
   };
 
   const board = useGroupBoard({
-    picked,
+    picked: video,
     embedder,
     threshold,
     clusters,
@@ -179,20 +194,28 @@ export function ReidLabelPage() {
     if (r) playerRef.current?.jumpToEvent({ id: r.id, frame: r.frame, time: r.time ?? null });
   };
 
-  const pickVideo = async (name: string) => {
-    if (board.dirty && name !== picked) {
-      const ok = await confirm({
+  // The parent owns picking; the guard below already asked about unsaved
+  // work, so a changed prop empties the board exactly like pickVideo did.
+  useEffect(() => {
+    board.clearBoard();
+    setSelectedRally('all');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [video]);
+
+  const boardDirty = board.dirty;
+  useEffect(() => {
+    if (!registerGuard) return;
+    registerGuard(async () => {
+      if (!boardDirty) return true;
+      return confirm({
         title: 'Discard unsaved changes?',
         body: 'The current group edits have not been saved.',
         confirmText: 'Discard',
         variant: 'danger',
       });
-      if (!ok) return;
-    }
-    board.clearBoard();
-    setSelectedRally('all');
-    setPicked(name);
-  };
+    });
+    return () => registerGuard(null);
+  }, [registerGuard, boardDirty]);
 
   // The denominator is deliberately simple: every action except score (the
   // ball-landing marker — nobody performs it). Off-frame and occluded events
@@ -211,13 +234,13 @@ export function ReidLabelPage() {
   const occludedCount = records.filter((r) => r.resolution === 'occluded').length;
   const resolvedCount = assignedCount + occludedCount;
 
-  const isDone = Boolean(extracted.find((v) => v.name === picked)?.done);
+  const isDone = Boolean(extracted.find((v) => v.name === video)?.done);
 
   // Save, then persist the human "this video is finished" verdict (toggles
   // off when pressed on an already-done video). Warns when actions are still
   // unassigned — done should mean done, but partial is the user's call.
   const markDone = async () => {
-    if (!picked) return;
+    if (!video) return;
     if (!isDone && resolvedCount < actionableCount) {
       const ok = await confirm({
         title: 'Mark as done?',
@@ -235,7 +258,7 @@ export function ReidLabelPage() {
     }
     if (board.dirty && !(await board.save())) return;
     try {
-      await apiFetch(API.reid.done(picked), {
+      await apiFetch(API.reid.done(video), {
         method: 'PUT',
         body: {
           done: !isDone,
@@ -246,7 +269,7 @@ export function ReidLabelPage() {
       void qc.invalidateQueries({ queryKey: ['reid-videos'] });
       if (!isDone) {
         void qc.invalidateQueries({
-          queryKey: ['extraction-records', picked],
+          queryKey: ['extraction-records', video],
         });
       }
     } catch (e) {
@@ -255,50 +278,11 @@ export function ReidLabelPage() {
   };
 
   return (
-    <div className="mx-auto max-w-screen-2xl space-y-5">
-      {/* Picker — same shape as the Action Label / Rally Label pickers */}
-      <Card>
-        <div className="grid grid-cols-1 items-end gap-3 lg:grid-cols-[8.5rem_8.5rem_minmax(18rem,1fr)_auto]">
-          <Field label="Kind">
-            <select value={kindFilter} onChange={(e) => setKindFilter(e.target.value as typeof kindFilter)} className={cn(fieldCls, 'h-9 w-full py-0')}>
-              <option value="all">All kinds</option>
-              <option value="broadcast">Broadcast</option>
-              <option value="sideline">Sideline</option>
-            </select>
-          </Field>
-          <Field label="Status">
-            <select value={pickStatus} onChange={(e) => setPickStatus(e.target.value as typeof pickStatus)} className={cn(fieldCls, 'h-9 w-full py-0')}>
-              <option value="all">All</option>
-              <option value="unlabeled">Unlabeled</option>
-              <option value="labeled">In progress</option>
-              <option value="done">Done</option>
-            </select>
-          </Field>
-          <Field label="Video">
-            <VideoCombobox
-              items={pickable}
-              value={picked}
-              onChange={pickVideo}
-              placeholder={`Search ${pickable.length} extracted videos…`}
-              renderItem={(v) => (
-                <>
-                  <KindBadge kind={v.kind} />
-                  <span className="min-w-0 flex-1 break-all font-mono">{v.name}</span>
-                  <span className="shrink-0 font-mono text-[10px] tabular-nums text-text-muted">{v.event_count}ev</span>
-                  {(v.player_count ?? 0) > 0 && <Badge tone="brand">{v.player_count}P</Badge>}
-                  {v.done && <Badge tone="success">✓</Badge>}
-                </>
-              )}
-            />
-          </Field>
-          <CopyFilenameButton name={picked} />
-        </div>
-      </Card>
-
-      {picked && showVideo && meta.fps && meta.frame_size && (
+    <div className="space-y-5">
+      {video && showVideo && meta.fps && meta.frame_size && (
         <EventVideoPlayer
           ref={playerRef}
-          src={apiUrl(API.actionAnnotate.video(picked))}
+          src={apiUrl(API.actionAnnotate.video(video))}
           fps={meta.fps}
           frameSize={meta.frame_size}
           records={records}
@@ -307,7 +291,7 @@ export function ReidLabelPage() {
           rallies={meta.rallies ?? []}
           selectedRally={selectedRally}
           onSelectRally={setSelectedRally}
-          videoName={picked}
+          videoName={video}
           tracklets={tracksQuery.data?.tracklets ?? []}
           onJumpToCrop={(id) => boardRef.current?.jumpToCrop(id)}
           trackLinks={trackLinks}
@@ -318,7 +302,7 @@ export function ReidLabelPage() {
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-3">
             <SectionLabel className="mb-0 leading-none">Identities</SectionLabel>
-            {picked && (
+            {video && (
               <span
                 className="font-mono text-[11px] leading-none tabular-nums text-text-muted"
                 title="Assigned to a player or marked occluded / all actions except score (off-frame events included, so 100% is not always reachable)"
@@ -419,7 +403,7 @@ export function ReidLabelPage() {
             <Button
               size="sm"
               onClick={board.seedRegroup}
-              disabled={!picked || !board.groups.some((g) => (g.locked || g.name.trim()) && g.unitKeys.length > 0)}
+              disabled={!video || !board.groups.some((g) => (g.locked || g.name.trim()) && g.unitKeys.length > 0)}
               title="Use every locked/named group as a player anchor: all other events join the nearest anchor (within the threshold); the rest re-cluster into leftover pools"
             >
               Seed regroup
@@ -427,14 +411,14 @@ export function ReidLabelPage() {
             <Button size="sm" onClick={board.reset} disabled={!board.dirty}>
               Reset
             </Button>
-            <Button size="sm" intent="primary" onClick={() => void board.save()} disabled={!picked}>
+            <Button size="sm" intent="primary" onClick={() => void board.save()} disabled={!video}>
               {board.dirty ? 'Save •' : 'Save'}
             </Button>
             <Button
               size="sm"
               intent={isDone ? 'default' : 'primary'}
               onClick={() => void markDone()}
-              disabled={!picked}
+              disabled={!video}
               title={isDone ? 'Labeling marked finished — click to unmark' : 'Save, then mark this video’s labeling as finished'}
             >
               {isDone ? 'Done ✓' : 'Done'}
@@ -442,7 +426,7 @@ export function ReidLabelPage() {
           </div>
         </div>
 
-        {!picked ? (
+        {!video ? (
           <EmptyState
             icon={
               <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
@@ -491,7 +475,7 @@ export function ReidLabelPage() {
           )}
           <GroupBoard
             ref={boardRef}
-            picked={picked}
+            picked={video}
             records={records}
             recordById={recordById}
             board={board}
@@ -504,7 +488,7 @@ export function ReidLabelPage() {
           </>
         )}
         {/* Association stats */}
-        {picked && records.length > 0 && (
+        {video && records.length > 0 && (
           <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
             <Badge tone="success">ok {records.filter((r) => r.status === 'ok').length}</Badge>
             <Badge tone="warning">multi {records.filter((r) => r.status === 'multi').length}</Badge>

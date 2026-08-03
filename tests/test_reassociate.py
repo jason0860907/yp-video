@@ -16,9 +16,11 @@ from yp_video.actor.policy import (
     SpotActorPolicy,
 )
 from yp_video.actor.spot_predictions import SpotAnswer
+from yp_video.core import label_done
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import read_jsonl, write_jsonl
-from yp_video.extraction import reassociate
+from yp_video.core.sidecar import JsonSidecar
+from yp_video.extraction import done, reassociate
 from yp_video.tracklets.geometry import TrackRef
 
 
@@ -91,6 +93,10 @@ class ReassociationTests(unittest.TestCase):
             ),
             patch.object(actor_labels, "actors_path", return_value=self.labels),
             patch.object(actor_labels._store, "_cache", StatCache()),
+            patch.object(done, "records_path", return_value=self.records),
+            patch.object(
+                label_done, "_sidecar", JsonSidecar(lambda stem: root / f"{stem}_done.json")
+            ),
         ]
         for item in self._patches:
             item.start()
@@ -197,6 +203,36 @@ class ReassociationTests(unittest.TestCase):
 
         self.assertEqual(counts["labeled"], 2)
         self.assertEqual(self.records.stat().st_mtime_ns, before)
+
+    def test_a_done_video_keeps_its_endorsement_after_a_re_run(self) -> None:
+        """The per-rally sweep says "reviewed"; a predict re-run must not
+        un-review a video its reviewer declared finished. Answers the run
+        produces land as confirmed_auto instead of unreviewed."""
+        label_done.set_done("match", "association", True)
+
+        counts = self._run(
+            _StubPolicy(
+                {"auto": ActorPick(box=(410, 510, 510, 690))},
+                {100: "human", 200: "auto"},
+            )
+        )
+
+        self.assertEqual(counts["confirmed"], 1)
+        self.assertIs(
+            actor_labels.load("match")["auto"].verdict, ActorVerdict.CONFIRMED_AUTO
+        )
+
+    def test_an_undone_video_gains_no_endorsement(self) -> None:
+        """New machine output nobody vouched for stays visibly unreviewed."""
+        counts = self._run(
+            _StubPolicy(
+                {"auto": ActorPick(box=(410, 510, 510, 690))},
+                {100: "human", 200: "auto"},
+            )
+        )
+
+        self.assertEqual(counts["confirmed"], 0)
+        self.assertNotIn("auto", actor_labels.load("match"))
 
     def test_an_invisible_ball_event_comes_out_endorsable(self) -> None:
         """An action's ``visible`` is about the BALL — the head still saw who

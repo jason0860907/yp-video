@@ -2,6 +2,8 @@
 
 import asyncio
 import logging
+import threading
+import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -17,6 +19,11 @@ class R2Client:
         self._client = None
         self._config: dict[str, str] = {}
         self._loaded = False
+        # prefix -> (monotonic deadline, objects). Writes through this client
+        # invalidate the affected prefixes; cross-machine writes surface once
+        # the TTL lapses.
+        self._list_cache: dict[str, tuple[float, list[dict]]] = {}
+        self._list_lock = threading.Lock()
 
     def _ensure_config(self):
         """Load config from disk if not yet loaded."""
@@ -70,6 +77,8 @@ class R2Client:
         self._client = None
         self._config = {}
         self._loaded = False
+        with self._list_lock:
+            self._list_cache.clear()
 
     def list_objects(self, prefix: str = "") -> list[dict]:
         """List objects in bucket with optional prefix."""
@@ -84,6 +93,29 @@ class R2Client:
                     "last_modified": obj["LastModified"].isoformat(),
                 })
         return objects
+
+    def list_objects_cached(self, prefix: str = "", ttl: float = 30.0) -> list[dict]:
+        """``list_objects`` behind a per-prefix TTL.
+
+        For list endpoints hit on every page load — a full paginated listing
+        per request is seconds of latency. Mutations through this client drop
+        the affected prefixes immediately, so only writes from other machines
+        wait out the TTL.
+        """
+        now = time.monotonic()
+        with self._list_lock:
+            hit = self._list_cache.get(prefix)
+            if hit and hit[0] > now:
+                return hit[1]
+        objects = self.list_objects(prefix)  # network I/O outside the lock
+        with self._list_lock:
+            self._list_cache[prefix] = (now + ttl, objects)
+        return objects
+
+    def _invalidate_listings(self, key: str) -> None:
+        with self._list_lock:
+            for prefix in [p for p in self._list_cache if key.startswith(p)]:
+                del self._list_cache[prefix]
 
     def object_exists(self, key: str) -> bool:
         """Check if an object exists in R2."""
@@ -141,6 +173,7 @@ class R2Client:
             ),
         )
 
+        self._invalidate_listings(key)
         return {"key": key, "size": file_size}
 
     def download_file(
@@ -192,6 +225,23 @@ class R2Client:
     def delete_object(self, key: str):
         """Delete an object from R2."""
         self._get_client().delete_object(Bucket=self.bucket, Key=key)
+        self._invalidate_listings(key)
+
+    def delete_objects(self, keys: list[str]) -> int:
+        """Bulk delete, chunked at the S3 limit of 1000 keys per call."""
+        client = self._get_client()
+        deleted = 0
+        chunk = 1000
+        for i in range(0, len(keys), chunk):
+            batch = keys[i:i + chunk]
+            resp = client.delete_objects(
+                Bucket=self.bucket,
+                Delete={"Objects": [{"Key": k} for k in batch]},
+            )
+            deleted += len(resp.get("Deleted", []))
+            for k in batch:
+                self._invalidate_listings(k)
+        return deleted
 
 
 # Module-level instance

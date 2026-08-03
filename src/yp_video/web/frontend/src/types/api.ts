@@ -248,6 +248,9 @@ export interface ActionVideo {
   has_action_final_annotation?: boolean;
   action_reviewed?: boolean;
   action_annotation_source?: string;
+  /** The stored "action labeling is finished" flag (core/label_done.py) —
+   *  independent of saving, which only marks the file human-owned. */
+  done?: boolean;
   rally_sources?: string[];
 }
 
@@ -271,6 +274,9 @@ export interface ActionEvent {
 export interface ActionAnnotationData {
   video?: string;
   source_video?: string;
+  /** Which store this payload came from (null = neither exists yet); the
+   *  file's own provenance stays in its `source` metadata. */
+  loaded_source?: 'annotation' | 'pre-annotation' | null;
   duration?: number;
   fps?: number;
   num_frames?: number;
@@ -467,18 +473,6 @@ export interface ReidPlayers {
   matches: Record<string, { player: string; sim: number; assigned: boolean }>;
 }
 
-export interface SystemStats {
-  videos?: number;
-  cuts?: number;
-  pre_annotations?: number;
-  annotations?: number;
-  action_pre_annotations?: number;
-  actions?: number;
-  association_labels?: number;
-  association_labels_done?: number;
-  reid_labels?: number;
-}
-
 export interface ActiveCount {
   count: number;
 }
@@ -600,6 +594,9 @@ export interface AssociationVideo {
   unresolved: number;
   /** What the automatic policy produced, for context on the remainder. */
   auto_counts: { ok: number; multi: number; miss: number };
+  /** The stored "actor review is finished" flag — a human verdict, no longer
+   *  derived from the counts above. */
+  done: boolean;
   pipeline: PipelineState;
 }
 

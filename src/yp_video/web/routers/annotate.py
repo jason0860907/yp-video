@@ -25,6 +25,7 @@ from yp_video.config import (
     cut_kind_of,
     find_cut,
 )
+from yp_video.core import label_done
 from yp_video.core.ffmpeg import FFmpegError, export_segment
 from yp_video.core.jsonl import read_jsonl, read_jsonl_header
 from yp_video.core.rallies import RALLY_SOURCES, SOURCE_BY_TAG, resolve_rally_ids
@@ -92,19 +93,39 @@ def list_results() -> list[dict]:
     if r2_client.configured:
         try:
             for source in _SOURCES:
-                for obj in r2_client.list_objects(prefix=f"{source.r2_category}/"):
+                for obj in r2_client.list_objects_cached(prefix=f"{source.r2_category}/"):
                     files.setdefault(Path(obj["key"]).name, set()).add(source.tag)
         except Exception:  # noqa: BLE001 — R2 down must not take the page down
             log.warning("R2 listing failed; remote annotations will look absent")
-    def _kind(name: str) -> str:
+    def _stem(name: str) -> str:
         # Strip the conventional "_annotations.jsonl" suffix to get the cut stem.
-        stem = name.removesuffix(".jsonl").removesuffix("_annotations")
+        return name.removesuffix(".jsonl").removesuffix("_annotations")
+    def _kind(stem: str) -> str:
         cut = find_cut(f"{stem}.mp4")
         return cut_kind_of(cut) if cut else "broadcast"
     return sorted(
-        [{"name": k, "source": sorted(v), "kind": _kind(k)} for k, v in files.items()],
+        [
+            {
+                "name": k,
+                "source": sorted(v),
+                "kind": _kind(_stem(k)),
+                "done": label_done.is_done(_stem(k), "rally"),
+            }
+            for k, v in files.items()
+        ],
         key=lambda x: x["name"],
     )
+
+
+class DoneRequest(StrictModel):
+    done: bool = True
+
+
+@router.put("/done/{name}")
+def set_done(name: str, req: DoneRequest) -> dict:
+    """Persist the human "rally labeling is finished" verdict for one video."""
+    flags = label_done.set_done(Path(unquote(name)).stem, "rally", req.done)
+    return {"done": flags["rally"]}
 
 
 @router.get("/results/{name}")
@@ -129,7 +150,9 @@ async def get_result(name: str, source: str | None = None) -> dict:
                 data = _read_jsonl_as_dict(path)
             except json.JSONDecodeError:
                 raise HTTPException(400, "Invalid JSONL file")
-            data["source"] = candidate.r2_category
+            # The tag, not the r2_category path — this is the value the
+            # editor's Source select and loaded-source badge speak.
+            data["source"] = candidate.tag
             return data
 
     # Fallback: download from R2 and cache locally.

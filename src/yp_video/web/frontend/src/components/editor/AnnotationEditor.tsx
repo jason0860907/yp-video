@@ -85,6 +85,12 @@ interface AnnotationEditorProps {
    *  match to the app — per keystroke that hammered a slow tunnel with full
    *  publishes (and surfaced as Cloudflare 524s mid-labeling). */
   onSaved?: (videoName: string) => Promise<void> | void;
+  /** Where to start playback once metadata loads (null/0 = from the top).
+   *  Read at load time, so the parent can hand over a position captured
+   *  elsewhere (e.g. another tab's player). */
+  initialTime?: () => number | null;
+  /** Fired with the playhead position on every timeupdate (plays and seeks). */
+  onTimeChange?: (t: number) => void;
 }
 
 const normalizeRallyId = (v: unknown): number | null => {
@@ -139,7 +145,7 @@ const clearDraft = (endpoint: string, video: string): void => {
   }
 };
 
-export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtras, previewBackoff = 3, onSaved }: AnnotationEditorProps) {
+export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtras, previewBackoff = 3, onSaved, initialTime, onTimeChange }: AnnotationEditorProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
   const [annotations, setAnnotations] = useState<EditorAnnotation[]>([]);
@@ -338,6 +344,7 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
     const el = videoRef.current;
     if (!el) return;
     setCurrentTime(el.currentTime);
+    onTimeChange?.(el.currentTime);
     if (selectedIdx >= 0 && selectedIdx < annotations.length) {
       const a = annotations[selectedIdx]!;
       if (!el.paused && el.currentTime >= a.end) {
@@ -474,7 +481,12 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
               onClick={togglePlay}
               onPlay={() => setPlaying(true)}
               onPause={() => setPlaying(false)}
-              onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
+              onLoadedMetadata={(e) => {
+                const el = e.currentTarget;
+                setDuration(el.duration);
+                const t = initialTime?.();
+                if (t) el.currentTime = Math.min(t, el.duration || t);
+              }}
               onTimeUpdate={onTimeUpdate}
             />
           </div>

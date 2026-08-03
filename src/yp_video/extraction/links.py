@@ -55,6 +55,7 @@ from yp_video.tracklets.store import (
 
 # Keyed by stem on its source files. Tiny values (one small dict per video).
 _links_cache: StatCache = StatCache()
+_unresolved_cache: StatCache = StatCache()
 
 
 def event_tracks(stem: str) -> dict[str, TrackRef]:
@@ -141,11 +142,26 @@ def unresolved_labels(stem: str) -> set[str]:
     Empty while the video has no tracking run at all: nothing is resolvable
     then, but the remedy is running tracking, not re-picking players — that
     gap is the pipeline's to report.
+
+    Cached per file version — deriving it parses the full records file, and
+    the association work list asks for every extracted video on each page
+    load. The returned set is shared; callers only test membership.
     """
+    tracks = tracks_path(stem)
     records = records_path(stem)
-    if not tracks_path(stem).exists() or not records.exists():
+    if not tracks.exists() or not records.exists():
         return set()
-    meta, rows = read_jsonl_cached(records)
+    # Same sources as event_tracks, and for the same reason: the labels file
+    # joins the key only once it exists.
+    sources = [tracks, records, *action_source_paths(stem)]
+    labels = actor_labels.actors_path(stem)
+    if labels.exists():
+        sources.append(labels)
+    return _unresolved_cache.get(stem, sources, lambda: _unresolved_labels(stem))
+
+
+def _unresolved_labels(stem: str) -> set[str]:
+    meta, rows = read_jsonl_cached(records_path(stem))
     current = {
         str(row["id"])
         for row in labelable(rows, stem, float(meta.get("fps") or 0))

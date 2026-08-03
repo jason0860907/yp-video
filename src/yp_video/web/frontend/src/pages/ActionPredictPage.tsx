@@ -132,7 +132,7 @@ export function ActionPredictPage() {
       <PageHeader
         actions={
           <>
-            <Button size="sm" onClick={() => navigate('/action-annotate')}>
+            <Button size="sm" onClick={() => navigate('/label?mode=action')}>
               Open Label
             </Button>
             <Button intent="primary" onClick={run} disabled={!spotReady}>

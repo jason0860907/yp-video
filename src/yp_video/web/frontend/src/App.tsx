@@ -8,44 +8,47 @@ import { DownloadPage } from '@/pages/DownloadPage';
 import { DetectPage } from '@/pages/DetectPage';
 import { ActionPredictPage } from '@/pages/ActionPredictPage';
 import { ActionTrainPage } from '@/pages/ActionTrainPage';
-import { ActionAnnotatePage } from '@/pages/ActionAnnotatePage';
 import { SpotTrainPage } from '@/pages/SpotTrainPage';
 import { SpotPredictPage } from '@/pages/SpotPredictPage';
 import { UploadPage } from '@/pages/UploadPage';
 import { CutPage } from '@/pages/CutPage';
-import { AnnotatePage } from '@/pages/AnnotatePage';
+import { LabelPage } from '@/pages/label/LabelPage';
 import { ReidPredictPage } from '@/pages/ReidPredictPage';
 import { PlayerDetectionPage } from '@/pages/PlayerDetectionPage';
 import { TrackingPage } from '@/pages/TrackingPage';
-import { AssociationLabelPage } from '@/pages/AssociationLabelPage';
 import { AssociationPredictPage } from '@/pages/AssociationPredictPage';
 import { AssociationTrainPage } from '@/pages/AssociationTrainPage';
 import { FusionTrainPage } from '@/pages/FusionTrainPage';
-import { ReidLabelPage } from '@/pages/ReidLabelPage';
 import { ReidTrainPage } from '@/pages/ReidTrainPage';
 
 /** Migrated pages, by route. Paths absent here fall back to a Placeholder. */
 const PAGES: Record<string, ReactElement> = {
   '/download': <DownloadPage />,
   '/cut': <CutPage />,
+  '/label': <LabelPage />,
   '/rally-vlm-predict': <DetectPage />,
-  '/annotate': <AnnotatePage />,
   '/spot-train': <SpotTrainPage />,
   '/spot-predict': <SpotPredictPage />,
   '/action-predict': <ActionPredictPage />,
   '/action-train': <ActionTrainPage />,
-  '/action-annotate': <ActionAnnotatePage />,
   '/tracking': <TrackingPage />,
   '/player-detection': <PlayerDetectionPage />,
   '/reid-predict': <ReidPredictPage />,
   '/association-predict': <AssociationPredictPage />,
-  '/association-label': <AssociationLabelPage />,
   '/association-train': <AssociationTrainPage />,
   '/fusion-train': <FusionTrainPage />,
-  '/reid-label': <ReidLabelPage />,
   '/reid-train': <ReidTrainPage />,
   '/upload': <UploadPage />,
   '/jobs': <JobsPage />,
+};
+
+/** Retired routes → where the work went. Bookmarks and muscle memory are
+ *  cheap to honor; these are not NAV items, so nav.ts is unaffected. */
+const REDIRECTS: Record<string, string> = {
+  '/annotate': '/label?mode=rally',
+  '/action-annotate': '/label?mode=action',
+  '/association-label': '/label?mode=association',
+  '/reid-label': '/label?mode=reid',
 };
 
 /**
@@ -59,6 +62,9 @@ export default function App() {
         <Route index element={<Navigate to={DEFAULT_PATH} replace />} />
         {NAV_ITEMS.map((item) => (
           <Route key={item.path} path={item.path} element={PAGES[item.path] ?? <Placeholder title={item.label} />} />
+        ))}
+        {Object.entries(REDIRECTS).map(([from, to]) => (
+          <Route key={from} path={from} element={<Navigate to={to} replace />} />
         ))}
         <Route path="*" element={<Placeholder title="Not found" />} />
       </Route>

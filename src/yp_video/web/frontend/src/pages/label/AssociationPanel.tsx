@@ -1,6 +1,6 @@
-/** Association Label: say which visible person performed each action.
+/** Association Label panel: say which visible person performed each action.
  *
- *  The question this page answers is "who did it", not "who are they" — the
+ *  The question this panel answers is "who did it", not "who are they" — the
  *  latter is ReID Label, and the two write different annotation files. So
  *  nothing here fetches clusters, players or embedders: an actor verdict is
  *  true regardless of which embedding model happens to be loaded, and asking
@@ -11,19 +11,16 @@
  *  components/labeling/EventVideoPlayer, which is also where the work is
  *  done: the rally sidebar shows what each event still needs and confirming
  *  happens next to the video you are watching.
+ *
+ *  No dirty guard: every verdict is written the moment it is made.
  */
 
 import { useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { API, apiFetch, apiUrl, errMsg } from '@/lib/api';
-import { Field, fieldCls } from '@/components/train/Field';
-import { cn } from '@/lib/cn';
 import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
-import { CopyFilenameButton } from '@/components/video/CopyFilenameButton';
-import { KindBadge } from '@/components/video/KindBadge';
-import { PipelineChips, STAGE_HINT } from '@/components/video/PipelineChips';
-import { VideoCombobox } from '@/components/video/VideoCombobox';
+import { STAGE_HINT } from '@/components/video/PipelineChips';
 import { toast } from '@/components/feedback/toast';
 import { EventVideoPlayer, type PlayerHandle } from '@/components/labeling/EventVideoPlayer';
 import { canConfirm, type ActorFix, type ActorVerdict, type TrackData } from '@/components/labeling/shared';
@@ -33,18 +30,45 @@ import type {
   ReidActorFixResponse,
   ReidRecord,
 } from '@/types/api';
+import { assocStatus } from '@/lib/labelStatus';
+import { STATUS_OPTIONS, type ModeDescriptor } from './mode';
 
+export const ASSOCIATION_MODE: ModeDescriptor = {
+  key: 'association',
+  label: 'Association',
+  statusOptions: [...STATUS_OPTIONS, { value: 'unresolved', label: 'Needs re-pick' }],
+  status: assocStatus,
+  matches: (row, status) => {
+    if (status === 'all') return true;
+    if (status === 'unresolved') return (row.assoc?.unresolved ?? 0) > 0;
+    return assocStatus(row) === status;
+  },
+  available: (row) => Boolean(row.assoc),
+  hint: (row) => {
+    const blocked = row.reid?.pipeline.blocked_on;
+    return blocked ? STAGE_HINT[blocked] : 'Not ready for actor review — needs rallies, action labels and extraction records';
+  },
+  rowExtras: (row) => {
+    const v = row.assoc;
+    if (!v) return null;
+    return (
+      <>
+        <span className="shrink-0 font-mono text-[10px] tabular-nums text-text-muted">{v.event_count}ev</span>
+        {v.reviewed > 0 && v.unreviewed > 0 && <Badge tone="warning">{v.unreviewed} left</Badge>}
+        {v.unresolved > 0 && (
+          <span title="Verdicts resolving to no tracklet — re-pick these players so tracklet training can use them">
+            <Badge tone="warning">{v.unresolved} re-pick</Badge>
+          </span>
+        )}
+      </>
+    );
+  },
+  doneApi: (video) => API.association.done(video),
+  listKey: 'association-videos',
+};
 
-
-export function AssociationLabelPage() {
+export function AssociationPanel({ video }: { video: string }) {
   const qc = useQueryClient();
-  const [picked, setPicked] = useState('');
-  const [kindFilter, setKindFilter] = useState<'all' | 'broadcast' | 'sideline'>('all');
-  // Same four states as the ReID Label picker, read off review progress.
-  // Unlike ReID Label's Done — a human "I'm finished" flag that counts can't
-  // derive — an actor review IS finished exactly when no event is left
-  // unreviewed, so this one is computed rather than stored.
-  const [pickStatus, setPickStatus] = useState<'all' | 'unlabeled' | 'labeled' | 'done' | 'unresolved'>('all');
   const [selectedRally, setSelectedRally] = useState<number | 'all'>('all');
   const playerRef = useRef<PlayerHandle>(null);
 
@@ -53,17 +77,8 @@ export function AssociationLabelPage() {
     queryFn: () => apiFetch<AssociationVideo[]>(API.association.videos),
   });
   const videos = useMemo(() => videosQuery.data ?? [], [videosQuery.data]);
-  const pickable = videos.filter((v) => {
-    if (kindFilter !== 'all' && v.kind !== kindFilter) return false;
-    const done = v.event_count > 0 && v.unreviewed === 0;
-    if (pickStatus === 'unlabeled' && (v.reviewed > 0 || done)) return false;
-    if (pickStatus === 'labeled' && (v.reviewed === 0 || done)) return false;
-    if (pickStatus === 'done' && !done) return false;
-    if (pickStatus === 'unresolved' && v.unresolved === 0) return false;
-    return true;
-  });
 
-  const { records, meta, tracksQuery, actionEvents } = useVideoLabelingData(picked);
+  const { records, meta, tracksQuery, actionEvents } = useVideoLabelingData(video);
   const rallies = useMemo(() => meta.rallies ?? [], [meta.rallies]);
 
   // A fix re-crops and re-embeds the event server-side; fixingEvent gates the
@@ -73,14 +88,14 @@ export function AssociationLabelPage() {
     if (fixingEvent) return;
     setFixingEvent(eventId);
     try {
-      const result = await apiFetch<ReidActorFixResponse>(API.association.fix(picked), {
+      const result = await apiFetch<ReidActorFixResponse>(API.association.fix(video), {
         method: 'POST',
         body: { event_id: eventId, ...fix },
       });
       // The POST returns the changed record and its one track link — patch
       // the two large payloads locally instead of downloading them again.
       qc.setQueryData<{ meta: Record<string, unknown>; records: ReidRecord[] }>(
-        ['extraction-records', picked],
+        ['extraction-records', video],
         (current) =>
           current
             ? {
@@ -89,7 +104,7 @@ export function AssociationLabelPage() {
               }
             : current,
       );
-      qc.setQueryData<TrackData | null>(['tracklets', picked], (current) => {
+      qc.setQueryData<TrackData | null>(['tracklets', video], (current) => {
         if (!current) return current;
         const links = { ...current.links };
         if (result.track_link) links[eventId] = result.track_link;
@@ -106,8 +121,8 @@ export function AssociationLabelPage() {
       // The work list's counts moved, and the identities this event fed into
       // are stale — ReID Label refetches them when it next mounts.
       void qc.invalidateQueries({ queryKey: ['association-videos'] });
-      void qc.invalidateQueries({ queryKey: ['reid-clusters', picked], refetchType: 'none' });
-      void qc.invalidateQueries({ queryKey: ['reid-players', picked], refetchType: 'none' });
+      void qc.invalidateQueries({ queryKey: ['reid-clusters', video], refetchType: 'none' });
+      void qc.invalidateQueries({ queryKey: ['reid-players', video], refetchType: 'none' });
     } catch (e) {
       toast.error(`Actor fix failed: ${errMsg(e)}`);
     } finally {
@@ -139,11 +154,11 @@ export function AssociationLabelPage() {
       // lands as `confirmed_auto`, endorsing "nobody is visible" lands as
       // `occluded`. Assuming the first showed the wrong badge for the second.
       const { confirmed } = await apiFetch<{ confirmed: Record<string, ActorVerdict> }>(
-        API.association.confirm(picked),
+        API.association.confirm(video),
         { method: 'POST', body: { event_ids: ids } },
       );
       qc.setQueryData<{ meta: Record<string, unknown>; records: ReidRecord[] }>(
-        ['extraction-records', picked],
+        ['extraction-records', video],
         (current) =>
           current
             ? {
@@ -167,70 +182,10 @@ export function AssociationLabelPage() {
     }
   };
 
-  const pickedVideo = videos.find((v) => v.name === picked);
+  const pickedVideo = videos.find((v) => v.name === video);
 
   return (
-    <div className="mx-auto max-w-screen-2xl space-y-5">
-      <Card>
-        <div className="grid grid-cols-1 items-end gap-3 lg:grid-cols-[8.5rem_8.5rem_minmax(18rem,1fr)_auto]">
-          <Field label="Kind">
-            <select
-              value={kindFilter}
-              onChange={(e) => setKindFilter(e.target.value as typeof kindFilter)}
-              className={cn(fieldCls, 'h-9 w-full py-0')}
-            >
-              <option value="all">All kinds</option>
-              <option value="broadcast">Broadcast</option>
-              <option value="sideline">Sideline</option>
-            </select>
-          </Field>
-          <Field label="Status">
-            <select
-              value={pickStatus}
-              onChange={(e) => setPickStatus(e.target.value as typeof pickStatus)}
-              className={cn(fieldCls, 'h-9 w-full py-0')}
-            >
-              <option value="all">All</option>
-              <option value="unlabeled">Unlabeled</option>
-              <option value="labeled">In progress</option>
-              <option value="done">Done</option>
-              <option value="unresolved">Needs re-pick</option>
-            </select>
-          </Field>
-          <Field label="Video">
-            <VideoCombobox
-              items={pickable}
-              value={picked}
-              onChange={setPicked}
-              placeholder={`Search ${pickable.length} extracted videos…`}
-              renderItem={(v) => (
-                <>
-                  <KindBadge kind={v.kind} />
-                  <span className="min-w-0 flex-1 break-all font-mono">{v.name}</span>
-                  <span className="shrink-0 font-mono text-[10px] tabular-nums text-text-muted">
-                    {v.event_count}ev
-                  </span>
-                  {/* Untouched videos stay bare, so the badges read as the
-                      same three states the Status filter selects. */}
-                  {v.event_count > 0 && v.unreviewed === 0 ? (
-                    <Badge tone="success">✓</Badge>
-                  ) : v.reviewed > 0 ? (
-                    <Badge tone="warning">{v.unreviewed} left</Badge>
-                  ) : null}
-                  {v.unresolved > 0 && (
-                    <span title="Verdicts resolving to no tracklet — re-pick these players so tracklet training can use them">
-                      <Badge tone="warning">{v.unresolved} re-pick</Badge>
-                    </span>
-                  )}
-                  <PipelineChips pipeline={v.pipeline} />
-                </>
-              )}
-            />
-          </Field>
-          <CopyFilenameButton name={picked} />
-        </div>
-      </Card>
-
+    <div className="space-y-5">
       {pickedVideo?.pipeline.blocked_on && (
         <Card>
           <p className="text-xs text-amber-400">
@@ -247,10 +202,10 @@ export function AssociationLabelPage() {
         </Card>
       )}
 
-      {picked && meta.fps && meta.frame_size && (
+      {video && meta.fps && meta.frame_size && (
         <EventVideoPlayer
           ref={playerRef}
-          src={apiUrl(API.actionAnnotate.video(picked))}
+          src={apiUrl(API.actionAnnotate.video(video))}
           fps={meta.fps}
           frameSize={meta.frame_size}
           records={records}
@@ -261,7 +216,7 @@ export function AssociationLabelPage() {
           rallies={rallies}
           selectedRally={selectedRally}
           onSelectRally={setSelectedRally}
-          videoName={picked}
+          videoName={video}
           tracklets={tracksQuery.data?.tracklets ?? []}
           onFixActor={fixActor}
           onConfirmActor={(id) => void confirmAuto([id])}

@@ -18,6 +18,7 @@ from collections.abc import Sequence
 
 from yp_video.actor import labels as actor_labels
 from yp_video.actor.labels import ActorLabel
+from yp_video.core import label_done
 from yp_video.core.jsonl import read_jsonl_cached
 from yp_video.extraction.links import track_keys
 from yp_video.extraction.store import labelable, records_path
@@ -56,6 +57,30 @@ def mark_done(stem: str, done: bool, *, confirm_auto: bool) -> int:
         )
     reid_store.save_done(stem, done)
     return confirmed
+
+
+def confirm_reviewed(stem: str) -> int:
+    """Association-Done's standing endorsement, applied to current answers.
+
+    The Association Done flag says a human reviewed this video's actors.
+    A predict re-run then invents answers for events that had none — and
+    those would arrive unendorsed, un-reviewing a video its reviewer already
+    declared finished. So a Done video keeps its endorsement: every current
+    automatic answer gets the same ``confirmed_auto``/``occluded`` label the
+    per-rally sweep writes, video-wide. Existing verdicts always win
+    (actor/labels.confirm_auto). Not-Done videos are left alone — new
+    machine output nobody vouched for stays visibly unreviewed.
+    """
+    if not label_done.is_done(stem, "association"):
+        return 0
+    path = records_path(stem)
+    if not path.exists():
+        return 0
+    meta, records = read_jsonl_cached(path)
+    records = labelable(records, stem, float(meta.get("fps") or 0))
+    return len(
+        actor_labels.confirm_auto(stem, actor_labels.confirmations_for(records))
+    )
 
 
 def backfill_confirmed_done(stems: Sequence[str]) -> dict[str, int]:
