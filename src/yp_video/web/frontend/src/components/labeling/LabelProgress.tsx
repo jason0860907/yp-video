@@ -20,7 +20,7 @@ const ROWS: Array<[label: string, mode: LabelMode]> = [
 ];
 
 export function LabelProgress() {
-  const { videos } = useUnionVideos({ refetchInterval: 30_000 });
+  const { videos, settled } = useUnionVideos({ refetchInterval: 30_000 });
   const counts = useMemo(() => countLabelStatuses(videos), [videos]);
 
   return (
@@ -38,7 +38,7 @@ export function LabelProgress() {
           </span>
           {([counts[mode].done, counts[mode]['in-progress'], counts[mode]['pre-annotate']]).map((n, i) => (
             <span key={i} className="text-right font-mono tabular-nums text-text-secondary">
-              {n}
+              {settled ? n : '–'}
             </span>
           ))}
         </Fragment>

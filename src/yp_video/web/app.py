@@ -79,20 +79,26 @@ log = logging.getLogger(__name__)
 
 
 def _warm_worklists() -> None:
-    """Prime the association work list's per-video caches.
+    """Prime the four label work lists the sidebar polls on every load.
 
-    Deriving it cold parses every extraction records file (hundreds of MB) —
-    tens of seconds the first visitor after a restart would otherwise eat.
-    Warm, the endpoint is stat-checks only.
+    Deriving them cold parses every annotation and extraction records file
+    (hundreds of MB) — tens of seconds the first visitor after a restart
+    would otherwise eat. Warm, the endpoints are stat-checks only. One
+    thread, heaviest first, each failure logged without stopping the rest.
     """
     import time
 
     started = time.perf_counter()
-    try:
-        actor_association.list_videos()
-    except Exception:
-        log.warning("worklist warm-up failed", exc_info=True)
-        return
+    for warm in (
+        actor_association.list_videos,
+        reid.list_videos,
+        action_annotate.list_videos,
+        annotate.list_results,
+    ):
+        try:
+            warm()
+        except Exception:
+            log.warning("worklist warm-up failed: %s", warm.__module__, exc_info=True)
     log.info("worklist warm-up done in %.1fs", time.perf_counter() - started)
 
 

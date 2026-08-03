@@ -47,12 +47,16 @@ export function useUnionVideos({ refetchInterval }: { refetchInterval?: number }
   // pending tracks just those two — partial data should show, not wait for
   // the slowest list. Errors surface from all four: a failed enrichment
   // silently marks rows "not ready" otherwise.
-  const failed = [actionQuery, rallyQuery, assocQuery, reidQuery].filter((q) => q.isError);
+  const all = [actionQuery, rallyQuery, assocQuery, reidQuery];
+  const failed = all.filter((q) => q.isError);
   const query: ListQuery = {
     isPending: actionQuery.isPending || rallyQuery.isPending,
     isError: failed.length > 0,
     error: failed[0]?.error ?? null,
     refetch: () => Promise.all(failed.map((q) => q.refetch())),
   };
-  return { videos, query };
+  // All four lists have answered at least once — until then, per-mode counts
+  // over `videos` would present half-loaded data as real zeros.
+  const settled = all.every((q) => !q.isPending);
+  return { videos, query, settled };
 }
