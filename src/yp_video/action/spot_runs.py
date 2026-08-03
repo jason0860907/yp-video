@@ -13,13 +13,11 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import shutil
 from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 
-from yp_video.config import SPOT_DIR
 from yp_video.contracts.action import ACTION_PACKAGE_TYPE, FUSION_PACKAGE_TYPE
 
 log = logging.getLogger(__name__)

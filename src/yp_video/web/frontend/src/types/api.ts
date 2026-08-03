@@ -243,13 +243,14 @@ export interface ActionVideo {
   name: string;
   kind: CutKind;
   event_count?: number;
+  /** Something is loadable — the human file, or the machine one. */
   has_action_annotation?: boolean;
+  /** Only machine output exists; provenance is by store, not a field. */
   has_action_pre_annotation?: boolean;
+  /** A human-saved annotation exists (the human-only annotations dir). */
   has_action_final_annotation?: boolean;
-  action_reviewed?: boolean;
-  action_annotation_source?: string;
   /** The stored "action labeling is finished" flag (core/label_done.py) —
-   *  independent of saving, which only marks the file human-owned. */
+   *  independent of saving, which only writes the human store. */
   done?: boolean;
   rally_sources?: string[];
 }

@@ -58,8 +58,7 @@ const NUM_FIELDS: Array<NumField<PredSettings>> = [
   { key: 'decode_chunk_frames', label: 'Chunk', min: 1, max: 512, step: 16 },
 ];
 
-const hasLabels = (v: ActionVideo) =>
-  Boolean(v.has_action_annotation || v.has_action_final_annotation || v.has_action_pre_annotation);
+const hasLabels = (v: ActionVideo) => Boolean(v.has_action_annotation);
 
 export function ActionPredictPage() {
   const navigate = useNavigate();

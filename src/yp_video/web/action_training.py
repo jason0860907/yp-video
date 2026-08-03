@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 from fastapi import HTTPException
-from pydantic import Field, model_validator
+from pydantic import Field
 
 from yp_video.action import training
 from yp_video.action.frames import ensure_action_frame_caches

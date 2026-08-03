@@ -138,11 +138,4 @@ export function normalizeActionEditor(
 }
 
 export const hasActiveActionAnnotation = (video: ActionVideo) =>
-  Boolean(
-    video.has_action_annotation ||
-      video.has_action_final_annotation ||
-      video.has_action_pre_annotation,
-  );
-
-export const isActionReviewed = (video: ActionVideo) =>
-  Boolean(video.action_reviewed);
+  Boolean(video.has_action_annotation);

@@ -23,8 +23,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from yp_video.config import REID_ANNOTATIONS_DIR
+from yp_video.core import label_done
 from yp_video.reid.identity import LinksFor, load_assignments
-from yp_video.reid.store import PLAYERS_SUFFIX, load_done
+from yp_video.reid.store import PLAYERS_SUFFIX
 
 
 @dataclass(frozen=True)
@@ -63,7 +64,7 @@ def labeled_stems(*, done_only: bool = False, links_for: LinksFor | None = None)
     ]
     keep = (s for s in stems if load_assignments(s, links_for(s) if links_for else None))
     if done_only:
-        keep = (s for s in keep if load_done(s))
+        keep = (s for s in keep if label_done.is_done(s, "reid"))
     return sorted(keep)
 
 

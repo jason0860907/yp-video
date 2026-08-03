@@ -2,10 +2,10 @@
 
 The Label page's Done button is a human verdict no counts can derive — a
 video with unreviewed events may still be as done as it will ever get, and a
-fully-covered one may need another pass. One sidecar per video holds the
-flag for every mode that lacks its own: ``{"rally": true, "action": true}``.
-ReID predates this and keeps its Done inside the players file
-(reid/store.py) together with its confirm-auto-actors semantics.
+fully-covered one may need another pass. One sidecar per video holds every
+mode's flag: ``{"rally": true, "reid": true}``. What marking Done *implies*
+(ReID's confirm-auto-actors, association's standing endorsement) belongs to
+the endpoints that set it — this module only stores the verdict.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from yp_video.config import LABEL_DONE_DIR
 from yp_video.core.sidecar import JsonSidecar
 
 #: Modes whose Done flag lives here.
-MODES = ("rally", "action", "association")
+MODES = ("rally", "action", "association", "reid")
 
 _sidecar = JsonSidecar(lambda stem: LABEL_DONE_DIR / f"{stem}_done.json")
 

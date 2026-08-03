@@ -22,6 +22,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import Field
 
 from yp_video.config import cut_kind_of, find_cut, iter_all_cuts
+from yp_video.core import label_done
 from yp_video.extraction import done, links, pipeline
 from yp_video.extraction import store as extraction_store
 from yp_video.extraction.prerequisites import prerequisites
@@ -58,7 +59,7 @@ def list_videos() -> list[dict]:
             "player_count": len(
                 set(players.tracks.values()) | set(players.assignments.values())
             ),
-            "done": players.done,
+            "done": label_done.is_done(f.stem, "reid"),
             "pipeline": prerequisites(f.stem).payload(),
         })
     return results
@@ -251,7 +252,8 @@ class DoneRequest(StrictModel):
 @router.put("/done/{name}")
 def put_done(name: str, req: DoneRequest) -> dict:
     """Mark (or unmark) a video's labeling as finished — the Label page's
-    Done button. A human verdict, stored alongside the assignments."""
+    Done button. A human verdict, stored in the shared label-done sidecar;
+    what it implies about auto actors is this endpoint's affair (done.py)."""
     stem = Path(unquote(name)).stem
     if not extraction_store.records_path(stem).exists():
         raise HTTPException(404, f"No extraction records for {stem}")

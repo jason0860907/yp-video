@@ -158,11 +158,13 @@ def _load_annotation(path: Path) -> dict | None:
 class AnnotationState(NamedTuple):
     """Which annotation file is live for a video, both payloads parsed once.
 
-    ``final`` is the training file in ACTION_ANNOTATIONS_DIR; ``active`` is
-    what the editor reads — the final file when it is reviewed (or corrupt,
-    so the parse error surfaces instead of silently opening the pre file),
-    otherwise the pre-annotation when one exists. A corrupt file parses to
-    ``None`` with its HTTPException in the matching ``*_error`` field.
+    Provenance is by location: only the editor's Save writes
+    ACTION_ANNOTATIONS_DIR, machine output goes to ACTION_PRE_ANNOTATIONS_DIR
+    — so ``final`` existing at all means a human wrote it. ``active`` is what
+    the editor reads — the final file when it exists (or is corrupt, so the
+    parse error surfaces instead of silently opening the pre file), otherwise
+    the pre-annotation. A corrupt file parses to ``None`` with its
+    HTTPException in the matching ``*_error`` field.
     """
 
     final: dict | None
@@ -170,7 +172,11 @@ class AnnotationState(NamedTuple):
     active_path: Path
     active: dict | None
     active_error: HTTPException | None
-    reviewed: bool
+
+    @property
+    def human(self) -> bool:
+        """A human-saved annotation exists, even one that fails to parse."""
+        return self.final is not None or self.final_error is not None
 
 
 def _try_load(path: Path) -> tuple[dict | None, HTTPException | None]:
@@ -183,26 +189,13 @@ def _try_load(path: Path) -> tuple[dict | None, HTTPException | None]:
 def _annotation_state(video_name: str) -> AnnotationState:
     final_path = _annotation_path(video_name)
     final, final_error = _try_load(final_path)
-    if final_error is not None:
-        return AnnotationState(None, final_error, final_path, None, final_error, False)
-    if final is not None and _annotation_reviewed(final):
-        return AnnotationState(final, None, final_path, final, None, True)
+    if final is not None or final_error is not None:
+        return AnnotationState(final, final_error, final_path, final, final_error)
     pre_path = _pre_annotation_path(video_name)
     if pre_path.exists():
         active, active_error = _try_load(pre_path)
-        return AnnotationState(final, None, pre_path, active, active_error, _annotation_reviewed(active))
-    return AnnotationState(final, None, final_path, final, None, False)
-
-
-def _annotation_reviewed(data: dict | None) -> bool:
-    if not data:
-        return False
-    if "reviewed" in data:
-        return bool(data["reviewed"])
-    source = data.get("source")
-    if isinstance(source, dict) and source.get("type") == "spot":
-        return False
-    return True
+        return AnnotationState(None, None, pre_path, active, active_error)
+    return AnnotationState(None, None, final_path, None, None)
 
 
 def _load_rallies(video: Path) -> list[dict]:
@@ -298,7 +291,6 @@ async def _save_spot_action_annotation(
         checkpoint_path=checkpoint,
         min_score=min_score,
     )
-    data["reviewed"] = False
     rallies = await asyncio.to_thread(_load_rallies, video)
     data["rallies"] = rallies
     data["events"] = _normalize_events(
@@ -431,27 +423,18 @@ def list_videos() -> list[dict]:
     results = []
     for video in sorted(iter_all_cuts(), key=lambda p: p.name):
         state = _annotation_state(video.name)
-        has_training = state.final is not None or state.final_error is not None
         has_active = state.active is not None or state.active_error is not None
         # -1 marks a file that exists but fails to parse.
-        training_event_count = -1 if state.final_error else len(state.final["events"]) if state.final else 0
         event_count = -1 if state.active_error else len(state.active["events"]) if state.active else 0
         results.append({
             "name": video.name,
             "kind": cut_kind_of(video),
             "rally_sources": rally_sources(video.stem),
             "has_action_annotation": has_active,
-            "has_action_pre_annotation": has_active and not state.reviewed,
-            "has_action_final_annotation": has_active and state.reviewed,
-            "has_action_training_annotation": has_training,
-            "action_annotation_source": (
-                ("action/annotations" if state.active_path.parent == ACTION_ANNOTATIONS_DIR else "action/pre-annotations")
-                if has_active else ""
-            ),
-            "action_reviewed": state.reviewed,
+            "has_action_pre_annotation": has_active and not state.human,
+            "has_action_final_annotation": state.human,
             "done": label_done.is_done(video.stem, "action"),
             "event_count": event_count,
-            "training_event_count": training_event_count,
             "frame_cache": inspect_action_frame_cache(video),
         })
     return results
@@ -465,8 +448,8 @@ class DoneRequest(StrictModel):
 def set_done(name: str, req: DoneRequest) -> dict:
     """Persist the human "action labeling is finished" verdict for one video.
 
-    Deliberately not tied to saving: Save keeps the file human-owned
-    (``reviewed``) while this flag is the separate "I'm finished" claim.
+    Deliberately not tied to saving: Save writes the human store while this
+    flag is the separate "I'm finished" claim.
     """
     video = find_cut(Path(unquote(name)).name)
     if video is None:
@@ -572,7 +555,6 @@ async def save_annotations(req: SaveActionAnnotationsRequest) -> dict:
         "num_frames": req.num_frames,
         "fps": req.fps,
         "source": {"type": "manual"},
-        "reviewed": True,
         "rallies": rallies,
         "num_events": len(events),
         "events": events,

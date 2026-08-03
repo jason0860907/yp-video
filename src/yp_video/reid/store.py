@@ -8,7 +8,7 @@ extraction (extraction/store.py), tracklets to their own package
 
 Layout under videos/reid/ — annotations/ is the hand-made part, the rest is
 recomputable derived data:
-    annotations/<stem>_players.json  player assignments + the done flag
+    annotations/<stem>_players.json  player assignments
     embeddings/<stem>.<model>.npy    float32 (n_records, dim) embedding
                                      matrix, row i ↔ record i, NaN = none
 
@@ -249,8 +249,7 @@ class PlayersFile:
 
         {"version": 2,
          "tracks":      {"12:3": "王小明"},
-         "assignments": {"<event_id>": "王小明"},
-         "done": true}
+         "assignments": {"<event_id>": "王小明"}}
 
     ``tracks`` is the unit: name a tracklet once and every action it performed
     carries the name. ``assignments`` exists for the two things a tracklet
@@ -258,11 +257,13 @@ class PlayersFile:
     its tracklet, which is what a ByteTrack identity switch looks like from
     the outside. An event override therefore WINS; a tracklet that gets
     contradicted is evidence, not an error.
+
+    The "labeling is finished" verdict is NOT here — every mode's Done flag
+    lives in the shared sidecar (core/label_done.py).
     """
 
     tracks: dict[str, str]
     assignments: dict[str, str]
-    done: bool
 
 
 _read_players = _players_store.read_fresh
@@ -290,7 +291,6 @@ def load_players(stem: str) -> PlayersFile:
     return PlayersFile(
         tracks=_clean(data.get("tracks") or {}),
         assignments=_clean(data.get("assignments") or {}),
-        done=bool(data.get("done")),
     )
 
 
@@ -311,27 +311,6 @@ def save_players(
         for key in ("tracks", "assignments"):
             if not data.get(key):
                 data.pop(key, None)
-        _write_players(stem, data)
-
-
-def load_done(stem: str) -> bool:
-    """Whether the user marked this video's labeling as finished."""
-    return bool(_cached_players(stem).get("done"))
-
-
-def save_done(stem: str, done: bool) -> None:
-    """Persist the human "labeling finished" verdict.
-
-    A judgment call, not derived state: assigned/actionable counts can't tell
-    "done" from "gave up halfway", so the mark means what the user says it
-    means. Absent rather than false when unset.
-    """
-    with _players_store.transaction():
-        data = _read_players(stem)
-        if done:
-            data["done"] = True
-        else:
-            data.pop("done", None)
         _write_players(stem, data)
 
 

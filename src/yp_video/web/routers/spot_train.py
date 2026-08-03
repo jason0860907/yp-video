@@ -40,8 +40,8 @@ from yp_video.web.job_helpers import (
 from yp_video.web.jobs import JobSummary, JobType, job_manager
 from yp_video.web.schemas import StrictModel
 from yp_video.web.spot_runs import (
-    PackageExporter,
     SPOT_INIT_PACKAGE_TYPES,
+    PackageExporter,
     TrainProgress,
     checkpoint_package_options,
     export_checkpoint_package,

@@ -7,7 +7,6 @@
  *  consume it — neither may import from the other.
  */
 
-import { hasActiveActionAnnotation, isActionReviewed } from '@/lib/actionEditorModel';
 import type { ActionVideo, AssociationVideo, CutKind, ReidVideo } from '@/types/api';
 
 export type LabelMode = 'rally' | 'action' | 'association' | 'reid';
@@ -62,10 +61,10 @@ export const actionStatus = (row: UnionVideo): LabelStatus => {
   const v = row.action;
   if (!v) return 'unlabeled';
   if (v.done) return 'done';
-  // reviewed = a human saved (the file is human-owned); done stays a
+  // A human file exists (provenance by store, like rally); done stays a
   // separate, explicit claim — saving alone keeps the video In-Progress.
-  if (isActionReviewed(v)) return 'in-progress';
-  return hasActiveActionAnnotation(v) ? 'pre-annotate' : 'unlabeled';
+  if (v.has_action_final_annotation) return 'in-progress';
+  return v.has_action_pre_annotation ? 'pre-annotate' : 'unlabeled';
 };
 
 export const assocStatus = (row: UnionVideo): LabelStatus => {
