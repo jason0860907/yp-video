@@ -30,6 +30,7 @@ tokens.env
 # Project specific
 *.json
 !package.json
+!tsconfig.json
 # Generated contracts — source of truth (iOS client, yp-spot, web frontend)
 !contracts/*.schema.json
 

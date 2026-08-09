@@ -1,6 +1,11 @@
-import { defineConfig } from 'vite';
+import { defineConfig, searchForWorkspaceRoot } from 'vite';
 import react from '@vitejs/plugin-react';
 import { fileURLToPath, URL } from 'node:url';
+
+// Repo-root contracts/ — the generated JSON schemas the train forms read
+// (defaults, bounds, enum options, descriptions). Outside the frontend root,
+// so the dev server must be allowed to serve it (server.fs.allow below).
+const contractsDir = fileURLToPath(new URL('../../../../contracts', import.meta.url));
 
 // Every backend route is mounted under /api on the FastAPI app (REST + SSE +
 // media). In dev that single prefix is proxied to the running yp-app on :8080;
@@ -8,10 +13,14 @@ import { fileURLToPath, URL } from 'node:url';
 export default defineConfig({
   plugins: [react()],
   resolve: {
-    alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
+    alias: {
+      '@': fileURLToPath(new URL('./src', import.meta.url)),
+      '@contracts': contractsDir,
+    },
   },
   server: {
     port: 5173,
+    fs: { allow: [searchForWorkspaceRoot(process.cwd()), contractsDir] },
     proxy: {
       '/api': { target: 'http://localhost:8080', changeOrigin: true },
     },
