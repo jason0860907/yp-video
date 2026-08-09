@@ -1,83 +1,32 @@
-import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import spotTrainSchema from '@contracts/spot_train_request.schema.json';
 import { API, apiFetch, errMsg } from '@/lib/api';
-import { cn } from '@/lib/cn';
-import { CameraViewSelect, FEATURE_ARCHS, Field, InitCheckpointSelect, NumberInput, SelectArch, fieldCls } from '@/components/train/Field';
-import { useTrainPerformance } from '@/components/train/useTrainPerformance';
+import { useSchemaForm } from '@/lib/schemaForm';
 import { useSingleJob } from '@/lib/useSingleJob';
+import { SchemaForm } from '@/components/form/SchemaForm';
+import {
+  SchemaCheckboxField,
+  SchemaNumberField,
+  SchemaSearchSelectField,
+  SchemaSelectField,
+} from '@/components/form/SchemaFields';
+import { useTrainPerformance } from '@/components/train/useTrainPerformance';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { Collapsible } from '@/components/ui/Collapsible';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { TrainJobCard } from '@/components/train/TrainJobCard';
 import { TrainPerfCard } from '@/components/train/TrainPerfCard';
 import { toast } from '@/components/feedback/toast';
 import type { Job, RallyTrainStatus } from '@/types/api';
+import type { RallyTrainRequest } from '@/types/contracts/spot_train_request.schema';
 
-interface Form {
-  extract_fps: number;
-  video_limit: number;
-  camera_view: 'all' | 'broadcast' | 'sideline';
-  init_checkpoint: string;
-  feature_arch: string;
-  temporal_arch: string;
-  num_epochs: number;
-  batch_size: number;
-  clip_len: number;
-  num_workers: number;
-  gpu: number;
-  learning_rate: number;
-  warm_up_epochs: number;
-  criterion: string;
-  start_val_epoch: number;
-  epoch_num_frames: number | '';
-  val_ratio: number;
-  split_seed: number;
-  stop_vllm: boolean;
-}
-
-const BASE_FORM: Form = {
-  extract_fps: 2,
-  video_limit: 100,
-  camera_view: 'all',
-  init_checkpoint: '',
-  feature_arch: 'rny008_gsm',
-  temporal_arch: 'gru',
-  num_epochs: 30,
-  batch_size: 8,
-  clip_len: 64,
-  num_workers: 4,
-  gpu: 0,
-  learning_rate: 0.0003,
-  warm_up_epochs: 2,
-  criterion: 'map',
-  start_val_epoch: 0,
-  epoch_num_frames: '',
-  val_ratio: 0.2,
-  split_seed: 42,
-  stop_vllm: false,
-};
-
-const SELECTS = {
-  feature_arch: FEATURE_ARCHS,
-  temporal_arch: ['gru', 'deeper_gru', 'mingru'],
-  criterion: ['map', 'loss'],
-} as const;
-
-const NUM_FIELDS: Array<{ key: keyof Form; label: string; min?: number; max?: number; step?: number }> = [
-  { key: 'video_limit', label: 'Video limit', min: 0, max: 2000 },
-  { key: 'num_epochs', label: 'Epochs', min: 1, max: 1000 },
-  { key: 'batch_size', label: 'Batch', min: 1, max: 64 },
-  { key: 'clip_len', label: 'Clip len', min: 8, max: 256 },
-  { key: 'num_workers', label: 'Workers', min: 0, max: 32 },
-  { key: 'gpu', label: 'GPU', min: 0, max: 7 },
-  { key: 'learning_rate', label: 'LR', min: 0, step: 0.0001 },
-  { key: 'warm_up_epochs', label: 'Warmup', min: 0, max: 100 },
-  { key: 'start_val_epoch', label: 'Start val', min: 0, max: 1000 },
-];
+type SpotForm = Required<RallyTrainRequest>;
 
 export function SpotTrainPage() {
-  const [form, setForm] = useState<Form>(BASE_FORM);
+  const form = useSchemaForm<SpotForm>(spotTrainSchema);
+  const { values } = form;
 
   const statusQuery = useQuery({
     queryKey: ['spot-train-status'],
@@ -95,41 +44,18 @@ export function SpotTrainPage() {
     running,
   );
 
-  const set = <K extends keyof Form>(key: K, value: Form[K]) => setForm((f) => ({ ...f, [key]: value }));
-
   const ann = status?.rally_annotations;
   const usable = Math.max(0, Number(ann?.with_local_video) || 0);
-  const trainingVideos = form.video_limit > 0 ? Math.min(form.video_limit, usable) : usable;
+  const trainingVideos = values.video_limit > 0 ? Math.min(values.video_limit, usable) : usable;
   const ready = usable > 0;
   const canStart = !running && ready && Boolean(status?.spot_available);
   const initCheckpoints = status?.init_checkpoints ?? [];
   // Rough JPEG footprint of the frame cache this run would need (~15 KB/frame).
-  const estCacheGb = ((Number(ann?.total_hours) || 0) * (trainingVideos / Math.max(1, usable)) * 3600 * form.extract_fps * 15) / 1e6;
+  const estCacheGb = ((Number(ann?.total_hours) || 0) * (trainingVideos / Math.max(1, usable)) * 3600 * values.extract_fps * 15) / 1e6;
 
   const start = async () => {
     try {
-      const body = {
-        extract_fps: form.extract_fps,
-        video_limit: form.video_limit,
-        camera_view: form.camera_view,
-        init_checkpoint: form.init_checkpoint.trim() || null,
-        gpu: form.gpu,
-        feature_arch: form.feature_arch,
-        temporal_arch: form.temporal_arch,
-        clip_len: form.clip_len,
-        batch_size: form.batch_size,
-        num_epochs: form.num_epochs,
-        warm_up_epochs: form.warm_up_epochs,
-        learning_rate: form.learning_rate,
-        num_workers: form.num_workers,
-        criterion: form.criterion,
-        start_val_epoch: form.start_val_epoch,
-        epoch_num_frames: form.epoch_num_frames === '' ? null : form.epoch_num_frames,
-        val_ratio: form.val_ratio,
-        split_seed: form.split_seed,
-        stop_vllm: form.stop_vllm,
-      };
-      const started = await apiFetch<Job>(API.spotTrain.start, { method: 'POST', body });
+      const started = await apiFetch<Job>(API.spotTrain.start, { method: 'POST', body: values });
       setJob(started);
       toast.success('SPOT rally training started');
     } catch (e) {
@@ -145,84 +71,65 @@ export function SpotTrainPage() {
         {/* Training config */}
         <Card>
           <SectionLabel>Training config</SectionLabel>
-          <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3">
-            <Field label="Extract fps">
-              <select
-                value={form.extract_fps}
-                onChange={(e) => set('extract_fps', Number(e.target.value))}
-                className={cn(fieldCls, 'cursor-pointer appearance-none')}
-              >
-                {[1, 2, 5].map((fps) => (
-                  <option key={fps} value={fps}>
-                    {fps} fps
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <InitCheckpointSelect
-              value={form.init_checkpoint}
-              onChange={(v) => set('init_checkpoint', v)}
-              options={initCheckpoints}
-            />
-            <Field label="Feature">
-              <SelectArch value={form.feature_arch} options={SELECTS.feature_arch} onChange={(v) => set('feature_arch', v)} />
-            </Field>
-            <Field label="Temporal">
-              <SelectArch value={form.temporal_arch} options={SELECTS.temporal_arch} onChange={(v) => set('temporal_arch', v)} />
-            </Field>
-            <CameraViewSelect value={form.camera_view} onChange={(v) => set('camera_view', v)} />
-
-            {NUM_FIELDS.map((f) => (
-              <Field key={f.key} label={f.label}>
-                <NumberInput
-                  value={form[f.key] as number}
-                  min={f.min}
-                  max={f.max}
-                  step={f.step ?? 1}
-                  onChange={(v) => set(f.key, v as Form[typeof f.key])}
-                />
-              </Field>
-            ))}
-            <Field label="Criterion">
-              <SelectArch value={form.criterion} options={SELECTS.criterion} onChange={(v) => set('criterion', v)} />
-            </Field>
-            <Field label="Epoch frames">
-              <input
-                type="number"
-                value={form.epoch_num_frames}
-                min={1}
-                placeholder="optional"
-                onChange={(e) => set('epoch_num_frames', e.target.value === '' ? '' : Number(e.target.value))}
-                className={cn(fieldCls, 'font-mono tabular-nums')}
-              />
-            </Field>
-          </div>
-
-          <div className="mt-5 border-t border-border pt-4">
-            <SectionLabel>Validation split</SectionLabel>
+          <SchemaForm form={form}>
             <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3">
-              <Field label="Val ratio">
-                <NumberInput value={form.val_ratio} min={0.01} max={0.9} step={0.01} onChange={(v) => set('val_ratio', v)} />
-              </Field>
-              <Field label="Split seed">
-                <NumberInput value={form.split_seed} onChange={(v) => set('split_seed', v)} />
-              </Field>
+              <SchemaSelectField
+                name="extract_fps"
+                label="Extract fps"
+                options={[1, 2, 5]}
+                optionLabels={{ 1: '1 fps', 2: '2 fps', 5: '5 fps' }}
+              />
+              <SchemaSearchSelectField
+                name="init_checkpoint"
+                label="Init checkpoint"
+                options={initCheckpoints}
+                placeholder="— From scratch —"
+                className="col-span-2"
+              />
+              <SchemaSelectField name="feature_arch" label="Feature" />
+              <SchemaSelectField name="temporal_arch" label="Temporal" />
+              <SchemaSelectField
+                name="camera_view"
+                label="Camera view"
+                optionLabels={{ all: 'All Views', broadcast: 'Broadcast', sideline: 'Sideline' }}
+              />
+              <SchemaNumberField name="video_limit" label="Video limit" />
+              <SchemaNumberField name="num_epochs" label="Epochs" />
+              <SchemaNumberField name="batch_size" label="Batch" />
+              <SchemaNumberField name="learning_rate" label="LR" />
             </div>
-            <p className="mt-2 text-[11px] text-text-muted">
-              Rally training splits by ratio — per-video holdout is not supported by this trainer yet.
+
+            <Collapsible label="Advanced" className="mt-4">
+              <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3">
+                <SchemaNumberField name="clip_len" label="Clip len" />
+                <SchemaNumberField name="warm_up_epochs" label="Warmup" />
+                <SchemaNumberField name="num_workers" label="Workers" />
+                <SchemaNumberField name="gpu" label="GPU" />
+                <SchemaSelectField name="criterion" />
+                <SchemaNumberField name="start_val_epoch" label="Start val" />
+                <SchemaNumberField name="epoch_num_frames" label="Epoch frames" />
+              </div>
+            </Collapsible>
+
+            <div className="mt-5 border-t border-border pt-4">
+              <SectionLabel>Validation split</SectionLabel>
+              <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3">
+                <SchemaNumberField name="val_ratio" label="Val ratio" step={0.01} />
+                <SchemaNumberField name="split_seed" label="Split seed" />
+              </div>
+              <p className="mt-2 text-[11px] text-text-muted">
+                Rally training splits by ratio — per-video holdout is not supported by this trainer yet.
+              </p>
+            </div>
+
+            <p className="mt-2 text-xs text-text-secondary">
+              Trains on {trainingVideos} video(s); frames are extracted once at {values.extract_fps} fps (~{estCacheGb.toFixed(0)} GB cache) and reused. Video limit 0 = all annotated videos.
             </p>
-          </div>
 
-          <p className="mt-2 text-xs text-text-secondary">
-            Trains on {trainingVideos} video(s); frames are extracted once at {form.extract_fps} fps (~{estCacheGb.toFixed(0)} GB cache) and reused. Video limit 0 = all annotated videos.
-          </p>
-
-          <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-text-secondary">
-            <label className="inline-flex cursor-pointer items-center gap-2">
-              <input type="checkbox" checked={form.stop_vllm} onChange={(e) => set('stop_vllm', e.target.checked)} className="h-3.5 w-3.5 accent-primary" />
-              Stop vLLM
-            </label>
-          </div>
+            <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-text-secondary">
+              <SchemaCheckboxField name="stop_vllm" label="Stop vLLM" />
+            </div>
+          </SchemaForm>
 
           <div className="mt-4 flex items-center gap-2">
             <Button intent="primary" onClick={start} disabled={!canStart} className="flex-1">
@@ -240,7 +147,7 @@ export function SpotTrainPage() {
               ['Labels', `${usable} vid / ${(ann?.rallies ?? 0).toLocaleString()} rallies`],
               ['Coverage', `${(Number(ann?.rally_hours) || 0).toFixed(1)}h rally / ${(Number(ann?.total_hours) || 0).toFixed(1)}h video`],
               ['Missing', `${ann?.missing_videos ?? 0} annotation(s) without local video`],
-              ['View', form.camera_view === 'all' ? 'all views' : form.camera_view],
+              ['View', values.camera_view === 'all' ? 'all views' : values.camera_view],
               ['Label dir', ann?.label_dir || '—'],
               ['Ckpt dir', status?.rally_checkpoints?.dir ? `${status.rally_checkpoints.dir}/<auto run>` : '—'],
             ].map(([label, value]) => (
@@ -271,7 +178,7 @@ export function SpotTrainPage() {
       <TrainJobCard
         job={job}
         progressKey="rally_train_progress"
-        epochsFallback={form.num_epochs}
+        epochsFallback={values.num_epochs}
         onCancel={() => void cancel()}
         mapLabel="Seg mAP"
         eventNoun="rallies"
