@@ -6,16 +6,13 @@
  */
 
 import type { ReactNode } from 'react';
+import { STATUS_FILTER_OPTIONS } from '@/lib/labelStatus';
 import type { LabelMode, LabelStatus, UnionVideo } from '@/lib/labelStatus';
 
-/** Shared Status-filter choices; a mode may append extras (e.g. re-pick). */
-export const STATUS_OPTIONS: { value: string; label: string }[] = [
-  { value: 'all', label: 'All' },
-  { value: 'unlabeled', label: 'Unlabeled' },
-  { value: 'pre-annotate', label: 'Pre-Annotate' },
-  { value: 'in-progress', label: 'In-Progress' },
-  { value: 'done', label: 'Done' },
-];
+/** Shared Status-filter choices; a mode may append extras (e.g. re-pick).
+ *  The vocabulary itself lives in lib/labelStatus.ts — one list serves this
+ *  page and every predict page's picker. */
+export const STATUS_OPTIONS: { value: string; label: string }[] = STATUS_FILTER_OPTIONS;
 
 /** Which store a panel loads from. Only modes keeping more than one store
  *  offer the select (rally, action); association and reid have a single

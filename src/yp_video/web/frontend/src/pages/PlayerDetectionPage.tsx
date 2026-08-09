@@ -18,7 +18,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { PipelineChips, STAGE_HINT } from '@/components/video/PipelineChips';
+import { PipelineChips, Prereqs, STAGE_HINT } from '@/components/video/PipelineChips';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { StatTile } from '@/components/ui/StatTile';
 import { VideoMultiSelectList } from '@/components/video/VideoMultiSelectList';
@@ -77,6 +77,7 @@ export function PlayerDetectionPage() {
   return (
     <div className="mx-auto max-w-screen-2xl space-y-5">
       <PageHeader
+        subtitle={<Prereqs stages={['action']} />}
         actions={
           <>
             <Button size="sm" onClick={() => navigate('/association-predict')}>

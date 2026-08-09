@@ -18,10 +18,11 @@ import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { StatTile } from '@/components/ui/StatTile';
-import { PipelineChips, STAGE_HINT } from '@/components/video/PipelineChips';
+import { PipelineChips, Prereqs, STAGE_HINT } from '@/components/video/PipelineChips';
 import { VideoMultiSelectList } from '@/components/video/VideoMultiSelectList';
 import { LiveJob } from '@/components/job/LiveJob';
 import { toast } from '@/components/feedback/toast';
+import { STATUS_FILTER_OPTIONS } from '@/lib/labelStatus';
 import { useTypedJobs } from '@/lib/useTypedJobs';
 import type {
   AssociationVideo,
@@ -114,6 +115,11 @@ export function AssociationPredictPage() {
   return (
     <div className="mx-auto max-w-screen-2xl space-y-5">
       <PageHeader
+        subtitle={
+          <Prereqs
+            stages={needsTracks ? ['rallies', 'action', 'tracks', 'records'] : ['rallies', 'action', 'records']}
+          />
+        }
         actions={
           <>
             <Button size="sm" onClick={() => navigate('/label?mode=association')}>
@@ -264,17 +270,8 @@ export function AssociationPredictPage() {
             selected={selected}
             onSelectedChange={setSelected}
             statusOptions={[
-              { value: 'all', label: 'All', predicate: () => true },
-              {
-                value: 'unreviewed',
-                label: 'Has unreviewed',
-                predicate: (v) => v.unreviewed > 0,
-              },
-              {
-                value: 'reviewed',
-                label: 'Reviewed',
-                predicate: (v) => v.reviewed > 0,
-              },
+              ...STATUS_FILTER_OPTIONS,
+              { value: 'unreviewed', label: 'Has unreviewed', predicate: (v) => v.unreviewed > 0 },
             ]}
             renderMeta={(v) => (
               <>

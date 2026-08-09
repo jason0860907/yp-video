@@ -17,11 +17,11 @@ import type { ActionVideo, AssociationVideo, ReidVideo } from '@/types/api';
 const stem = (name: string) => name.replace(/\.[^.]+$/, '');
 const rallyStem = (resultName: string) => resultName.replace(/_annotations\.jsonl$/, '');
 
-export function useUnionVideos({ refetchInterval }: { refetchInterval?: number } = {}) {
-  const rallyQuery = useQuery({ queryKey: ['annotate-results'], queryFn: () => apiFetch<RallyResult[]>(API.annotate.results), refetchInterval });
-  const actionQuery = useQuery({ queryKey: ['action-videos'], queryFn: () => apiFetch<ActionVideo[]>(API.actionAnnotate.videos), refetchInterval });
-  const assocQuery = useQuery({ queryKey: ['association-videos'], queryFn: () => apiFetch<AssociationVideo[]>(API.association.videos), refetchInterval });
-  const reidQuery = useQuery({ queryKey: ['reid-videos'], queryFn: () => apiFetch<ReidVideo[]>(API.reid.videos), refetchInterval });
+export function useUnionVideos() {
+  const rallyQuery = useQuery({ queryKey: ['annotate-results'], queryFn: () => apiFetch<RallyResult[]>(API.annotate.results) });
+  const actionQuery = useQuery({ queryKey: ['action-videos'], queryFn: () => apiFetch<ActionVideo[]>(API.actionAnnotate.videos) });
+  const assocQuery = useQuery({ queryKey: ['association-videos'], queryFn: () => apiFetch<AssociationVideo[]>(API.association.videos) });
+  const reidQuery = useQuery({ queryKey: ['reid-videos'], queryFn: () => apiFetch<ReidVideo[]>(API.reid.videos) });
 
   const videos = useMemo<UnionVideo[]>(() => {
     const rows: UnionVideo[] = (actionQuery.data ?? []).map((v) => ({ name: v.name, kind: v.kind, action: v }));
@@ -55,8 +55,5 @@ export function useUnionVideos({ refetchInterval }: { refetchInterval?: number }
     error: failed[0]?.error ?? null,
     refetch: () => Promise.all(failed.map((q) => q.refetch())),
   };
-  // All four lists have answered at least once — until then, per-mode counts
-  // over `videos` would present half-loaded data as real zeros.
-  const settled = all.every((q) => !q.isPending);
-  return { videos, query, settled };
+  return { videos, query };
 }

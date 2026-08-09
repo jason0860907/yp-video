@@ -140,6 +140,7 @@ export function LabelPage() {
             : `${active.label} labeling marked done`,
       );
       void qc.invalidateQueries({ queryKey: [active.listKey] });
+      void qc.invalidateQueries({ queryKey: ['label-stats'] });
       if (res.confirmed) void qc.invalidateQueries({ queryKey: ['extraction-records', video] });
     } catch (e) {
       toast.error(`Done failed: ${errMsg(e)}`);

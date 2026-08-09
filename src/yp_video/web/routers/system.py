@@ -11,6 +11,7 @@ from yp_video.config import (
     cut_kind_of,
     iter_all_cuts,
 )
+from yp_video.web import worklists
 from yp_video.web.schemas import StrictModel
 from yp_video.web.vllm_manager import vllm_manager
 
@@ -80,6 +81,7 @@ def list_videos() -> list[dict]:
         results.append({
             "name": f.name,
             "kind": cut_kind_of(f),
+            "status": worklists.rally_status(stem),
             # "Detected" means the whole video finished: rally-pre-annotations
             # is only written after detection + convert-to-rally completes.
             # seg-annotations is written incrementally, so a partial/aborted

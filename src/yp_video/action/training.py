@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+from collections.abc import Callable
 from pathlib import Path
 
 from yp_video.config import (
@@ -26,6 +27,15 @@ from yp_video.config import (
 from yp_video.core.jsonl import read_jsonl
 
 log = logging.getLogger(__name__)
+
+#: Resolves a cut filename whose bytes are not on local disk to its canonical
+#: path (parent dir encodes the camera view). The web layer passes an R2-backed
+#: resolver; ``None`` keeps this module import-clean of storage clients.
+CutResolver = Callable[[str], Path | None]
+
+
+def _locate_cut(name: str, resolve_missing: CutResolver | None) -> Path | None:
+    return find_cut(name) or (resolve_missing(name) if resolve_missing else None)
 
 #: Seconds of slack added on each side of the match window so clips straddling
 #: the first/last rally boundary are not clipped too tightly.
@@ -60,7 +70,7 @@ def read_val_set_file() -> list[str]:
     return names
 
 
-def annotation_stats() -> dict:
+def annotation_stats(resolve_missing: CutResolver | None = None) -> dict:
     ACTION_ANNOTATIONS_DIR.mkdir(parents=True, exist_ok=True)
     # Totals plus a per-camera-view breakdown so the UI can reflect the selected
     # view. A video's view is its cut kind (broadcast / sideline).
@@ -84,7 +94,7 @@ def annotation_stats() -> dict:
         events += n_events
         frames += n_frames
         stem = str(meta.get("video") or path.stem.removesuffix("_actions"))
-        video_path = find_cut(f"{stem}.mp4")
+        video_path = _locate_cut(f"{stem}.mp4", resolve_missing)
         view = cut_kind_of(video_path) if video_path else None
         if view in by_view:
             by_view[view]["videos"] += 1
@@ -110,13 +120,20 @@ def annotation_stats() -> dict:
     }
 
 
-def label_items() -> list[tuple[Path, Path]]:
+def label_items(
+    resolve_missing: CutResolver | None = None,
+) -> list[tuple[Path, Path]]:
     """One ``(label_file, cut_video)`` pair per annotated video.
 
     Snapshotted once per training job and shared by the frame-cache and
     label-preparation phases — annotations saved while a job is already
     running land in the *next* run instead of desyncing the two phases
     (label prep would otherwise see a video the cache phase never built).
+
+    ``resolve_missing`` may map a cut that is absent locally to its canonical
+    path (e.g. because its bytes live only in R2). Such a video trains fine
+    off its existing frame cache; the cache phase raises if the cache would
+    need a rebuild.
     """
     items: list[tuple[Path, Path]] = []
     missing: list[str] = []
@@ -127,7 +144,7 @@ def label_items() -> list[tuple[Path, Path]]:
             raise RuntimeError(f"Cannot read action labels: {path.name}") from exc
 
         stem = str(meta.get("video") or path.stem.removesuffix("_actions"))
-        video_path = find_cut(f"{stem}.mp4")
+        video_path = _locate_cut(f"{stem}.mp4", resolve_missing)
         if video_path is None:
             missing.append(f"{stem}.mp4")
             continue

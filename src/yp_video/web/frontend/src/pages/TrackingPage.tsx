@@ -13,8 +13,9 @@ import { API, apiFetch, errMsg } from '@/lib/api';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { NumberInput } from '@/components/train/Field';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { PipelineChips, STAGE_HINT } from '@/components/video/PipelineChips';
+import { PipelineChips, Prereqs, STAGE_HINT } from '@/components/video/PipelineChips';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { StatTile } from '@/components/ui/StatTile';
 import { VideoMultiSelectList } from '@/components/video/VideoMultiSelectList';
@@ -71,6 +72,7 @@ export function TrackingPage() {
   return (
     <div className="mx-auto max-w-screen-2xl space-y-5">
       <PageHeader
+        subtitle={<Prereqs stages={['rallies']} />}
         actions={
           <>
             <Button size="sm" onClick={() => navigate('/association-predict')}>
@@ -103,13 +105,12 @@ export function TrackingPage() {
               <span className="mb-1 block">
                 Stride <span className="text-text-muted">— detect every Nth rally frame</span>
               </span>
-              <input
-                type="number"
+              <NumberInput
                 min={1}
                 max={10}
                 value={stride}
-                onChange={(e) => setStride(Math.min(10, Math.max(1, Number(e.target.value) || 1)))}
-                className="w-full rounded-lg border border-border-light bg-surface-50 px-3 py-1.5 text-xs text-text-primary focus:border-primary/50 focus:outline-none"
+                onChange={setStride}
+                className="py-1.5 text-xs"
               />
             </label>
             <label className="flex cursor-pointer items-center gap-2 text-xs text-text-secondary">

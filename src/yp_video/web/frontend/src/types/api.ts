@@ -1,6 +1,23 @@
 /** Shared backend response shapes. Hand-written for the routes the UI reads;
  *  the data-contract record types live in src/types/contracts (generated). */
 
+/** The one label-status vocabulary every mode speaks, computed server-side
+ *  where each work list is assembled (grep `"status":` in web/routers).
+ *
+ *  unlabeled — nothing exists for this mode yet;
+ *  pre-annotate — only machine output (a pre-label, an auto policy pass);
+ *  in-progress — a human started but has not claimed to be finished;
+ *  done — the human pressed Done (a stored flag, never derived from counts).
+ */
+export type LabelStatus = 'unlabeled' | 'pre-annotate' | 'in-progress' | 'done';
+
+/** GET /label/stats — per-mode status tally of the union video list,
+ *  keys in pipeline order (web/routers/label_stats.py). */
+export type LabelStats = Record<
+  'rally' | 'action' | 'association' | 'reid',
+  Record<LabelStatus, number>
+>;
+
 export type JobStatus = 'running' | 'completed' | 'failed' | 'cancelled' | 'pending' | 'stopped';
 
 export interface JobItem {
@@ -210,6 +227,7 @@ export interface RallyMapBreakdown {
 export interface RallyPredictVideo {
   name: string;
   kind: CutKind;
+  status: LabelStatus;
   has_annotation?: boolean;
   /** SPOT prediction exists (rally-spot-pre-annotations). */
   has_pre_annotation?: boolean;
@@ -235,6 +253,7 @@ export interface SelectOption {
 export interface VideoMeta {
   name: string;
   kind: CutKind;
+  status: LabelStatus;
   has_detection?: boolean;
 }
 
@@ -252,6 +271,7 @@ export interface ActionVideo {
   /** The stored "action labeling is finished" flag (core/label_done.py) —
    *  independent of saving, which only writes the human store. */
   done?: boolean;
+  status: LabelStatus;
   rally_sources?: string[];
 }
 
@@ -360,6 +380,7 @@ export interface ReidVideo {
   player_count?: number;
   /** Labeling marked finished by the user (the Label page's Done button). */
   done?: boolean;
+  status: LabelStatus;
   pipeline: PipelineState;
 }
 
@@ -598,6 +619,7 @@ export interface AssociationVideo {
   /** The stored "actor review is finished" flag — a human verdict, no longer
    *  derived from the counts above. */
   done: boolean;
+  status: LabelStatus;
   pipeline: PipelineState;
 }
 

@@ -111,6 +111,9 @@ export const API = {
     start: '/detect/start',
     convert: '/detect/convert',
   },
+  label: {
+    stats: '/label/stats',
+  },
   annotate: {
     results: '/annotate/results',
     annotations: '/annotate/annotations',

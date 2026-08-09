@@ -52,9 +52,6 @@ def ensure_action_frame_cache(
     """
 
     video_path = Path(video_path)
-    if not video_path.exists():
-        raise ActionFrameCacheError(f"Video not found: {video_path}")
-
     output_dir = action_frame_dir(video_path, cache_root=cache_root)
     with _cache_lock(output_dir):
         return _ensure_action_frame_cache_locked(
@@ -88,6 +85,11 @@ def _ensure_action_frame_cache_locked(
         )
         if cached["ready"]:
             return {**cached, "created": False}
+
+    # Only a (re)build needs the source bytes — a ready cache serves videos
+    # whose cut now lives only in R2.
+    if not video_path.exists():
+        raise ActionFrameCacheError(f"Video not found: {video_path}")
 
     cache_root.mkdir(parents=True, exist_ok=True)
     tmp_dir = cache_root / f".{video_path.stem}.frames.tmp"

@@ -121,6 +121,7 @@ export function AssociationPanel({ video }: { video: string }) {
       // The work list's counts moved, and the identities this event fed into
       // are stale — ReID Label refetches them when it next mounts.
       void qc.invalidateQueries({ queryKey: ['association-videos'] });
+      void qc.invalidateQueries({ queryKey: ['label-stats'] });
       void qc.invalidateQueries({ queryKey: ['reid-clusters', video], refetchType: 'none' });
       void qc.invalidateQueries({ queryKey: ['reid-players', video], refetchType: 'none' });
     } catch (e) {
@@ -170,6 +171,7 @@ export function AssociationPanel({ video }: { video: string }) {
             : current,
       );
       void qc.invalidateQueries({ queryKey: ['association-videos'] });
+      void qc.invalidateQueries({ queryKey: ['label-stats'] });
       const n = Object.keys(confirmed).length;
       const occluded = Object.values(confirmed).filter((v) => v === 'occluded').length;
       toast.success(

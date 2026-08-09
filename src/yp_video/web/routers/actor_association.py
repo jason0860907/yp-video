@@ -30,7 +30,6 @@ from yp_video.actor import dataset as actor_dataset
 from yp_video.actor import evaluate as actor_evaluate
 from yp_video.actor import labels as actor_labels
 from yp_video.actor import policy as actor_policy
-from yp_video.actor import review as actor_review
 from yp_video.actor import spot_associate, spot_predictions
 from yp_video.actor.ranking import RULE_BASED
 from yp_video.actor.training_labels import prepare_action_training_labels
@@ -39,9 +38,7 @@ from yp_video.config import (
     ACTION_FRAMES_DIR,
     SPOT_DIR,
     SPOT_PYTHON,
-    cut_kind_of,
     find_cut,
-    iter_all_cuts,
 )
 from yp_video.contracts.action import (
     ACTION_CONTRACT_VERSION,
@@ -52,15 +49,15 @@ from yp_video.contracts.action import (
 )
 from yp_video.core import label_done
 from yp_video.core.cache import StatCache
-from yp_video.core.jsonl import read_jsonl_cached, read_jsonl_header
+from yp_video.core.jsonl import read_jsonl_cached
 from yp_video.extraction import actor_fix, links, reassociate
 from yp_video.extraction import done as extraction_done
 from yp_video.extraction import store as extraction_store
-from yp_video.extraction.prerequisites import prerequisites
 from yp_video.reid import store as reid_store
 from yp_video.reid.embedder import DEFAULT_EMBEDDER, base_embedder_name
 from yp_video.tracklets import store as tracks_store
 from yp_video.tracklets.geometry import TrackRef
+from yp_video.web import worklists
 from yp_video.web.job_helpers import (
     ProgressParser,
     fail_job_from_exc,
@@ -74,6 +71,7 @@ from yp_video.web.jobs import JobSummary, JobType, job_manager
 from yp_video.web.schemas import StrictModel
 from yp_video.web.spot_runs import (
     PackageExporter,
+    actor_task_metrics,
     export_checkpoint_package,
     performance_payload,
 )
@@ -87,59 +85,7 @@ _train_start_lock = asyncio.Lock()
 
 @router.get("/videos")
 def list_videos() -> list[dict]:
-    """Extracted videos and how much of their actor review is left.
-
-    Action annotations own event membership and labels. Extraction records
-    only say which of those events have detector output, and actor labels say
-    which current, labelable ids a human reviewed.
-
-    A video missing anything association is built on is left out entirely
-    rather than listed as a row with nothing in it: actions own which events
-    exist, rallies own which of them are in play (and namespace every tracklet
-    an answer can name), and records hold the detections a pick chooses among.
-    Producing any of the three is another page's job, so a row here would be a
-    dead end — the pipeline chips on those pages are where the gap belongs.
-    """
-    results = []
-    for path in sorted(iter_all_cuts(), key=lambda p: p.name):
-        # Cheapest gate first: this walks every cut on every page load, and
-        # only a minority have been extracted at all.
-        records = extraction_store.records_path(path.stem)
-        if not records.exists():
-            continue
-        pipeline = prerequisites(path.stem)
-        if not (pipeline.rally_sources and pipeline.has_action):
-            continue
-        header = read_jsonl_header(records)
-        progress = actor_review.review_progress(
-            path.stem, float(header.get("fps") or 0)
-        )
-        results.append(
-            {
-                "name": path.name,
-                "kind": cut_kind_of(path),
-                "event_count": progress.event_count,
-                "reviewed": progress.reviewed,
-                "unreviewed": progress.unreviewed,
-                "verdicts": progress.verdicts,
-                # The re-pick worklist (links.unresolved_labels): labels no
-                # tracklet can be derived for today, whatever their verdict.
-                "unresolved": len(links.unresolved_labels(path.stem)),
-                # The human "I'm finished" flag — a verdict counts can't
-                # derive, same as ReID's (see core/label_done.py).
-                "done": label_done.is_done(path.stem, "association"),
-                # The automatic policy's own outcome, for context on how much
-                # of the remainder is likely to just need confirming. These
-                # are detector-run diagnostics; unlike progress above they
-                # deliberately describe that immutable run.
-                "auto_counts": {
-                    key: int(header.get(key) or 0)
-                    for key in ("ok", "multi", "miss")
-                },
-                "pipeline": pipeline.payload(),
-            }
-        )
-    return results
+    return worklists.association_videos()
 
 
 class DoneRequest(StrictModel):
@@ -550,19 +496,7 @@ async def _start_association_training(
                 # The shared live-progress schema (see spot_runs.TrainProgress):
                 # one Train page job card renders every trainer, so this
                 # trainer reports itself as its one task.
-                task_metrics = {
-                    "actor": {
-                        "primary_metric": "player_top1",
-                        "train": {
-                            "loss": loss.get("train"),
-                            "metrics": record.get("train") or {},
-                        },
-                        "validation": {
-                            "loss": loss.get("val"),
-                            "metrics": validation,
-                        },
-                    }
-                }
+                task_metrics = actor_task_metrics(record)
                 snapshot = {
                     "epoch": epoch,
                     "epoch_display": epoch + 1,

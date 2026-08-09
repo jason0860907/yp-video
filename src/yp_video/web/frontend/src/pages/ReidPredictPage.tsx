@@ -17,12 +17,13 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { PipelineChips, STAGE_HINT } from '@/components/video/PipelineChips';
+import { PipelineChips, Prereqs, STAGE_HINT } from '@/components/video/PipelineChips';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { StatTile } from '@/components/ui/StatTile';
 import { VideoMultiSelectList } from '@/components/video/VideoMultiSelectList';
 import { LiveJob } from '@/components/job/LiveJob';
 import { toast } from '@/components/feedback/toast';
+import { STATUS_FILTER_OPTIONS } from '@/lib/labelStatus';
 import { useTypedJobs } from '@/lib/useTypedJobs';
 import type { Job, ReidOptions, ReidVideo } from '@/types/api';
 
@@ -81,6 +82,7 @@ export function ReidPredictPage() {
   return (
     <div className="mx-auto max-w-screen-2xl space-y-5">
       <PageHeader
+        subtitle={<Prereqs stages={['records']} />}
         actions={
           <>
             <Button size="sm" onClick={() => navigate('/label?mode=reid')}>
@@ -164,11 +166,7 @@ export function ReidPredictPage() {
             query={videosQuery}
             selected={selected}
             onSelectedChange={setSelected}
-            statusOptions={[
-              { value: 'pending', label: 'Not embedded', predicate: (v) => v.embedded_models.length === 0 },
-              { value: 'all', label: 'All', predicate: () => true },
-              { value: 'embedded', label: 'Embedded', predicate: (v) => v.embedded_models.length > 0 },
-            ]}
+            statusOptions={STATUS_FILTER_OPTIONS}
             renderMeta={(v) => {
               const missing = v.pipeline.has_records
                 ? registeredEmbedders.filter((m) => !v.embedded_models.includes(m))

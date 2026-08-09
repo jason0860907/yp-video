@@ -27,6 +27,39 @@ const STAGES = [
   { key: 'records', label: 'Extract', met: (p: PipelineState) => p.has_records },
 ] as const;
 
+type StageKey = (typeof STAGES)[number]['key'];
+
+/** What a predict page needs before Run does anything, said before the click:
+ *  "Prerequisites: Rally + Action". Same stage words as the chips below —
+ *  declared once per page, not derived per video. `extras` carries the
+ *  non-stage requirements (a checkpoint, the vLLM server). */
+export function Prereqs({ stages = [], extras = [] }: {
+  stages?: StageKey[];
+  extras?: Array<{ label: string; hint: string }>;
+}) {
+  const items = [
+    ...STAGES.filter((s) => stages.includes(s.key)).map((s) => ({ label: s.label, hint: STAGE_HINT[s.key] })),
+    ...extras,
+  ];
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1.5">
+      <span className="text-xs text-text-muted">Prerequisites:</span>
+      {items.length === 0 && <span className="text-xs text-text-muted">none</span>}
+      {items.map((item, i) => (
+        <span key={item.label} className="inline-flex items-center gap-1.5">
+          {i > 0 && <span className="text-xs text-text-muted">+</span>}
+          <span
+            title={item.hint}
+            className="rounded bg-ink/5 px-1.5 py-px font-mono text-[9.5px] uppercase tracking-wide text-text-secondary ring-1 ring-border"
+          >
+            {item.label}
+          </span>
+        </span>
+      ))}
+    </span>
+  );
+}
+
 export function PipelineChips({ pipeline, className }: { pipeline: PipelineState; className?: string }) {
   return (
     <span className={cn('inline-flex flex-wrap items-center gap-1', className)}>

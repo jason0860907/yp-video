@@ -87,11 +87,12 @@ const STALE_QUERIES: Record<string, string[][]> = {
   r2_download: [['upload-status']],
 };
 
-// Stale after any job settles: queue views and the label-progress counters
-// (the union work lists feeding LabelProgress and the Label page picker).
+// Stale after any job settles: queue views, the label-progress counters
+// (GET /label/stats), and the union work lists feeding the Label page picker.
 const ALWAYS_STALE: string[][] = [
   ['jobs-list'],
   ['jobs-active-count'],
+  ['label-stats'],
   ['annotate-results'],
   ['action-videos'],
   ['association-videos'],

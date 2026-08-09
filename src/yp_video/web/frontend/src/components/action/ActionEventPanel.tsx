@@ -1,7 +1,30 @@
+import { useState } from 'react';
 import { cn } from '@/lib/cn';
 import { actionColor } from '@/lib/actionColors';
 import { formatActionTime } from '@/lib/actionEditorModel';
 import type { ActionEvent } from '@/types/api';
+
+/** Inline frame editor. Edits commit live, but the raw text stays a local
+ *  draft so clearing the cell doesn't yank the event to frame 0. */
+function FrameCell({ frame, onCommit }: { frame: number; onCommit: (frame: number) => void }) {
+  const [draft, setDraft] = useState<string | null>(null);
+  return (
+    <input
+      value={draft ?? String(frame)}
+      onClick={(event) => event.stopPropagation()}
+      onFocus={(event) => setDraft(event.target.value)}
+      onChange={(event) => {
+        setDraft(event.target.value);
+        const parsed = Number(event.target.value);
+        if (event.target.value.trim() !== '' && Number.isFinite(parsed)) {
+          onCommit(Math.max(0, Math.round(parsed)));
+        }
+      }}
+      onBlur={() => setDraft(null)}
+      className="w-full border-0 border-b border-white/10 bg-transparent text-center font-heading text-[11px] tabular-nums text-text-primary focus:border-primary-light focus:outline-none"
+    />
+  );
+}
 
 interface ActionEventPanelProps {
   entries: Array<{ e: ActionEvent; idx: number }>;
@@ -85,19 +108,7 @@ export function ActionEventPanel({
                 ))}
               </select>
             </span>
-            <input
-              value={e.frame}
-              onClick={(event) => event.stopPropagation()}
-              onChange={(event) =>
-                onEdit(idx, {
-                  frame: Math.max(
-                    0,
-                    Math.round(Number(event.target.value) || 0),
-                  ),
-                })
-              }
-              className="w-full border-0 border-b border-white/10 bg-transparent text-center font-heading text-[11px] tabular-nums text-text-primary focus:border-primary-light focus:outline-none"
-            />
+            <FrameCell frame={e.frame} onCommit={(f) => onEdit(idx, { frame: f })} />
             <span className="text-center font-heading text-[10px] tabular-nums text-text-muted">
               {formatActionTime(e.frame / (fps || 30))}
             </span>

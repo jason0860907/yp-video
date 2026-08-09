@@ -7,7 +7,7 @@ import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from yp_video.config import load_r2_env
+from yp_video.config import CUT_KINDS, load_r2_env
 
 log = logging.getLogger(__name__)
 
@@ -246,6 +246,24 @@ class R2Client:
 
 # Module-level instance
 r2_client = R2Client()
+
+
+def remote_cut_path(name: str) -> Path | None:
+    """Canonical local path of a cut whose bytes live only in R2.
+
+    The parent directory encodes the camera view, so ``cut_kind_of`` works on
+    the returned path even though the file is absent. Used as the
+    ``resolve_missing`` hook of ``action.training`` — training reads the
+    video's frame cache, not the file itself.
+    """
+    if not r2_client.configured:
+        return None
+    for kind in CUT_KINDS.values():
+        key = f"{kind.r2_category}/{name}"
+        objects = r2_client.list_objects_cached(f"{kind.r2_category}/", ttl=300.0)
+        if any(o["key"] == key for o in objects):
+            return kind.local_dir / name
+    return None
 
 
 def serve_video_or_r2_redirect(

@@ -307,6 +307,33 @@ def export_checkpoint_package(
 
 # ── Per-epoch metrics for the performance charts ──────────────────
 
+# The independent association trainer reports each phase as one flat dict;
+# these keys are tallies, everything else is a rate. The task-metrics
+# contract keeps them apart (``counts`` vs ``metrics``), so split here —
+# the one place that reshapes trainer records for the UI.
+_ACTOR_COUNT_KEYS = ("events", "player_events", "player_correct")
+
+
+def actor_task_metrics(record: dict) -> dict:
+    """Task-metrics contract for one independent-association epoch record."""
+    loss = record.get("loss") or {}
+
+    def phase(loss_value: float | None, flat: dict | None) -> dict:
+        flat = flat or {}
+        return {
+            "loss": loss_value,
+            "metrics": {k: v for k, v in flat.items() if k not in _ACTOR_COUNT_KEYS},
+            "counts": {k: flat[k] for k in _ACTOR_COUNT_KEYS if k in flat},
+        }
+
+    return {
+        "actor": {
+            "primary_metric": "player_top1",
+            "train": phase(loss.get("train"), record.get("train")),
+            "validation": phase(loss.get("val"), record.get("val")),
+        }
+    }
+
 
 def _normalize_metrics_entry(rec: dict) -> dict:
     """Flatten one epoch record into the flat shape the UI reads.
@@ -329,19 +356,7 @@ def _normalize_metrics_entry(rec: dict) -> dict:
             "val_loss": loss.get("val"),
             "per_class": {},
             "val_per_video": [],
-            "tasks": {
-                "actor": {
-                    "primary_metric": "player_top1",
-                    "train": {
-                        "loss": loss.get("train"),
-                        "metrics": rec.get("train") or {},
-                    },
-                    "validation": {
-                        "loss": loss.get("val"),
-                        "metrics": rec.get("val") or {},
-                    },
-                }
-            },
+            "tasks": actor_task_metrics(rec),
             "selection": {"task": "actor", "metric": "player_top1", "mode": "max"},
         }
     if "mAP" in rec:  # new metrics.jsonl schema

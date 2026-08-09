@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { StatTile } from '@/components/ui/StatTile';
+import { Prereqs } from '@/components/video/PipelineChips';
 import { VideoMultiSelectList } from '@/components/video/VideoMultiSelectList';
 import { JobsCard } from '@/components/job/JobsCard';
 import {
@@ -18,6 +19,7 @@ import {
 import { useSpotStatus } from '@/components/spot/useSpotStatus';
 import { toast } from '@/components/feedback/toast';
 import { confirm } from '@/components/feedback/confirm';
+import { STATUS_FILTER_OPTIONS } from '@/lib/labelStatus';
 import { useTypedJobs } from '@/lib/useTypedJobs';
 import type { ActionVideo, Job } from '@/types/api';
 
@@ -129,6 +131,12 @@ export function ActionPredictPage() {
   return (
     <div className="mx-auto max-w-screen-2xl space-y-5">
       <PageHeader
+        subtitle={
+          <Prereqs
+            stages={['rallies']}
+            extras={[{ label: 'Action Checkpoint', hint: 'Train one on Action Train' }]}
+          />
+        }
         actions={
           <>
             <Button size="sm" onClick={() => navigate('/label?mode=action')}>
@@ -180,11 +188,7 @@ export function ActionPredictPage() {
             query={videosQuery}
             selected={selected}
             onSelectedChange={setSelected}
-            statusOptions={[
-              { value: 'unlabeled', label: 'Unlabeled', predicate: (v) => !hasLabels(v) },
-              { value: 'all', label: 'All', predicate: () => true },
-              { value: 'labeled', label: 'Labeled', predicate: hasLabels },
-            ]}
+            statusOptions={STATUS_FILTER_OPTIONS}
             renderMeta={(v) => (
               <span className={cn('font-mono text-[11px] tabular-nums', hasLabels(v) ? 'text-primary-light' : 'text-text-muted')}>
                 {v.event_count || 0}

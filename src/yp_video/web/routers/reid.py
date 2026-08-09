@@ -21,11 +21,9 @@ from urllib.parse import unquote
 from fastapi import APIRouter, HTTPException
 from pydantic import Field
 
-from yp_video.config import cut_kind_of, find_cut, iter_all_cuts
-from yp_video.core import label_done
+from yp_video.config import find_cut
 from yp_video.extraction import done, links, pipeline
 from yp_video.extraction import store as extraction_store
-from yp_video.extraction.prerequisites import prerequisites
 from yp_video.reid import checkpoints, identity, store
 from yp_video.reid.embedder import (
     DEFAULT_EMBEDDER,
@@ -33,6 +31,7 @@ from yp_video.reid.embedder import (
     build_embedders,
     threshold_calibration,
 )
+from yp_video.web import worklists
 from yp_video.web.job_helpers import init_batch_items, spawn_batch_video_job
 from yp_video.web.jobs import JobSummary, JobType, job_manager
 from yp_video.web.schemas import StrictModel
@@ -43,26 +42,7 @@ router = APIRouter()
 
 @router.get("/videos")
 def list_videos() -> list[dict]:
-    """Extracted videos and how far their player naming has got."""
-    results = []
-    for f in sorted(iter_all_cuts(), key=lambda p: p.name):
-        events = pipeline.load_events(f.stem)
-        if not events:
-            continue
-        players = store.load_players(f.stem)
-        results.append({
-            "name": f.name,
-            "kind": cut_kind_of(f),
-            "event_count": len(events),
-            "embedded_models": store.embedded_models(f.stem),
-            "stale_embedding_models": store.stale_embedding_models(f.stem),
-            "player_count": len(
-                set(players.tracks.values()) | set(players.assignments.values())
-            ),
-            "done": label_done.is_done(f.stem, "reid"),
-            "pipeline": prerequisites(f.stem).payload(),
-        })
-    return results
+    return worklists.reid_videos()
 
 
 @router.get("/options")

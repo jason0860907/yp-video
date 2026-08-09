@@ -22,13 +22,13 @@ from yp_video.config import (
     RALLY_ANNOTATIONS_DIR,
     RAW_VIDEOS_DIR,
     VIDEOS_DIR,
-    cut_kind_of,
     find_cut,
 )
 from yp_video.core import label_done
 from yp_video.core.ffmpeg import FFmpegError, export_segment
 from yp_video.core.jsonl import read_jsonl, read_jsonl_header
 from yp_video.core.rallies import RALLY_SOURCES, SOURCE_BY_TAG, resolve_rally_ids
+from yp_video.web import worklists
 from yp_video.web.r2_client import r2_client, serve_video_or_r2_redirect, sync_to_r2
 from yp_video.web.schemas import StrictModel
 
@@ -84,37 +84,7 @@ def _read_jsonl_as_dict(path: Path) -> dict:
 
 @router.get("/results")
 def list_results() -> list[dict]:
-    files: dict[str, set[str]] = {}  # name -> set of source tags
-    for source in _SOURCES:
-        if source.directory.exists():
-            for f in source.directory.glob("*.jsonl"):
-                files.setdefault(f.name, set()).add(source.tag)
-    # Include R2-only files
-    if r2_client.configured:
-        try:
-            for source in _SOURCES:
-                for obj in r2_client.list_objects_cached(prefix=f"{source.r2_category}/"):
-                    files.setdefault(Path(obj["key"]).name, set()).add(source.tag)
-        except Exception:  # noqa: BLE001 — R2 down must not take the page down
-            log.warning("R2 listing failed; remote annotations will look absent")
-    def _stem(name: str) -> str:
-        # Strip the conventional "_annotations.jsonl" suffix to get the cut stem.
-        return name.removesuffix(".jsonl").removesuffix("_annotations")
-    def _kind(stem: str) -> str:
-        cut = find_cut(f"{stem}.mp4")
-        return cut_kind_of(cut) if cut else "broadcast"
-    return sorted(
-        [
-            {
-                "name": k,
-                "source": sorted(v),
-                "kind": _kind(_stem(k)),
-                "done": label_done.is_done(_stem(k), "rally"),
-            }
-            for k, v in files.items()
-        ],
-        key=lambda x: x["name"],
-    )
+    return worklists.rally_results()
 
 
 class DoneRequest(StrictModel):

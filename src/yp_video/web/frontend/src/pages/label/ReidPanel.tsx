@@ -267,6 +267,7 @@ export function ReidPanel({ video, registerGuard }: { video: string; registerGua
       });
       toast.success(isDone ? 'Done mark removed' : 'Marked done');
       void qc.invalidateQueries({ queryKey: ['reid-videos'] });
+      void qc.invalidateQueries({ queryKey: ['label-stats'] });
       if (!isDone) {
         void qc.invalidateQueries({
           queryKey: ['extraction-records', video],

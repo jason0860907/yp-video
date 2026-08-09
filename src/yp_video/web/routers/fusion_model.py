@@ -28,6 +28,7 @@ from yp_video.web.action_training import (
     start_training_job,
 )
 from yp_video.web.jobs import JobSummary, JobType, job_manager
+from yp_video.web.r2_client import remote_cut_path
 from yp_video.web.schemas import StrictModel
 from yp_video.web.spot_runs import (
     SPOT_INIT_PACKAGE_TYPES,
@@ -104,7 +105,7 @@ FUSION_TRAINING = TrainingFlavor(
 
 @router.get("/status")
 def status() -> dict:
-    annotation_stats = training.annotation_stats()
+    annotation_stats = training.annotation_stats(remote_cut_path)
     reviewed = set(association_labels.labeled_stems())
     per_video = [
         {
@@ -241,7 +242,7 @@ async def train(req: FusionTrainRequest) -> dict:
         reviewed = set(association_labels.labeled_stems())
         label_items = [
             item
-            for item in training.label_items()
+            for item in training.label_items(remote_cut_path)
             if item[0].stem.removesuffix("_actions") in reviewed
         ]
         if not label_items:

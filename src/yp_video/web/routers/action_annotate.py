@@ -7,7 +7,7 @@ import os
 import tempfile
 import traceback
 from pathlib import Path
-from typing import Literal, NamedTuple
+from typing import Literal
 from urllib.parse import unquote
 
 from fastapi import APIRouter, HTTPException, Query
@@ -15,15 +15,11 @@ from fastapi.responses import Response
 from pydantic import Field, field_validator
 
 from yp_video.action import prelabel
-from yp_video.action.frames import inspect_action_frame_cache
 from yp_video.config import (
     ACTION_ANNOTATIONS_DIR,
-    ACTION_PRE_ANNOTATIONS_DIR,
     CUT_R2_CATEGORIES,
     SPOT_DIR,
-    cut_kind_of,
     find_cut,
-    iter_all_cuts,
 )
 from yp_video.contracts.action import (
     ACTION_CONTRACT_VERSION,
@@ -33,10 +29,15 @@ from yp_video.contracts.action import (
 )
 from yp_video.core import label_done
 from yp_video.core.annotation_ids import action_id
-from yp_video.core.cache import StatCache
 from yp_video.core.ffmpeg import parse_optional_float as _parse_optional_float
-from yp_video.core.jsonl import read_jsonl
-from yp_video.core.rallies import load_rallies, rally_sources
+from yp_video.core.rallies import load_rallies
+from yp_video.web import worklists
+from yp_video.web.action_annotations import (
+    annotation_path,
+    annotation_state,
+    load_annotation,
+    pre_annotation_path,
+)
 from yp_video.web.action_waveform import audio_waveform, video_metadata
 from yp_video.web.job_helpers import (
     ProgressParser,
@@ -118,84 +119,6 @@ class SpotPrelabelOptions(StrictModel):
 
 class SpotPrelabelBatchRequest(SpotPrelabelOptions):
     videos: list[str] = Field(min_length=1)
-
-
-def _annotation_path(video_name: str) -> Path:
-    return ACTION_ANNOTATIONS_DIR / f"{Path(video_name).stem}_actions.jsonl"
-
-
-def _pre_annotation_path(video_name: str) -> Path:
-    return ACTION_PRE_ANNOTATIONS_DIR / f"{Path(video_name).stem}_actions.jsonl"
-
-
-_annotation_cache = StatCache()
-
-
-def _load_annotation(path: Path) -> dict | None:
-    """Parsed annotation with events sorted, cached per file version.
-
-    The returned dict and its events are shared across callers — a caller
-    that mutates must copy first.
-    """
-    if not path.exists():
-        return None
-
-    def compute() -> dict:
-        try:
-            data, events = read_jsonl(path)
-        except json.JSONDecodeError as exc:
-            raise HTTPException(400, f"Invalid annotation JSONL: {path.name}") from exc
-        data["events"] = sorted(events, key=lambda e: (e.get("frame", 0), e.get("label", "")))
-        data["num_events"] = len(data["events"])
-        return data
-
-    try:
-        return _annotation_cache.get(str(path), [path], compute)
-    except FileNotFoundError:
-        return None  # deleted between exists() and stat
-
-
-class AnnotationState(NamedTuple):
-    """Which annotation file is live for a video, both payloads parsed once.
-
-    Provenance is by location: only the editor's Save writes
-    ACTION_ANNOTATIONS_DIR, machine output goes to ACTION_PRE_ANNOTATIONS_DIR
-    — so ``final`` existing at all means a human wrote it. ``active`` is what
-    the editor reads — the final file when it exists (or is corrupt, so the
-    parse error surfaces instead of silently opening the pre file), otherwise
-    the pre-annotation. A corrupt file parses to ``None`` with its
-    HTTPException in the matching ``*_error`` field.
-    """
-
-    final: dict | None
-    final_error: HTTPException | None
-    active_path: Path
-    active: dict | None
-    active_error: HTTPException | None
-
-    @property
-    def human(self) -> bool:
-        """A human-saved annotation exists, even one that fails to parse."""
-        return self.final is not None or self.final_error is not None
-
-
-def _try_load(path: Path) -> tuple[dict | None, HTTPException | None]:
-    try:
-        return _load_annotation(path), None
-    except HTTPException as exc:
-        return None, exc
-
-
-def _annotation_state(video_name: str) -> AnnotationState:
-    final_path = _annotation_path(video_name)
-    final, final_error = _try_load(final_path)
-    if final is not None or final_error is not None:
-        return AnnotationState(final, final_error, final_path, final, final_error)
-    pre_path = _pre_annotation_path(video_name)
-    if pre_path.exists():
-        active, active_error = _try_load(pre_path)
-        return AnnotationState(None, None, pre_path, active, active_error)
-    return AnnotationState(None, None, final_path, None, None)
 
 
 def _load_rallies(video: Path) -> list[dict]:
@@ -304,7 +227,7 @@ async def _save_spot_action_annotation(
     ann_path.parent.mkdir(parents=True, exist_ok=True)
     await asyncio.to_thread(_write_annotation_atomic, ann_path, data)
     if replace_final:
-        final_path = _annotation_path(video.name)
+        final_path = annotation_path(video.name)
         if final_path != ann_path:
             final_path.unlink(missing_ok=True)
     sync_to_r2(ann_path, "action/pre-annotations")
@@ -326,8 +249,8 @@ def _resolve_prelabel_entries(names: list[str], *, overwrite: bool) -> list[tupl
         if video is None:
             missing.append(name)
             continue
-        final_path = _annotation_path(video.name)
-        pre_path = _pre_annotation_path(video.name)
+        final_path = annotation_path(video.name)
+        pre_path = pre_annotation_path(video.name)
         if (final_path.exists() or pre_path.exists()) and not overwrite:
             existing.append(video.name)
             continue
@@ -420,24 +343,7 @@ def spot_status() -> dict:
 
 @router.get("/videos")
 def list_videos() -> list[dict]:
-    results = []
-    for video in sorted(iter_all_cuts(), key=lambda p: p.name):
-        state = _annotation_state(video.name)
-        has_active = state.active is not None or state.active_error is not None
-        # -1 marks a file that exists but fails to parse.
-        event_count = -1 if state.active_error else len(state.active["events"]) if state.active else 0
-        results.append({
-            "name": video.name,
-            "kind": cut_kind_of(video),
-            "rally_sources": rally_sources(video.stem),
-            "has_action_annotation": has_active,
-            "has_action_pre_annotation": has_active and not state.human,
-            "has_action_final_annotation": state.human,
-            "done": label_done.is_done(video.stem, "action"),
-            "event_count": event_count,
-            "frame_cache": inspect_action_frame_cache(video),
-        })
-    return results
+    return worklists.action_videos()
 
 
 class DoneRequest(StrictModel):
@@ -479,14 +385,14 @@ async def get_annotations(
     # Shallow copies throughout — the cached dict is shared; every key below
     # is reassigned wholesale, and _normalize_events copies each event.
     if source is not None:
-        path = _annotation_path(video.name) if source == "annotation" else _pre_annotation_path(video.name)
-        forced = _load_annotation(path)
+        path = annotation_path(video.name) if source == "annotation" else pre_annotation_path(video.name)
+        forced = load_annotation(path)
         if forced is None:
             raise HTTPException(404, f"No {source} for this video")
         ann = dict(forced)
         loaded = source
     else:
-        state = _annotation_state(video.name)
+        state = annotation_state(video.name)
         if state.active_error is not None:
             raise state.active_error
         ann = dict(state.active) if state.active is not None else None
@@ -559,7 +465,7 @@ async def save_annotations(req: SaveActionAnnotationsRequest) -> dict:
         "num_events": len(events),
         "events": events,
     }
-    output_path = _annotation_path(video.name)
+    output_path = annotation_path(video.name)
     await asyncio.to_thread(_write_annotation_atomic, output_path, data)
     sync_to_r2(output_path, "action/annotations")
     return {"saved": str(output_path), "count": len(events)}
@@ -858,7 +764,7 @@ def export_dataset() -> Response:
     ACTION_ANNOTATIONS_DIR.mkdir(parents=True, exist_ok=True)
     records = []
     for path in sorted(ACTION_ANNOTATIONS_DIR.glob("*_actions.jsonl")):
-        data = _load_annotation(path)
+        data = load_annotation(path)
         if data is not None:
             records.append({
                 "video": data.get("video", path.stem.removesuffix("_actions")),

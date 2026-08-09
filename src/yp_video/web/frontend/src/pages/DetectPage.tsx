@@ -1,17 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { API, apiFetch, errMsg } from '@/lib/api';
-import { fieldCls } from '@/components/train/Field';
-import { cn } from '@/lib/cn';
+import { NumberInput } from '@/components/train/Field';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { StatTile } from '@/components/ui/StatTile';
+import { Prereqs } from '@/components/video/PipelineChips';
 import { VideoMultiSelectList } from '@/components/video/VideoMultiSelectList';
 import { LiveJob } from '@/components/job/LiveJob';
 import { toast } from '@/components/feedback/toast';
+import { STATUS_FILTER_OPTIONS } from '@/lib/labelStatus';
 import type { Job, VideoMeta, VllmStatus } from '@/types/api';
 
 interface Settings {
@@ -97,6 +98,7 @@ export function DetectPage() {
   return (
     <div className="mx-auto max-w-screen-2xl space-y-5">
       <PageHeader
+        subtitle={<Prereqs extras={[{ label: 'vLLM Server', hint: 'Start the vLLM server on Jobs & System' }]} />}
         actions={
           <>
             <span className="self-center font-mono text-xs tabular-nums text-text-muted">{selected.size} selected</span>
@@ -122,17 +124,15 @@ export function DetectPage() {
             {SETTING_FIELDS.map((f) => (
               <div key={f.key}>
                 <label className="mb-1.5 block text-[10.5px] uppercase tracking-wide text-text-muted">{f.label}</label>
-                <input
-                  type="number"
+                <NumberInput
                   value={settings[f.key]}
                   min={f.min}
                   max={f.max}
                   step={f.step}
-                  onChange={(e) => {
+                  onChange={(v) => {
                     if (f.key === 'batch_size') setBatchTouched(true);
-                    setSettings((s) => ({ ...s, [f.key]: Number(e.target.value) }));
+                    setSettings((s) => ({ ...s, [f.key]: v }));
                   }}
-                  className={cn(fieldCls, 'font-mono tabular-nums')}
                 />
               </div>
             ))}
@@ -151,9 +151,9 @@ export function DetectPage() {
             selected={selected}
             onSelectedChange={setSelected}
             statusOptions={[
-              { value: 'all', label: 'All', predicate: () => true },
-              { value: 'pending', label: 'Pending', predicate: (v) => !v.has_detection },
-              { value: 'detected', label: 'Detected', predicate: (v) => Boolean(v.has_detection) },
+              ...STATUS_FILTER_OPTIONS,
+              { value: 'pending', label: 'No VLM output', predicate: (v) => !v.has_detection },
+              { value: 'detected', label: 'VLM output', predicate: (v) => Boolean(v.has_detection) },
             ]}
             quickSelects={[{ label: 'Undetected', predicate: (v) => !v.has_detection }]}
             renderMeta={(v) => (v.has_detection ? <Badge tone="success">detected</Badge> : <Badge tone="neutral">pending</Badge>)}

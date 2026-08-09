@@ -23,6 +23,7 @@ from fastapi import HTTPException
 from yp_video.action import spot_runs as _runs
 from yp_video.action.spot_runs import (  # noqa: F401 — re-exported for routers
     SPOT_INIT_PACKAGE_TYPES,
+    actor_task_metrics,
     checkpoint_package_options,
     export_checkpoint_package,
     load_json_file,

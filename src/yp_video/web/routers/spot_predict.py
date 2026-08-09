@@ -37,6 +37,7 @@ from yp_video.contracts.action import (
 from yp_video.core.ffmpeg import probe_video_metadata
 from yp_video.core.jsonl import write_jsonl
 from yp_video.core.rallies import number_rallies
+from yp_video.web import worklists
 from yp_video.web.job_helpers import (
     ProgressParser,
     batch_items_params,
@@ -87,6 +88,7 @@ def list_videos() -> list[dict]:
         results.append({
             "name": f.name,
             "kind": cut_kind_of(f),
+            "status": worklists.rally_status(f.stem),
             "has_annotation": (RALLY_ANNOTATIONS_DIR / f"{f.stem}_annotations.jsonl").exists(),
             "has_pre_annotation": _pre_annotation_path(f.stem).exists(),
             "has_vlm_pre_annotation": (
@@ -201,7 +203,9 @@ async def start(req: RallyPredictRequest) -> dict:
             with tempfile.TemporaryDirectory(prefix="rally-spot-") as tmp:
                 tmp_dir = Path(tmp)
                 # One subprocess for the whole batch: the model loads once and
-                # yp-spot writes per-video predictions to <tmp>/<stem>/.
+                # yp-spot writes per-video predictions to <tmp>/<stem>/ before
+                # starting the next video, so each finished video converts to a
+                # pre-annotation immediately — a mid-batch cancel keeps them.
                 cmd = prelabel.build_command(
                     video_path=video_paths,
                     checkpoint_path=checkpoint,
@@ -214,74 +218,23 @@ async def start(req: RallyPredictRequest) -> dict:
                     postprocess=False,
                 )
 
-                state = {"index": 0}
-
-                def current_video() -> str:
-                    return video_paths[state["index"]].name
-
-                def on_video_start(match: re.Match) -> dict:
-                    prev = state["index"]
-                    state["index"] = int(match.group(1)) - 1
-                    if state["index"] > prev:
-                        mark_batch_item(
-                            items, prev, progress=1.0,
-                            message="inference done — converting after batch",
-                        )
-                    mark_batch_item(
-                        items, state["index"],
-                        status="running", message="preparing first batch",
-                    )
-                    return {
-                        "progress": state["index"] / total,
-                        "message": batch_message(
-                            state["index"], total, current_video(), "preparing first batch"
-                        ),
-                        "params": batch_items_params(items),
-                    }
-
-                def on_spot_progress(match: re.Match) -> dict | None:
-                    data = prelabel.parse_spot_progress(match.group(1))
-                    if data is None:
-                        return None
-                    frac = prelabel.spot_progress_fraction(data)
-                    detail = prelabel.spot_progress_message(data)
-                    mark_batch_item(items, state["index"], progress=frac, message=detail)
-                    return {
-                        "progress": (state["index"] + frac) / total,
-                        "message": batch_message(
-                            state["index"], total, current_video(), detail,
-                        ),
-                        "params": batch_items_params(items),
-                    }
-
-                env = {
-                    **os.environ,
-                    "PYTHONUNBUFFERED": "1",
-                    ACTION_CONTRACT_VERSION_ENV: ACTION_CONTRACT_VERSION,
-                }
-                async with stop_vllm_for_job(job.id, when=req.stop_vllm):
-                    async with job_manager.inference_lock:
-                        rc, last_line = await stream_subprocess(
-                            job.id,
-                            cmd,
-                            cwd=SPOT_DIR,
-                            env=env,
-                            parsers=[
-                                ProgressParser(
-                                    r"Starting inference (\d+)/(\d+): (.+)",
-                                    on_video_start,
-                                ),
-                                ProgressParser(
-                                    r"^SPOT_PROGRESS (\{.*\})", on_spot_progress
-                                ),
-                            ],
-                            is_key_line=lambda line: "Starting inference" in line,
-                            tee_to_terminal=True,
-                        )
-
-                failed = 0
+                state = {"index": 0, "enqueued": 0}
+                done_queue: asyncio.Queue[int | None] = asyncio.Queue()
                 converted: list[dict] = []
-                for i, video_path in enumerate(video_paths):
+                failed = 0
+
+                def enqueue_finished(upto: int) -> None:
+                    for j in range(state["enqueued"], upto):
+                        mark_batch_item(
+                            items, j, progress=1.0,
+                            message="inference done — converting...",
+                        )
+                        done_queue.put_nowait(j)
+                    state["enqueued"] = upto
+
+                async def convert_one(i: int) -> None:
+                    nonlocal failed
+                    video_path = video_paths[i]
                     predictions_file = tmp_dir / video_path.stem / "predictions.json"
                     if not predictions_file.exists():
                         failed += 1
@@ -293,7 +246,7 @@ async def start(req: RallyPredictRequest) -> dict:
                             message="no predictions written",
                             error="no predictions written",
                         )
-                        continue
+                        return
                     try:
                         await update_batch_item(
                             job.id, items, i, message="converting rallies...",
@@ -327,6 +280,79 @@ async def start(req: RallyPredictRequest) -> dict:
                             message=f"{type(exc).__name__}: {exc}",
                             error=str(exc),
                         )
+
+                async def convert_worker() -> None:
+                    while (i := await done_queue.get()) is not None:
+                        await convert_one(i)
+
+                def current_video() -> str:
+                    return video_paths[state["index"]].name
+
+                def on_video_start(match: re.Match) -> dict:
+                    state["index"] = int(match.group(1)) - 1
+                    enqueue_finished(state["index"])
+                    mark_batch_item(
+                        items, state["index"],
+                        status="running", message="preparing first batch",
+                    )
+                    return {
+                        "progress": state["index"] / total,
+                        "message": batch_message(
+                            state["index"], total, current_video(), "preparing first batch"
+                        ),
+                        "params": batch_items_params(items),
+                    }
+
+                def on_spot_progress(match: re.Match) -> dict | None:
+                    data = prelabel.parse_spot_progress(match.group(1))
+                    if data is None:
+                        return None
+                    frac = prelabel.spot_progress_fraction(data)
+                    detail = prelabel.spot_progress_message(data)
+                    mark_batch_item(items, state["index"], progress=frac, message=detail)
+                    return {
+                        "progress": (state["index"] + frac) / total,
+                        "message": batch_message(
+                            state["index"], total, current_video(), detail,
+                        ),
+                        "params": batch_items_params(items),
+                    }
+
+                env = {
+                    **os.environ,
+                    "PYTHONUNBUFFERED": "1",
+                    ACTION_CONTRACT_VERSION_ENV: ACTION_CONTRACT_VERSION,
+                }
+                convert_task = asyncio.create_task(convert_worker())
+                try:
+                    async with stop_vllm_for_job(job.id, when=req.stop_vllm):
+                        async with job_manager.inference_lock:
+                            rc, last_line = await stream_subprocess(
+                                job.id,
+                                cmd,
+                                cwd=SPOT_DIR,
+                                env=env,
+                                parsers=[
+                                    ProgressParser(
+                                        r"Starting inference (\d+)/(\d+): (.+)",
+                                        on_video_start,
+                                    ),
+                                    ProgressParser(
+                                        r"^SPOT_PROGRESS (\{.*\})", on_spot_progress
+                                    ),
+                                ],
+                                is_key_line=lambda line: "Starting inference" in line,
+                                tee_to_terminal=True,
+                            )
+                    # The last video has no "Starting inference" successor;
+                    # flush it (and anything lost to a mid-batch crash).
+                    enqueue_finished(total)
+                    done_queue.put_nowait(None)
+                    await convert_task
+                except BaseException:
+                    convert_task.cancel()
+                    raise
+
                 if rc != 0 and failed == 0:
                     raise RuntimeError(
                         last_line or f"SPOT inference exited with code {rc}"

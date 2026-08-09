@@ -12,7 +12,7 @@ from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import write_jsonl
 from yp_video.extraction import store
 from yp_video.extraction.prerequisites import Prerequisites
-from yp_video.web.routers import actor_association
+from yp_video.web import worklists
 
 
 class CurrentActionJoinTests(unittest.TestCase):
@@ -144,7 +144,7 @@ class AssociationProgressTests(unittest.TestCase):
             )
 
             with (
-                patch.object(actor_association, "iter_all_cuts", return_value=[video]),
+                patch.object(worklists, "iter_all_cuts", return_value=[video]),
                 patch.object(store, "records_path", return_value=records),
                 patch.object(store, "action_annotation_path", return_value=action),
                 patch.object(
@@ -155,7 +155,7 @@ class AssociationProgressTests(unittest.TestCase):
                 patch.object(actor_labels, "actors_path", return_value=actors),
                 patch.object(actor_labels._store, "_cache", StatCache()),
                 patch.object(
-                    actor_association,
+                    worklists,
                     "prerequisites",
                     return_value=Prerequisites(
                         rally_sources=["annotation"],
@@ -179,7 +179,7 @@ class AssociationProgressTests(unittest.TestCase):
                     "now-score",
                     ActorLabel(ActorVerdict.OCCLUDED),
                 )
-                result = actor_association.list_videos()[0]
+                result = worklists.association_videos()[0]
 
         self.assertEqual(result["event_count"], 2)
         self.assertEqual(result["reviewed"], 1)
@@ -214,10 +214,10 @@ class AssociationProgressTests(unittest.TestCase):
             def listed(pipeline: Prerequisites, record_file: Path) -> list[dict]:
                 with (
                     patch.object(
-                        actor_association, "iter_all_cuts", return_value=[video]
+                        worklists, "iter_all_cuts", return_value=[video]
                     ),
                     patch.object(
-                        actor_association, "prerequisites", return_value=pipeline
+                        worklists, "prerequisites", return_value=pipeline
                     ),
                     patch.object(store, "records_path", return_value=record_file),
                     patch.object(store, "action_annotation_path", return_value=action),
@@ -227,7 +227,7 @@ class AssociationProgressTests(unittest.TestCase):
                     patch.object(actor_labels, "actors_path", return_value=root / "a.json"),
                     patch.object(actor_labels._store, "_cache", StatCache()),
                 ):
-                    return actor_association.list_videos()
+                    return worklists.association_videos()
 
             # The fixture is listable, so each removal below is the only cause.
             self.assertEqual(len(listed(complete, records)), 1)

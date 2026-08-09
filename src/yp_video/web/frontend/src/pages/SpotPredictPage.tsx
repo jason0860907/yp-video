@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { StatTile } from '@/components/ui/StatTile';
+import { Prereqs } from '@/components/video/PipelineChips';
 import { VideoMultiSelectList } from '@/components/video/VideoMultiSelectList';
 import { JobsCard } from '@/components/job/JobsCard';
 import {
@@ -17,6 +18,7 @@ import {
 import { useSpotStatus } from '@/components/spot/useSpotStatus';
 import { toast } from '@/components/feedback/toast';
 import { confirm } from '@/components/feedback/confirm';
+import { STATUS_FILTER_OPTIONS } from '@/lib/labelStatus';
 import { useTypedJobs } from '@/lib/useTypedJobs';
 import type { Job, RallyPredictVideo } from '@/types/api';
 
@@ -116,6 +118,7 @@ export function SpotPredictPage() {
   return (
     <div className="mx-auto max-w-screen-2xl space-y-5">
       <PageHeader
+        subtitle={<Prereqs extras={[{ label: 'Rally Checkpoint', hint: 'Train one on Rally SPOT Train' }]} />}
         actions={
           <>
             <Button size="sm" onClick={() => navigate('/label?mode=rally')}>
@@ -156,9 +159,9 @@ export function SpotPredictPage() {
             selected={selected}
             onSelectedChange={setSelected}
             statusOptions={[
-              { value: 'unpredicted', label: 'No pre-annotation', predicate: (v) => !v.has_pre_annotation },
-              { value: 'all', label: 'All', predicate: () => true },
-              { value: 'predicted', label: 'Pre-annotated', predicate: (v) => Boolean(v.has_pre_annotation) },
+              ...STATUS_FILTER_OPTIONS,
+              { value: 'unpredicted', label: 'No SPOT output', predicate: (v) => !v.has_pre_annotation },
+              { value: 'predicted', label: 'SPOT output', predicate: (v) => Boolean(v.has_pre_annotation) },
             ]}
             renderMeta={(v) => (
               <>

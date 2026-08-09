@@ -52,6 +52,7 @@ from yp_video.web.job_helpers import (
     terminal_prefix,
 )
 from yp_video.web.jobs import JobType, job_manager
+from yp_video.web.r2_client import remote_cut_path
 from yp_video.web.schemas import StrictModel
 from yp_video.web.spot_runs import (
     PackageExporter,
@@ -501,7 +502,7 @@ async def start_training_job(
                 items = (
                     list(label_items)
                     if label_items is not None
-                    else await asyncio.to_thread(training.label_items)
+                    else await asyncio.to_thread(training.label_items, remote_cut_path)
                 )
                 if not items:
                     raise RuntimeError("No action labels selected for training")

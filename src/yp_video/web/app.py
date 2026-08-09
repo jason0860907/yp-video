@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse, ORJSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from yp_video.config import APP_LOG_PATH, FRONTEND_DIST_DIR, LOGS_DIR
+from yp_video.web import worklists
 from yp_video.web.r2_client import r2_client
 from yp_video.web.routers import (
     action_annotate,
@@ -24,6 +25,7 @@ from yp_video.web.routers import (
     extraction,
     fusion_model,
     jobs,
+    label_stats,
     reid,
     reid_train,
     spot_predict,
@@ -79,26 +81,27 @@ log = logging.getLogger(__name__)
 
 
 def _warm_worklists() -> None:
-    """Prime the four label work lists the sidebar polls on every load.
+    """Prime the four label work lists (web/worklists.py) at startup.
 
     Deriving them cold parses every annotation and extraction records file
     (hundreds of MB) — tens of seconds the first visitor after a restart
-    would otherwise eat. Warm, the endpoints are stat-checks only. One
-    thread, heaviest first, each failure logged without stopping the rest.
+    would otherwise eat. Warm, the list endpoints and /label/stats are
+    stat-checks only. One thread, heaviest first, each failure logged
+    without stopping the rest.
     """
     import time
 
     started = time.perf_counter()
     for warm in (
-        actor_association.list_videos,
-        reid.list_videos,
-        action_annotate.list_videos,
-        annotate.list_results,
+        worklists.association_videos,
+        worklists.reid_videos,
+        worklists.action_videos,
+        worklists.rally_results,
     ):
         try:
             warm()
         except Exception:
-            log.warning("worklist warm-up failed: %s", warm.__module__, exc_info=True)
+            log.warning("worklist warm-up failed: %s", warm.__name__, exc_info=True)
     log.info("worklist warm-up done in %.1fs", time.perf_counter() - started)
 
 
@@ -152,6 +155,7 @@ app.include_router(spot_predict.router, prefix="/api/spot-predict", tags=["spot-
 app.include_router(tracklets.router, prefix="/api/tracklets", tags=["tracklets"])
 app.include_router(extraction.router, prefix="/api/extraction", tags=["extraction"])
 app.include_router(fusion_model.router, prefix="/api/fusion-model", tags=["fusion-model"])
+app.include_router(label_stats.router, prefix="/api/label", tags=["label"])
 app.include_router(reid.router, prefix="/api/reid", tags=["reid"])
 app.include_router(reid_train.router, prefix="/api/reid-train", tags=["reid-train"])
 app.include_router(
