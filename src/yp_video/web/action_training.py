@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 from fastapi import HTTPException
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from yp_video.action import training
 from yp_video.action.frames import ensure_action_frame_caches
@@ -110,6 +110,10 @@ class ActionTrainBase(StrictModel):
     # the same wall-clock time on 30fps and 60fps sources. 0 = every frame.
     sample_fps: float = Field(default=30.0, ge=0, le=120)
     batch_size: int = Field(default=8, ge=1, le=64)
+    # Split each optimizer step into N forward/backward micro-batches; the
+    # DataLoader batch becomes batch_size // acc_grad_iter, so heavy backbones
+    # (convnext) keep the effective batch without the VRAM.
+    acc_grad_iter: int = Field(default=1, ge=1, le=64)
     num_epochs: int = Field(default=50, ge=1, le=1000)
     warm_up_epochs: int = Field(default=3, ge=0, le=100)
     learning_rate: float = Field(default=0.0003, gt=0)
@@ -123,6 +127,15 @@ class ActionTrainBase(StrictModel):
     # actor work — see the flag's use in the command builder.
     predict_actor: bool = False
     stop_vllm: bool = False
+
+    @model_validator(mode="after")
+    def _check_acc_grad_divides_batch(self) -> "ActionTrainBase":
+        if self.batch_size % self.acc_grad_iter != 0:
+            raise ValueError(
+                f"batch_size ({self.batch_size}) must be divisible by "
+                f"acc_grad_iter ({self.acc_grad_iter})"
+            )
+        return self
 
 
 class VnlActionTrainRequest(ActionTrainBase):
@@ -352,6 +365,8 @@ def _build_command(
         str(req.sample_fps),
         "--batch_size",
         str(req.batch_size),
+        "--acc_grad_iter",
+        str(req.acc_grad_iter),
         "--num_epochs",
         str(req.num_epochs),
         "--warm_up_epochs",

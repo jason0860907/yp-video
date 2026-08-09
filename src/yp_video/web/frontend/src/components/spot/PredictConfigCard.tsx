@@ -3,7 +3,7 @@ import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { SectionLabel } from '@/components/ui/SectionLabel';
-import { fieldCls } from '@/components/train/Field';
+import { NumberInput, fieldCls } from '@/components/train/Field';
 import type { SpotCheckpoint } from '@/types/api';
 
 export interface NumField<S> {
@@ -78,14 +78,12 @@ export function PredictConfigCard<S extends BaseSettings>({
         {numFields.map((f) => (
           <div key={f.key}>
             <label className="mb-1 block text-[10px] uppercase tracking-wide text-text-muted">{f.label}</label>
-            <input
-              type="number"
+            <NumberInput
               value={settings[f.key] as number}
               min={f.min}
               max={f.max}
               step={f.step}
-              onChange={(e) => onChange({ [f.key]: Number(e.target.value) } as Partial<S>)}
-              className={cn(fieldCls, 'font-mono tabular-nums')}
+              onChange={(v) => onChange({ [f.key]: v } as Partial<S>)}
             />
           </div>
         ))}

@@ -171,6 +171,7 @@ class FusionTrainRequest(StrictModel):
     clip_len: int = Field(default=64, ge=8, le=256)
     sample_fps: float = Field(default=30.0, ge=0, le=120)
     batch_size: int = Field(default=8, ge=1, le=64)
+    acc_grad_iter: int = Field(default=1, ge=1, le=64)
     num_epochs: int = Field(default=50, ge=1, le=1000)
     warm_up_epochs: int = Field(default=3, ge=0, le=100)
     learning_rate: float = Field(default=0.00003, gt=0)
@@ -193,6 +194,12 @@ async def train(req: FusionTrainRequest) -> dict:
         raise HTTPException(
             400,
             "Manual validation mode needs at least one validation video",
+        )
+    if req.batch_size % req.acc_grad_iter:
+        raise HTTPException(
+            400,
+            f"Batch size ({req.batch_size}) must be divisible by grad "
+            f"accumulation steps ({req.acc_grad_iter})",
         )
 
     name = (
@@ -222,6 +229,7 @@ async def train(req: FusionTrainRequest) -> dict:
         clip_len=req.clip_len,
         sample_fps=req.sample_fps,
         batch_size=req.batch_size,
+        acc_grad_iter=req.acc_grad_iter,
         num_epochs=req.num_epochs,
         warm_up_epochs=req.warm_up_epochs,
         learning_rate=req.learning_rate,

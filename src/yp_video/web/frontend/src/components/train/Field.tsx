@@ -6,7 +6,7 @@
  *  being re-typed per page.
  */
 
-import { type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { cn } from '@/lib/cn';
 
 /** Input/select styling. Exported so pages can apply it to bare inputs. */
@@ -22,6 +22,20 @@ export function Field({ label, className, children }: { label: string; className
   );
 }
 
+/** Visual backbones every SPOT-based trainer offers, best-first. GSM variants
+ *  are the recommended form; the plain RegNets stay for shift ablations. */
+export const FEATURE_ARCHS = [
+  'rny008_gsm',
+  'rny002_gsm',
+  'convnextt_dv3_gsm',
+  'convnextt2_gsm',
+  'convnextt_gsm',
+  'rn50_gsm',
+  'rn18_gsm',
+  'rny008',
+  'rny002',
+] as const;
+
 /** Select over a fixed set of string options (architectures, modes, …). */
 export function SelectArch({ value, options, onChange }: { value: string; options: readonly string[]; onChange: (v: string) => void }) {
   return (
@@ -32,6 +46,49 @@ export function SelectArch({ value, options, onChange }: { value: string; option
         </option>
       ))}
     </select>
+  );
+}
+
+/** Number input that never fabricates a value. The raw text lives in a local
+ *  draft while editing, so clearing the box doesn't commit `Number('') === 0`;
+ *  only parseable input reaches onChange, and blur snaps the display back to
+ *  the committed value, clamped into [min, max]. */
+export function NumberInput({
+  value,
+  min,
+  max,
+  step = 1,
+  className,
+  onChange,
+}: {
+  value: number;
+  min?: number;
+  max?: number;
+  step?: number | 'any';
+  className?: string;
+  onChange: (value: number) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  return (
+    <input
+      type="number"
+      value={draft ?? String(value)}
+      min={min}
+      max={max}
+      step={step}
+      onFocus={(e) => setDraft(e.target.value)}
+      onChange={(e) => {
+        setDraft(e.target.value);
+        const parsed = e.target.valueAsNumber;
+        if (Number.isFinite(parsed)) onChange(parsed);
+      }}
+      onBlur={() => {
+        setDraft(null);
+        const clamped = Math.min(max ?? Infinity, Math.max(min ?? -Infinity, value));
+        if (clamped !== value) onChange(clamped);
+      }}
+      className={cn(fieldCls, 'font-mono tabular-nums', className)}
+    />
   );
 }
 
@@ -55,15 +112,7 @@ export function NumberField({
 }) {
   return (
     <Field label={label} className={className}>
-      <input
-        type="number"
-        value={value}
-        min={min}
-        max={max}
-        step={step}
-        onChange={(e) => onChange(Number(e.target.value))}
-        className={cn(fieldCls, 'font-mono tabular-nums')}
-      />
+      <NumberInput value={value} min={min} max={max} step={step} onChange={onChange} />
     </Field>
   );
 }

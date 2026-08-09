@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { API, apiFetch, errMsg } from '@/lib/api';
 import { cn } from '@/lib/cn';
-import { CameraViewSelect, Field, InitCheckpointSelect, SelectArch, fieldCls } from '@/components/train/Field';
+import { CameraViewSelect, FEATURE_ARCHS, Field, InitCheckpointSelect, NumberInput, SelectArch, fieldCls } from '@/components/train/Field';
 import { useTrainPerformance } from '@/components/train/useTrainPerformance';
 import { useSingleJob } from '@/lib/useSingleJob';
 import { Button } from '@/components/ui/Button';
@@ -59,7 +59,7 @@ const BASE_FORM: Form = {
 };
 
 const SELECTS = {
-  feature_arch: ['rny008_gsm', 'rny002_gsm', 'convnextt_gsm', 'rn18_gsm'],
+  feature_arch: FEATURE_ARCHS,
   temporal_arch: ['gru', 'deeper_gru', 'mingru'],
   criterion: ['map', 'loss'],
 } as const;
@@ -174,14 +174,12 @@ export function SpotTrainPage() {
 
             {NUM_FIELDS.map((f) => (
               <Field key={f.key} label={f.label}>
-                <input
-                  type="number"
+                <NumberInput
                   value={form[f.key] as number}
                   min={f.min}
                   max={f.max}
                   step={f.step ?? 1}
-                  onChange={(e) => set(f.key, Number(e.target.value) as Form[typeof f.key])}
-                  className={cn(fieldCls, 'font-mono tabular-nums')}
+                  onChange={(v) => set(f.key, v as Form[typeof f.key])}
                 />
               </Field>
             ))}
@@ -204,10 +202,10 @@ export function SpotTrainPage() {
             <SectionLabel>Validation split</SectionLabel>
             <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3">
               <Field label="Val ratio">
-                <input type="number" value={form.val_ratio} min={0.01} max={0.9} step={0.01} onChange={(e) => set('val_ratio', Number(e.target.value))} className={cn(fieldCls, 'font-mono tabular-nums')} />
+                <NumberInput value={form.val_ratio} min={0.01} max={0.9} step={0.01} onChange={(v) => set('val_ratio', v)} />
               </Field>
               <Field label="Split seed">
-                <input type="number" value={form.split_seed} onChange={(e) => set('split_seed', Number(e.target.value))} className={cn(fieldCls, 'font-mono tabular-nums')} />
+                <NumberInput value={form.split_seed} onChange={(v) => set('split_seed', v)} />
               </Field>
             </div>
             <p className="mt-2 text-[11px] text-text-muted">

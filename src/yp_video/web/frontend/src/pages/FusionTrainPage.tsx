@@ -10,8 +10,10 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import {
   CameraViewSelect,
+  FEATURE_ARCHS,
   Field,
   InitCheckpointSelect,
+  NumberInput,
   SelectArch,
   fieldCls,
 } from '@/components/train/Field';
@@ -32,6 +34,7 @@ interface TrainForm {
   clip_len: number;
   sample_fps: number;
   batch_size: number;
+  acc_grad_iter: number;
   num_epochs: number;
   warm_up_epochs: number;
   learning_rate: number;
@@ -50,6 +53,7 @@ const TRAIN_DEFAULTS: TrainForm = {
   clip_len: 64,
   sample_fps: 30,
   batch_size: 8,
+  acc_grad_iter: 1,
   num_epochs: 50,
   warm_up_epochs: 3,
   learning_rate: 0.00003,
@@ -68,6 +72,7 @@ const TRAIN_NUMBERS: Array<{
   { key: 'clip_len', label: 'Clip len', min: 8, max: 256 },
   { key: 'sample_fps', label: 'Sample fps', min: 0, max: 120 },
   { key: 'batch_size', label: 'Batch', min: 1, max: 64 },
+  { key: 'acc_grad_iter', label: 'Grad accum', min: 1, max: 64 },
   { key: 'num_epochs', label: 'Epochs', min: 1, max: 1000 },
   { key: 'warm_up_epochs', label: 'Warmup', min: 0, max: 100 },
   { key: 'learning_rate', label: 'Learning rate', min: 0, step: 0.00001 },
@@ -157,6 +162,10 @@ export function FusionTrainPage() {
       toast.warning(
         'Select at least one validation video for this camera view',
       );
+      return;
+    }
+    if (trainForm.batch_size % trainForm.acc_grad_iter !== 0) {
+      toast.warning('Batch must be divisible by grad accumulation steps');
       return;
     }
     try {
@@ -281,7 +290,7 @@ export function FusionTrainPage() {
             <Field label="Feature">
               <SelectArch
                 value={trainForm.feature_arch}
-                options={['rny008_gsm', 'rny002_gsm', 'rny008', 'rny002']}
+                options={FEATURE_ARCHS}
                 onChange={(value) => setTrain('feature_arch', value)}
               />
             </Field>
@@ -294,19 +303,12 @@ export function FusionTrainPage() {
             </Field>
             {TRAIN_NUMBERS.map((field) => (
               <Field key={field.key} label={field.label}>
-                <input
-                  type="number"
+                <NumberInput
                   value={trainForm[field.key] as number}
                   min={field.min}
                   max={field.max}
                   step={field.step ?? 1}
-                  onChange={(event) =>
-                    setTrain(
-                      field.key,
-                      Number(event.target.value) as never,
-                    )
-                  }
-                  className={cn(fieldCls, 'font-mono tabular-nums')}
+                  onChange={(value) => setTrain(field.key, value as never)}
                 />
               </Field>
             ))}

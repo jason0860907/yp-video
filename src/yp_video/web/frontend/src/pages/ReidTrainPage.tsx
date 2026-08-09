@@ -20,7 +20,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { StatTile } from '@/components/ui/StatTile';
-import { Field, InitCheckpointSelect, SelectArch, fieldCls } from '@/components/train/Field';
+import { Field, InitCheckpointSelect, NumberInput, SelectArch, fieldCls } from '@/components/train/Field';
 import { JobProgress } from '@/components/job/JobProgress';
 import { toast } from '@/components/feedback/toast';
 import { useSingleJob } from '@/lib/useSingleJob';
@@ -189,10 +189,10 @@ export function ReidTrainPage() {
               <SelectArch value={form.split_mode} options={status?.split_modes ?? ['auto']} onChange={(v) => set('split_mode', v)} />
             </Field>
             <Field label="Test ratio">
-              <input type="number" min={0.05} max={0.9} step={0.05} value={form.test_ratio} onChange={(e) => set('test_ratio', Number(e.target.value))} className={fieldCls} />
+              <NumberInput min={0.05} max={0.9} step={0.05} value={form.test_ratio} onChange={(v) => set('test_ratio', v)} />
             </Field>
             <Field label="Seed">
-              <input type="number" value={form.seed} onChange={(e) => set('seed', Number(e.target.value))} className={fieldCls} />
+              <NumberInput value={form.seed} onChange={(v) => set('seed', v)} />
             </Field>
             <Field label="Name (optional)">
               <input value={form.name} onChange={(e) => set('name', e.target.value)} placeholder="reid_<mode>_<timestamp>" className={fieldCls} />
@@ -260,13 +260,13 @@ export function ReidTrainPage() {
               <input value={trainForm.run_name} onChange={(e) => setTrain('run_name', e.target.value)} placeholder="reid_<timestamp>" className={fieldCls} />
             </Field>
             <Field label="Epochs">
-              <input type="number" min={1} value={trainForm.epochs} onChange={(e) => setTrain('epochs', Number(e.target.value))} className={fieldCls} />
+              <NumberInput min={1} value={trainForm.epochs} onChange={(v) => setTrain('epochs', v)} />
             </Field>
             <Field label="Batch size (≤ identities)">
-              <input type="number" min={2} value={trainForm.batch_size} onChange={(e) => setTrain('batch_size', Number(e.target.value))} className={fieldCls} />
+              <NumberInput min={2} value={trainForm.batch_size} onChange={(v) => setTrain('batch_size', v)} />
             </Field>
             <Field label="Learning rate">
-              <input type="number" step="any" value={trainForm.lr} onChange={(e) => setTrain('lr', Number(e.target.value))} className={fieldCls} />
+              <NumberInput step="any" value={trainForm.lr} onChange={(v) => setTrain('lr', v)} />
             </Field>
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-4">
