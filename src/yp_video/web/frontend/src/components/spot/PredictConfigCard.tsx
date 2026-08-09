@@ -3,7 +3,7 @@ import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { SectionLabel } from '@/components/ui/SectionLabel';
-import { NumberInput, fieldCls } from '@/components/train/Field';
+import { NumberInput, fieldCls } from '@/components/form/Field';
 import type { SpotCheckpoint } from '@/types/api';
 
 export interface NumField<S> {

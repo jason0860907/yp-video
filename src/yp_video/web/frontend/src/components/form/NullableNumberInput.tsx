@@ -6,7 +6,7 @@
 
 import { useState } from 'react';
 import { cn } from '@/lib/cn';
-import { fieldCls } from '@/components/train/Field';
+import { fieldCls } from '@/components/form/Field';
 
 export function NullableNumberInput({
   value,

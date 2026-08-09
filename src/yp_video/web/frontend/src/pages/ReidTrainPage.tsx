@@ -23,7 +23,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { StatTile } from '@/components/ui/StatTile';
-import { fieldCls } from '@/components/train/Field';
+import { fieldCls } from '@/components/form/Field';
 import { SchemaForm } from '@/components/form/SchemaForm';
 import {
   SchemaCheckboxField,

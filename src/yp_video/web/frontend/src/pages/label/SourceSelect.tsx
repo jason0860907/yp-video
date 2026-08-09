@@ -6,7 +6,7 @@
  *  checkbox rather than a fourth option: checked, Pre-Annotation (and
  *  Auto's fallback) reads the VLM pass instead of the SPOT pass. */
 
-import { fieldCls } from '@/components/train/Field';
+import { fieldCls } from '@/components/form/Field';
 import { cn } from '@/lib/cn';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import type { LabelSource, LoadedSource } from './mode';

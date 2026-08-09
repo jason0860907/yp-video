@@ -7,7 +7,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import { cn } from '@/lib/cn';
-import { fieldCls } from '@/components/train/Field';
+import { fieldCls } from '@/components/form/Field';
 
 export interface SearchSelectOption {
   value: string;

@@ -13,7 +13,7 @@ import { API, apiFetch, errMsg } from '@/lib/api';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
-import { NumberInput } from '@/components/train/Field';
+import { NumberInput } from '@/components/form/Field';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { PipelineChips, Prereqs, STAGE_HINT } from '@/components/video/PipelineChips';
 import { SectionLabel } from '@/components/ui/SectionLabel';

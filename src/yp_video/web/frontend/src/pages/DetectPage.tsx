@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { API, apiFetch, errMsg } from '@/lib/api';
-import { NumberInput } from '@/components/train/Field';
+import { NumberInput } from '@/components/form/Field';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';

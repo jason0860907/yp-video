@@ -5,7 +5,7 @@ import { API, apiFetch, errMsg } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { useSchemaForm } from '@/lib/schemaForm';
 import { useSingleJob } from '@/lib/useSingleJob';
-import { fieldCls } from '@/components/train/Field';
+import { fieldCls } from '@/components/form/Field';
 import { SchemaForm } from '@/components/form/SchemaForm';
 import {
   SchemaCheckboxField,

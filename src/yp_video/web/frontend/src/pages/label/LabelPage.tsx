@@ -14,7 +14,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { fieldCls } from '@/components/train/Field';
+import { fieldCls } from '@/components/form/Field';
 import { apiFetch, errMsg } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import type { LabelMode } from '@/lib/labelStatus';

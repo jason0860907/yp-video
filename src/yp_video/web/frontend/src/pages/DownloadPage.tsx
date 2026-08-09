@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { API, apiFetch, errMsg } from '@/lib/api';
-import { fieldCls } from '@/components/train/Field';
+import { fieldCls } from '@/components/form/Field';
 import { cn } from '@/lib/cn';
 import { formatBytes, formatDuration, formatSpeed } from '@/lib/format';
 import { useSSE } from '@/lib/useSSE';

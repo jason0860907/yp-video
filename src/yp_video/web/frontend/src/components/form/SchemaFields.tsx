@@ -8,7 +8,7 @@
  */
 
 import { cn } from '@/lib/cn';
-import { NumberInput, fieldCls } from '@/components/train/Field';
+import { NumberInput, fieldCls } from '@/components/form/Field';
 import { FieldShell } from './FieldLabel';
 import { NullableNumberInput } from './NullableNumberInput';
 import { SearchSelect, type SearchSelectOption } from './SearchSelect';
