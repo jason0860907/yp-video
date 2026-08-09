@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Generated from yp_video/web/train_requests.py via make_train_schemas.py \u2014 do not edit by hand.",
+  "additionalProperties": false,
+  "description": "An independent event-level association experiment.",
+  "properties": {
+    "train_videos": {
+      "description": "Videos whose association labels train the model.",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Train Videos",
+      "type": "array"
+    },
+    "val_videos": {
+      "description": "Videos held out as the validation set.",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Val Videos",
+      "type": "array"
+    },
+    "run_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Run name; empty picks a timestamped one.",
+      "title": "Run Name"
+    },
+    "init_checkpoint": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Empty trains from scratch; an association run's checkpoint fine-tunes from it.",
+      "title": "Init Checkpoint"
+    },
+    "gpu": {
+      "default": 0,
+      "description": "CUDA device index.",
+      "maximum": 7,
+      "minimum": 0,
+      "title": "Gpu",
+      "type": "integer"
+    },
+    "num_epochs": {
+      "default": 40,
+      "maximum": 1000,
+      "minimum": 1,
+      "title": "Num Epochs",
+      "type": "integer"
+    },
+    "batch_size": {
+      "default": 8,
+      "maximum": 64,
+      "minimum": 1,
+      "title": "Batch Size",
+      "type": "integer"
+    },
+    "learning_rate": {
+      "default": 0.0003,
+      "description": "LR for the association head.",
+      "exclusiveMinimum": 0,
+      "title": "Learning Rate",
+      "type": "number"
+    },
+    "warm_up_epochs": {
+      "default": 3,
+      "description": "Linear LR warm-up epochs.",
+      "maximum": 100,
+      "minimum": 0,
+      "title": "Warm Up Epochs",
+      "type": "integer"
+    },
+    "backbone": {
+      "default": "rny002",
+      "description": "Visual backbone over the player crops.",
+      "enum": [
+        "rny002",
+        "rny002_gsm",
+        "rny008",
+        "rny008_gsm",
+        "rn18",
+        "rn50"
+      ],
+      "title": "Backbone",
+      "type": "string"
+    },
+    "backbone_learning_rate": {
+      "default": 3e-05,
+      "description": "Separate, smaller LR for the pretrained backbone.",
+      "exclusiveMinimum": 0,
+      "title": "Backbone Learning Rate",
+      "type": "number"
+    },
+    "crop_dim": {
+      "default": 224,
+      "description": "Player-crop side length in pixels.",
+      "maximum": 512,
+      "minimum": 64,
+      "title": "Crop Dim",
+      "type": "integer"
+    },
+    "num_workers": {
+      "default": 4,
+      "description": "DataLoader worker processes.",
+      "maximum": 32,
+      "minimum": 0,
+      "title": "Num Workers",
+      "type": "integer"
+    },
+    "stop_vllm": {
+      "default": false,
+      "description": "Stop the vLLM server first to free its GPU memory for training.",
+      "title": "Stop Vllm",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "train_videos",
+    "val_videos"
+  ],
+  "title": "AssociationTrainRequest",
+  "type": "object"
+}

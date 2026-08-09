@@ -69,11 +69,13 @@ stop:
 # of truth consumed by the iOS app + yp-spot.
 contract:
 	uv run python -m yp_video.contracts.make_schema
+	uv run python -m yp_video.web.make_train_schemas
 
 # CI / pre-commit guard against drift: regenerate and fail if the committed
 # schemas are stale (someone edited a Pydantic model but forgot `make contract`).
 contract-check:
 	uv run python -m yp_video.contracts.make_schema
+	uv run python -m yp_video.web.make_train_schemas
 	@git diff --exit-code -- contracts/*.schema.json \
 		|| (echo "❌ contracts/*.schema.json out of date — run 'make contract' and commit." && exit 1)
 	@echo "✓ contracts up to date"

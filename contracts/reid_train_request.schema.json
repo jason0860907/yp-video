@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Generated from yp_video/web/train_requests.py via make_train_schemas.py \u2014 do not edit by hand.",
+  "additionalProperties": false,
+  "properties": {
+    "dataset": {
+      "description": "Exported dataset under reid/datasets to train on.",
+      "title": "Dataset",
+      "type": "string"
+    },
+    "run_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Run name; empty picks a timestamped one.",
+      "title": "Run Name"
+    },
+    "epochs": {
+      "default": 4,
+      "minimum": 1,
+      "title": "Epochs",
+      "type": "integer"
+    },
+    "batch_size": {
+      "default": 16,
+      "minimum": 2,
+      "title": "Batch Size",
+      "type": "integer"
+    },
+    "lr": {
+      "default": 4e-05,
+      "exclusiveMinimum": 0,
+      "title": "Lr",
+      "type": "number"
+    },
+    "init_checkpoint": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Checkpoint package ref to fine-tune from (reid/checkpoints/<run>).",
+      "title": "Init Checkpoint"
+    },
+    "overwrite": {
+      "default": false,
+      "description": "Replace an existing run of the same name.",
+      "title": "Overwrite",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "dataset"
+  ],
+  "title": "ReidTrainRequest",
+  "type": "object"
+}

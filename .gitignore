@@ -30,9 +30,8 @@ tokens.env
 # Project specific
 *.json
 !package.json
-# Generated contracts — source of truth (iOS client + yp-spot integration)
-!contracts/detector.schema.json
-!contracts/action_label.schema.json
+# Generated contracts — source of truth (iOS client, yp-spot, web frontend)
+!contracts/*.schema.json
 
 # Large directories (use git submodule if needed)
 datasets/

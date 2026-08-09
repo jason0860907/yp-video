@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Generated from yp_video/web/train_requests.py via make_train_schemas.py \u2014 do not edit by hand.",
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Dataset name; empty picks a timestamped one.",
+      "title": "Name"
+    },
+    "split_mode": {
+      "default": "auto",
+      "description": "How labeled events split into train/test: auto picks per corpus size, session holds out whole sessions, crops splits within sessions, all_train keeps everything for training.",
+      "enum": [
+        "auto",
+        "session",
+        "crops",
+        "all_train"
+      ],
+      "title": "Split Mode",
+      "type": "string"
+    },
+    "test_ratio": {
+      "default": 0.25,
+      "description": "Fraction of identities/crops held out as the test split.",
+      "exclusiveMaximum": 1,
+      "exclusiveMinimum": 0,
+      "title": "Test Ratio",
+      "type": "number"
+    },
+    "seed": {
+      "default": 42,
+      "description": "Seed for the split shuffle.",
+      "title": "Seed",
+      "type": "integer"
+    },
+    "masked": {
+      "default": false,
+      "description": "Reference the background-suppressed crops the masked embedders saw.",
+      "title": "Masked",
+      "type": "boolean"
+    },
+    "overwrite": {
+      "default": false,
+      "description": "Replace an existing dataset of the same name.",
+      "title": "Overwrite",
+      "type": "boolean"
+    }
+  },
+  "title": "ReidExportRequest",
+  "type": "object"
+}

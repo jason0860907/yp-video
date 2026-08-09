@@ -1,0 +1,192 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Generated from yp_video/web/train_requests.py via make_train_schemas.py \u2014 do not edit by hand.",
+  "additionalProperties": false,
+  "properties": {
+    "extract_fps": {
+      "default": 2.0,
+      "description": "Frame-extraction rate; also the model's sample_fps. Rally on/off is a slow signal \u2014 2 fps gives clip_len=64 a 32 s window and keeps the whole library's frame cache around 30 GB.",
+      "maximum": 10,
+      "minimum": 0.5,
+      "title": "Extract Fps",
+      "type": "number"
+    },
+    "video_limit": {
+      "default": 100,
+      "description": "0 = every annotated video. A positive limit takes a seeded-shuffle subset (stable across runs) so a quick experiment doesn't extract hundreds of hours of frames first.",
+      "minimum": 0,
+      "title": "Video Limit",
+      "type": "integer"
+    },
+    "camera_view": {
+      "default": "all",
+      "description": "Train on all views together or restrict to one camera view.",
+      "enum": [
+        "all",
+        "broadcast",
+        "sideline"
+      ],
+      "title": "Camera View",
+      "type": "string"
+    },
+    "save_dir": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Run directory override; empty picks a timestamped dir under exp/.",
+      "title": "Save Dir"
+    },
+    "init_checkpoint": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Empty trains from scratch; a checkpoint package (rally or action) fine-tunes from it \u2014 mismatched heads are skipped on load.",
+      "title": "Init Checkpoint"
+    },
+    "gpu": {
+      "default": 0,
+      "description": "CUDA device index.",
+      "maximum": 7,
+      "minimum": 0,
+      "title": "Gpu",
+      "type": "integer"
+    },
+    "feature_arch": {
+      "default": "rny008_gsm",
+      "description": "Visual backbone.",
+      "enum": [
+        "rny008_gsm",
+        "rny002_gsm",
+        "convnextt_dv3_gsm",
+        "convnextt2_gsm",
+        "convnextt_gsm",
+        "rn50_gsm",
+        "rn18_gsm",
+        "rny008",
+        "rny002"
+      ],
+      "title": "Feature Arch",
+      "type": "string"
+    },
+    "temporal_arch": {
+      "default": "gru",
+      "description": "Temporal head over the frame features.",
+      "enum": [
+        "gru",
+        "deeper_gru",
+        "mingru"
+      ],
+      "title": "Temporal Arch",
+      "type": "string"
+    },
+    "clip_len": {
+      "default": 64,
+      "description": "Frames per training clip; with extract_fps this sets the temporal window.",
+      "maximum": 256,
+      "minimum": 8,
+      "title": "Clip Len",
+      "type": "integer"
+    },
+    "batch_size": {
+      "default": 8,
+      "maximum": 64,
+      "minimum": 1,
+      "title": "Batch Size",
+      "type": "integer"
+    },
+    "num_epochs": {
+      "default": 30,
+      "maximum": 1000,
+      "minimum": 1,
+      "title": "Num Epochs",
+      "type": "integer"
+    },
+    "warm_up_epochs": {
+      "default": 2,
+      "description": "Linear LR warm-up epochs.",
+      "maximum": 100,
+      "minimum": 0,
+      "title": "Warm Up Epochs",
+      "type": "integer"
+    },
+    "learning_rate": {
+      "default": 0.0003,
+      "exclusiveMinimum": 0,
+      "title": "Learning Rate",
+      "type": "number"
+    },
+    "num_workers": {
+      "default": 4,
+      "description": "DataLoader worker processes.",
+      "maximum": 32,
+      "minimum": 0,
+      "title": "Num Workers",
+      "type": "integer"
+    },
+    "criterion": {
+      "default": "map",
+      "description": "Which epoch counts as best: top validation mAP or lowest loss.",
+      "enum": [
+        "map",
+        "loss"
+      ],
+      "title": "Criterion",
+      "type": "string"
+    },
+    "start_val_epoch": {
+      "default": 0,
+      "description": "Skip validation before this epoch to save time early in a long run.",
+      "minimum": 0,
+      "title": "Start Val Epoch",
+      "type": "integer"
+    },
+    "epoch_num_frames": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Frames sampled per epoch; empty uses the trainer's default budget.",
+      "title": "Epoch Num Frames"
+    },
+    "val_ratio": {
+      "default": 0.2,
+      "description": "Fraction of videos held out as the validation split.",
+      "exclusiveMaximum": 1,
+      "exclusiveMinimum": 0,
+      "title": "Val Ratio",
+      "type": "number"
+    },
+    "split_seed": {
+      "default": 42,
+      "description": "Seed for the train/val video shuffle \u2014 keep it fixed to compare runs.",
+      "title": "Split Seed",
+      "type": "integer"
+    },
+    "stop_vllm": {
+      "default": false,
+      "description": "Stop the vLLM server first to free its GPU memory for training.",
+      "title": "Stop Vllm",
+      "type": "boolean"
+    }
+  },
+  "title": "RallyTrainRequest",
+  "type": "object"
+}

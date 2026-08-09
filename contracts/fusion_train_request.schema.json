@@ -1,0 +1,242 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Generated from yp_video/web/train_requests.py via make_train_schemas.py \u2014 do not edit by hand.",
+  "additionalProperties": false,
+  "properties": {
+    "recipe": {
+      "default": "association_action",
+      "description": "Which task heads share the one fused checkpoint.",
+      "enum": [
+        "association_action",
+        "rally_action",
+        "association_action_rally"
+      ],
+      "title": "Recipe",
+      "type": "string"
+    },
+    "run_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Run name; empty picks a timestamped one.",
+      "title": "Run Name"
+    },
+    "init_checkpoint": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Empty trains from scratch; a package from action-checkpoints/ fine-tunes from it.",
+      "title": "Init Checkpoint"
+    },
+    "validation_mode": {
+      "default": "ratio",
+      "description": "manual validates on validation_videos; ratio holds out a seeded val_ratio.",
+      "enum": [
+        "manual",
+        "ratio"
+      ],
+      "title": "Validation Mode",
+      "type": "string"
+    },
+    "validation_videos": {
+      "description": "manual mode: the exact videos held out as the validation set.",
+      "items": {
+        "type": "string"
+      },
+      "title": "Validation Videos",
+      "type": "array"
+    },
+    "dataset_scope": {
+      "default": "joint_only",
+      "description": "joint_only trains on videos with both action and association labels; partial_labels also uses action-only videos (their association head sees no supervision).",
+      "enum": [
+        "joint_only",
+        "partial_labels"
+      ],
+      "title": "Dataset Scope",
+      "type": "string"
+    },
+    "camera_view": {
+      "default": "all",
+      "description": "Train on all views together or restrict to one camera view.",
+      "enum": [
+        "all",
+        "broadcast",
+        "sideline"
+      ],
+      "title": "Camera View",
+      "type": "string"
+    },
+    "audio_backend": {
+      "default": "logmel",
+      "description": "logmel adds late-fusion audio (precomputed before training); none trains a pure-visual model. Must match at inference.",
+      "enum": [
+        "logmel",
+        "none"
+      ],
+      "title": "Audio Backend",
+      "type": "string"
+    },
+    "feature_arch": {
+      "default": "rny008_gsm",
+      "description": "Visual backbone.",
+      "enum": [
+        "rny008_gsm",
+        "rny002_gsm",
+        "convnextt_dv3_gsm",
+        "convnextt2_gsm",
+        "convnextt_gsm",
+        "rn50_gsm",
+        "rn18_gsm",
+        "rny008",
+        "rny002"
+      ],
+      "title": "Feature Arch",
+      "type": "string"
+    },
+    "temporal_arch": {
+      "default": "gru",
+      "description": "Temporal head over the frame features.",
+      "enum": [
+        "gru",
+        "deeper_gru",
+        "mingru"
+      ],
+      "title": "Temporal Arch",
+      "type": "string"
+    },
+    "clip_len": {
+      "default": 64,
+      "description": "Frames per training clip.",
+      "maximum": 256,
+      "minimum": 8,
+      "title": "Clip Len",
+      "type": "integer"
+    },
+    "sample_fps": {
+      "default": 30.0,
+      "description": "Per-video frame stride targeting this sampling rate. 0 = every frame.",
+      "maximum": 120,
+      "minimum": 0,
+      "title": "Sample Fps",
+      "type": "number"
+    },
+    "batch_size": {
+      "default": 8,
+      "maximum": 64,
+      "minimum": 1,
+      "title": "Batch Size",
+      "type": "integer"
+    },
+    "acc_grad_iter": {
+      "default": 1,
+      "description": "Split each optimizer step into N micro-batches (batch_size must divide evenly).",
+      "maximum": 64,
+      "minimum": 1,
+      "title": "Acc Grad Iter",
+      "type": "integer"
+    },
+    "num_epochs": {
+      "default": 50,
+      "maximum": 1000,
+      "minimum": 1,
+      "title": "Num Epochs",
+      "type": "integer"
+    },
+    "warm_up_epochs": {
+      "default": 3,
+      "description": "Linear LR warm-up epochs.",
+      "maximum": 100,
+      "minimum": 0,
+      "title": "Warm Up Epochs",
+      "type": "integer"
+    },
+    "learning_rate": {
+      "default": 3e-05,
+      "exclusiveMinimum": 0,
+      "title": "Learning Rate",
+      "type": "number"
+    },
+    "num_workers": {
+      "default": 4,
+      "description": "DataLoader worker processes.",
+      "maximum": 32,
+      "minimum": 0,
+      "title": "Num Workers",
+      "type": "integer"
+    },
+    "criterion": {
+      "default": "map",
+      "description": "Which epoch counts as best: top validation mAP or lowest loss.",
+      "enum": [
+        "map",
+        "loss"
+      ],
+      "title": "Criterion",
+      "type": "string"
+    },
+    "start_val_epoch": {
+      "default": 0,
+      "description": "Skip validation before this epoch to save time early in a long run.",
+      "minimum": 0,
+      "title": "Start Val Epoch",
+      "type": "integer"
+    },
+    "epoch_num_frames": {
+      "anyOf": [
+        {
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Frames sampled per epoch; empty uses the trainer's default budget.",
+      "title": "Epoch Num Frames"
+    },
+    "val_ratio": {
+      "default": 0.2,
+      "description": "ratio mode: fraction of videos held out as the validation split.",
+      "exclusiveMaximum": 1,
+      "exclusiveMinimum": 0,
+      "title": "Val Ratio",
+      "type": "number"
+    },
+    "split_seed": {
+      "default": 42,
+      "description": "Seed for the train/val video shuffle \u2014 keep it fixed to compare runs.",
+      "title": "Split Seed",
+      "type": "integer"
+    },
+    "gpu": {
+      "default": 0,
+      "description": "CUDA device index.",
+      "maximum": 7,
+      "minimum": 0,
+      "title": "Gpu",
+      "type": "integer"
+    },
+    "stop_vllm": {
+      "default": false,
+      "description": "Stop the vLLM server first to free its GPU memory for training.",
+      "title": "Stop Vllm",
+      "type": "boolean"
+    }
+  },
+  "title": "FusionTrainRequest",
+  "type": "object"
+}
