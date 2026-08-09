@@ -11,8 +11,11 @@
 
 import { useMemo, useState } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import reidExportSchema from '@contracts/reid_export_request.schema.json';
+import reidTrainSchema from '@contracts/reid_train_request.schema.json';
 import { API, apiFetch, apiUrl, errMsg } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { useSchemaForm } from '@/lib/schemaForm';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -20,59 +23,33 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { StatTile } from '@/components/ui/StatTile';
-import { Field, InitCheckpointSelect, NumberInput, SelectArch, fieldCls } from '@/components/train/Field';
+import { fieldCls } from '@/components/train/Field';
+import { SchemaForm } from '@/components/form/SchemaForm';
+import {
+  SchemaCheckboxField,
+  SchemaNumberField,
+  SchemaSearchSelectField,
+  SchemaSelectField,
+  SchemaTextField,
+} from '@/components/form/SchemaFields';
+import { FieldShell } from '@/components/form/FieldLabel';
 import { JobProgress } from '@/components/job/JobProgress';
 import { toast } from '@/components/feedback/toast';
 import { useSingleJob } from '@/lib/useSingleJob';
 import type { Job, ReidModelEval, ReidPerfData, ReidRun, ReidTrainStatus, ReidVideoEval } from '@/types/api';
+import type { ReidExportRequest } from '@/types/contracts/reid_export_request.schema';
+import type { ReidTrainRequest } from '@/types/contracts/reid_train_request.schema';
 
 const pct = (v: number) => `${(v * 100).toFixed(1)}%`;
 
-interface ExportForm {
-  name: string;
-  split_mode: string;
-  test_ratio: number;
-  seed: number;
-  masked: boolean;
-  overwrite: boolean;
-}
-
-const BASE_FORM: ExportForm = {
-  name: '',
-  split_mode: 'auto',
-  test_ratio: 0.25,
-  seed: 42,
-  masked: false,
-  overwrite: false,
-};
-
-interface TrainForm {
-  dataset: string; // '' = newest export
-  run_name: string;
-  epochs: number;
-  batch_size: number;
-  lr: number;
-  init_checkpoint: string; // package ref; '' = fresh from OpenAI ViT-L/14
-  overwrite: boolean;
-}
-
-const BASE_TRAIN_FORM: TrainForm = {
-  dataset: '',
-  run_name: '',
-  epochs: 4,
-  batch_size: 16,
-  lr: 4e-5,
-  init_checkpoint: '',
-  overwrite: false,
-};
+type ExportForm = Required<ReidExportRequest>;
+type TrainForm = Required<ReidTrainRequest>;
 
 export function ReidTrainPage() {
-  const [form, setForm] = useState<ExportForm>(BASE_FORM);
-  const [trainForm, setTrainForm] = useState<TrainForm>(BASE_TRAIN_FORM);
+  const exportForm = useSchemaForm<ExportForm>(reidExportSchema);
+  // dataset: '' = newest export, resolved at submit.
+  const trainForm = useSchemaForm<TrainForm>(reidTrainSchema, { dataset: '' });
   const [openModel, setOpenModel] = useState<string | null>(null);
-  const set = <K extends keyof ExportForm>(key: K, value: ExportForm[K]) => setForm((f) => ({ ...f, [key]: value }));
-  const setTrain = <K extends keyof TrainForm>(key: K, value: TrainForm[K]) =>
-    setTrainForm((f) => ({ ...f, [key]: value }));
 
   const statusQuery = useQuery({
     queryKey: ['reid-train-status'],
@@ -97,7 +74,7 @@ export function ReidTrainPage() {
     try {
       const started = await apiFetch<Job>(API.reidTrain.export, {
         method: 'POST',
-        body: { ...form, name: form.name.trim() || null },
+        body: exportForm.values,
       });
       setJob(started);
     } catch (e) {
@@ -116,31 +93,19 @@ export function ReidTrainPage() {
       );
       return;
     }
+    const { split_mode, test_ratio, seed, masked } = exportForm.values;
     window.location.href = apiUrl(
-      API.reidTrain.exportPlan({
-        split_mode: form.split_mode,
-        test_ratio: form.test_ratio,
-        seed: form.seed,
-        masked: form.masked,
-      }),
+      API.reidTrain.exportPlan({ split_mode, test_ratio, seed, masked }),
     );
   };
 
   const startTrain = async () => {
-    const dataset = trainForm.dataset || status?.datasets[0]?.name;
+    const dataset = trainForm.values.dataset || status?.datasets[0]?.name;
     if (!dataset) return;
     try {
       const started = await apiFetch<Job>(API.reidTrain.train, {
         method: 'POST',
-        body: {
-          dataset,
-          run_name: trainForm.run_name.trim() || null,
-          epochs: trainForm.epochs,
-          batch_size: trainForm.batch_size,
-          lr: trainForm.lr,
-          init_checkpoint: trainForm.init_checkpoint || null,
-          overwrite: trainForm.overwrite,
-        },
+        body: { ...trainForm.values, dataset },
       });
       setJob(started);
       toast.success('ReID training started');
@@ -184,31 +149,18 @@ export function ReidTrainPage() {
             <span className="font-medium"> Export plan JSONL</span> (writes nothing), then
             <span className="font-medium"> Build dataset</span> to commit it under reid/datasets/.
           </p>
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            <Field label="Split mode">
-              <SelectArch value={form.split_mode} options={status?.split_modes ?? ['auto']} onChange={(v) => set('split_mode', v)} />
-            </Field>
-            <Field label="Test ratio">
-              <NumberInput min={0.05} max={0.9} step={0.05} value={form.test_ratio} onChange={(v) => set('test_ratio', v)} />
-            </Field>
-            <Field label="Seed">
-              <NumberInput value={form.seed} onChange={(v) => set('seed', v)} />
-            </Field>
-            <Field label="Name (optional)">
-              <input value={form.name} onChange={(e) => set('name', e.target.value)} placeholder="reid_<mode>_<timestamp>" className={fieldCls} />
-            </Field>
-          </div>
-          <div className="mt-3 flex flex-wrap gap-4">
-            {([
-              ['masked', 'Masked crops', 'Reference the background-suppressed crops the masked embedders saw'],
-              ['overwrite', 'Overwrite', 'Replace an existing dataset of the same name'],
-            ] as const).map(([key, label, title]) => (
-              <label key={key} className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-text-secondary" title={title}>
-                <input type="checkbox" checked={form[key]} onChange={(e) => set(key, e.target.checked)} className="h-3.5 w-3.5 accent-primary" />
-                {label}
-              </label>
-            ))}
-          </div>
+          <SchemaForm form={exportForm}>
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+              <SchemaSelectField name="split_mode" label="Split mode" />
+              <SchemaNumberField name="test_ratio" label="Test ratio" step={0.05} />
+              <SchemaNumberField name="seed" label="Seed" />
+              <SchemaTextField name="name" label="Name (optional)" placeholder="reid_<mode>_<timestamp>" />
+            </div>
+            <div className="mt-3 flex flex-wrap gap-4">
+              <SchemaCheckboxField name="masked" label="Masked crops" />
+              <SchemaCheckboxField name="overwrite" label="Overwrite" />
+            </div>
+          </SchemaForm>
           <div className="mt-4 flex items-center gap-2">
             <Button className="flex-1" disabled={!status?.totals.assigned_events} onClick={downloadPlan}>
               Export plan JSONL
@@ -242,44 +194,43 @@ export function ReidTrainPage() {
             checkpoint package, so even a cancelled run leaves its best-so-far usable — the clip-reident
             embedder rebinds to whichever package leads the runs table below.
           </p>
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-            <Field label="Dataset">
-              <SelectArch
-                value={trainForm.dataset || status?.datasets[0]?.name || ''}
-                options={(status?.datasets ?? []).map((d) => d.name)}
-                onChange={(v) => setTrain('dataset', v)}
+          <SchemaForm form={trainForm}>
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+              {/* '' falls back to the newest export at submit — runtime data
+                  the contract's plain string field can't express. */}
+              <FieldShell label="Dataset" description={trainForm.fields.dataset?.description}>
+                <select
+                  value={trainForm.values.dataset || status?.datasets[0]?.name || ''}
+                  onChange={(e) => trainForm.set('dataset', e.target.value)}
+                  className={cn(fieldCls, 'cursor-pointer appearance-none')}
+                >
+                  {(status?.datasets ?? []).map((d) => (
+                    <option key={d.name} value={d.name}>
+                      {d.name}
+                    </option>
+                  ))}
+                </select>
+              </FieldShell>
+              <SchemaSearchSelectField
+                name="init_checkpoint"
+                label="Init checkpoint"
+                options={(status?.runs ?? []).map((r) => ({ value: r.path, label: r.run_name }))}
+                placeholder="fresh (OpenAI ViT-L/14)"
               />
-            </Field>
-            <InitCheckpointSelect
-              value={trainForm.init_checkpoint}
-              onChange={(v) => setTrain('init_checkpoint', v)}
-              options={(status?.runs ?? []).map((r) => ({ value: r.path, label: r.run_name }))}
-              emptyLabel="fresh (OpenAI ViT-L/14)"
-            />
-            <Field label="Run name (optional)">
-              <input value={trainForm.run_name} onChange={(e) => setTrain('run_name', e.target.value)} placeholder="reid_<timestamp>" className={fieldCls} />
-            </Field>
-            <Field label="Epochs">
-              <NumberInput min={1} value={trainForm.epochs} onChange={(v) => setTrain('epochs', v)} />
-            </Field>
-            <Field label="Batch size (≤ identities)">
-              <NumberInput min={2} value={trainForm.batch_size} onChange={(v) => setTrain('batch_size', v)} />
-            </Field>
-            <Field label="Learning rate">
-              <NumberInput step="any" value={trainForm.lr} onChange={(v) => setTrain('lr', v)} />
-            </Field>
-          </div>
-          <div className="mt-3 flex flex-wrap items-center gap-4">
-            <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-text-secondary" title="Replace an existing checkpoint package of the same run name">
-              <input type="checkbox" checked={trainForm.overwrite} onChange={(e) => setTrain('overwrite', e.target.checked)} className="h-3.5 w-3.5 accent-primary" />
-              Overwrite
-            </label>
-            {!status?.reid_engine_available && (
-              <span className="text-[11px] text-amber-400">
-                clip-reident engine not registered — needs the yp-reid venv and at least one checkpoint package
-              </span>
-            )}
-          </div>
+              <SchemaTextField name="run_name" label="Run name (optional)" placeholder="reid_<timestamp>" />
+              <SchemaNumberField name="epochs" label="Epochs" />
+              <SchemaNumberField name="batch_size" label="Batch size (≤ identities)" />
+              <SchemaNumberField name="lr" label="Learning rate" />
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-4">
+              <SchemaCheckboxField name="overwrite" label="Overwrite" />
+              {!status?.reid_engine_available && (
+                <span className="text-[11px] text-amber-400">
+                  clip-reident engine not registered — needs the yp-reid venv and at least one checkpoint package
+                </span>
+              )}
+            </div>
+          </SchemaForm>
           <div className="mt-4 flex items-center gap-2">
             <Button intent="primary" className="flex-1" disabled={busy || !status?.datasets.length} onClick={() => void startTrain()}>
               {busy && job?.type === 'reid_train' ? 'Training…' : 'Start Training'}
