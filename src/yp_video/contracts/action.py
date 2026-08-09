@@ -217,3 +217,12 @@ class ActionLabelRecord(BaseModel):
 # The producer parses these defensively (web/routers/action_annotate.py); only
 # the prefix is a hard contract.
 SPOT_PROGRESS_PREFIX = "SPOT_PROGRESS "
+
+# yp-spot may ALSO stream partial foreground events as inference runs, so the
+# consumer can surface rallies progressively instead of waiting for the final
+# ``predictions.json``. One line per inference batch, carrying that batch's new
+# foreground events (native frame numbers):
+#   ``SPOT_PARTIAL {"events":[{"frame":<int>,"score":<float>}, ...]}``
+# Optional and additive — a yp-spot build that never emits it degrades to the
+# existing all-at-once behaviour. Only the prefix is a hard contract.
+SPOT_PARTIAL_PREFIX = "SPOT_PARTIAL "

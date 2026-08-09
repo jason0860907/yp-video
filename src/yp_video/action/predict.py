@@ -12,6 +12,7 @@ duplicate (and drift from) the web router's flow.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import tempfile
@@ -24,6 +25,7 @@ from yp_video.config import SPOT_DIR
 from yp_video.contracts.action import (
     ACTION_CONTRACT_VERSION,
     ACTION_CONTRACT_VERSION_ENV,
+    SPOT_PARTIAL_PREFIX,
     SPOT_PROGRESS_PREFIX,
 )
 from yp_video.core.ffmpeg import FFmpegError, probe_video_metadata
@@ -50,6 +52,23 @@ def _spot_progress_ratio(line: str) -> float | None:
     return prelabel.spot_progress_fraction(data) if data is not None else None
 
 
+def _spot_partial_events(line: str) -> list[dict] | None:
+    """Parse a yp-spot ``SPOT_PARTIAL`` stdout line to this batch's new events.
+
+    Returns ``None`` for any non-partial line. Defensive: a malformed payload
+    is treated as "no events" (``[]``) rather than crashing the reader — the
+    authoritative event set still arrives via ``predictions.json`` at the end.
+    """
+    if not line.startswith(SPOT_PARTIAL_PREFIX):
+        return None
+    try:
+        payload = json.loads(line[len(SPOT_PARTIAL_PREFIX):])
+        events = payload.get("events")
+        return events if isinstance(events, list) else []
+    except (ValueError, AttributeError):
+        return []
+
+
 def _probe_fps_frames(video_path: Path) -> tuple[float, int]:
     """Return ``(fps, num_frames)`` for ``video_path`` via ffprobe."""
     try:
@@ -69,6 +88,7 @@ def run_spot_inference(
     use_amp: bool = True,
     postprocess: bool = True,
     on_progress: Callable[[float], None] | None = None,
+    on_events: Callable[[list[dict]], None] | None = None,
 ) -> list[dict]:
     """Run one yp-spot inference subprocess and return its loaded predictions.
 
@@ -104,6 +124,11 @@ def run_spot_inference(
             "PYTHONUNBUFFERED": "1",
             ACTION_CONTRACT_VERSION_ENV: ACTION_CONTRACT_VERSION,
         }
+        # Ask yp-spot to stream settled foreground events only when a consumer
+        # wants them (the rally path). Leaving it off for action runs keeps
+        # them from emitting SPOT_PARTIAL lines nobody reads.
+        if on_events is not None:
+            env["SPOT_EMIT_PARTIAL"] = "1"
         proc = subprocess.Popen(
             cmd,
             cwd=SPOT_DIR,
@@ -114,6 +139,7 @@ def run_spot_inference(
             bufsize=1,
         )
         tail: deque[str] = deque(maxlen=20)
+        partial_events: list[dict] = []
         assert proc.stdout is not None
         for raw in proc.stdout:
             # tqdm redraws end in \r without a newline; merged into stdout they
@@ -127,8 +153,18 @@ def run_spot_inference(
                 if ratio is not None:
                     if on_progress:
                         on_progress(ratio)
-                else:
-                    tail.append(line)
+                    continue
+                # Progressive foreground events (optional, only when a consumer
+                # asked for them). A yp-spot build that never emits SPOT_PARTIAL
+                # simply never triggers this and the final predictions.json is
+                # unchanged.
+                if on_events is not None:
+                    batch = _spot_partial_events(line)
+                    if batch is not None:
+                        partial_events.extend(batch)
+                        on_events(partial_events)
+                        continue
+                tail.append(line)
         rc = proc.wait()
         if rc != 0:
             raise SpotInferenceError(

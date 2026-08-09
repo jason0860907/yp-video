@@ -250,6 +250,7 @@ def predict_rally_segments(
     use_amp: bool = True,
     on_message: Callable[[str], None] | None = None,
     on_progress: Callable[[float], None] | None = None,
+    on_rallies: Callable[[list[dict]], None] | None = None,
 ) -> list[dict]:
     """Run SPOT rally inference on one video and return merged rally segments.
 
@@ -286,6 +287,29 @@ def predict_rally_segments(
         raise SpotInferenceError(str(exc)) from exc
 
     _msg("Running SPOT rally inference...")
+
+    # Progressive delivery: re-derive rally segments from the events seen so
+    # far each time yp-spot streams a batch, and hand the settled ones up.
+    # `events_to_rally_segments` is pure and idempotent, so re-running it on the
+    # growing event list is cheap and always consistent with the final result.
+    def _on_events(events_so_far: list[dict]) -> None:
+        if not on_rallies:
+            return
+        segments = events_to_rally_segments(
+            events_so_far,
+            native_fps=float(metadata["fps"]),
+            min_score=min_score,
+            max_gap_s=max_gap_s,
+            min_duration_s=min_duration_s,
+        )
+        # Hold back the last segment: inference hasn't passed its end yet, so
+        # its end/score would keep changing and (worse) it could still merge
+        # with the next event. Only emit segments the stream has moved beyond,
+        # which keeps their chronological 1-based indexing stable — the client
+        # merges rallies by index, so an index must never renumber.
+        if len(segments) > 1:
+            on_rallies(segments[:-1])
+
     # postprocess=False: the dense segment model needs every per-frame event;
     # score filtering and NMS would shred contiguous runs.
     predictions = run_spot_inference(
@@ -297,6 +321,7 @@ def predict_rally_segments(
         use_amp=use_amp,
         postprocess=False,
         on_progress=on_progress,
+        on_events=_on_events if on_rallies else None,
     )
     events = (predictions[0].get("events") or []) if predictions else []
     segments = events_to_rally_segments(
