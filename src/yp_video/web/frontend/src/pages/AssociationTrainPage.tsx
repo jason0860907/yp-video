@@ -1,21 +1,25 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
+import associationTrainSchema from '@contracts/association_train_request.schema.json';
 import { toast } from '@/components/feedback/toast';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { Collapsible } from '@/components/ui/Collapsible';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { VideoMultiSelectList } from '@/components/video/VideoMultiSelectList';
 import { API, apiFetch, errMsg } from '@/lib/api';
+import { useSchemaForm } from '@/lib/schemaForm';
+import { SchemaForm } from '@/components/form/SchemaForm';
 import {
-  Field,
-  InitCheckpointSelect,
-  NumberField,
-  SelectArch,
-  fieldCls,
-} from '@/components/train/Field';
+  SchemaCheckboxField,
+  SchemaNumberField,
+  SchemaSearchSelectField,
+  SchemaSelectField,
+  SchemaTextField,
+} from '@/components/form/SchemaFields';
 import { CheckpointsCard } from '@/components/train/CheckpointsCard';
 import { TrainJobCard } from '@/components/train/TrainJobCard';
 import { TrainPerfCard } from '@/components/train/TrainPerfCard';
@@ -26,38 +30,14 @@ import type {
   Job,
   ReidAssociationStatus,
 } from '@/types/api';
+import type { AssociationTrainRequest } from '@/types/contracts/association_train_request.schema';
 
-type Form = {
-  run_name: string;
-  init_checkpoint: string;
-  num_epochs: number;
-  batch_size: number;
-  learning_rate: number;
-  backbone_learning_rate: number;
-  warm_up_epochs: number;
-  gpu: number;
-  backbone: 'rny002' | 'rny002_gsm' | 'rny008' | 'rny008_gsm' | 'rn18' | 'rn50';
-  crop_dim: number;
-  num_workers: number;
-  stop_vllm: boolean;
+// min_length=1 generates non-empty tuple types; the form legitimately starts
+// empty and the backend enforces the minimum at submit.
+type AssociationForm = Omit<Required<AssociationTrainRequest>, 'train_videos' | 'val_videos'> & {
+  train_videos: string[];
+  val_videos: string[];
 };
-
-const INITIAL_FORM: Form = {
-  run_name: '',
-  init_checkpoint: '',
-  num_epochs: 40,
-  batch_size: 8,
-  learning_rate: 0.0003,
-  backbone_learning_rate: 0.00003,
-  warm_up_epochs: 3,
-  gpu: 0,
-  backbone: 'rny002',
-  crop_dim: 224,
-  num_workers: 4,
-  stop_vllm: false,
-};
-
-const BACKBONES = ['rny002', 'rny002_gsm', 'rny008', 'rny008_gsm', 'rn18', 'rn50'] as const;
 
 const isDone = (video: AssociationVideo) =>
   video.event_count > 0 && video.unreviewed === 0;
@@ -66,7 +46,11 @@ export function AssociationTrainPage() {
   const valSeeded = useRef(false);
   const startingRef = useRef(false);
   const [valVideos, setValVideos] = useState<Set<string>>(new Set());
-  const [form, setForm] = useState<Form>(INITIAL_FORM);
+  const form = useSchemaForm<AssociationForm>(associationTrainSchema, {
+    train_videos: [],
+    val_videos: [],
+  });
+  const { values } = form;
   const [starting, setStarting] = useState(false);
 
   const videosQuery = useQuery({
@@ -103,9 +87,6 @@ export function AssociationTrainPage() {
     valSeeded.current = true;
   }, [videosQuery.data]);
 
-  const set = <K extends keyof Form>(key: K, value: Form[K]) =>
-    setForm((previous) => ({ ...previous, [key]: value }));
-
   const split = useMemo(() => {
     const done = videos.filter(isDone);
     const train = done.filter((video) => !valVideos.has(video.name));
@@ -138,25 +119,12 @@ export function AssociationTrainPage() {
     setStarting(true);
     toast.info('Validating the selected videos and creating the training job…');
     try {
-      const started = await apiFetch<Job>(API.association.train, {
-        method: 'POST',
-        body: {
-          train_videos: split.train.map((video) => video.name),
-          val_videos: [...valVideos],
-          run_name: form.run_name.trim() || null,
-          init_checkpoint: form.init_checkpoint || null,
-          num_epochs: form.num_epochs,
-          batch_size: form.batch_size,
-          learning_rate: form.learning_rate,
-          backbone_learning_rate: form.backbone_learning_rate,
-          warm_up_epochs: form.warm_up_epochs,
-          gpu: form.gpu,
-          backbone: form.backbone,
-          crop_dim: form.crop_dim,
-          num_workers: form.num_workers,
-          stop_vllm: form.stop_vllm,
-        },
-      });
+      const body: AssociationForm = {
+        ...values,
+        train_videos: split.train.map((video) => video.name),
+        val_videos: [...valVideos],
+      };
+      const started = await apiFetch<Job>(API.association.train, { method: 'POST', body });
       setJob(started);
       toast.success('yp-association training started');
     } catch (error) {
@@ -189,91 +157,84 @@ export function AssociationTrainPage() {
             </p>
           ) : null}
 
-          <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3">
-            <Field label="Run name">
-              <input
-                value={form.run_name}
-                onChange={(event) => set('run_name', event.target.value)}
+          <SchemaForm form={form}>
+            <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3">
+              <SchemaTextField
+                name="run_name"
+                label="Run name"
                 placeholder="yp_actor_YYYYMMDD-HHMMSS"
-                className={fieldCls}
               />
-            </Field>
-            <InitCheckpointSelect
-              value={form.init_checkpoint}
-              onChange={(value) => set('init_checkpoint', value)}
-              options={status?.init_checkpoints ?? []}
-              emptyLabel="— New model (ImageNet-initialized backbone) —"
-            />
-            <NumberField label="Epochs" value={form.num_epochs} min={1} onChange={(value) => set('num_epochs', value)} />
-            <NumberField label="Batch" value={form.batch_size} min={1} onChange={(value) => set('batch_size', value)} />
-            <NumberField label="Head LR" value={form.learning_rate} min={0} step={0.00001} onChange={(value) => set('learning_rate', value)} />
-            <NumberField label="Backbone LR" value={form.backbone_learning_rate} min={0} step={0.00001} onChange={(value) => set('backbone_learning_rate', value)} />
-            <NumberField label="Warm-up" value={form.warm_up_epochs} min={0} onChange={(value) => set('warm_up_epochs', value)} />
-            <NumberField label="GPU" value={form.gpu} min={0} max={7} onChange={(value) => set('gpu', value)} />
-            <Field label="Visual backbone">
-              <SelectArch
-                value={form.backbone}
-                options={BACKBONES}
-                onChange={(value) => set('backbone', value as Form['backbone'])}
+              <SchemaSearchSelectField
+                name="init_checkpoint"
+                label="Init checkpoint"
+                options={status?.init_checkpoints ?? []}
+                placeholder="— New model (ImageNet-initialized backbone) —"
+                className="col-span-2"
               />
-            </Field>
-            <NumberField label="Image size" value={form.crop_dim} min={64} max={512} onChange={(value) => set('crop_dim', value)} />
-            <NumberField label="Workers" value={form.num_workers} min={0} onChange={(value) => set('num_workers', value)} />
-          </div>
+              <SchemaSelectField name="backbone" label="Visual backbone" />
+              <SchemaNumberField name="num_epochs" label="Epochs" />
+              <SchemaNumberField name="batch_size" label="Batch" />
+              <SchemaNumberField name="learning_rate" label="Head LR" />
+              <SchemaNumberField name="backbone_learning_rate" label="Backbone LR" />
+            </div>
 
-          <div className="mt-5 border-t border-border pt-4">
-            <SectionLabel>Validation split</SectionLabel>
-            <p className="mb-2 text-[11px] text-text-muted">
-              trains on {split.train.length} videos · {split.trainEvents} reviewed events
-            </p>
-            <VideoMultiSelectList
-              videos={videos}
-              query={videosQuery}
-              selected={valVideos}
-              onSelectedChange={setValVideos}
-              title="Validation videos"
-              statusOptions={[
-                { value: 'all', label: 'All', predicate: () => true },
-                { value: 'done', label: 'Done', predicate: isDone },
-                {
-                  value: 'partial',
-                  label: 'In progress',
-                  predicate: (video) => video.reviewed > 0 && video.unreviewed > 0,
-                },
-              ]}
-              quickSelects={[{ label: 'Clear', predicate: () => false }]}
-              renderMeta={(video) => (
-                <>
-                  <span className="font-mono text-[11px] tabular-nums text-text-muted">
-                    {video.reviewed}/{video.event_count}
-                  </span>
-                  {isDone(video) ? (
-                    <Badge tone="success">Done</Badge>
-                  ) : video.reviewed > 0 ? (
-                    <Badge tone="warning">{video.unreviewed} left</Badge>
-                  ) : (
-                    <Badge>Unlabeled</Badge>
-                  )}
-                </>
-              )}
-              maxHeightClass="max-h-[42vh]"
-              emptyTitle="No association videos"
-              emptySubtitle="Finish tracking, actions and Association Label first"
-            />
-            <p className="mt-2 text-[10px] leading-relaxed text-text-muted">
-              Selected videos are validation only; every other Done video trains.
-            </p>
-          </div>
+            <Collapsible label="Advanced" className="mt-4">
+              <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3">
+                <SchemaNumberField name="warm_up_epochs" label="Warm-up" />
+                <SchemaNumberField name="crop_dim" label="Image size" />
+                <SchemaNumberField name="num_workers" label="Workers" />
+                <SchemaNumberField name="gpu" label="GPU" />
+              </div>
+            </Collapsible>
 
-          <label className="mt-4 inline-flex cursor-pointer items-center gap-2 text-xs text-text-secondary">
-            <input
-              type="checkbox"
-              checked={form.stop_vllm}
-              onChange={(event) => set('stop_vllm', event.target.checked)}
-              className="h-3.5 w-3.5 accent-primary"
-            />
-            Stop vLLM before taking the GPU
-          </label>
+            <div className="mt-5 border-t border-border pt-4">
+              <SectionLabel>Validation split</SectionLabel>
+              <p className="mb-2 text-[11px] text-text-muted">
+                trains on {split.train.length} videos · {split.trainEvents} reviewed events
+              </p>
+              <VideoMultiSelectList
+                videos={videos}
+                query={videosQuery}
+                selected={valVideos}
+                onSelectedChange={setValVideos}
+                title="Validation videos"
+                statusOptions={[
+                  { value: 'all', label: 'All', predicate: () => true },
+                  { value: 'done', label: 'Done', predicate: isDone },
+                  {
+                    value: 'partial',
+                    label: 'In progress',
+                    predicate: (video) => video.reviewed > 0 && video.unreviewed > 0,
+                  },
+                ]}
+                quickSelects={[{ label: 'Clear', predicate: () => false }]}
+                renderMeta={(video) => (
+                  <>
+                    <span className="font-mono text-[11px] tabular-nums text-text-muted">
+                      {video.reviewed}/{video.event_count}
+                    </span>
+                    {isDone(video) ? (
+                      <Badge tone="success">Done</Badge>
+                    ) : video.reviewed > 0 ? (
+                      <Badge tone="warning">{video.unreviewed} left</Badge>
+                    ) : (
+                      <Badge>Unlabeled</Badge>
+                    )}
+                  </>
+                )}
+                maxHeightClass="max-h-[42vh]"
+                emptyTitle="No association videos"
+                emptySubtitle="Finish tracking, actions and Association Label first"
+              />
+              <p className="mt-2 text-[10px] leading-relaxed text-text-muted">
+                Selected videos are validation only; every other Done video trains.
+              </p>
+            </div>
+
+            <div className="mt-4">
+              <SchemaCheckboxField name="stop_vllm" label="Stop vLLM before taking the GPU" />
+            </div>
+          </SchemaForm>
 
           <div className="mt-4 flex items-center gap-2">
             <Button intent="primary" disabled={!canTrain} onClick={() => void start()} className="flex-1">
@@ -314,7 +275,7 @@ export function AssociationTrainPage() {
       <TrainJobCard
         job={job}
         progressKey="association_train_progress"
-        epochsFallback={form.num_epochs}
+        epochsFallback={values.num_epochs}
         onCancel={() => void cancel()}
       />
 
