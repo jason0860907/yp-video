@@ -11,14 +11,18 @@ supply, this fails before the UI does.
 
 from __future__ import annotations
 
+import ast
+import typing
 import unittest
 
 from pydantic import BaseModel, ValidationError
 
+from yp_video.config import SPOT_DIR
 from yp_video.web.make_train_schemas import _SCHEMAS
 from yp_video.web.train_requests import (
     AnnotationActionTrainRequest,
     AssociationTrainRequest,
+    FeatureArch,
     RallyTrainRequest,
     ReidTrainRequest,
 )
@@ -94,6 +98,40 @@ class DefaultsAreValidRequests(unittest.TestCase):
         payload["btach_size"] = 8
         with self.assertRaises(ValidationError):
             RallyTrainRequest.model_validate(payload)
+
+
+BACKBONES_PY = SPOT_DIR / "yp_spot" / "model" / "backbones.py"
+
+
+@unittest.skipUnless(BACKBONES_PY.exists(), "yp-spot checkout not present")
+class ArchLiteralsMirrorSpotRegistry(unittest.TestCase):
+    """FeatureArch / association backbone are hand-mirrored from yp-spot's
+    backbone registry (its env is separate, so importing it is not an
+    option). Parse the registry file and fail on any drift."""
+
+    def spot_registry(self) -> tuple[set[str], tuple[str, ...]]:
+        tree = ast.parse(BACKBONES_PY.read_text())
+        bases: set[str] = set()
+        suffixes: tuple[str, ...] = ()
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name)):
+                continue
+            if node.targets[0].id == "BACKBONES":
+                bases = {ast.literal_eval(key) for key in node.value.keys}  # type: ignore[attr-defined]
+            elif node.targets[0].id == "TEMPORAL_SUFFIXES":
+                suffixes = ast.literal_eval(node.value)
+        self.assertTrue(bases and suffixes, "failed to parse yp-spot registry")
+        return bases, suffixes
+
+    def test_feature_arch_covers_every_registry_combination(self) -> None:
+        bases, suffixes = self.spot_registry()
+        expected = {base + suffix for base in bases for suffix in ("", *suffixes)}
+        self.assertEqual(set(typing.get_args(FeatureArch)), expected)
+
+    def test_association_backbone_matches_registry_bases(self) -> None:
+        bases, _ = self.spot_registry()
+        field = AssociationTrainRequest.model_fields["backbone"]
+        self.assertEqual(set(typing.get_args(field.annotation)), bases)
 
 
 if __name__ == "__main__":

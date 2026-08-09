@@ -17,19 +17,23 @@ from pydantic import Field, model_validator
 
 from yp_video.web.schemas import StrictModel
 
-#: Visual backbones every SPOT-based trainer offers, best-first. GSM variants
-#: are the recommended form; the plain RegNets stay for shift ablations.
+#: Every backbone the yp-spot registry offers, times its temporal-shift
+#: variants — mirrors yp_spot/model/backbones.py (BACKBONES × plain/_tsm/_gsm);
+#: tests/test_train_request_schemas.py cross-checks against the checkout.
+#: Best-first per base, GSM (the recommended shift) leading each group.
 FeatureArch = Literal[
-    "rny008_gsm",
-    "rny002_gsm",
-    "convnextt_dv3_gsm",
-    "convnextt2_gsm",
-    "convnextt_gsm",
-    "rn50_gsm",
-    "rn18_gsm",
-    "rny008",
-    "rny002",
+    "rny008_gsm", "rny008_tsm", "rny008",
+    "rny002_gsm", "rny002_tsm", "rny002",
+    "convnextt_dv3_gsm", "convnextt_dv3_tsm", "convnextt_dv3",
+    "convnextt2_gsm", "convnextt2_tsm", "convnextt2",
+    "convnextt_gsm", "convnextt_tsm", "convnextt",
+    "rn50_gsm", "rn50_tsm", "rn50",
+    "rn18_gsm", "rn18_tsm", "rn18",
 ]
+
+#: Temporal heads yp_spot/model/e2e.py supports — the same five for every
+#: SPOT-based trainer (rally, action, fusion).
+TemporalArch = Literal["gru", "deeper_gru", "mingru", "mstcn", "asformer"]
 
 CameraView = Literal["all", "broadcast", "sideline"]
 
@@ -76,7 +80,7 @@ class RallyTrainRequest(StrictModel):
     feature_arch: FeatureArch = Field(
         default="rny008_gsm", description="Visual backbone."
     )
-    temporal_arch: Literal["gru", "deeper_gru", "mingru"] = Field(
+    temporal_arch: TemporalArch = Field(
         default="gru", description="Temporal head over the frame features."
     )
     clip_len: int = Field(
@@ -153,7 +157,7 @@ class ActionTrainBase(StrictModel):
     feature_arch: FeatureArch = Field(
         default="rny008_gsm", description="Visual backbone."
     )
-    temporal_arch: Literal["gru", "deeper_gru", "mstcn", "asformer"] = Field(
+    temporal_arch: TemporalArch = Field(
         default="gru", description="Temporal head over the frame features."
     )
     pred_loc_arch: str = Field(
@@ -323,7 +327,7 @@ class FusionTrainRequest(StrictModel):
     feature_arch: FeatureArch = Field(
         default="rny008_gsm", description="Visual backbone."
     )
-    temporal_arch: Literal["gru", "deeper_gru", "mingru"] = Field(
+    temporal_arch: TemporalArch = Field(
         default="gru", description="Temporal head over the frame features."
     )
     clip_len: int = Field(
@@ -410,13 +414,16 @@ class AssociationTrainRequest(StrictModel):
     warm_up_epochs: int = Field(
         default=3, ge=0, le=100, description="Linear LR warm-up epochs."
     )
+    #: Same registry as FeatureArch but bare bases only — single crops have
+    #: no temporal axis, so the trainer takes no shift variants.
     backbone: Literal[
         "rny002",
-        "rny002_gsm",
         "rny008",
-        "rny008_gsm",
-        "rn18",
+        "convnextt_dv3",
+        "convnextt2",
+        "convnextt",
         "rn50",
+        "rn18",
     ] = Field(default="rny002", description="Visual backbone over the player crops.")
     backbone_learning_rate: float = Field(
         default=0.00003,

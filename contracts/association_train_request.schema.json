@@ -90,11 +90,12 @@
       "description": "Visual backbone over the player crops.",
       "enum": [
         "rny002",
-        "rny002_gsm",
         "rny008",
-        "rny008_gsm",
-        "rn18",
-        "rn50"
+        "convnextt_dv3",
+        "convnextt2",
+        "convnextt",
+        "rn50",
+        "rn18"
       ],
       "title": "Backbone",
       "type": "string"

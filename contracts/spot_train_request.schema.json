@@ -68,14 +68,26 @@
       "description": "Visual backbone.",
       "enum": [
         "rny008_gsm",
-        "rny002_gsm",
-        "convnextt_dv3_gsm",
-        "convnextt2_gsm",
-        "convnextt_gsm",
-        "rn50_gsm",
-        "rn18_gsm",
+        "rny008_tsm",
         "rny008",
-        "rny002"
+        "rny002_gsm",
+        "rny002_tsm",
+        "rny002",
+        "convnextt_dv3_gsm",
+        "convnextt_dv3_tsm",
+        "convnextt_dv3",
+        "convnextt2_gsm",
+        "convnextt2_tsm",
+        "convnextt2",
+        "convnextt_gsm",
+        "convnextt_tsm",
+        "convnextt",
+        "rn50_gsm",
+        "rn50_tsm",
+        "rn50",
+        "rn18_gsm",
+        "rn18_tsm",
+        "rn18"
       ],
       "title": "Feature Arch",
       "type": "string"
@@ -86,7 +98,9 @@
       "enum": [
         "gru",
         "deeper_gru",
-        "mingru"
+        "mingru",
+        "mstcn",
+        "asformer"
       ],
       "title": "Temporal Arch",
       "type": "string"
