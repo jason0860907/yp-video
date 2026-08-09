@@ -20,11 +20,6 @@ from yp_video.contracts.reid import (
 )
 from yp_video.extraction import actor_fix, cropping, pipeline
 from yp_video.reid import checkpoints, store
-from yp_video.web.action_training import (
-    ActionTrainRequest,
-    AnnotationActionTrainRequest,
-    VnlActionTrainRequest,
-)
 from yp_video.web.jobs import MAX_LOG_LINES, Job, JobManager, JobStatus, JobType
 from yp_video.web.routers import extraction as extraction_router
 from yp_video.web.routers.actor_association import (
@@ -32,6 +27,11 @@ from yp_video.web.routers.actor_association import (
     AutoActorRequest,
     OccludedActorRequest,
     PickActorRequest,
+)
+from yp_video.web.train_requests import (
+    ActionTrainRequest,
+    AnnotationActionTrainRequest,
+    VnlActionTrainRequest,
 )
 
 

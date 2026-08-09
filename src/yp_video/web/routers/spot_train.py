@@ -14,7 +14,6 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
-from pydantic import Field
 
 from yp_video.action import rally as rally_spot
 from yp_video.action.frames import ensure_action_frame_caches
@@ -38,7 +37,6 @@ from yp_video.web.job_helpers import (
     terminal_prefix,
 )
 from yp_video.web.jobs import JobSummary, JobType, job_manager
-from yp_video.web.schemas import StrictModel
 from yp_video.web.spot_runs import (
     SPOT_INIT_PACKAGE_TYPES,
     PackageExporter,
@@ -49,43 +47,13 @@ from yp_video.web.spot_runs import (
     performance_payload,
     validate_checkpoint_dir,
 )
+from yp_video.web.train_requests import RallyTrainRequest
 
 log = logging.getLogger(__name__)
 router = APIRouter()
 
 RALLY_RUN_PREFIX = "yp_rally"
 SEGMENT_MAP_PATTERN = r"Segment mAP \(mean over tIoU\):\s*([0-9.]+)%"
-
-
-class RallyTrainRequest(StrictModel):
-    # Frame-extraction rate; also the model's sample_fps. 2fps keeps the whole
-    # 800-video library around ~30 GB of JPEGs and gives clip_len=64 a 32 s
-    # temporal window — rally on/off is a slow signal, it does not need 30fps.
-    extract_fps: float = Field(default=2.0, ge=0.5, le=10)
-    # 0 = every annotated video. A positive limit takes a seeded-shuffle subset
-    # (stable across runs) so a quick experiment doesn't extract 300 hours of
-    # frames first.
-    video_limit: int = Field(default=100, ge=0)
-    camera_view: str = Field(default="all", pattern="^(all|broadcast|sideline)$")
-    save_dir: str | None = None
-    # None / "" → train from scratch; an explicit path → that checkpoint
-    # (a rally or action package — mismatched heads are skipped on load).
-    init_checkpoint: str | None = None
-    gpu: int = Field(default=0, ge=0)
-    feature_arch: str = "rny008_gsm"
-    temporal_arch: str = "gru"
-    clip_len: int = Field(default=64, ge=8, le=256)
-    batch_size: int = Field(default=8, ge=1, le=64)
-    num_epochs: int = Field(default=30, ge=1, le=1000)
-    warm_up_epochs: int = Field(default=2, ge=0, le=100)
-    learning_rate: float = Field(default=0.0003, gt=0)
-    num_workers: int = Field(default=4, ge=0, le=32)
-    criterion: str = Field(default="map", pattern="^(map|loss)$")
-    start_val_epoch: int = Field(default=0, ge=0)
-    epoch_num_frames: int | None = Field(default=None, ge=1)
-    val_ratio: float = Field(default=0.2, gt=0, lt=1)
-    split_seed: int = 42
-    stop_vllm: bool = False
 
 
 def _resolve_save_dir(req: RallyTrainRequest) -> Path:

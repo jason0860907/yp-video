@@ -12,7 +12,7 @@ from fastapi import APIRouter
 from yp_video.action import training
 from yp_video.config import ACTION_CHECKPOINTS_DIR, SPOT_DIR, SPOT_PYTHON
 from yp_video.contracts.action import ACTION_PACKAGE_TYPE
-from yp_video.web.action_training import ActionTrainRequest, start_training_job
+from yp_video.web.action_training import start_training_job
 from yp_video.web.jobs import JobSummary, JobType, job_manager
 from yp_video.web.r2_client import remote_cut_path
 from yp_video.web.spot_runs import (
@@ -20,6 +20,7 @@ from yp_video.web.spot_runs import (
     checkpoint_package_options,
     performance_payload,
 )
+from yp_video.web.train_requests import ActionTrainRequest
 
 router = APIRouter()
 

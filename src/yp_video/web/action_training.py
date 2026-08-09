@@ -2,10 +2,11 @@
 
 Action Train and Fusion Train are the same trainer with a different flavor
 (job type, package type, run naming); Association Train reuses the label
-snapshot machinery. This module owns the request models, the command builder
-and ``start_training_job`` once, so the routers stay HTTP-thin and never
-import each other. Domain rules about the label corpus live below the web
-layer, in ``yp_video.action.training`` / ``yp_video.actor.training_labels``.
+snapshot machinery. This module owns the command builder and
+``start_training_job`` once, so the routers stay HTTP-thin and never import
+each other. The request models live in ``yp_video.web.train_requests``; domain
+rules about the label corpus live below the web layer, in
+``yp_video.action.training`` / ``yp_video.actor.training_labels``.
 """
 
 from __future__ import annotations
@@ -17,10 +18,8 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated, Literal
 
 from fastapi import HTTPException
-from pydantic import Field, model_validator
 
 from yp_video.action import training
 from yp_video.action.frames import ensure_action_frame_caches
@@ -53,13 +52,17 @@ from yp_video.web.job_helpers import (
 )
 from yp_video.web.jobs import JobType, job_manager
 from yp_video.web.r2_client import remote_cut_path
-from yp_video.web.schemas import StrictModel
 from yp_video.web.spot_runs import (
     PackageExporter,
     TrainProgress,
     export_checkpoint_package,
     make_train_parsers,
     validate_checkpoint_dir,
+)
+from yp_video.web.train_requests import (
+    ActionTrainBase,
+    ActionTrainRequest,
+    AnnotationActionTrainRequest,
 )
 
 log = logging.getLogger(__name__)
@@ -87,81 +90,6 @@ ACTION_TRAINING = TrainingFlavor(
     subject="action",
     serveable_tasks=("action",),
 )
-
-
-class ActionTrainBase(StrictModel):
-
-    dataset: str | None = None
-    frame_dir: str | None = None
-    save_dir: str | None = None
-    checkpoint_dir: str | None = None
-    # None / "" → train from scratch; an explicit path → that checkpoint
-    # (selected from ACTION_CHECKPOINTS_DIR).
-    init_checkpoint: str | None = None
-    gpu: int = Field(default=0, ge=0)
-    # "logmel" → late-fusion audio (precomputed before training); "none" →
-    # pure-visual model (no audio, no precompute). Must match at inference.
-    audio_backend: str = Field(default="logmel", pattern="^(logmel|none)$")
-    feature_arch: str = "rny008_gsm"
-    temporal_arch: str = "gru"
-    pred_loc_arch: str = "mlp"
-    clip_len: int = Field(default=64, ge=8, le=256)
-    # Per-video frame stride targeting this sampling rate, so clip_len spans
-    # the same wall-clock time on 30fps and 60fps sources. 0 = every frame.
-    sample_fps: float = Field(default=30.0, ge=0, le=120)
-    batch_size: int = Field(default=8, ge=1, le=64)
-    # Split each optimizer step into N forward/backward micro-batches; the
-    # DataLoader batch becomes batch_size // acc_grad_iter, so heavy backbones
-    # (convnext) keep the effective batch without the VRAM.
-    acc_grad_iter: int = Field(default=1, ge=1, le=64)
-    num_epochs: int = Field(default=50, ge=1, le=1000)
-    warm_up_epochs: int = Field(default=3, ge=0, le=100)
-    learning_rate: float = Field(default=0.0003, gt=0)
-    num_workers: int = Field(default=4, ge=0, le=32)
-    criterion: str = Field(default="map", pattern="^(map|loss)$")
-    start_val_epoch: int = Field(default=0, ge=0)
-    epoch_num_frames: int | None = Field(default=None, ge=1)
-    predict_location: bool = True
-    # Also learn WHICH PLAYER acted, from the actor-candidate sidecar the
-    # label snapshot carries. Rejected up front when the snapshot has no
-    # actor work — see the flag's use in the command builder.
-    predict_actor: bool = False
-    stop_vllm: bool = False
-
-    @model_validator(mode="after")
-    def _check_acc_grad_divides_batch(self) -> "ActionTrainBase":
-        if self.batch_size % self.acc_grad_iter != 0:
-            raise ValueError(
-                f"batch_size ({self.batch_size}) must be divisible by "
-                f"acc_grad_iter ({self.acc_grad_iter})"
-            )
-        return self
-
-
-class VnlActionTrainRequest(ActionTrainBase):
-    """Built-in VNL data owns its train/val split and has no camera-view mode."""
-
-    source: Literal["vnl_1_5"] = "vnl_1_5"
-
-
-class AnnotationActionTrainRequest(ActionTrainBase):
-    source: Literal["action_annotations"]
-    training_mode: Literal["split", "all", "holdout"] = "split"
-    val_ratio: float = Field(default=0.2, gt=0, lt=1)
-    split_seed: int = 42
-    # holdout mode: the exact videos to hold out as the validation set; every
-    # other labelled video trains. Entries may be the raw stem, `<stem>.mp4`, or
-    # `<stem>_actions.jsonl` — matched against the run-local label snapshot.
-    holdout_videos: list[str] = Field(default_factory=list)
-    # "all" trains every view together; "broadcast"/"sideline" restrict to one
-    # camera view (labels carry a camera_view tag from prepare_action_training_labels).
-    camera_view: Literal["all", "broadcast", "sideline"] = "all"
-
-
-ActionTrainRequest = Annotated[
-    VnlActionTrainRequest | AnnotationActionTrainRequest,
-    Field(discriminator="source"),
-]
 
 
 def spot_path(path: str | Path) -> Path:

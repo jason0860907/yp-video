@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, patch
 from fastapi import HTTPException
 from pydantic import TypeAdapter
 
+from yp_video.action.spot_runs import _normalize_metrics_entry
 from yp_video.actor import labels as actor_labels
 from yp_video.actor import review as actor_review
 from yp_video.actor.labels import ActorLabel, ActorVerdict
@@ -20,7 +21,6 @@ from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import write_jsonl
 from yp_video.extraction import actor_fix, done
 from yp_video.person.detector import PersonBox
-from yp_video.action.spot_runs import _normalize_metrics_entry
 from yp_video.web.routers import actor_association as router
 
 

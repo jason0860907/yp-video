@@ -12,10 +12,8 @@ from __future__ import annotations
 
 import re
 import time
-from typing import Literal
 
 from fastapi import APIRouter, HTTPException
-from pydantic import Field
 
 from yp_video.action import training
 from yp_video.actor import labels as association_labels
@@ -23,17 +21,19 @@ from yp_video.actor import spot_associate
 from yp_video.config import ACTION_CHECKPOINTS_DIR, SPOT_DIR, SPOT_PYTHON
 from yp_video.contracts.action import FUSION_PACKAGE_TYPE
 from yp_video.web.action_training import (
-    AnnotationActionTrainRequest,
     TrainingFlavor,
     start_training_job,
 )
 from yp_video.web.jobs import JobSummary, JobType, job_manager
 from yp_video.web.r2_client import remote_cut_path
-from yp_video.web.schemas import StrictModel
 from yp_video.web.spot_runs import (
     SPOT_INIT_PACKAGE_TYPES,
     checkpoint_package_options,
     performance_payload,
+)
+from yp_video.web.train_requests import (
+    AnnotationActionTrainRequest,
+    FusionTrainRequest,
 )
 
 router = APIRouter()
@@ -151,38 +151,6 @@ def performance(run: str | None = None) -> dict:
     return performance_payload(
         ACTION_CHECKPOINTS_DIR, run, package_types=(FUSION_PACKAGE_TYPE,)
     )
-
-
-class FusionTrainRequest(StrictModel):
-    recipe: Literal[
-        "association_action",
-        "rally_action",
-        "association_action_rally",
-    ] = ASSOCIATION_ACTION
-    run_name: str | None = None
-    init_checkpoint: str | None = None
-    validation_mode: Literal["manual", "ratio"] = "ratio"
-    validation_videos: list[str] = Field(default_factory=list)
-    dataset_scope: Literal["joint_only", "partial_labels"] = "joint_only"
-    camera_view: Literal["all", "broadcast", "sideline"] = "all"
-    audio_backend: Literal["logmel", "none"] = "logmel"
-    feature_arch: str = "rny008_gsm"
-    temporal_arch: str = "gru"
-    clip_len: int = Field(default=64, ge=8, le=256)
-    sample_fps: float = Field(default=30.0, ge=0, le=120)
-    batch_size: int = Field(default=8, ge=1, le=64)
-    acc_grad_iter: int = Field(default=1, ge=1, le=64)
-    num_epochs: int = Field(default=50, ge=1, le=1000)
-    warm_up_epochs: int = Field(default=3, ge=0, le=100)
-    learning_rate: float = Field(default=0.00003, gt=0)
-    num_workers: int = Field(default=4, ge=0, le=32)
-    criterion: Literal["map", "loss"] = "map"
-    start_val_epoch: int = Field(default=0, ge=0)
-    epoch_num_frames: int | None = Field(default=None, ge=1)
-    val_ratio: float = Field(default=0.2, gt=0, lt=1)
-    split_seed: int = 42
-    gpu: int = Field(default=0, ge=0, le=7)
-    stop_vllm: bool = False
 
 
 @router.post("/train", response_model=JobSummary)

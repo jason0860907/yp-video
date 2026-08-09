@@ -20,7 +20,7 @@ from typing import Annotated, Literal
 from urllib.parse import unquote
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from yp_video.action import prelabel
 from yp_video.action.frames import ensure_action_frame_caches
@@ -75,6 +75,7 @@ from yp_video.web.spot_runs import (
     export_checkpoint_package,
     performance_payload,
 )
+from yp_video.web.train_requests import AssociationTrainRequest
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -192,46 +193,6 @@ async def performance() -> dict:
         sources,
         compute,
     )
-
-
-class AssociationTrainRequest(BaseModel):
-    """An independent event-level association experiment."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    train_videos: list[str] = Field(min_length=1)
-    val_videos: list[str] = Field(min_length=1)
-    run_name: str | None = None
-    init_checkpoint: str | None = None
-    gpu: int = Field(default=0, ge=0, le=7)
-    num_epochs: int = Field(default=40, ge=1, le=1000)
-    batch_size: int = Field(default=8, ge=1, le=64)
-    learning_rate: float = Field(default=0.0003, gt=0)
-    warm_up_epochs: int = Field(default=3, ge=0, le=100)
-    backbone: Literal[
-        "rny002",
-        "rny002_gsm",
-        "rny008",
-        "rny008_gsm",
-        "rn18",
-        "rn50",
-    ] = "rny002"
-    backbone_learning_rate: float = Field(default=0.00003, gt=0)
-    crop_dim: int = Field(default=224, ge=64, le=512)
-    num_workers: int = Field(default=4, ge=0, le=32)
-    stop_vllm: bool = False
-
-    @model_validator(mode="after")
-    def distinct_splits(self):
-        train = set(self.train_videos)
-        validation = set(self.val_videos)
-        overlap = sorted(train & validation)
-        if overlap:
-            raise ValueError(
-                "Train and validation videos must be disjoint: "
-                + ", ".join(overlap)
-            )
-        return self
 
 
 def _association_training_items(
