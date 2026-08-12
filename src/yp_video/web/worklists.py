@@ -21,7 +21,7 @@ from pathlib import Path
 
 from yp_video.action.frames import inspect_action_frame_cache
 from yp_video.actor import review as actor_review
-from yp_video.config import cut_kind_of, find_cut, iter_all_cuts
+from yp_video.config import cut_kind_of
 from yp_video.core import label_done
 from yp_video.core.jsonl import read_jsonl_header
 from yp_video.core.rallies import RALLY_SOURCES, rally_sources
@@ -31,7 +31,7 @@ from yp_video.extraction import store as extraction_store
 from yp_video.extraction.prerequisites import prerequisites
 from yp_video.reid import store as reid_store
 from yp_video.web.action_annotations import annotation_state
-from yp_video.web.r2_client import r2_client
+from yp_video.web.r2_client import all_cut_paths, r2_client, resolve_cut
 
 log = logging.getLogger(__name__)
 
@@ -79,7 +79,7 @@ def rally_results() -> list[dict]:
             log.warning("R2 listing failed; remote annotations will look absent")
 
     def _kind(stem: str) -> str:
-        cut = find_cut(f"{stem}.mp4")
+        cut = resolve_cut(f"{stem}.mp4")
         return cut_kind_of(cut) if cut else "broadcast"
 
     def _row(name: str, tags: set[str]) -> dict:
@@ -101,9 +101,9 @@ def rally_results() -> list[dict]:
 
 
 def action_videos() -> list[dict]:
-    """Every cut and where its action labeling stands."""
+    """Every cut, local and R2-only, and where its action labeling stands."""
     results = []
-    for video in sorted(iter_all_cuts(), key=lambda p: p.name):
+    for video in sorted(all_cut_paths(), key=lambda p: p.name):
         state = annotation_state(video.name)
         has_active = state.active is not None or state.active_error is not None
         # -1 marks a file that exists but fails to parse.
@@ -145,7 +145,7 @@ def association_videos() -> list[dict]:
     dead end — the pipeline chips on those pages are where the gap belongs.
     """
     results = []
-    for path in sorted(iter_all_cuts(), key=lambda p: p.name):
+    for path in sorted(all_cut_paths(), key=lambda p: p.name):
         # Cheapest gate first: this walks every cut on every page load, and
         # only a minority have been extracted at all.
         records = extraction_store.records_path(path.stem)
@@ -195,7 +195,7 @@ def association_videos() -> list[dict]:
 def reid_videos() -> list[dict]:
     """Extracted videos and how far their player naming has got."""
     results = []
-    for f in sorted(iter_all_cuts(), key=lambda p: p.name):
+    for f in sorted(all_cut_paths(), key=lambda p: p.name):
         events = extraction_pipeline.load_events(f.stem)
         if not events:
             continue

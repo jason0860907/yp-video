@@ -53,7 +53,7 @@ from yp_video.web.job_helpers import (
     update_batch_item,
 )
 from yp_video.web.jobs import JobSummary, JobType, job_manager
-from yp_video.web.r2_client import serve_video_or_r2_redirect, sync_to_r2
+from yp_video.web.r2_client import resolve_cut, serve_video_or_r2_redirect, sync_to_r2
 from yp_video.web.schemas import StrictModel
 
 log = logging.getLogger(__name__)
@@ -357,7 +357,7 @@ def set_done(name: str, req: DoneRequest) -> dict:
     Deliberately not tied to saving: Save writes the human store while this
     flag is the separate "I'm finished" claim.
     """
-    video = find_cut(Path(unquote(name)).name)
+    video = resolve_cut(Path(unquote(name)).name)
     if video is None:
         raise HTTPException(404, "Video not found")
     flags = label_done.set_done(video.stem, "action", req.done)
@@ -376,7 +376,7 @@ async def get_annotations(
     the video does not have is a 404, not an empty editor.
     """
     decoded = unquote(name)
-    video = find_cut(Path(decoded).name)
+    video = resolve_cut(Path(decoded).name)
     if video is None:
         raise HTTPException(404, "Video not found")
 
@@ -435,7 +435,7 @@ async def get_annotations(
 @router.get("/waveform/{name:path}")
 async def get_waveform(name: str, points: int = Query(default=9600, ge=200, le=96000)) -> dict:
     decoded = unquote(name)
-    video = find_cut(Path(decoded).name)
+    video = resolve_cut(Path(decoded).name)
     if video is None:
         raise HTTPException(404, "Video not found")
     return await asyncio.to_thread(audio_waveform, video, points)
@@ -443,7 +443,7 @@ async def get_waveform(name: str, points: int = Query(default=9600, ge=200, le=9
 
 @router.post("/annotations")
 async def save_annotations(req: SaveActionAnnotationsRequest) -> dict:
-    video = find_cut(Path(req.video).name)
+    video = resolve_cut(Path(req.video).name)
     if video is None:
         raise HTTPException(404, "Video not found")
 
@@ -796,7 +796,7 @@ def export_dataset() -> Response:
 @router.get("/video/{path:path}")
 def stream_video(path: str):
     decoded_path = unquote(path)
-    video_path = find_cut(Path(decoded_path).name)
+    video_path = resolve_cut(Path(decoded_path).name)
     if video_path is None:
         raise HTTPException(404, "Video not found")
     response = serve_video_or_r2_redirect(video_path, CUT_R2_CATEGORIES)

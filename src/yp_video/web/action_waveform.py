@@ -19,6 +19,7 @@ from yp_video.core.ffmpeg import (
     parse_optional_float,
     probe_video_metadata,
 )
+from yp_video.web.r2_client import cut_media_source, remote_cut_fingerprint
 
 log = logging.getLogger(__name__)
 
@@ -27,20 +28,33 @@ AUDIO_WAVEFORM_CHANNELS = 2
 AUDIO_WAVEFORM_CACHE_VERSION = 7
 
 
-def video_metadata(path: Path) -> dict:
-    """Probe ``{fps, duration, num_frames, start_time}``; HTTP 502 on failure."""
+def _media_source(video: Path) -> str:
+    """The cut's local file or a presigned R2 URL; HTTP 404 when neither exists."""
+    source = cut_media_source(video)
+    if source is None:
+        raise HTTPException(404, "Video not found")
+    return source
+
+
+def _probe_metadata(source: str) -> dict:
     try:
-        return probe_video_metadata(path)
+        return probe_video_metadata(source)
     except FFmpegError as exc:
         raise HTTPException(502, str(exc)) from exc
 
 
-def _timeline_metadata(path: Path, video_meta: dict) -> dict:
+def video_metadata(path: Path) -> dict:
+    """Probe ``{fps, duration, num_frames, start_time}`` from the local file
+    or its R2 copy; HTTP 404 when the cut exists nowhere, 502 on probe failure."""
+    return _probe_metadata(_media_source(path))
+
+
+def _timeline_metadata(source: str, video_meta: dict) -> dict:
     cmd = [
         "ffprobe", "-v", "error",
         "-show_entries", "format=start_time,duration:stream=codec_type,start_time,duration",
         "-of", "json",
-        str(path),
+        source,
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if result.returncode != 0:
@@ -72,9 +86,13 @@ def _safe_cache_stem(name: str) -> str:
 
 
 def _waveform_cache_path(video: Path, points: int) -> Path:
-    stat = video.stat()
+    if video.exists():
+        stat = video.stat()
+        fingerprint = f"{stat.st_size}:{stat.st_mtime_ns}"
+    else:
+        fingerprint = remote_cut_fingerprint(video.name) or "remote"
     cache_key = hashlib.sha1(
-        f"v{AUDIO_WAVEFORM_CACHE_VERSION}:{video.name}:{stat.st_size}:{stat.st_mtime_ns}:{points}".encode("utf-8"),
+        f"v{AUDIO_WAVEFORM_CACHE_VERSION}:{video.name}:{fingerprint}:{points}".encode("utf-8"),
         usedforsecurity=False,
     ).hexdigest()[:16]
     return ACTION_WAVEFORMS_DIR / f"{_safe_cache_stem(video.stem)}-v{AUDIO_WAVEFORM_CACHE_VERSION}-{cache_key}-{points}.json"
@@ -105,8 +123,9 @@ def _write_waveform_cache(path: Path, payload: dict) -> None:
 
 
 def audio_waveform(video: Path, points: int) -> dict:
-    meta = video_metadata(video)
-    timeline = _timeline_metadata(video, meta)
+    source = _media_source(video)
+    meta = _probe_metadata(source)
+    timeline = _timeline_metadata(source, meta)
     cache_path = _waveform_cache_path(video, points)
     if cache_path.exists():
         try:
@@ -134,7 +153,7 @@ def audio_waveform(video: Path, points: int) -> dict:
     reached_target = samples_seen >= target_samples
     stderr = ""
     cmd = [
-        "ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(video),
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-i", source,
         "-vn", "-ac", str(AUDIO_WAVEFORM_CHANNELS), "-ar",
         str(AUDIO_WAVEFORM_SAMPLE_RATE), "-f", "s16le", "-",
     ]

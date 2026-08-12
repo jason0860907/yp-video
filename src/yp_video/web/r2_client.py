@@ -7,7 +7,7 @@ import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from yp_video.config import CUT_KINDS, load_r2_env
+from yp_video.config import CUT_KINDS, CutKind, find_cut, iter_all_cuts, load_r2_env
 
 log = logging.getLogger(__name__)
 
@@ -248,6 +248,18 @@ class R2Client:
 r2_client = R2Client()
 
 
+def _remote_cut_entry(name: str) -> tuple[CutKind, dict] | None:
+    """The R2 listing entry of a cut — its kind plus the object row — or None."""
+    if not r2_client.configured:
+        return None
+    for kind in CUT_KINDS.values():
+        key = f"{kind.r2_category}/{name}"
+        for obj in r2_client.list_objects_cached(f"{kind.r2_category}/", ttl=300.0):
+            if obj["key"] == key:
+                return kind, obj
+    return None
+
+
 def remote_cut_path(name: str) -> Path | None:
     """Canonical local path of a cut whose bytes live only in R2.
 
@@ -256,14 +268,63 @@ def remote_cut_path(name: str) -> Path | None:
     ``resolve_missing`` hook of ``action.training`` — training reads the
     video's frame cache, not the file itself.
     """
-    if not r2_client.configured:
+    entry = _remote_cut_entry(name)
+    return entry[0].local_dir / name if entry else None
+
+
+def resolve_cut(name: str) -> Path | None:
+    """The web layer's ``find_cut``: canonical path of a cut whose bytes are
+    local or in R2. The returned path may not exist on disk."""
+    return find_cut(name) or remote_cut_path(name)
+
+
+def all_cut_paths() -> list[Path]:
+    """Every cut video, local and R2-only, as canonical local paths.
+
+    The video universe the work lists iterate — labeling must not depend on
+    which machine holds the bytes. Local files win on name collisions; an
+    R2-only cut resolves under its kind's local dir (see ``remote_cut_path``).
+    An R2 outage degrades to the local list rather than taking the page down.
+    """
+    cuts = list(iter_all_cuts())
+    seen = {p.name for p in cuts}
+    if r2_client.configured:
+        for kind in CUT_KINDS.values():
+            try:
+                objects = r2_client.list_objects_cached(f"{kind.r2_category}/", ttl=300.0)
+            except Exception:  # noqa: BLE001
+                log.warning("R2 listing failed; remote cuts will look absent")
+                break
+            for obj in objects:
+                name = Path(obj["key"]).name
+                if name.endswith(".mp4") and name not in seen:
+                    seen.add(name)
+                    cuts.append(kind.local_dir / name)
+    return cuts
+
+
+def remote_cut_fingerprint(name: str) -> str | None:
+    """``size:last_modified`` of a cut's R2 copy — cache-key material for
+    derived artifacts of a cut that has no local file to ``stat()``."""
+    entry = _remote_cut_entry(name)
+    return f"{entry[1]['size']}:{entry[1]['last_modified']}" if entry else None
+
+
+def cut_media_source(path: Path) -> str | None:
+    """An ffmpeg/ffprobe-readable source for a cut: the local file when it
+    exists, else a presigned URL to its R2 copy, else None.
+
+    24h expiry for the same reason as ``serve_video_or_r2_redirect`` — one
+    URL must survive a whole labeling session.
+    """
+    if path.exists():
+        return str(path)
+    entry = _remote_cut_entry(path.name)
+    if entry is None:
         return None
-    for kind in CUT_KINDS.values():
-        key = f"{kind.r2_category}/{name}"
-        objects = r2_client.list_objects_cached(f"{kind.r2_category}/", ttl=300.0)
-        if any(o["key"] == key for o in objects):
-            return kind.local_dir / name
-    return None
+    return r2_client.generate_presigned_url(
+        f"{entry[0].r2_category}/{path.name}", expires=24 * 3600
+    )
 
 
 def serve_video_or_r2_redirect(

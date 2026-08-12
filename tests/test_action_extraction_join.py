@@ -144,7 +144,7 @@ class AssociationProgressTests(unittest.TestCase):
             )
 
             with (
-                patch.object(worklists, "iter_all_cuts", return_value=[video]),
+                patch.object(worklists, "all_cut_paths", return_value=[video]),
                 patch.object(store, "records_path", return_value=records),
                 patch.object(store, "action_annotation_path", return_value=action),
                 patch.object(
@@ -214,7 +214,7 @@ class AssociationProgressTests(unittest.TestCase):
             def listed(pipeline: Prerequisites, record_file: Path) -> list[dict]:
                 with (
                     patch.object(
-                        worklists, "iter_all_cuts", return_value=[video]
+                        worklists, "all_cut_paths", return_value=[video]
                     ),
                     patch.object(
                         worklists, "prerequisites", return_value=pipeline
