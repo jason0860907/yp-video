@@ -23,6 +23,36 @@ from yp_video.contracts.action import ACTION_PACKAGE_TYPE, FUSION_PACKAGE_TYPE
 log = logging.getLogger(__name__)
 
 
+# ── Run naming ────────────────────────────────────────────────────
+
+def spot_run_name(*, view: str, task: str, feature_arch: str) -> str:
+    """Canonical run name {date}_{view}_{task}_{model}.
+
+    Mirrors yp-spot's ``RunName`` (its env is separate, so importing it is
+    not an option): the model token is the backbone base with any temporal
+    suffix stripped, and the "all" view is spelled out as "all_view".
+    Tasks: ``act`` action spotting, ``ass_act`` +actor, ``ral`` rally.
+    """
+    model = feature_arch
+    for suffix in ("_tsm", "_gsm"):
+        model = model.removesuffix(suffix)
+    view = "all_view" if view == "all" else view
+    return f"{datetime.now():%Y%m%d}_{view}_{task}_{model}"
+
+
+def dedupe_run_name(name: str, exp_dir: Path) -> str:
+    """First of name, name-2, name-3... without a run dir in ``exp_dir``.
+
+    The canonical name carries only the date, so a same-day rerun with the
+    same config would land in the finished run's directory and clobber it.
+    """
+    candidate, i = name, 1
+    while (exp_dir / candidate).exists():
+        i += 1
+        candidate = f"{name}-{i}"
+    return candidate
+
+
 def load_json_file(path: Path) -> dict | list | None:
     if not path.exists():
         return None

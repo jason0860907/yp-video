@@ -14,9 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import re
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -56,7 +54,9 @@ from yp_video.web.spot_runs import (
     PackageExporter,
     TrainProgress,
     export_checkpoint_package,
+    dedupe_run_name,
     make_train_parsers,
+    spot_run_name,
     validate_checkpoint_dir,
 )
 from yp_video.web.train_requests import (
@@ -109,26 +109,16 @@ def default_dataset(source: str) -> str:
     return "vnl_1.5" if source == "vnl_1_5" else "yp_actions"
 
 
-def _safe_run_name(dataset: str) -> str:
-    return re.sub(r"[^A-Za-z0-9_.-]+", "_", dataset).strip("._") or "actions"
-
-
-def _audio_tag(req: ActionTrainBase) -> str:
-    """Run-name fragment marking the modality: 'visual' or 'fusion'.
-
-    Makes a run dir self-describing (e.g. yp_actions_fusion_<stamp> vs
-    yp_actions_visual_<stamp>) so visual-only and audio late-fusion runs are
-    distinguishable at a glance in exp/ and action-checkpoints/.
-    """
-    return "visual" if req.audio_backend == "none" else "fusion"
-
-
-def _resolve_save_dir(req: ActionTrainRequest, dataset: str | None = None) -> Path:
-    dataset = dataset or req.dataset or default_dataset(req.source)
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+def _resolve_save_dir(req: ActionTrainRequest) -> Path:
+    if req.save_dir:
+        return spot_path(req.save_dir)
     view = req.camera_view if isinstance(req, AnnotationActionTrainRequest) else "all"
-    name = f"{_safe_run_name(dataset)}_{view}_{_audio_tag(req)}_{stamp}"
-    return spot_path(req.save_dir or (Path("exp") / name))
+    name = spot_run_name(
+        view=view,
+        task="ass_act" if req.predict_actor else "act",
+        feature_arch=req.feature_arch,
+    )
+    return SPOT_DIR / "exp" / dedupe_run_name(name, SPOT_DIR / "exp")
 
 
 def _action_checkpoint_path(path: str | Path) -> Path:
@@ -270,7 +260,7 @@ def _build_command(
     else:
         init_checkpoint = None
 
-    save_dir = save_dir or _resolve_save_dir(req, dataset)
+    save_dir = save_dir or _resolve_save_dir(req)
     checkpoint_dir = checkpoint_dir or _resolve_checkpoint_dir(req, save_dir=save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
 
@@ -409,7 +399,7 @@ async def start_training_job(
     on its page, including action pre-annotations.
     """
     dataset = req.dataset or default_dataset(req.source)
-    save_dir = _resolve_save_dir(req, dataset)
+    save_dir = _resolve_save_dir(req)
     checkpoint_dir = _resolve_checkpoint_dir(req, save_dir=save_dir)
     initial_params = {
         "source": req.source,

@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -42,9 +41,11 @@ from yp_video.web.spot_runs import (
     PackageExporter,
     TrainProgress,
     checkpoint_package_options,
+    dedupe_run_name,
     export_checkpoint_package,
     make_train_parsers,
     performance_payload,
+    spot_run_name,
     validate_checkpoint_dir,
 )
 from yp_video.web.train_requests import RallyTrainRequest
@@ -52,7 +53,6 @@ from yp_video.web.train_requests import RallyTrainRequest
 log = logging.getLogger(__name__)
 router = APIRouter()
 
-RALLY_RUN_PREFIX = "yp_rally"
 SEGMENT_MAP_PATTERN = r"Segment mAP \(mean over tIoU\):\s*([0-9.]+)%"
 
 
@@ -60,9 +60,10 @@ def _resolve_save_dir(req: RallyTrainRequest) -> Path:
     if req.save_dir:
         path = Path(os.path.expanduser(req.save_dir))
         return path if path.is_absolute() else SPOT_DIR / path
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    name = f"{RALLY_RUN_PREFIX}_{req.camera_view}_fps{req.extract_fps:g}_{stamp}"
-    return SPOT_DIR / "exp" / name
+    name = spot_run_name(
+        view=req.camera_view, task="ral", feature_arch=req.feature_arch
+    )
+    return SPOT_DIR / "exp" / dedupe_run_name(name, SPOT_DIR / "exp")
 
 
 def _resolve_init_checkpoint(req: RallyTrainRequest) -> Path | None:

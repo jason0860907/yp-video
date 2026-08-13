@@ -11,7 +11,6 @@ trainers produced one fused checkpoint.
 from __future__ import annotations
 
 import re
-import time
 
 from fastapi import APIRouter, HTTPException
 
@@ -29,7 +28,9 @@ from yp_video.web.r2_client import remote_cut_path
 from yp_video.web.spot_runs import (
     SPOT_INIT_PACKAGE_TYPES,
     checkpoint_package_options,
+    dedupe_run_name,
     performance_payload,
+    spot_run_name,
 )
 from yp_video.web.train_requests import (
     AnnotationActionTrainRequest,
@@ -170,9 +171,11 @@ async def train(req: FusionTrainRequest) -> dict:
             f"accumulation steps ({req.acc_grad_iter})",
         )
 
-    name = (
-        req.run_name
-        or f"yp_fusion_association_action_{time.strftime('%Y%m%d-%H%M%S')}"
+    name = req.run_name or dedupe_run_name(
+        spot_run_name(
+            view=req.camera_view, task="ass_act", feature_arch=req.feature_arch
+        ),
+        SPOT_DIR / "exp",
     )
     if not re.fullmatch(r"[A-Za-z0-9_.-]+", name) or name.startswith("."):
         raise HTTPException(
