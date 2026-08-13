@@ -34,9 +34,16 @@ const pointCount = (durationSeconds: number) =>
 export function useActionWaveform() {
   const [waveform, setWaveform] = useState<WaveformData>(EMPTY_WAVEFORM);
   const requestRevision = useRef(0);
+  const abortRef = useRef<AbortController | null>(null);
 
   const loadWaveform = useCallback(async (video: string, duration: number) => {
     const revision = ++requestRevision.current;
+    // Abort, not just ignore: a hanging waveform request holds one of the
+    // browser's six per-origin connections, and enough of them stall every
+    // later API call the page makes.
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
     setWaveform({ ...EMPTY_WAVEFORM, video, loading: true });
     try {
       const points = pointCount(duration);
@@ -45,7 +52,9 @@ export function useActionWaveform() {
         duration?: number;
         peaks?: number[];
         rms?: number[];
-      }>(`${API.actionAnnotate.waveform(video)}?points=${points}`);
+      }>(`${API.actionAnnotate.waveform(video)}?points=${points}`, {
+        signal: controller.signal,
+      });
       if (revision !== requestRevision.current) return;
       const peaks = Array.isArray(data.peaks)
         ? data.peaks.map((value) => clamp(Number(value) || 0, 0, 1))

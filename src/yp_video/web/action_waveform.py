@@ -19,7 +19,7 @@ from yp_video.core.ffmpeg import (
     parse_optional_float,
     probe_video_metadata,
 )
-from yp_video.web.r2_client import cut_media_source, remote_cut_fingerprint
+from yp_video.web.r2_client import cut_media_source
 
 log = logging.getLogger(__name__)
 
@@ -86,13 +86,9 @@ def _safe_cache_stem(name: str) -> str:
 
 
 def _waveform_cache_path(video: Path, points: int) -> Path:
-    if video.exists():
-        stat = video.stat()
-        fingerprint = f"{stat.st_size}:{stat.st_mtime_ns}"
-    else:
-        fingerprint = remote_cut_fingerprint(video.name) or "remote"
+    stat = video.stat()
     cache_key = hashlib.sha1(
-        f"v{AUDIO_WAVEFORM_CACHE_VERSION}:{video.name}:{fingerprint}:{points}".encode("utf-8"),
+        f"v{AUDIO_WAVEFORM_CACHE_VERSION}:{video.name}:{stat.st_size}:{stat.st_mtime_ns}:{points}".encode("utf-8"),
         usedforsecurity=False,
     ).hexdigest()[:16]
     return ACTION_WAVEFORMS_DIR / f"{_safe_cache_stem(video.stem)}-v{AUDIO_WAVEFORM_CACHE_VERSION}-{cache_key}-{points}.json"
@@ -123,7 +119,15 @@ def _write_waveform_cache(path: Path, payload: dict) -> None:
 
 
 def audio_waveform(video: Path, points: int) -> dict:
-    source = _media_source(video)
+    # Building a waveform streams the ENTIRE video through ffmpeg. For a cut
+    # whose bytes live only in R2 that is minutes of download holding the
+    # request — and one of the browser's six per-origin connections — open,
+    # which stalls every later request the Label page makes. No audio lane
+    # beats an unusable page; the file appearing locally upgrades this on
+    # the next request.
+    if not video.exists():
+        return _empty_waveform(video, {}, reason="remote_video")
+    source = str(video)
     meta = _probe_metadata(source)
     timeline = _timeline_metadata(source, meta)
     cache_path = _waveform_cache_path(video, points)

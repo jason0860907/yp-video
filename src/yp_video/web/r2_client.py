@@ -307,13 +307,6 @@ def all_cut_paths() -> list[Path]:
     return cuts
 
 
-def remote_cut_fingerprint(name: str) -> str | None:
-    """``size:last_modified`` of a cut's R2 copy — cache-key material for
-    derived artifacts of a cut that has no local file to ``stat()``."""
-    entry = _remote_cut_entry(name)
-    return f"{entry[1]['size']}:{entry[1]['last_modified']}" if entry else None
-
-
 def cut_media_source(path: Path) -> str | None:
     """An ffmpeg/ffprobe-readable source for a cut: the local file when it
     exists, else a presigned URL to its R2 copy, else None.
