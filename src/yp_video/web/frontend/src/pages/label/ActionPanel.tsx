@@ -9,7 +9,7 @@
 
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type SyntheticEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { API, ApiError, apiFetch, apiUrl, errMsg } from '@/lib/api';
+import { API, apiFetch, apiUrl, errMsg } from '@/lib/api';
 import { fieldCls } from '@/components/form/Field';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
@@ -76,9 +76,6 @@ export function ActionPanel({ video, source = 'auto', onLoaded, registerGuard, c
   // Every persisted editor mutation advances this counter. Saves capture it
   // before sending so an older response can never mark newer work clean.
   const editRevision = useRef(0);
-  // The human store's revision our edits are based on (from load / last save).
-  // Sent with every save; the server 409s when another writer got there first.
-  const storeRevision = useRef<string | null>(null);
   const [selectedIdx, setSelectedIdx] = useState(-1);
   const [selectedRallyId, setSelectedRallyId] = useState<number | 'all'>('all');
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -311,7 +308,6 @@ export function ActionPanel({ video, source = 'auto', onLoaded, registerGuard, c
       );
       onLoaded?.(data.loaded_source ?? 'none');
       const next = normalizeActionEditor(data, labels);
-      storeRevision.current = data.revision ?? null;
       // Never reuse a revision: a response from the previous video must not
       // be able to compare equal and mark this editor clean.
       editRevision.current += 1;
@@ -401,17 +397,15 @@ export function ActionPanel({ video, source = 'auto', onLoaded, registerGuard, c
         return;
       }
       const video = snapshot.video;
-      const saved = await apiFetch<{ revision?: string | null }>(API.actionAnnotate.annotations, {
+      await apiFetch(API.actionAnnotate.annotations, {
         method: 'POST',
         body: {
           video,
           fps: snapshot.fps,
           num_frames: snapshot.numFrames,
           events: snapshot.events,
-          revision: storeRevision.current,
         },
       });
-      storeRevision.current = saved.revision ?? null;
       // A request only owns the revision it sent. Mid-request edits retain
       // dirty=true; useSerializedSave queues the latest.
       if (editRevision.current === revision) {
@@ -427,25 +421,15 @@ export function ActionPanel({ video, source = 'auto', onLoaded, registerGuard, c
       }
     },
     onError: (e) => {
-      // Another writer (tab, machine, unload flush) saved first: the server
-      // copy is the newer truth — reload it rather than blind-overwriting.
-      if (e instanceof ApiError && e.status === 409) {
-        toast.error('標註已被其他工作階段更新,重新載入伺服器版本');
-        void load(video);
-        return;
-      }
       // Dirty state deliberately survives a failed request.
       toast.error(`Save failed: ${errMsg(e)}`);
     },
   });
 
   // ── Flush unsaved work when the page goes away ──
-  // The warn and the flush are separate events on purpose: beforeunload
-  // fires BEFORE the user answers the leave dialog, so a flush there would
-  // advance the store's revision under a page that then stays — and its
-  // next autosave would 409. pagehide only fires once leaving is settled.
-  // keepalive lets the request outlive the tab; the server's revision check
-  // still applies, so a stale flush can never clobber a newer save.
+  // beforeunload only warns (it fires before the leave dialog is answered);
+  // pagehide fires once leaving is settled, and keepalive lets the flush
+  // request outlive the tab.
   useEffect(() => {
     const warn = (e: BeforeUnloadEvent) => {
       const cur = edRef.current;
@@ -463,7 +447,6 @@ export function ActionPanel({ video, source = 'auto', onLoaded, registerGuard, c
           fps: cur.fps,
           num_frames: cur.numFrames,
           events: cur.events,
-          revision: storeRevision.current,
         }),
       });
     };

@@ -1,15 +1,8 @@
-"""The two rules that keep hand-made action labels safe on disk.
+"""The rule that keeps hand-made action labels safe on disk.
 
-Both exist because a real revert happened: a stale writer (a leftover browser
-draft, a second tab, an unload flush racing a later save) blind-overwrote a
-newer annotation file, and a prelabel run with overwrite deleted the human
-store outright.
-
-1. Saving is optimistic-concurrency-checked: every save carries the store
-   revision (the file's mtime_ns) it was based on; a mismatch is a 409, never
-   an overwrite.
-2. Prelabel writes machine output only. The human store neither gates a
-   re-run nor is ever deleted by one.
+A prelabel run with overwrite once deleted the human store outright.
+Prelabel writes machine output only: the human store neither gates a
+re-run nor is ever deleted by one.
 """
 
 from __future__ import annotations
@@ -46,36 +39,6 @@ def scratch_stores():
             patch.object(action_annotate, "sync_to_r2", lambda *a, **k: None),
         ):
             yield ann_dir, pre_dir
-
-
-def save_request(revision: str | None) -> action_annotate.SaveActionAnnotationsRequest:
-    return action_annotate.SaveActionAnnotationsRequest(
-        video="match.mp4", fps=30.0, num_frames=100, events=[], revision=revision
-    )
-
-
-class SaveRevisionTests(unittest.IsolatedAsyncioTestCase):
-    async def test_stale_revision_is_rejected_not_overwritten(self) -> None:
-        with scratch_stores() as (ann_dir, _):
-            first = await action_annotate.save_annotations(save_request(None))
-            self.assertIsNotNone(first["revision"])
-            self.assertTrue((ann_dir / "match_actions.jsonl").exists())
-
-            # A writer still claiming "no file yet" lost the race: 409.
-            with self.assertRaises(HTTPException) as ctx:
-                await action_annotate.save_annotations(save_request(None))
-            self.assertEqual(ctx.exception.status_code, 409)
-
-            # The current revision saves, and the token advances with the file.
-            second = await action_annotate.save_annotations(
-                save_request(first["revision"])
-            )
-            self.assertIsNotNone(second["revision"])
-
-            # The superseded token is now stale too.
-            with self.assertRaises(HTTPException) as ctx:
-                await action_annotate.save_annotations(save_request(first["revision"]))
-            self.assertEqual(ctx.exception.status_code, 409)
 
 
 class PrelabelHumanStoreTests(unittest.TestCase):

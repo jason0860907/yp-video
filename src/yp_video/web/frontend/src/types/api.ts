@@ -303,9 +303,6 @@ export interface ActionAnnotationData {
   num_frames?: number;
   rallies?: Array<{ rally_id?: unknown; start?: unknown; end?: unknown; label?: string }>;
   events?: Array<Record<string, unknown>>;
-  /** Human-store revision for optimistic concurrency (null = file absent).
-   *  Echo it back on save; a mismatch is a 409. */
-  revision?: string | null;
 }
 
 /** Decoded audio envelope for the Action Label waveform lane. */
