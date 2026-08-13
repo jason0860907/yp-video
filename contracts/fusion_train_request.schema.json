@@ -90,9 +90,12 @@
       "type": "string"
     },
     "feature_arch": {
-      "default": "rny008_gsm",
+      "default": "rny008_tv_gsm",
       "description": "Visual backbone.",
       "enum": [
+        "rny008_tv_gsm",
+        "rny008_tv_tsm",
+        "rny008_tv",
         "rny008_gsm",
         "rny008_tsm",
         "rny008",

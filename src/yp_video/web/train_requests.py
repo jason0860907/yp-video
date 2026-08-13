@@ -22,6 +22,7 @@ from yp_video.web.schemas import StrictModel
 #: tests/test_train_request_schemas.py cross-checks against the checkout.
 #: Best-first per base, GSM (the recommended shift) leading each group.
 FeatureArch = Literal[
+    "rny008_tv_gsm", "rny008_tv_tsm", "rny008_tv",
     "rny008_gsm", "rny008_tsm", "rny008",
     "rny002_gsm", "rny002_tsm", "rny002",
     "convnextt_dv3_gsm", "convnextt_dv3_tsm", "convnextt_dv3",
@@ -78,7 +79,7 @@ class RallyTrainRequest(StrictModel):
     )
     gpu: int = Field(default=0, ge=0, le=7, description="CUDA device index.")
     feature_arch: FeatureArch = Field(
-        default="rny008_gsm", description="Visual backbone."
+        default="rny008_tv_gsm", description="Visual backbone."
     )
     temporal_arch: TemporalArch = Field(
         default="gru", description="Temporal head over the frame features."
@@ -155,7 +156,7 @@ class ActionTrainBase(StrictModel):
         ),
     )
     feature_arch: FeatureArch = Field(
-        default="rny008_gsm", description="Visual backbone."
+        default="rny008_tv_gsm", description="Visual backbone."
     )
     temporal_arch: TemporalArch = Field(
         default="gru", description="Temporal head over the frame features."
@@ -325,7 +326,7 @@ class FusionTrainRequest(StrictModel):
         ),
     )
     feature_arch: FeatureArch = Field(
-        default="rny008_gsm", description="Visual backbone."
+        default="rny008_tv_gsm", description="Visual backbone."
     )
     temporal_arch: TemporalArch = Field(
         default="gru", description="Temporal head over the frame features."
@@ -419,6 +420,7 @@ class AssociationTrainRequest(StrictModel):
     backbone: Literal[
         "rny002",
         "rny008",
+        "rny008_tv",
         "convnextt_dv3",
         "convnextt2",
         "convnextt",

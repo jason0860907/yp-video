@@ -91,6 +91,7 @@
       "enum": [
         "rny002",
         "rny008",
+        "rny008_tv",
         "convnextt_dv3",
         "convnextt2",
         "convnextt",
