@@ -11,7 +11,7 @@ import zipfile
 from pathlib import Path
 from urllib.parse import unquote
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 from pydantic import Field
 from starlette.background import BackgroundTask
@@ -143,7 +143,7 @@ async def get_result(name: str, source: str | None = None) -> dict:
 
 
 @router.get("/video/{path:path}")
-def stream_video(path: str):
+def stream_video(path: str, request: Request):
     from yp_video.config import find_cut
     decoded_path = unquote(path)
     basename = Path(decoded_path).name
@@ -162,7 +162,9 @@ def stream_video(path: str):
                 alt = RAW_VIDEOS_DIR / decoded_path
                 if alt.exists():
                     video_path = alt
-    response = serve_video_or_r2_redirect(video_path, (*CUT_R2_CATEGORIES, "videos"))
+    response = serve_video_or_r2_redirect(
+        video_path, (*CUT_R2_CATEGORIES, "videos"), host=request.headers.get("host")
+    )
     if response:
         return response
     raise HTTPException(404, f"Video not found: {video_path}")

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import unquote
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import Field, field_validator
 
@@ -818,12 +818,14 @@ def export_dataset() -> Response:
 
 
 @router.get("/video/{path:path}")
-def stream_video(path: str):
+def stream_video(path: str, request: Request):
     decoded_path = unquote(path)
     video_path = resolve_cut(Path(decoded_path).name)
     if video_path is None:
         raise HTTPException(404, "Video not found")
-    response = serve_video_or_r2_redirect(video_path, CUT_R2_CATEGORIES)
+    response = serve_video_or_r2_redirect(
+        video_path, CUT_R2_CATEGORIES, host=request.headers.get("host")
+    )
     if response:
         return response
     raise HTTPException(404, "Video not found")

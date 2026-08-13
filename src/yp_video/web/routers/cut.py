@@ -2,7 +2,7 @@
 
 import asyncio
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from yp_video.config import (
@@ -47,8 +47,10 @@ def list_videos() -> list[str]:
 
 
 @router.get("/video/{name}")
-def stream_video(name: str):
-    response = serve_video_or_r2_redirect(RAW_VIDEOS_DIR / name, ("videos",))
+def stream_video(name: str, request: Request):
+    response = serve_video_or_r2_redirect(
+        RAW_VIDEOS_DIR / name, ("videos",), host=request.headers.get("host")
+    )
     if response:
         return response
     raise HTTPException(404, "Video not found")
