@@ -56,12 +56,14 @@ export function LabelPage() {
   // filter, so it renders beside the mode tabs instead of in the picker row.
   // Shared between rally and action (the two multi-store modes); the VLM
   // checkbox is rally's third store, exposed only there.
-  const [source, setSource] = useState<LabelSource>('auto');
+  const [source, setSource] = useState<LabelSource>('annotation');
   const [vlm, setVlm] = useState(false);
-  // What the panel's last load actually resolved to — the badge beside the
-  // select answers "am I looking at human labels or machine output", which
-  // the select alone can't under Auto. Panels report it after each load.
+  // What the panel's last load actually resolved to — 'none' means the
+  // selected store has no file for this video yet (an empty editor).
   const [loadedSource, setLoadedSource] = useState<LoadedSource | null>(null);
+  // Saving always writes the human store; if the user was viewing the
+  // machine store, follow the save there so the screen shows what's saved.
+  const onPanelSaved = () => setSource((s) => (s === 'pre-annotation' ? 'annotation' : s));
   useEffect(() => setLoadedSource(null), [video, mode, source, vlm]);
 
   const active = MODES.find((m) => m.key === mode) ?? RALLY_MODE;
@@ -323,6 +325,7 @@ export function LabelPage() {
           source={source}
           vlm={vlm}
           onLoaded={setLoadedSource}
+          onSaved={onPanelSaved}
           clock={clock}
         />
       ) : mode === 'action' ? (
@@ -330,6 +333,7 @@ export function LabelPage() {
           video={video}
           source={source}
           onLoaded={setLoadedSource}
+          onSaved={onPanelSaved}
           registerGuard={registerGuard}
           clock={clock}
         />

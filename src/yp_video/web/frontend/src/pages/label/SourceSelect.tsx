@@ -1,10 +1,9 @@
 /** The one Source select every multi-store mode shares (rally, action).
  *
- *  Three options both modes understand: Auto (annotation first, machine
- *  output as fallback), the saved Annotation, the machine Pre-Annotation.
- *  Rally's third store — the VLM pass — is the special case, exposed as a
- *  checkbox rather than a fourth option: checked, Pre-Annotation (and
- *  Auto's fallback) reads the VLM pass instead of the SPOT pass. */
+ *  Two options, no automatic fallback: the saved Annotation or the machine
+ *  Pre-Annotation — what you select is what you see. Rally's third store,
+ *  the VLM pass, is exposed as a checkbox rather than a third option:
+ *  checked, Pre-Annotation reads the VLM pass instead of the SPOT pass. */
 
 import { fieldCls } from '@/components/form/Field';
 import { cn } from '@/lib/cn';
@@ -36,7 +35,6 @@ export function SourceSelect({ source, onSource, vlm, onVlm, showVlm, loaded }: 
       <label className="inline-flex items-center gap-2">
         Source
         <select value={source} onChange={(e) => onSource(e.target.value as LabelSource)} className={cn(fieldCls, 'h-9 py-0')}>
-          <option value="auto">Auto</option>
           <option value="annotation">Annotation</option>
           <option value="pre-annotation">Pre-Annotation</option>
         </select>

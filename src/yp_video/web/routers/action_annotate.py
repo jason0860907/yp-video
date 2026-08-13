@@ -34,7 +34,6 @@ from yp_video.core.rallies import load_rallies
 from yp_video.web import worklists
 from yp_video.web.action_annotations import (
     annotation_path,
-    annotation_state,
     load_annotation,
     pre_annotation_path,
 )
@@ -364,13 +363,14 @@ def set_done(name: str, req: DoneRequest) -> dict:
 @router.get("/annotations/{name:path}")
 async def get_annotations(
     name: str,
-    source: Literal["annotation", "pre-annotation"] | None = None,
+    source: Literal["annotation", "pre-annotation"],
 ) -> dict:
-    """One video's action annotation, from the active store by default.
+    """One video's action annotation from exactly the requested store.
 
-    ``source`` forces one store — the saved annotation or the machine
-    pre-annotation — mirroring the rally editor's Source select; a store
-    the video does not have is a 404, not an empty editor.
+    Deterministic on purpose — the Source select means what it says, no
+    automatic fallback. A store with no file is an empty editor
+    (``loaded_source: null``), not an error: labeling can start from
+    scratch on either view.
     """
     decoded = unquote(name)
     video = resolve_cut(Path(decoded).name)
@@ -379,27 +379,16 @@ async def get_annotations(
 
     meta = await asyncio.to_thread(video_metadata, video)
     rallies = await asyncio.to_thread(_load_rallies, video)
-    # Shallow copies throughout — the cached dict is shared; every key below
-    # is reassigned wholesale, and _normalize_events copies each event.
-    if source is not None:
-        path = annotation_path(video.name) if source == "annotation" else pre_annotation_path(video.name)
-        forced = load_annotation(path)
-        if forced is None:
-            raise HTTPException(404, f"No {source} for this video")
+    path = annotation_path(video.name) if source == "annotation" else pre_annotation_path(video.name)
+    forced = await asyncio.to_thread(load_annotation, path)
+    if forced is not None:
+        # Shallow copies throughout — the cached dict is shared; every key
+        # below is reassigned wholesale, and _normalize_events copies each
+        # event.
         ann = dict(forced)
-        loaded = source
-    else:
-        state = annotation_state(video.name)
-        if state.active_error is not None:
-            raise state.active_error
-        ann = dict(state.active) if state.active is not None else None
-        loaded = None
-        if ann is not None:
-            loaded = "annotation" if state.active_path.parent == ACTION_ANNOTATIONS_DIR else "pre-annotation"
-    if ann is not None:
         # Which store this payload came from — the editor's "what am I
         # looking at" badge; the file's own provenance stays in `source`.
-        ann["loaded_source"] = loaded
+        ann["loaded_source"] = source
         ann.setdefault("video", video.stem)
         ann["source_video"] = video.name
         ann.setdefault("fps", meta["fps"])

@@ -99,45 +99,43 @@ def set_done(name: str, req: DoneRequest) -> dict:
 
 
 @router.get("/results/{name}")
-async def get_result(name: str, source: str | None = None) -> dict:
-    """Load one result file, preferring the highest-priority source.
+async def get_result(name: str, source: str) -> dict:
+    """Load one result file from exactly the requested store.
 
-    ``source`` (a tag from ``_SOURCES``) restricts the lookup to that one
-    location — used by the Load UI to open e.g. the VLM pass even when a SPOT
-    pass or a saved annotation also exists.
+    ``source`` is a tag from ``_SOURCES`` — deterministic on purpose, no
+    priority ladder: the editor's Source select means what it says. A store
+    with no file is a 404 (the frontend renders it as an empty editor).
     """
-    if source is not None and source not in _SOURCE_BY_TAG:
+    if source not in _SOURCE_BY_TAG:
         raise HTTPException(
             400, f"Unknown source {source!r}; expected one of {[s.tag for s in _SOURCES]}"
         )
-    candidates = (_SOURCE_BY_TAG[source],) if source else _SOURCES
+    candidate = _SOURCE_BY_TAG[source]
 
-    # Try local files first
-    for candidate in candidates:
-        path = candidate.directory / name
-        if path.exists() and path.is_file():
-            try:
-                data = _read_jsonl_as_dict(path)
-            except json.JSONDecodeError:
-                raise HTTPException(400, "Invalid JSONL file")
-            # The tag, not the r2_category path — this is the value the
-            # editor's Source select and loaded-source badge speak.
-            data["source"] = candidate.tag
-            return data
+    # Try the local file first
+    path = candidate.directory / name
+    if path.exists() and path.is_file():
+        try:
+            data = _read_jsonl_as_dict(path)
+        except json.JSONDecodeError:
+            raise HTTPException(400, "Invalid JSONL file")
+        # The tag, not the r2_category path — this is the value the
+        # editor's Source select and loaded-source badge speak.
+        data["source"] = candidate.tag
+        return data
 
     # Fallback: download from R2 and cache locally.
     # boto3 is synchronous, so run in a thread to avoid blocking the event loop.
     if r2_client.configured:
-        for candidate in candidates:
-            r2_key = f"{candidate.r2_category}/{name}"
-            exists = await asyncio.to_thread(r2_client.object_exists, r2_key)
-            if exists:
-                candidate.directory.mkdir(parents=True, exist_ok=True)
-                local_path = candidate.directory / name
-                await asyncio.to_thread(r2_client.download_file, r2_key, local_path)
-                data = _read_jsonl_as_dict(local_path)
-                data["source"] = candidate.r2_category
-                return data
+        r2_key = f"{candidate.r2_category}/{name}"
+        exists = await asyncio.to_thread(r2_client.object_exists, r2_key)
+        if exists:
+            candidate.directory.mkdir(parents=True, exist_ok=True)
+            local_path = candidate.directory / name
+            await asyncio.to_thread(r2_client.download_file, r2_key, local_path)
+            data = _read_jsonl_as_dict(local_path)
+            data["source"] = candidate.tag
+            return data
 
     raise HTTPException(404, "Results file not found")
 

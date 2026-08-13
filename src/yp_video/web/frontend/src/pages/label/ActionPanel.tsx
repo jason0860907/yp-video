@@ -62,7 +62,7 @@ export const ACTION_MODE: ModeDescriptor = {
   hasSources: true,
 };
 
-export function ActionPanel({ video, source = 'auto', onLoaded, registerGuard, clock }: { video: string; source?: LabelSource; onLoaded?: (s: LoadedSource) => void; registerGuard?: RegisterGuard; clock?: PlaybackClock }) {
+export function ActionPanel({ video, source = 'annotation', onLoaded, onSaved, registerGuard, clock }: { video: string; source?: LabelSource; onLoaded?: (s: LoadedSource) => void; onSaved?: () => void; registerGuard?: RegisterGuard; clock?: PlaybackClock }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const [pointMode, setPointMode] = useState(false);
@@ -304,7 +304,7 @@ export function ActionPanel({ video, source = 'auto', onLoaded, registerGuard, c
     if (!name) return;
     try {
       const data = await apiFetch<ActionAnnotationData>(
-        API.actionAnnotate.annotation(name, source === 'auto' ? {} : { source }),
+        API.actionAnnotate.annotation(name, { source }),
       );
       onLoaded?.(data.loaded_source ?? 'none');
       const next = normalizeActionEditor(data, labels);
@@ -415,6 +415,7 @@ export function ActionPanel({ video, source = 'auto', onLoaded, registerGuard, c
       }
       // The save wrote the annotation store — that is what's on screen now.
       onLoaded?.('annotation');
+      onSaved?.();
       if (!silent) {
         void videosQuery.refetch();
         toast.success('Action annotations saved');

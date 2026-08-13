@@ -43,29 +43,21 @@ export const RALLY_MODE: ModeDescriptor = {
 // Stable reference so the editor's load effect doesn't re-run each render.
 const streamPath = (vp: string) => apiUrl(API.annotate.video(vp));
 
-/** The shared (source, vlm) choice → this store's tag. Rally keeps three
- *  stores; the backend tags are annotation / spot-pre-annotation (SPOT) /
- *  pre-annotation (VLM), and the VLM checkbox redirects Pre-Annotation to
- *  the VLM pass. */
-const loadRally = async (name: string, source: LabelSource, vlm: boolean): Promise<EditorData> => {
-  if (source === 'annotation') return apiFetch(API.annotate.result(name, { source: 'annotation' }));
-  if (source === 'pre-annotation') return apiFetch(API.annotate.result(name, { source: vlm ? 'pre-annotation' : 'spot-pre-annotation' }));
-  if (!vlm) return apiFetch(API.annotate.result(name, {})); // backend priority ✅→🤖→⚡
-  // Auto with VLM checked: annotation first, VLM pass as the fallback.
-  try {
-    return await apiFetch(API.annotate.result(name, { source: 'annotation' }));
-  } catch (e) {
-    if (e instanceof ApiError && e.status === 404) return apiFetch(API.annotate.result(name, { source: 'pre-annotation' }));
-    throw e;
-  }
-};
+/** The shared (source, vlm) choice → this store's tag — exactly one store,
+ *  no fallback. Rally keeps three stores; the backend tags are annotation /
+ *  spot-pre-annotation (SPOT) / pre-annotation (VLM), and the VLM checkbox
+ *  redirects Pre-Annotation to the VLM pass. */
+const loadRally = (name: string, source: LabelSource, vlm: boolean): Promise<EditorData> =>
+  apiFetch(API.annotate.result(name, {
+    source: source === 'annotation' ? 'annotation' : vlm ? 'pre-annotation' : 'spot-pre-annotation',
+  }));
 
 /** Backend store tag → the shared LoadedSource vocabulary. The rally tag
  *  'pre-annotation' is the VLM pass; SPOT wears 'spot-pre-annotation'. */
 const loadedFromTag = (tag: unknown): LoadedSource =>
   tag === 'annotation' ? 'annotation' : tag === 'spot-pre-annotation' ? 'pre-annotation' : tag === 'pre-annotation' ? 'vlm' : 'none';
 
-export function RallyPanel({ video, source, vlm, onLoaded, clock }: { video: string; source: LabelSource; vlm: boolean; onLoaded?: (s: LoadedSource) => void; clock?: PlaybackClock }) {
+export function RallyPanel({ video, source, vlm, onLoaded, onSaved, clock }: { video: string; source: LabelSource; vlm: boolean; onLoaded?: (s: LoadedSource) => void; onSaved?: () => void; clock?: PlaybackClock }) {
   const [data, setData] = useState<EditorData | null>(null);
   const [manifestUrl, setManifestUrl] = useState<string | null>(null);
 
@@ -87,8 +79,14 @@ export function RallyPanel({ video, source, vlm, onLoaded, clock }: { video: str
         onLoaded?.(loadedFromTag(d.source));
         toast.success(`Loaded ${d.results?.length ?? 0} annotations (${String(d.source || '')})`);
       } catch (e) {
-        if (!stale) {
-          onLoaded?.('none');
+        if (stale) return;
+        onLoaded?.('none');
+        // The selected store simply has no file yet — an empty editor, not
+        // an error: rally spans can be drawn from scratch.
+        if (e instanceof ApiError && e.status === 404) {
+          setData({ video, results: [] });
+          setManifestUrl(null);
+        } else {
           toast.error(`Failed to load: ${errMsg(e)}`);
         }
       }
@@ -105,6 +103,7 @@ export function RallyPanel({ video, source, vlm, onLoaded, clock }: { video: str
     // The save just wrote the annotation store — whatever was loaded before,
     // that is what the editor is showing now.
     onLoaded?.('annotation');
+    onSaved?.();
     toast.info('Pushing this match to the app…');
     try {
       const res = await apiFetch<{ manifest_url: string; video_uploaded: boolean; rally_count: number }>(API.annotate.publish, {

@@ -14,15 +14,13 @@ import type { LabelMode, LabelStatus, UnionVideo } from '@/lib/labelStatus';
  *  page and every predict page's picker. */
 export const STATUS_OPTIONS: { value: string; label: string }[] = STATUS_FILTER_OPTIONS;
 
-/** Which store a panel loads from. Only modes keeping more than one store
- *  offer the select (rally, action); association and reid have a single
- *  store — their machine output is merged into it (auto picks on extraction
- *  records) or derived on demand (reid clusters), never a separate file. */
-export type LabelSource = 'auto' | 'annotation' | 'pre-annotation';
+/** Which store a panel loads from — exactly what the user selected, no
+ *  automatic fallback. Only modes keeping more than one store offer the
+ *  select (rally, action); association and reid have a single store. */
+export type LabelSource = 'annotation' | 'pre-annotation';
 
-/** Which store actually satisfied the last load — what Auto resolved to.
- *  Rendered as a badge beside the Source select, so the editor always says
- *  whether you are looking at human labels or machine output. */
+/** Which store actually satisfied the last load ('none' = the selected
+ *  store has no file yet). Rendered as a badge beside the Source select. */
 export type LoadedSource = 'annotation' | 'pre-annotation' | 'vlm' | 'none';
 
 export interface ModeDescriptor {
