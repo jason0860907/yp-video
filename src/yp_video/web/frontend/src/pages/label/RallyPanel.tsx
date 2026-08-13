@@ -7,8 +7,8 @@
  *  select (SourceSelect) sits beside the mode tabs rather than in the picker
  *  row; the page owns its state and passes it down.
  *
- *  No dirty guard: the editor mirrors unsaved work to localStorage on every
- *  edit and restores it on the next load, so leaving never loses anything.
+ *  No dirty guard: the editor autosaves 2 s after editing stops and flushes
+ *  on pagehide, so leaving loses at most a couple of seconds of work.
  */
 
 import { useEffect, useState } from 'react';

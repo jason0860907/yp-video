@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { API, apiFetch, apiPostBlob, errMsg } from '@/lib/api';
+import { API, apiFetch, apiPostBlob, apiUrl, errMsg } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { formatTime, formatTimePrecise, parseTime } from '@/lib/format';
 import { copyText, downloadBlob } from '@/lib/download';
@@ -102,48 +102,12 @@ const num = (...vals: unknown[]): number => {
   return 0;
 };
 
-// ── Local draft persistence ──
-// The network is not trustworthy (flaky tunnel, dropped connections), so
-// unsaved work is mirrored to localStorage on every edit. A draft exists
-// *only* while there is unsaved work: it is cleared on a successful save.
-// On load, a leftover draft means the page died before saving — restore it.
+// No localStorage drafts, on purpose: a restored draft paints stale (or
+// merely unsaved) state over what the server holds and makes the screen lie
+// about what is on disk — that is precisely how saved labels once "reverted".
+// The server is the only store; the 2 s autosave plus the pagehide flush
+// below keep the window between screen and disk negligible.
 const AUTOSAVE_MS = 2000;
-const DRAFT_PREFIX = 'vq:annot-draft';
-
-interface AnnotationDraft {
-  video: string;
-  duration: number;
-  annotations: EditorAnnotation[];
-}
-
-const draftKey = (endpoint: string, video: string) => `${DRAFT_PREFIX}:${endpoint}:${video}`;
-
-const readDraft = (endpoint: string, video: string): AnnotationDraft | null => {
-  try {
-    const raw = localStorage.getItem(draftKey(endpoint, video));
-    if (!raw) return null;
-    const d = JSON.parse(raw) as AnnotationDraft;
-    return Array.isArray(d.annotations) ? d : null;
-  } catch {
-    return null; // corrupt JSON / privacy mode — drafts are best-effort
-  }
-};
-
-const writeDraft = (endpoint: string, draft: AnnotationDraft): void => {
-  try {
-    localStorage.setItem(draftKey(endpoint, draft.video), JSON.stringify(draft));
-  } catch {
-    /* quota exceeded / privacy mode — nothing we can do, skip */
-  }
-};
-
-const clearDraft = (endpoint: string, video: string): void => {
-  try {
-    localStorage.removeItem(draftKey(endpoint, video));
-  } catch {
-    /* ignore */
-  }
-};
 
 export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtras, previewBackoff = 3, onSaved, initialTime, onTimeChange }: AnnotationEditorProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -189,17 +153,8 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
         score: (r.confidence ?? r.score ?? null) as number | null,
       }))
       .sort((a, b) => a.start - b.start);
-    // A leftover draft is unsaved work from a previous session — prefer it
-    // so a crash/reload never loses annotations.
-    const draft = path ? readDraft(saveEndpoint, path) : null;
-    if (draft) {
-      setAnnotations(draft.annotations);
-      setDirty(true);
-      toast.info('已還原上次未儲存的標註草稿');
-    } else {
-      setAnnotations(fromServer);
-      setDirty(false);
-    }
+    setAnnotations(fromServer);
+    setDirty(false);
     setSelectedIdx(-1);
     setMarkStart(null);
     const el = videoRef.current;
@@ -392,15 +347,13 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
         if (latestAnnotations.current === sent) {
           setAnnotations(saved.annotations);
           setDirty(false);
-          clearDraft(saveEndpoint, videoName); // server now holds the truth; drop the local backup
         }
         if (!silent) {
           toast.success('Annotations saved!');
           if (onSaved) await onSaved(videoName);
         }
       } catch (e) {
-        // Keep dirty=true and the draft intact so the work survives — autosave
-        // will retry on the next edit, and the draft survives a reload.
+        // Dirty stays true so autosave retries on the next edit.
         toast.error(`Save failed: ${errMsg(e)}`);
       } finally {
         setSaving(false);
@@ -409,11 +362,38 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
     [videoName, duration, annotations, saveEndpoint, onSaved],
   );
 
-  // ── Mirror unsaved work to localStorage on every edit ──
+  // ── Flush unsaved work when the page goes away ──
+  // beforeunload only warns (it fires before the leave dialog is answered);
+  // pagehide fires once leaving is settled, and keepalive lets the flush
+  // request outlive the tab. Same pattern as the Action panel.
+  const flushRef = useRef({ dirty, videoName, duration });
+  flushRef.current = { dirty, videoName, duration };
   useEffect(() => {
-    if (!dirty || !videoName) return;
-    writeDraft(saveEndpoint, { video: videoName, duration, annotations });
-  }, [annotations, duration, dirty, videoName, saveEndpoint]);
+    const warn = (e: BeforeUnloadEvent) => {
+      const cur = flushRef.current;
+      if (cur.dirty && cur.videoName) e.preventDefault();
+    };
+    const flush = () => {
+      const cur = flushRef.current;
+      if (!cur.dirty || !cur.videoName) return;
+      void fetch(apiUrl(saveEndpoint), {
+        method: 'POST',
+        keepalive: true,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          video: cur.videoName,
+          duration: cur.duration,
+          annotations: latestAnnotations.current.map(({ rally_id, start, end, label }) => ({ rally_id, start, end, label })),
+        }),
+      });
+    };
+    window.addEventListener('beforeunload', warn);
+    window.addEventListener('pagehide', flush);
+    return () => {
+      window.removeEventListener('beforeunload', warn);
+      window.removeEventListener('pagehide', flush);
+    };
+  }, [saveEndpoint]);
 
   // ── Debounced autosave: push to the server AUTOSAVE_MS after editing stops ──
   const saveRef = useRef(save);
