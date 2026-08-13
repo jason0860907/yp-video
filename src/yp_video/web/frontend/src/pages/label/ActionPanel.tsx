@@ -440,10 +440,18 @@ export function ActionPanel({ video, source = 'auto', onLoaded, registerGuard, c
   });
 
   // ── Flush unsaved work when the page goes away ──
+  // The warn and the flush are separate events on purpose: beforeunload
+  // fires BEFORE the user answers the leave dialog, so a flush there would
+  // advance the store's revision under a page that then stays — and its
+  // next autosave would 409. pagehide only fires once leaving is settled.
   // keepalive lets the request outlive the tab; the server's revision check
   // still applies, so a stale flush can never clobber a newer save.
   useEffect(() => {
-    const flush = (e: BeforeUnloadEvent) => {
+    const warn = (e: BeforeUnloadEvent) => {
+      const cur = edRef.current;
+      if (cur.dirty && cur.video) e.preventDefault();
+    };
+    const flush = () => {
       const cur = edRef.current;
       if (!cur.dirty || !cur.video) return;
       void fetch(apiUrl(API.actionAnnotate.annotations), {
@@ -458,10 +466,13 @@ export function ActionPanel({ video, source = 'auto', onLoaded, registerGuard, c
           revision: storeRevision.current,
         }),
       });
-      e.preventDefault();
     };
-    window.addEventListener('beforeunload', flush);
-    return () => window.removeEventListener('beforeunload', flush);
+    window.addEventListener('beforeunload', warn);
+    window.addEventListener('pagehide', flush);
+    return () => {
+      window.removeEventListener('beforeunload', warn);
+      window.removeEventListener('pagehide', flush);
+    };
   }, []);
 
   // ── Debounced autosave ──
