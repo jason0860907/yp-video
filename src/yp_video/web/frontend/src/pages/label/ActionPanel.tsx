@@ -9,7 +9,7 @@
 
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type SyntheticEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { API, apiFetch, apiUrl, errMsg } from '@/lib/api';
+import { API, ApiError, apiFetch, apiUrl, errMsg } from '@/lib/api';
 import { fieldCls } from '@/components/form/Field';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
@@ -22,13 +22,6 @@ import { ActionTimeline } from '@/components/editor/ActionTimeline';
 import { ActionEventPanel } from '@/components/action/ActionEventPanel';
 import { useVideoRecovery } from '@/lib/useVideoRecovery';
 import { useSerializedSave } from '@/lib/useSerializedSave';
-import {
-  ACTION_AUTOSAVE_MS,
-  ACTION_DRAFT_DEBOUNCE_MS,
-  clearActionDraft,
-  readActionDraft,
-  writeActionDraft,
-} from '@/lib/actionDrafts';
 import {
   DEFAULT_ACTION_LABELS,
   EMPTY_ACTION_EDITOR,
@@ -48,6 +41,8 @@ import { ACTION_COLORS, actionColor } from '@/lib/actionColors';
 import type { ActionAnnotationData, ActionEvent, ActionVideo } from '@/types/api';
 import { actionStatus } from '@/lib/labelStatus';
 import { STATUS_OPTIONS, type LabelSource, type LoadedSource, type ModeDescriptor, type PlaybackClock, type RegisterGuard } from './mode';
+
+const ACTION_AUTOSAVE_MS = 2000;
 
 export const ACTION_MODE: ModeDescriptor = {
   key: 'action',
@@ -81,6 +76,9 @@ export function ActionPanel({ video, source = 'auto', onLoaded, registerGuard, c
   // Every persisted editor mutation advances this counter. Saves capture it
   // before sending so an older response can never mark newer work clean.
   const editRevision = useRef(0);
+  // The human store's revision our edits are based on (from load / last save).
+  // Sent with every save; the server 409s when another writer got there first.
+  const storeRevision = useRef<string | null>(null);
   const [selectedIdx, setSelectedIdx] = useState(-1);
   const [selectedRallyId, setSelectedRallyId] = useState<number | 'all'>('all');
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -312,15 +310,8 @@ export function ActionPanel({ video, source = 'auto', onLoaded, registerGuard, c
         API.actionAnnotate.annotation(name, source === 'auto' ? {} : { source }),
       );
       onLoaded?.(data.loaded_source ?? 'none');
-      let next = normalizeActionEditor(data, labels);
-      // A leftover draft is unsaved work from a previous session: restore the
-      // user's events (server stays authoritative for rally/fps structure).
-      // Only in Auto — a forced Source means "show me that store", and the
-      // draft would paint the user's events over it.
-      const draft = source === 'auto' ? readActionDraft(next.video) : null;
-      if (draft) {
-        next = { ...next, events: sortActionEvents(draft.events.map((e) => withActionRally(e, next))), dirty: true };
-      }
+      const next = normalizeActionEditor(data, labels);
+      storeRevision.current = data.revision ?? null;
       // Never reuse a revision: a response from the previous video must not
       // be able to compare equal and mark this editor clean.
       editRevision.current += 1;
@@ -340,8 +331,7 @@ export function ActionPanel({ video, source = 'auto', onLoaded, registerGuard, c
       }
       loadWaveform(next.video, next.duration);
       setFrame(0);
-      if (next.dirty) toast.info(`已還原上次未儲存的草稿（${next.events.length} 個動作）`);
-      else toast.success(`Loaded ${next.events.length} event(s)`);
+      toast.success(`Loaded ${next.events.length} event(s)`);
     } catch (e) {
       onLoaded?.('none');
       toast.error(`Load failed: ${errMsg(e)}`);
@@ -356,16 +346,13 @@ export function ActionPanel({ video, source = 'auto', onLoaded, registerGuard, c
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [video, source]);
 
-  // Leaving with unsaved work: same confirm the old pick flow ran, and the
-  // draft is cleared only when the user explicitly abandons the edits.
+  // Leaving with unsaved work: same confirm the old pick flow ran.
   useEffect(() => {
     if (!registerGuard) return;
     registerGuard(async () => {
       const cur = edRef.current;
       if (!cur.dirty) return true;
-      const ok = await confirm({ title: 'Discard unsaved changes?', body: 'The current action labels have not been saved.', confirmText: 'Discard', variant: 'danger' });
-      if (ok) clearActionDraft(cur.video);
-      return ok;
+      return confirm({ title: 'Discard unsaved changes?', body: 'The current action labels have not been saved.', confirmText: 'Discard', variant: 'danger' });
     });
     return () => registerGuard(null);
   }, [registerGuard]);
@@ -414,22 +401,23 @@ export function ActionPanel({ video, source = 'auto', onLoaded, registerGuard, c
         return;
       }
       const video = snapshot.video;
-      await apiFetch(API.actionAnnotate.annotations, {
+      const saved = await apiFetch<{ revision?: string | null }>(API.actionAnnotate.annotations, {
         method: 'POST',
         body: {
           video,
           fps: snapshot.fps,
           num_frames: snapshot.numFrames,
           events: snapshot.events,
+          revision: storeRevision.current,
         },
       });
+      storeRevision.current = saved.revision ?? null;
       // A request only owns the revision it sent. Mid-request edits retain
-      // dirty=true and their local draft; useSerializedSave queues the latest.
+      // dirty=true; useSerializedSave queues the latest.
       if (editRevision.current === revision) {
         const next = { ...edRef.current, dirty: false };
         edRef.current = next;
         setEd(next);
-        clearActionDraft(video);
       }
       // The save wrote the annotation store — that is what's on screen now.
       onLoaded?.('annotation');
@@ -439,17 +427,42 @@ export function ActionPanel({ video, source = 'auto', onLoaded, registerGuard, c
       }
     },
     onError: (e) => {
-      // Dirty state and the draft deliberately survive a failed request.
+      // Another writer (tab, machine, unload flush) saved first: the server
+      // copy is the newer truth — reload it rather than blind-overwriting.
+      if (e instanceof ApiError && e.status === 409) {
+        toast.error('標註已被其他工作階段更新,重新載入伺服器版本');
+        void load(video);
+        return;
+      }
+      // Dirty state deliberately survives a failed request.
       toast.error(`Save failed: ${errMsg(e)}`);
     },
   });
 
-  // ── Mirror unsaved work to localStorage (debounced to coalesce drags) ──
+  // ── Flush unsaved work when the page goes away ──
+  // keepalive lets the request outlive the tab; the server's revision check
+  // still applies, so a stale flush can never clobber a newer save.
   useEffect(() => {
-    if (!ed.dirty || !ed.video) return;
-    const t = setTimeout(() => writeActionDraft(ed), ACTION_DRAFT_DEBOUNCE_MS);
-    return () => clearTimeout(t);
-  }, [ed]);
+    const flush = (e: BeforeUnloadEvent) => {
+      const cur = edRef.current;
+      if (!cur.dirty || !cur.video) return;
+      void fetch(apiUrl(API.actionAnnotate.annotations), {
+        method: 'POST',
+        keepalive: true,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          video: cur.video,
+          fps: cur.fps,
+          num_frames: cur.numFrames,
+          events: cur.events,
+          revision: storeRevision.current,
+        }),
+      });
+      e.preventDefault();
+    };
+    window.addEventListener('beforeunload', flush);
+    return () => window.removeEventListener('beforeunload', flush);
+  }, []);
 
   // ── Debounced autosave ──
   useEffect(() => {

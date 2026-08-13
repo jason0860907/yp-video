@@ -99,6 +99,10 @@ class SaveActionAnnotationsRequest(StrictModel):
     fps: float = Field(gt=0)
     num_frames: int = Field(ge=0)
     events: list[ActionEvent]
+    # The human-store revision this edit is based on (from GET /annotations or
+    # the previous save's response); None claims the store does not exist yet.
+    # A mismatch means another writer saved in between — 409, never overwrite.
+    revision: str | None
 
 
 class SpotPrelabelOptions(StrictModel):
@@ -124,6 +128,18 @@ class SpotPrelabelBatchRequest(SpotPrelabelOptions):
 def _load_rallies(video: Path) -> list[dict]:
     """This video's rally spans (see core/rallies.py for the source priority)."""
     return load_rallies(video.stem)
+
+
+def _annotation_revision(video_name: str) -> str | None:
+    """The human store's identity for optimistic concurrency: its mtime_ns.
+
+    A string, not an int — the token crosses JSON into JS numbers, and ns
+    timestamps exceed Number.MAX_SAFE_INTEGER. None = no human file.
+    """
+    try:
+        return str(annotation_path(video_name).stat().st_mtime_ns)
+    except FileNotFoundError:
+        return None
 
 
 def _rally_for_event(event: dict, fps: float, rallies: list[dict]) -> dict | None:
@@ -204,7 +220,6 @@ async def _save_spot_action_annotation(
     pred_file: Path,
     checkpoint: Path,
     min_score: float,
-    replace_final: bool = False,
 ) -> dict:
     predictions = await asyncio.to_thread(prelabel.load_predictions, pred_file)
     data = prelabel.predictions_to_annotation(
@@ -226,10 +241,6 @@ async def _save_spot_action_annotation(
     data["num_events"] = len(data["events"])
     ann_path.parent.mkdir(parents=True, exist_ok=True)
     await asyncio.to_thread(_write_annotation_atomic, ann_path, data)
-    if replace_final:
-        final_path = annotation_path(video.name)
-        if final_path != ann_path:
-            final_path.unlink(missing_ok=True)
     sync_to_r2(ann_path, "action/pre-annotations")
     return data
 
@@ -249,9 +260,11 @@ def _resolve_prelabel_entries(names: list[str], *, overwrite: bool) -> list[tupl
         if video is None:
             missing.append(name)
             continue
-        final_path = annotation_path(video.name)
+        # Only the machine store gates a re-run: prelabel writes (and with
+        # overwrite, rewrites) pre-annotations exclusively. The human store is
+        # never touched — the editor keeps preferring it either way.
         pre_path = pre_annotation_path(video.name)
-        if (final_path.exists() or pre_path.exists()) and not overwrite:
+        if pre_path.exists() and not overwrite:
             existing.append(video.name)
             continue
         entries.append((video, pre_path))
@@ -399,6 +412,7 @@ async def get_annotations(
         loaded = None
         if ann is not None:
             loaded = "annotation" if state.active_path.parent == ACTION_ANNOTATIONS_DIR else "pre-annotation"
+    revision = _annotation_revision(video.name)
     if ann is not None:
         # Which store this payload came from — the editor's "what am I
         # looking at" badge; the file's own provenance stays in `source`.
@@ -417,6 +431,7 @@ async def get_annotations(
         )
         ann["num_events"] = len(ann["events"])
         ann["duration"] = meta["duration"]
+        ann["revision"] = revision
         return ann
 
     return {
@@ -429,6 +444,7 @@ async def get_annotations(
         "num_events": 0,
         "rallies": rallies,
         "events": [],
+        "revision": revision,
     }
 
 
@@ -446,6 +462,11 @@ async def save_annotations(req: SaveActionAnnotationsRequest) -> dict:
     video = resolve_cut(Path(req.video).name)
     if video is None:
         raise HTTPException(404, "Video not found")
+    if req.revision != _annotation_revision(video.name):
+        raise HTTPException(
+            409,
+            "Annotation changed on disk since it was loaded — reload before saving",
+        )
 
     ACTION_ANNOTATIONS_DIR.mkdir(parents=True, exist_ok=True)
     rallies = await asyncio.to_thread(_load_rallies, video)
@@ -468,7 +489,11 @@ async def save_annotations(req: SaveActionAnnotationsRequest) -> dict:
     output_path = annotation_path(video.name)
     await asyncio.to_thread(_write_annotation_atomic, output_path, data)
     sync_to_r2(output_path, "action/annotations")
-    return {"saved": str(output_path), "count": len(events)}
+    return {
+        "saved": str(output_path),
+        "count": len(events),
+        "revision": _annotation_revision(video.name),
+    }
 
 
 @router.post("/prelabel-batch", response_model=JobSummary)
@@ -581,7 +606,6 @@ async def _run_prelabel_batch_subprocess(
                     pred_file=pred_file,
                     checkpoint=checkpoint,
                     min_score=req.min_score,
-                    replace_final=req.overwrite,
                 )
                 log.info("%ssaved %s (%d event(s))", prefix, ann_path.name, data["num_events"])
                 await update_batch_item(

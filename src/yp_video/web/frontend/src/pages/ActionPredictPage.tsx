@@ -87,17 +87,19 @@ export function ActionPredictPage() {
       toast.warning('Select at least one video');
       return;
     }
-    const existing = names.map((n) => videos.find((v) => v.name === n)).filter((v): v is ActionVideo => Boolean(v)).filter(hasLabels);
+    const existing = names
+      .map((n) => videos.find((v) => v.name === n))
+      .filter((v): v is ActionVideo => Boolean(v))
+      .filter((v) => Boolean(v.has_action_pre_annotation));
     if (existing.length && !settings.overwrite) {
-      toast.warning(`${existing.length} selected video(s) already have action labels`);
+      toast.warning(`${existing.length} selected video(s) already have pre-labels`);
       return;
     }
     if (existing.length && settings.overwrite) {
       const ok = await confirm({
-        title: 'Overwrite action labels?',
-        body: `This replaces the active action labels for ${existing.length} video(s) with new pre-labels.`,
-        confirmText: 'Overwrite',
-        variant: 'danger',
+        title: 'Rebuild pre-labels?',
+        body: `This regenerates machine pre-labels for ${existing.length} video(s). Hand-made annotations are never touched — the editor keeps preferring them.`,
+        confirmText: 'Rebuild',
       });
       if (!ok) return;
     }
