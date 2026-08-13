@@ -19,6 +19,7 @@ from yp_video.config import (
     ACTION_ANNOTATIONS_DIR,
     ACTION_CHECKPOINTS_DIR,
     ACTION_FRAMES_DIR,
+    ACTION_PRE_ANNOTATIONS_DIR,
     ACTION_VAL_SET_FILE,
     SPOT_DIR,
     cut_kind_of,
@@ -122,6 +123,8 @@ def annotation_stats(resolve_missing: CutResolver | None = None) -> dict:
 
 def label_items(
     resolve_missing: CutResolver | None = None,
+    *,
+    include_predictions: bool = False,
 ) -> list[tuple[Path, Path]]:
     """One ``(label_file, cut_video)`` pair per annotated video.
 
@@ -130,14 +133,28 @@ def label_items(
     running land in the *next* run instead of desyncing the two phases
     (label prep would otherwise see a video the cache phase never built).
 
+    ``include_predictions`` also picks up SPOT pre-annotations for videos
+    that have no human label file yet — pseudo-labels for training only;
+    the holdout guard in the launcher keeps them out of validation. A human
+    label of the same name always wins over the prediction.
+
     ``resolve_missing`` may map a cut that is absent locally to its canonical
     path (e.g. because its bytes live only in R2). Such a video trains fine
     off its existing frame cache; the cache phase raises if the cache would
     need a rebuild.
     """
+    label_files = sorted(ACTION_ANNOTATIONS_DIR.glob("*_actions.jsonl"))
+    if include_predictions:
+        annotated = {path.name for path in label_files}
+        label_files += sorted(
+            path
+            for path in ACTION_PRE_ANNOTATIONS_DIR.glob("*_actions.jsonl")
+            if path.name not in annotated
+        )
+
     items: list[tuple[Path, Path]] = []
     missing: list[str] = []
-    for path in sorted(ACTION_ANNOTATIONS_DIR.glob("*_actions.jsonl")):
+    for path in label_files:
         try:
             meta, _records = read_jsonl(path)
         except (OSError, json.JSONDecodeError) as exc:
@@ -156,6 +173,15 @@ def label_items(
         suffix = "" if len(missing) <= 5 else f" and {len(missing) - 5} more"
         raise RuntimeError(f"Missing source video(s) for action labels: {sample}{suffix}")
     return items
+
+
+def prediction_label_stems(items: list[tuple[Path, Path]]) -> set[str]:
+    """Video stems in ``items`` whose labels are SPOT predictions, not human work."""
+    return {
+        path.stem.removesuffix("_actions")
+        for path, _video in items
+        if path.parent == ACTION_PRE_ANNOTATIONS_DIR
+    }
 
 
 def rally_match_span(meta: dict, num_frames: int) -> tuple[int, int] | None:

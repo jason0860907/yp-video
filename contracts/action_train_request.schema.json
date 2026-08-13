@@ -294,6 +294,12 @@
       ],
       "title": "Camera View",
       "type": "string"
+    },
+    "include_predictions": {
+      "default": false,
+      "description": "Also train on videos that only have SPOT pre-annotations (no human labels). Pseudo-labeled videos always land on the training side, so this needs holdout mode \u2014 a random split would leak them into validation.",
+      "title": "Include Predictions",
+      "type": "boolean"
     }
   },
   "required": [

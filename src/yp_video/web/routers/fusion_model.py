@@ -194,6 +194,7 @@ async def train(req: FusionTrainRequest) -> dict:
             "holdout" if req.validation_mode == "manual" else "split"
         ),
         holdout_videos=req.validation_videos,
+        include_predictions=req.include_predictions,
         audio_backend=req.audio_backend,
         feature_arch=req.feature_arch,
         temporal_arch=req.temporal_arch,

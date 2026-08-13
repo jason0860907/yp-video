@@ -274,6 +274,24 @@ class AnnotationActionTrainRequest(ActionTrainBase):
         default="all",
         description="Train on all views together or restrict to one camera view.",
     )
+    include_predictions: bool = Field(
+        default=False,
+        description=(
+            "Also train on videos that only have SPOT pre-annotations (no "
+            "human labels). Pseudo-labeled videos always land on the training "
+            "side, so this needs holdout mode — a random split would leak "
+            "them into validation."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _predictions_need_holdout(self) -> "AnnotationActionTrainRequest":
+        if self.include_predictions and self.training_mode != "holdout":
+            raise ValueError(
+                "include_predictions requires training_mode='holdout' so "
+                "validation stays human-labeled"
+            )
+        return self
 
 
 ActionTrainRequest = Annotated[
@@ -317,6 +335,15 @@ class FusionTrainRequest(StrictModel):
     camera_view: CameraView = Field(
         default="all",
         description="Train on all views together or restrict to one camera view.",
+    )
+    include_predictions: bool = Field(
+        default=False,
+        description=(
+            "Also train on videos that only have SPOT pre-annotations (no "
+            "human labels). Needs partial_labels scope (predictions carry no "
+            "association labels) and manual validation, so pseudo-labeled "
+            "videos never validate."
+        ),
     )
     audio_backend: Literal["logmel", "none"] = Field(
         default="logmel",
@@ -388,6 +415,21 @@ class FusionTrainRequest(StrictModel):
         default=False,
         description="Stop the vLLM server first to free its GPU memory for training.",
     )
+
+    @model_validator(mode="after")
+    def _predictions_need_manual_partial(self) -> "FusionTrainRequest":
+        if self.include_predictions:
+            if self.dataset_scope != "partial_labels":
+                raise ValueError(
+                    "include_predictions requires dataset_scope='partial_labels'; "
+                    "prediction-only videos carry no association labels"
+                )
+            if self.validation_mode != "manual":
+                raise ValueError(
+                    "include_predictions requires validation_mode='manual' so "
+                    "validation stays human-labeled"
+                )
+        return self
 
 
 class AssociationTrainRequest(StrictModel):

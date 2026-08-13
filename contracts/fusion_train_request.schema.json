@@ -79,6 +79,12 @@
       "title": "Camera View",
       "type": "string"
     },
+    "include_predictions": {
+      "default": false,
+      "description": "Also train on videos that only have SPOT pre-annotations (no human labels). Needs partial_labels scope (predictions carry no association labels) and manual validation, so pseudo-labeled videos never validate.",
+      "title": "Include Predictions",
+      "type": "boolean"
+    },
     "audio_backend": {
       "default": "logmel",
       "description": "logmel adds late-fusion audio (precomputed before training); none trains a pure-visual model. Must match at inference.",

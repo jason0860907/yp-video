@@ -435,10 +435,15 @@ async def start_training_job(
                 items = (
                     list(label_items)
                     if label_items is not None
-                    else await asyncio.to_thread(training.label_items, remote_cut_path)
+                    else await asyncio.to_thread(
+                        training.label_items,
+                        remote_cut_path,
+                        include_predictions=req.include_predictions,
+                    )
                 )
                 if not items:
                     raise RuntimeError("No action labels selected for training")
+                prediction_stems = training.prediction_label_stems(items)
 
                 loop = asyncio.get_running_loop()
 
@@ -478,8 +483,24 @@ async def start_training_job(
                     require_actor_targets=require_actor_targets,
                 )
                 action_label_dir = Path(label_summary["label_dir"])
+                if prediction_stems:
+                    label_summary = {
+                        **label_summary,
+                        "prediction_label_videos": sorted(prediction_stems),
+                    }
                 if req.training_mode == "holdout":
                     holdout_videos = _resolve_holdout_videos(req)
+                    leaked = prediction_stems & {
+                        Path(entry).name
+                        .removesuffix("_actions.jsonl")
+                        .removesuffix(".mp4")
+                        for entry in holdout_videos
+                    }
+                    if leaked:
+                        raise RuntimeError(
+                            "Validation video(s) carry prediction labels only — "
+                            "they cannot validate: " + ", ".join(sorted(leaked))
+                        )
                     split = await asyncio.to_thread(
                         training.materialize_holdout_split,
                         action_label_dir,

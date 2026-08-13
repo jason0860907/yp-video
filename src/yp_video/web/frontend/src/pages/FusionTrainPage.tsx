@@ -180,9 +180,13 @@ export function FusionTrainPage() {
               <FieldShell label="Dataset scope" className="col-span-3">
                 <select
                   value={values.dataset_scope}
-                  onChange={(event) =>
-                    set('dataset_scope', event.target.value as FusionForm['dataset_scope'])
-                  }
+                  onChange={(event) => {
+                    const scope = event.target.value as FusionForm['dataset_scope'];
+                    set('dataset_scope', scope);
+                    // Predictions carry no association labels — the joint-only
+                    // scope can never include them.
+                    if (scope === 'joint_only') set('include_predictions', false);
+                  }}
                   className={cn(fieldCls, 'cursor-pointer appearance-none')}
                 >
                   <option value="joint_only">
@@ -265,7 +269,13 @@ export function FusionTrainPage() {
               </p>
             </div>
 
-            <div className="mt-4">
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              {values.dataset_scope === 'partial_labels' && (
+                <SchemaCheckboxField
+                  name="include_predictions"
+                  label="Include predictions"
+                />
+              )}
               <SchemaCheckboxField name="stop_vllm" label="Stop vLLM first" />
             </div>
           </SchemaForm>
