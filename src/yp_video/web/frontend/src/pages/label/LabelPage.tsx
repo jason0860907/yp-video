@@ -7,9 +7,9 @@
  *  refresh-safe links.
  *
  *  Only the active panel is mounted — react-query's shared keys make
- *  Association↔ReID switches cheap and Action's localStorage drafts survive
- *  unmount. Panels with unsaved work register a dirty guard; every video or
- *  mode change awaits it before touching the URL.
+ *  Association↔ReID switches cheap. Panels with unsaved work register a
+ *  dirty guard; every video or mode change awaits it before touching the
+ *  URL.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
