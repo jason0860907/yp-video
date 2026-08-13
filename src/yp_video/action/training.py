@@ -26,6 +26,7 @@ from yp_video.config import (
     find_cut,
 )
 from yp_video.core.jsonl import read_jsonl
+from yp_video.core.rallies import load_rallies
 
 log = logging.getLogger(__name__)
 
@@ -184,7 +185,7 @@ def prediction_label_stems(items: list[tuple[Path, Path]]) -> set[str]:
     }
 
 
-def rally_match_span(meta: dict, num_frames: int) -> tuple[int, int] | None:
+def rally_match_span(stem: str, *, fps: float, num_frames: int) -> tuple[int, int] | None:
     """Frame span ``[first_rally_start, last_rally_end]`` (± margin) for sampling.
 
     Restricting training clips to this match window keeps the in-rally actions
@@ -193,9 +194,12 @@ def rally_match_span(meta: dict, num_frames: int) -> tuple[int, int] | None:
     would otherwise be sampled as background and confuse the model. Returns
     ``None`` when the video has no rallies, so non-rally datasets fall back to
     whole-video sampling.
+
+    Reads the LIVE rally store (core/rallies) — the action label file carries
+    no rally copy, so a rally re-edit reaches the next training run without
+    anyone re-saving the action annotation.
     """
-    rallies = meta.get("rallies") or []
-    fps = float(meta.get("fps") or 30.0)
+    rallies = load_rallies(stem)
     starts = [float(r["start"]) for r in rallies if r.get("start") is not None]
     ends = [float(r["end"]) for r in rallies if r.get("end") is not None]
     if not starts or not ends:

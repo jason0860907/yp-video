@@ -31,6 +31,7 @@ from yp_video.actor import labels as actor_labels
 from yp_video.config import cut_kind_of, find_cut, iter_all_cuts
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import read_jsonl, read_jsonl_cached
+from yp_video.core.rallies import load_rallies
 from yp_video.extraction import links, pipeline
 from yp_video.extraction import store as extraction_store
 from yp_video.extraction.prerequisites import prerequisites
@@ -152,15 +153,32 @@ def records(name: str) -> dict:
     # mutate what read_jsonl_cached hands out.
     meta, _records = read_jsonl_cached(path)
     meta = dict(meta)
-    # The video-sync overlay needs fps (frame ↔ time) and the rally spans for
-    # its rally navigator — both live in the annotation header, not the
-    # extraction header.
+    # The video-sync overlay needs fps (frame ↔ time); the rally navigator
+    # reads the LIVE rally store — the action file carries no rally copy,
+    # so a rally re-edit reaches the boards without re-saving the action
+    # annotation. The full event list (score / non-visible included, which
+    # extraction skips) rides along for the boards' action sidebar.
     ann = extraction_store.action_annotation_path(stem)
     if ann is not None:
-        ann_meta, _ = read_jsonl(ann)
+        ann_meta, ann_events = read_jsonl(ann)
         if not meta.get("fps") and ann_meta.get("fps"):
             meta["fps"] = ann_meta["fps"]
-        meta["rallies"] = ann_meta.get("rallies") or []
+        fps = float(meta.get("fps") or 0)
+        meta["action_events"] = [
+            {
+                "id": event.get("id"),
+                "frame": event.get("frame"),
+                "time": (
+                    float(event["frame"]) / fps
+                    if fps and event.get("frame") is not None
+                    else None
+                ),
+                "label": event.get("label"),
+                "visible": event.get("visible", True),
+            }
+            for event in ann_events
+        ]
+    meta["rallies"] = load_rallies(stem)
     sources = [path, *extraction_store.action_source_paths(stem)]
     rows = _slim_records_cache.get(
         stem, sources, lambda: _slim_records(path, stem)

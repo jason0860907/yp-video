@@ -115,12 +115,12 @@ export function normalizeActionEditor(
       return withActionRally(
         {
           id: (raw.id as string) || makeActionId(),
+          // rally_id / time / relative_frame are derived state —
+          // withActionRally recomputes all three from frame + rallies.
           rally_id: null,
           frame: Math.max(0, Math.round(Number(raw.frame) || 0)),
-          time: Number(raw.time) || null,
-          relative_frame: Number.isInteger(raw.relative_frame)
-            ? (raw.relative_frame as number)
-            : null,
+          time: null,
+          relative_frame: null,
           label: labels.includes(raw.label as string)
             ? (raw.label as string)
             : labels[0]!,

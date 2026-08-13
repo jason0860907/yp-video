@@ -2,12 +2,15 @@ import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { API, ApiError, apiFetch } from '@/lib/api';
 import type { Rally, SidebarAction, TrackData } from '@/components/labeling/shared';
-import type { ActionAnnotationData, ReidRecord } from '@/types/api';
+import type { ReidRecord } from '@/types/api';
 
 interface VideoMeta {
   fps?: number;
   frame_size?: [number, number];
   rallies?: Rally[];
+  /** Full action event list (score / non-visible included) served by the
+   *  extraction endpoint from the active annotation file. */
+  action_events?: Array<Record<string, unknown>>;
 }
 
 /** The per-video data layer both labeling pages (ReID, Association) share:
@@ -39,17 +42,12 @@ export function useVideoLabelingData(picked: string) {
     staleTime: 60_000,
   });
 
-  // The full action annotation — the sidebar lists every action's time,
-  // including the score / non-visible events extraction skipped.
-  const actionsQuery = useQuery({
-    queryKey: ['reid-action-events', picked],
-    queryFn: () => apiFetch<ActionAnnotationData>(API.actionAnnotate.annotation(picked)),
-    enabled: Boolean(picked),
-  });
+  // The full action event list rides on the extraction records response
+  // (meta.action_events) — same active annotation file the join uses, so
+  // the sidebar and the board can never disagree about the event set.
   const actionEvents = useMemo<SidebarAction[]>(
     () =>
-      (actionsQuery.data?.events ?? []).flatMap((raw) => {
-        const x = raw as Record<string, unknown>;
+      (meta.action_events ?? []).flatMap((x) => {
         if (x.frame == null) return [];
         const frame = Math.max(0, Math.round(Number(x.frame) || 0));
         return [
@@ -63,7 +61,7 @@ export function useVideoLabelingData(picked: string) {
           },
         ];
       }),
-    [actionsQuery.data],
+    [meta.action_events],
   );
 
   return { resultsQuery, records, meta, tracksQuery, actionEvents };

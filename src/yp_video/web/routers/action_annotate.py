@@ -176,6 +176,18 @@ def _normalize_events(video_stem: str, events: list[dict], *, fps: float, num_fr
     return normalized
 
 
+#: What the store persists per event: the human's facts, nothing derived.
+#: rally_id / relative_frame / time are recomputed from the live rally store
+#: on every read (_normalize_events) — a stored copy goes stale the moment
+#: rallies are re-edited, which is exactly how the Association board once
+#: ended up navigating by outdated spans.
+PERSISTED_EVENT_FIELDS = ("id", "frame", "label", "xy", "visible")
+
+
+def _persistable_events(events: list[dict]) -> list[dict]:
+    return [{key: event[key] for key in PERSISTED_EVENT_FIELDS} for event in events]
+
+
 def _truthy_event_visible(value: object) -> bool:
     if isinstance(value, str):
         return value.strip().lower() not in {"0", "false", "no", "off"}
@@ -212,15 +224,13 @@ async def _save_spot_action_annotation(
         checkpoint_path=checkpoint,
         min_score=min_score,
     )
-    rallies = await asyncio.to_thread(_load_rallies, video)
-    data["rallies"] = rallies
-    data["events"] = _normalize_events(
+    data["events"] = _persistable_events(_normalize_events(
         video.stem,
         data.get("events", []),
         fps=float(data.get("fps") or meta["fps"]),
         num_frames=int(data.get("num_frames") or meta["num_frames"]),
-        rallies=rallies,
-    )
+        rallies=[],
+    ))
     data["num_events"] = len(data["events"])
     ann_path.parent.mkdir(parents=True, exist_ok=True)
     await asyncio.to_thread(_write_annotation_atomic, ann_path, data)
@@ -434,20 +444,18 @@ async def save_annotations(req: SaveActionAnnotationsRequest) -> dict:
         raise HTTPException(404, "Video not found")
 
     ACTION_ANNOTATIONS_DIR.mkdir(parents=True, exist_ok=True)
-    rallies = await asyncio.to_thread(_load_rallies, video)
-    events = _normalize_events(
+    events = _persistable_events(_normalize_events(
         video.stem,
         [event.model_dump(mode="json") for event in req.events],
         fps=req.fps,
         num_frames=req.num_frames,
-        rallies=rallies,
-    )
+        rallies=[],
+    ))
     data = {
         "video": video.stem,
         "num_frames": req.num_frames,
         "fps": req.fps,
         "source": {"type": "manual"},
-        "rallies": rallies,
         "num_events": len(events),
         "events": events,
     }
@@ -751,13 +759,25 @@ def export_dataset() -> Response:
     for path in sorted(ACTION_ANNOTATIONS_DIR.glob("*_actions.jsonl")):
         data = load_annotation(path)
         if data is not None:
+            # The export is self-contained: rallies and the rally-derived
+            # event fields are joined fresh from the live rally store here,
+            # never stored in the annotation file.
+            stem = data.get("video", path.stem.removesuffix("_actions"))
+            rallies = load_rallies(stem)
+            events = _normalize_events(
+                stem,
+                data.get("events", []),
+                fps=float(data.get("fps") or 30.0),
+                num_frames=int(data.get("num_frames") or 0),
+                rallies=rallies,
+            )
             records.append({
-                "video": data.get("video", path.stem.removesuffix("_actions")),
+                "video": stem,
                 "num_frames": data.get("num_frames", 0),
                 "fps": data.get("fps", 0),
-                "rallies": data.get("rallies", []),
-                "num_events": len(data.get("events", [])),
-                "events": data.get("events", []),
+                "rallies": rallies,
+                "num_events": len(events),
+                "events": events,
             })
     lines = [
         json.dumps(

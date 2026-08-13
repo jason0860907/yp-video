@@ -48,9 +48,11 @@ SKIP_LABELS = frozenset({"score"})
 # contain snapshots of them, but action annotations are the sole authority:
 # changing "spike" to "score" must not require another expensive detection
 # pass merely to make every downstream reader see the edit.
-ACTION_FIELDS = frozenset({
-    "frame", "time", "label", "xy", "visible", "rally_id", "relative_frame",
-})
+ACTION_FIELDS = frozenset({"frame", "label", "xy", "visible"})
+
+# Rally-derived copies that annotation files and old records used to carry;
+# the live rally store owns them now. Stripped on read, never re-applied.
+LEGACY_ACTION_FIELDS = frozenset({"time", "rally_id", "relative_frame"})
 
 
 def action_source_paths(stem: str) -> list[Path]:
@@ -121,7 +123,7 @@ def with_current_actions(records: Iterable[dict], stem: str) -> list[dict]:
         # source. Absence in the source is meaningful too (e.g. no xy).
         record = {
             key: value for key, value in stored.items()
-            if key not in ACTION_FIELDS
+            if key not in ACTION_FIELDS and key not in LEGACY_ACTION_FIELDS
         }
         record.update({
             key: event[key] for key in ACTION_FIELDS
@@ -161,18 +163,15 @@ def labelable(records: Iterable[dict], stem: str, fps: float) -> list[dict]:
 
 
 def _within(record: dict, spans: list[dict], fps: float) -> bool:
-    """Whether the event falls in a rally. Prefer the stored time, fall back
-    to frame/fps — the same rule the sidebar uses, so the two cannot disagree
-    about which rally an event belongs to."""
+    """Whether the event falls in a rally — ``frame / fps`` against the live
+    spans, the same rule every reader uses."""
     if not spans:
         # No rally source at all: hiding everything would be a worse answer
         # than showing it, and the pipeline chips already say what is missing.
         return True
-    at = record.get("time")
-    if at is None:
-        at = record["frame"] / fps if fps else None
-    if at is None:
+    if not fps:
         return True  # cannot tell; never hide on a guess
+    at = record["frame"] / fps
     return any(span["start"] <= at <= span["end"] for span in spans)
 
 

@@ -1,13 +1,17 @@
-"""The rule that keeps hand-made action labels safe on disk.
+"""The rules that keep hand-made action labels safe and single-source on disk.
 
-A prelabel run with overwrite once deleted the human store outright.
-Prelabel writes machine output only: the human store neither gates a
-re-run nor is ever deleted by one.
+1. Prelabel writes machine output only: the human store neither gates a
+   re-run nor is ever deleted by one (an overwrite run once deleted it).
+2. The annotation file persists only the human's facts. Rally spans and the
+   fields derived from them (rally_id / relative_frame / time) are joined
+   from the live rally store on every read — a stored copy is exactly the
+   stale data that once left the Association board navigating by old spans.
 """
 
 from __future__ import annotations
 
 import contextlib
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -39,6 +43,37 @@ def scratch_stores():
             patch.object(action_annotate, "sync_to_r2", lambda *a, **k: None),
         ):
             yield ann_dir, pre_dir
+
+
+class PersistedShapeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_save_persists_facts_only_never_rally_copies(self) -> None:
+        with scratch_stores() as (ann_dir, _):
+            req = action_annotate.SaveActionAnnotationsRequest(
+                video="match.mp4",
+                fps=30.0,
+                num_frames=100,
+                events=[
+                    action_annotate.ActionEvent(
+                        frame=10,
+                        label="spike",
+                        xy=(0.5, 0.5),
+                        # UI state the frontend sends along — must not persist.
+                        rally_id=3,
+                        time=0.3333,
+                        relative_frame=4,
+                    )
+                ],
+            )
+            await action_annotate.save_annotations(req)
+
+            lines = (ann_dir / "match_actions.jsonl").read_text().splitlines()
+            meta, event = json.loads(lines[0]), json.loads(lines[1])
+            self.assertNotIn("rallies", meta)
+            self.assertEqual(
+                set(event), {"id", "frame", "label", "xy", "visible"}
+            )
+            self.assertEqual(event["frame"], 10)
+            self.assertEqual(event["label"], "spike")
 
 
 class PrelabelHumanStoreTests(unittest.TestCase):

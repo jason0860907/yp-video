@@ -91,8 +91,13 @@ def prepare_action_training_labels(
         records = kept
 
         original_frames = int(meta.get("num_frames") or 0)
+        # Explicit field pick, not {**meta}: the snapshot must carry only
+        # what yp-spot's dataset contract reads (video/fps/num_frames plus
+        # our own additions) — never a stale copy of the rally spans.
         training_meta = {
-            **meta,
+            "video": stem,
+            "fps": meta.get("fps"),
+            "source": meta.get("source"),
             "num_frames": cache_frames,
             "training_num_frames_source": "action_frame_cache",
             "camera_view": view,
@@ -105,7 +110,9 @@ def prepare_action_training_labels(
                 "training_num_frames": cache_frames,
             })
 
-        match_span = rally_match_span(meta, cache_frames)
+        match_span = rally_match_span(
+            stem, fps=float(meta.get("fps") or 30.0), num_frames=cache_frames
+        )
         if match_span is not None:
             training_meta["sample_spans"] = [list(match_span)]
             span_frames += match_span[1] - match_span[0]
