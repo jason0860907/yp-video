@@ -247,6 +247,10 @@ class R2Client:
 # Module-level instance
 r2_client = R2Client()
 
+# asyncio only weak-refs Tasks: a fire-and-forget sync task with no strong
+# reference can be garbage-collected mid-upload, silently leaving R2 stale.
+_sync_tasks: set[asyncio.Task] = set()
+
 
 def _remote_cut_entry(name: str) -> tuple[CutKind, dict] | None:
     """The R2 listing entry of a cut — its kind plus the object row — or None."""
@@ -396,7 +400,9 @@ def sync_to_r2(local_path: Path, category: str, *, base_dir: Path | None = None)
 
     try:
         loop = asyncio.get_running_loop()
-        loop.create_task(_upload())
+        task = loop.create_task(_upload())
+        _sync_tasks.add(task)
+        task.add_done_callback(_sync_tasks.discard)
     except RuntimeError:
         log.debug("sync_to_r2 skipped (no running event loop) for %s", rel)
 

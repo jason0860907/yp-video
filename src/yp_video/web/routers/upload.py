@@ -4,6 +4,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -364,16 +365,42 @@ async def start_download(req: DownloadRequest):
         raise HTTPException(400, "No files to download")
 
     base_dir = _get_base_dir(req.category)
+    # The R2 copy can lag local work (background sync is best-effort), so a
+    # blanket download must never clobber newer local files: skip any file
+    # whose local mtime is at or ahead of the R2 object's timestamp.
+    remote_stamps = {
+        obj["key"]: obj["last_modified"]
+        for obj in r2_client.list_objects(prefix=f"{req.category}/")
+    }
+    files: list[str] = []
+    skipped = 0
+    for file_path in req.files:
+        local_path = base_dir / file_path
+        stamp = remote_stamps.get(f"{req.category}/{file_path}")
+        if (
+            stamp
+            and local_path.exists()
+            and local_path.stat().st_mtime >= datetime.fromisoformat(stamp).timestamp()
+        ):
+            skipped += 1
+        else:
+            files.append(file_path)
+    if not files:
+        raise HTTPException(
+            400, f"All {skipped} selected files are newer locally than their R2 copies"
+        )
+
     job = job_manager.create_job(JobType.R2_DOWNLOAD, {
         "category": req.category,
-        "count": len(req.files),
-    }, name=f"Download ({len(req.files)} files)")
+        "count": len(files),
+        "skipped_newer_local": skipped,
+    }, name=f"Download ({len(files)} files)")
 
     def transfer(local_path, r2_key, cb):
         r2_client.download_file(r2_key, local_path, on_progress=cb)
 
     task = asyncio.create_task(
-        _run_batch_transfer(job, req.files, req.category, base_dir, transfer, "Download")
+        _run_batch_transfer(job, files, req.category, base_dir, transfer, "Download")
     )
     job_manager.attach_task([job], task)
 
