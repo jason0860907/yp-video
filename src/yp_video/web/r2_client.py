@@ -328,29 +328,30 @@ def serve_video_or_r2_redirect(
     local_path: Path,
     r2_categories: Sequence[str] = ("cuts-broadcast", "cuts-sideline", "videos"),
 ):
-    """Serve a video via R2 presigned URL (preferred) or local file fallback.
+    """Serve a video from local disk, or via R2 presigned URL when the bytes
+    live only in R2.
 
-    Prefers R2 when configured so that users close to the R2 region get
-    lower latency than streaming through the VM.
+    Local disk wins whenever the file exists: streaming a file that sits
+    next to the server through the internet trades a rock-solid range-request
+    source for one that stutters with every bandwidth dip — labeling seeks
+    constantly. FileResponse handles Range, so seeking works either way.
 
-    Returns a FastAPI response if the file is found on R2 or locally,
-    or None if not found anywhere.
+    Returns a FastAPI response, or None if the video exists nowhere.
     """
     from fastapi.responses import FileResponse, RedirectResponse
 
-    # Prefer R2 presigned URL — video is served directly from the edge.
-    # 24h expiry: a <video> element holds one URL for the whole labeling
-    # session, and an expired signature kills it mid-seek.
+    if local_path.exists() and local_path.is_file():
+        return FileResponse(local_path, media_type="video/mp4")
+
+    # R2-only cut: redirect to a presigned URL — the video streams straight
+    # from the edge. 24h expiry: a <video> element holds one URL for the
+    # whole labeling session, and an expired signature kills it mid-seek.
     if r2_client.configured:
         for category in r2_categories:
             r2_key = f"{category}/{local_path.name}"
             if r2_client.object_exists(r2_key):
                 url = r2_client.generate_presigned_url(r2_key, expires=24 * 3600)
                 return RedirectResponse(url)
-
-    # Fallback: serve from local disk
-    if local_path.exists() and local_path.is_file():
-        return FileResponse(local_path, media_type="video/mp4")
     return None
 
 
