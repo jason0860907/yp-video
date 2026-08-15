@@ -167,7 +167,7 @@ export function ActionPredictPage() {
           checkpoints={checkpoints}
           defaultCheckpoint={spot?.default_checkpoint}
           numFields={NUM_FIELDS}
-          overwriteLabel="Overwrite existing action labels"
+          overwriteLabel="Overwrite existing action pre-annotations"
           runDisabled={!spotReady}
           onRun={run}
         >
