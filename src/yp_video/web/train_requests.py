@@ -177,9 +177,9 @@ class ActionTrainBase(StrictModel):
             "0 = every frame."
         ),
     )
-    batch_size: int = Field(default=8, ge=1, le=64)
+    batch_size: int = Field(default=32, ge=1, le=64)
     acc_grad_iter: int = Field(
-        default=1,
+        default=4,
         ge=1,
         le=64,
         description=(
@@ -188,11 +188,11 @@ class ActionTrainBase(StrictModel):
             "without the VRAM."
         ),
     )
-    num_epochs: int = Field(default=50, ge=1, le=1000)
+    num_epochs: int = Field(default=100, ge=1, le=1000)
     warm_up_epochs: int = Field(
         default=3, ge=0, le=100, description="Linear LR warm-up epochs."
     )
-    learning_rate: float = Field(default=0.0003, gt=0)
+    learning_rate: float = Field(default=0.00001, gt=0)
     num_workers: int = Field(
         default=4, ge=0, le=32, description="DataLoader worker processes."
     )

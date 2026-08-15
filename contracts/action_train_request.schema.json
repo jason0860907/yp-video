@@ -154,14 +154,14 @@
       "type": "number"
     },
     "batch_size": {
-      "default": 8,
+      "default": 32,
       "maximum": 64,
       "minimum": 1,
       "title": "Batch Size",
       "type": "integer"
     },
     "acc_grad_iter": {
-      "default": 1,
+      "default": 4,
       "description": "Split each optimizer step into N micro-batches (batch_size must divide evenly) \u2014 heavy backbones keep the effective batch without the VRAM.",
       "maximum": 64,
       "minimum": 1,
@@ -169,7 +169,7 @@
       "type": "integer"
     },
     "num_epochs": {
-      "default": 50,
+      "default": 100,
       "maximum": 1000,
       "minimum": 1,
       "title": "Num Epochs",
@@ -184,7 +184,7 @@
       "type": "integer"
     },
     "learning_rate": {
-      "default": 0.0003,
+      "default": 1e-05,
       "exclusiveMinimum": 0,
       "title": "Learning Rate",
       "type": "number"
