@@ -62,6 +62,16 @@ export function FusionTrainPage() {
     trainingRunning,
   );
 
+  // Mirrors the server's spot_run_name default ({date}_{view}_ass_act_{model},
+  // fusion_model.py) so the empty field previews the actual run name.
+  const now = new Date();
+  const autoRunName = [
+    `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`,
+    values.camera_view === 'all' ? 'all_view' : values.camera_view,
+    'ass_act',
+    values.feature_arch.replace(/_(tsm|gsm)$/, ''),
+  ].join('_');
+
   const chosenRecipe = status?.recipes.find((item) => item.id === values.recipe);
   const recipeBlocked = Boolean(chosenRecipe && !chosenRecipe.available);
   const annotations = status?.action_annotations;
@@ -169,7 +179,7 @@ export function FusionTrainPage() {
               <SchemaTextField
                 name="run_name"
                 label="Run name"
-                placeholder="yp_fusion_association_action_..."
+                placeholder={autoRunName}
                 className="col-span-2"
               />
               <SchemaSelectField

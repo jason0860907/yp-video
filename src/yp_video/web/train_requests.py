@@ -310,7 +310,8 @@ class FusionTrainRequest(StrictModel):
         description="Which task heads share the one fused checkpoint.",
     )
     run_name: str | None = Field(
-        default=None, description="Run name; empty picks a timestamped one."
+        default=None,
+        description="Run name; empty picks {date}_{view}_ass_act_{model}.",
     )
     init_checkpoint: str | None = Field(
         default=None,

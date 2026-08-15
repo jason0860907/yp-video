@@ -24,7 +24,7 @@
         }
       ],
       "default": null,
-      "description": "Run name; empty picks a timestamped one.",
+      "description": "Run name; empty picks {date}_{view}_ass_act_{model}.",
       "title": "Run Name"
     },
     "init_checkpoint": {
