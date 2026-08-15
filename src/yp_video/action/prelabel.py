@@ -229,7 +229,9 @@ def predictions_to_annotation(
             "frame": frame,
             "label": label,
             "xy": [round(x, 4), round(y, 4)],
-            "visible": True,
+            # Visibility-head checkpoints predict the flag; older ones emit
+            # events without it, and an unannotated contact defaults visible.
+            "visible": bool(event.get("visible", True)),
         })
 
     events.sort(key=lambda e: (e["frame"], e["label"]))
