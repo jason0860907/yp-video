@@ -17,7 +17,7 @@ import os
 import subprocess
 import tempfile
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from yp_video.action import prelabel
@@ -87,6 +87,7 @@ def run_spot_inference(
     clip_len: int = 64,
     use_amp: bool = True,
     postprocess: bool = True,
+    segments: Sequence[tuple[float, float]] | None = None,
     on_progress: Callable[[float], None] | None = None,
     on_events: Callable[[list[dict]], None] | None = None,
 ) -> list[dict]:
@@ -118,6 +119,7 @@ def run_spot_inference(
             clip_len=clip_len,
             use_amp=use_amp,
             postprocess=postprocess,
+            segments=segments,
         )
         env = {
             **os.environ,
@@ -186,6 +188,7 @@ def predict_actions_to_jsonl(
     clip_len: int = 64,
     use_amp: bool = True,
     min_score: float = 0.0,
+    segments: Sequence[tuple[float, float]] | None = None,
     on_message: Callable[[str], None] | None = None,
     on_progress: Callable[[float], None] | None = None,
 ) -> Path:
@@ -197,6 +200,9 @@ def predict_actions_to_jsonl(
         checkpoint_path: Explicit SPOT ``.pt`` checkpoint. When ``None`` the
             newest checkpoint under ``~/videos/action-checkpoints`` is used.
         min_score: Drop predicted events below this confidence.
+        segments: Optional ``(start_s, end_s)`` spans; inference only scans
+            clip windows inside them (e.g. rally spans from a prior rally
+            pass). Events keep native frame numbers.
         on_message: Optional status callback for step-level progress.
         on_progress: Optional ``(fraction) -> None`` callback fired per SPOT
             progress tick (0..1 of inference). Lets long-running callers push
@@ -232,6 +238,7 @@ def predict_actions_to_jsonl(
         num_workers=num_workers,
         clip_len=clip_len,
         use_amp=use_amp,
+        segments=segments,
         on_progress=on_progress,
     )
 

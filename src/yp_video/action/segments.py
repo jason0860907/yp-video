@@ -95,6 +95,32 @@ def _rally_bounds(rallies: Sequence[dict]) -> list[tuple[float, float]]:
     )
 
 
+def pad_and_merge_spans(
+    rallies: Sequence[dict],
+    *,
+    pad_s: float,
+    duration_s: float,
+) -> list[tuple[float, float]]:
+    """Rally segments → padded, merged ``(start, end)`` scan spans in seconds.
+
+    Each rally grows by ``pad_s`` on both sides (so the serve run-up and the
+    point's tail stay in view), clamps to ``[0, duration_s]``, and overlapping
+    spans merge. This is what turns a rally pass's output into the ``segments``
+    argument of action inference.
+    """
+    spans: list[list[float]] = []
+    for start, end in _rally_bounds(rallies):
+        lo = max(0.0, start - pad_s)
+        hi = min(duration_s, end + pad_s)
+        if hi <= lo:
+            continue
+        if spans and lo <= spans[-1][1]:
+            spans[-1][1] = max(spans[-1][1], hi)
+        else:
+            spans.append([lo, hi])
+    return [(lo, hi) for lo, hi in spans]
+
+
 def build_action_segments(
     events: Sequence[dict],
     rallies: Sequence[dict],

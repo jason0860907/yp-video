@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import re
+from collections.abc import Sequence
 from pathlib import Path
 
 from yp_video.config import (
@@ -117,11 +118,14 @@ def build_command(
     prefetch_factor: int | None = None,
     use_amp: bool = True,
     postprocess: bool = True,
+    segments: Sequence[tuple[float, float]] | None = None,
 ) -> list[str]:
     video_paths = [video_path] if isinstance(video_path, Path) else list(video_path)
     save_dirs = [save_dir] if isinstance(save_dir, Path) else list(save_dir)
     if len(save_dirs) not in (1, len(video_paths)):
         raise ValueError("save_dir must contain one path or one path per video")
+    if segments is not None and len(video_paths) != 1:
+        raise ValueError("segments requires exactly one video_path")
 
     cmd = [
         str(SPOT_PYTHON),
@@ -140,6 +144,14 @@ def build_command(
         # Dense/segment models need every per-frame event; score filtering and
         # NMS would shred contiguous runs.
         cmd.append("--no-postprocess")
+    if segments is not None:
+        cmd.extend([
+            "--segments",
+            json.dumps([
+                [round(float(start), 3), round(float(end), 3)]
+                for start, end in segments
+            ]),
+        ])
     return cmd
 
 
