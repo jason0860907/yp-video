@@ -65,9 +65,11 @@ from yp_video.extraction.store import (
 )
 from yp_video.person.detector import (
     DETECTOR_NAME,
+    PersonBox,
     person_detector,
     person_from_detection,
 )
+from yp_video.tracklets.store import load_span_detections
 from yp_video.reid.embedder import base_embedder_name, build_embedders
 from yp_video.reid.store import (
     clear_embedding_refreshes,
@@ -155,10 +157,17 @@ def detect_video(
     fps = float(cap.get(cv2.CAP_PROP_FPS)) or 30.0
     cap.release()
 
+    # The dense tracking pass persists its raw detections for event frames
+    # (same model, same resolution — see tracklets/tracking.py); every frame
+    # it covered needs neither a seek nor a forward here. Frames it did not
+    # cover (tracking not run yet, or the event moved since) decode as before.
+    cached = load_span_detections(stem, DETECTOR_NAME)
+    to_decode = [e for e in events if e["frame"] not in cached]
+
     detector = person_detector()
     records: list[dict] = []
     total = len(events)
-    if on_progress:
+    if on_progress and to_decode:
         # The first detect() loads the detector — announce the stall.
         on_progress(0, total, f"loading detector ({DETECTOR_NAME})...")
 
@@ -172,7 +181,7 @@ def detect_video(
     def decode():
         cap = cv2.VideoCapture(str(video_path))
         try:
-            for event in events:
+            for event in to_decode:
                 cap.set(cv2.CAP_PROP_POS_FRAMES, event["frame"])
                 item = cap.read()  # (ok, frame)
                 while not stop.is_set():
@@ -190,17 +199,30 @@ def detect_video(
             cap.release()
 
     producer = threading.Thread(target=decode, name=f"detect-{stem}", daemon=True)
-    producer.start()
+    if to_decode:
+        producer.start()
+
+    def _cached_detections(rows) -> list[dict]:
+        """Sidecar (n, 5) x0,y0,x1,y1,score rows → the serialized shape,
+        detection-threshold filtered (the dense pass keeps a lower floor)."""
+        kept = rows[rows[:, 4] >= detector.score_threshold]
+        return _serialize_detections(
+            [PersonBox(tuple(map(float, row[:4])), float(row[4])) for row in kept],
+            frame_w,
+            frame_h,
+        )
 
     try:
         for i, event in enumerate(events):
-            while True:
-                try:
-                    ok, frame = frame_q.get(timeout=0.5)
-                    break
-                except queue.Empty:
-                    if decode_error:
-                        raise decode_error[0]
+            from_cache = event["frame"] in cached
+            if not from_cache:
+                while True:
+                    try:
+                        ok, frame = frame_q.get(timeout=0.5)
+                        break
+                    except queue.Empty:
+                        if decode_error:
+                            raise decode_error[0]
             xy = event.get("xy")
             event_id = str(event.get("id") or f"f{event['frame']}")
             record = {
@@ -225,7 +247,9 @@ def detect_video(
                     if key in _ASSOCIATION_FIELDS
                 }
             )
-            if ok:
+            if from_cache:
+                record["detections"] = _cached_detections(cached[event["frame"]])
+            elif ok:
                 pt = contact_point(xy, frame_w, frame_h)
                 # ALL person boxes, unfiltered — the actor picker and the
                 # association training set both need the ones a policy would
@@ -238,7 +262,8 @@ def detect_video(
                 on_progress(i + 1, total, f"event {i + 1}/{total}")
     finally:
         stop.set()
-        producer.join(timeout=5)
+        if to_decode:
+            producer.join(timeout=5)
 
     counts = {
         "events": total,

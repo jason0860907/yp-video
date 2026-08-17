@@ -57,6 +57,41 @@ def tracklet_index(stem: str) -> TrackletIndex:
     )
 
 
+def span_detections_path(stem: str) -> Path:
+    return TRACKS_DIR / f"{stem}_span_detections.npz"
+
+
+def save_span_detections(stem: str, detector: str, detections: dict[int, np.ndarray]) -> None:
+    """Raw per-event-frame detections the dense pass saw, atomically replaced.
+
+    ``detections`` maps a native frame index to an (n, 5) float32 array of
+    ``x0, y0, x1, y1, score`` rows in frame pixels, captured BEFORE the
+    tracker touched them — the full candidate set, flicker included. The
+    detector name rides along so a reader can refuse a cache produced by a
+    different model.
+    """
+    path = span_detections_path(stem)
+    with atomic_binary(path) as f:
+        np.savez_compressed(
+            f,
+            _detector=np.array(detector),
+            **{str(frame): array for frame, array in detections.items()},
+        )
+
+
+def load_span_detections(stem: str, detector: str) -> dict[int, np.ndarray]:
+    """The saved span detections, or {} when absent or from another detector."""
+    path = span_detections_path(stem)
+    if not path.exists():
+        return {}
+    with np.load(path) as data:
+        if "_detector" not in data.files or str(data["_detector"]) != detector:
+            return {}
+        return {
+            int(key): data[key] for key in data.files if not key.startswith("_")
+        }
+
+
 def save_track_masks(stem: str, mask_hw: tuple[int, int], masks: dict[str, np.ndarray]) -> None:
     """Per-tracklet packed instance masks, atomically replaced.
 

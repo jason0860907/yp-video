@@ -26,6 +26,7 @@ from yp_video.core.jsonl import read_jsonl_cached
 from yp_video.core.rallies import rally_sources
 from yp_video.extraction import links
 from yp_video.extraction import store as extraction_store
+from yp_video.extraction.pipeline import load_events
 from yp_video.tracklets import store as tracks_store
 from yp_video.tracklets import tracking
 from yp_video.web.job_helpers import init_batch_items, spawn_batch_video_job
@@ -85,7 +86,15 @@ async def run(req: TrackRequest) -> dict:
         job,
         video_paths,
         stop_vllm=req.stop_vllm,
-        work=lambda p, cb: tracking.track_video(p, stride=req.stride, on_progress=cb),
+        # Event frames ride along (this layer may join action + tracking;
+        # the tracking stage itself stays action-free): their raw detections
+        # persist as a sidecar so the sparse detect stage skips re-decoding.
+        work=lambda p, cb: tracking.track_video(
+            p,
+            stride=req.stride,
+            event_frames={e["frame"] for e in load_events(p.stem)},
+            on_progress=cb,
+        ),
         done_message=lambda c: f"{c['tracklets']} tracklets over {c['frames']} frames",
         start_message="tracking rallies...",
     )

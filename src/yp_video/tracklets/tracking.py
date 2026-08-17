@@ -19,9 +19,11 @@ from the action file's copy of them: tracking needs to know where the rallies
 are, not what happened inside them, and reading the action file made this
 stage wait for one it does not depend on.
 
-The dense pass is throughput-tuned (~9 ms/frame vs ~116 ms naive):
-a producer thread decodes and preprocesses frames while the GPU runs
-fixed-size fp16 batches, so neither side ever waits for the other.
+The dense pass overlaps decode and inference: a producer thread decodes and
+preprocesses frames (~9 ms/frame) while the GPU runs fixed-size fp16 batches.
+Measured 2026-08 on the 4090: the seg model's forward is ~14.5 ms/frame, so
+the pass is GPU-bound — a faster decoder would not speed it up; only a faster
+or smaller detector would.
 
 Storage lives in tracklets/store.py. Resolving a box back to the tracklet it
 belongs to lives in tracklets/geometry.py; joining tracklets to extracted
@@ -41,8 +43,13 @@ import numpy as np
 from yp_video.core.jsonl import write_jsonl
 from yp_video.core.progress import ProgressFn
 from yp_video.core.rallies import load_rallies, rally_fingerprint
+from yp_video.person.detector import DETECTOR_NAME
 from yp_video.person.seg import PERSON_CLASS_ID, SEG_WEIGHTS
-from yp_video.tracklets.store import save_track_masks, tracks_path
+from yp_video.tracklets.store import (
+    save_span_detections,
+    save_track_masks,
+    tracks_path,
+)
 
 # Detection floor for the dense pass — even lower than extraction's 0.1:
 # ByteTrack's second association stage recovers these low-score detections
@@ -82,8 +89,8 @@ def _pack_mask(mask: np.ndarray, box) -> np.ndarray:
 
 class _BatchDetector:
     """fp16 batch-compiled RF-DETR Seg for the dense pass — person boxes,
-    scores and instance masks in one forward (3.7 ms/frame at res 432,
-    fast enough for the dense pass).
+    scores and instance masks in one forward (~14.5 ms/frame at res 432 on
+    the 4090; the dense pass is bound by this, not by decoding).
 
     Separate from PersonDetector on purpose: optimize_for_inference() halves
     latency, and the compiled graph only accepts exactly BATCH_SIZE
@@ -118,13 +125,25 @@ class _BatchDetector:
 _detector = _BatchDetector()
 
 
-def track_video(video_path: Path, *, stride: int = 1, on_progress: ProgressFn | None = None) -> dict:
+def track_video(
+    video_path: Path,
+    *,
+    stride: int = 1,
+    event_frames: set[int] | None = None,
+    on_progress: ProgressFn | None = None,
+) -> dict:
     """Detect + ByteTrack every annotated rally span of one video.
 
     ``stride`` detects every Nth frame (skipped frames are grabbed but not
     decoded); ByteTrack is told the effective frame rate. Returns the summary
     counts also written to the jsonl header. Synchronous and GPU-bound —
     callers run it in an executor.
+
+    ``event_frames`` (native indices, supplied by the caller so this stage
+    keeps not reading the action file) marks frames whose raw detections are
+    also persisted as a sidecar: the sparse detect stage
+    (extraction/pipeline.detect_video) reads them instead of re-decoding and
+    re-detecting frames this dense pass already paid for.
     """
     import cv2
     import supervision as sv
@@ -204,6 +223,7 @@ def track_video(video_path: Path, *, stride: int = 1, on_progress: ProgressFn | 
 
     records: list[dict] = []
     masks_store: dict[str, np.ndarray] = {}
+    span_detections: dict[int, np.ndarray] = {}
     detected = 0
     current_rally: int | None = None
     tracker = None
@@ -244,6 +264,12 @@ def track_video(video_path: Path, *, stride: int = 1, on_progress: ProgressFn | 
                         minimum_consecutive_frames=2,
                     )
                 det.xyxy = det.xyxy * box_scale
+                if event_frames and frame_idx in event_frames:
+                    # Full frame-pixel candidate set, pre-tracker: the sparse
+                    # detect stage wants flicker too.
+                    span_detections[frame_idx] = np.concatenate(
+                        (det.xyxy, det.confidence[:, None]), axis=1
+                    ).astype(np.float32)
                 det = tracker.update_with_detections(det)  # masks ride along, aligned
                 for i, (xyxy, score, tid) in enumerate(zip(det.xyxy, det.confidence, det.tracker_id)):
                     t = tracks.setdefault(int(tid), {"frames": [], "boxes": [], "scores": [], "masks": []})
@@ -286,6 +312,8 @@ def track_video(video_path: Path, *, stride: int = 1, on_progress: ProgressFn | 
         "created_at": time.time(),
         "counts": counts,
     }
+    if event_frames:
+        save_span_detections(stem, DETECTOR_NAME, span_detections)
     # Masks land first: the jsonl's mtime is what downstream caches key on,
     # so a reader never sees new tracks with the old masks.
     save_track_masks(stem, (MASK_H, MASK_W), masks_store)
