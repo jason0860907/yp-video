@@ -39,7 +39,7 @@ class FusionModelStatusTests(unittest.TestCase):
                 fusion_model.spot_associate,
                 "list_association_checkpoints",
                 return_value=[
-                    {"name": "joint", "family": "legacy-actor-head"},
+                    {"name": "joint", "family": "fusion-actor-head"},
                     {"name": "independent", "family": "yp-association-v1"},
                 ],
             ),

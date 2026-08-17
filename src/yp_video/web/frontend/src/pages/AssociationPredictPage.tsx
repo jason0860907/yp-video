@@ -8,7 +8,7 @@
  *  Human verdicts are never re-decided — the count is shown per video so it
  *  is visible rather than promised.
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { API, apiFetch, errMsg } from '@/lib/api';
@@ -43,6 +43,7 @@ export function AssociationPredictPage() {
   const navigate = useNavigate();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [policy, setPolicy] = useState(RULE);
+  const touchedPolicy = useRef(false);
   const [stopVllm, setStopVllm] = useState(false);
   const { jobs, upsertJob } = useTypedJobs(PAGE_JOB_TYPES);
 
@@ -57,6 +58,20 @@ export function AssociationPredictPage() {
 
   const videos = videosQuery.data ?? [];
   const associationCheckpoints = statusQuery.data?.association_checkpoints ?? [];
+
+  // The fusion actor head is the mainline association model: once checkpoints
+  // exist, default to the newest fusion one (the listing is newest-first).
+  // The geometric rule stays one click away as the explicit fallback.
+  const defaultPolicy = useMemo(() => {
+    const fusion = associationCheckpoints.find((c) => c.family === 'fusion-actor-head');
+    return fusion ? ASSOCIATION_PREFIX + fusion.path : RULE;
+  }, [associationCheckpoints]);
+  useEffect(() => {
+    if (policy === RULE && defaultPolicy !== RULE && !touchedPolicy.current) {
+      setPolicy(defaultPolicy);
+    }
+  }, [defaultPolicy, policy]);
+
   const chosenAssociation = policy.startsWith(ASSOCIATION_PREFIX)
     ? associationCheckpoints.find((c) => ASSOCIATION_PREFIX + c.path === policy)
     : undefined;
@@ -157,13 +172,16 @@ export function AssociationPredictPage() {
             <span className="mb-1 block">Decide with</span>
             <select
               value={policy}
-              onChange={(e) => setPolicy(e.target.value)}
+              onChange={(e) => {
+                touchedPolicy.current = true;
+                setPolicy(e.target.value);
+              }}
               className="w-full cursor-pointer appearance-none rounded-lg border border-border-light bg-surface-50 px-3 py-1.5 text-xs text-text-primary focus:border-primary/50 focus:outline-none"
             >
               <option value={RULE}>rule-based (geometry, never abstains)</option>
               {associationCheckpoints.map((c) => (
                 <option key={c.path} value={ASSOCIATION_PREFIX + c.path}>
-                  {c.name} — {c.family === 'legacy-actor-head'
+                  {c.name} — {c.family === 'fusion-actor-head'
                     ? 'SPOT joint actor head (fusion)'
                     : 'independent visual association'}
                 </option>
@@ -200,7 +218,7 @@ export function AssociationPredictPage() {
             </dl>
           )}
 
-          {chosenAssociation?.family === 'legacy-actor-head' && (
+          {chosenAssociation?.family === 'fusion-actor-head' && (
             <dl className="mt-3 space-y-1 rounded-lg border border-border bg-surface-50 px-3 py-2 text-[11px]">
               {(
                 [

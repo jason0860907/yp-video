@@ -46,8 +46,8 @@ from yp_video.core.checkpoints import checkpoint_ref
 from yp_video.core.jsonl import atomic_write, read_jsonl, write_jsonl
 
 INDEPENDENT_ASSOCIATE_MODULE = "yp_spot.association.predict"
-LEGACY_ASSOCIATE_MODULE = "yp_spot.associate"
-LEGACY_ACTOR_FORMAT = "legacy-actor-head"
+FUSION_ASSOCIATE_MODULE = "yp_spot.associate"
+FUSION_ACTOR_FORMAT = "fusion-actor-head"
 INDEPENDENT_FORMAT = "yp-association-v1"
 
 
@@ -78,7 +78,7 @@ def run(
     if labels is None:
         raise FileNotFoundError(f"No action labels for {stem} — run Action Predict first")
 
-    total_steps = 4 if family == LEGACY_ACTOR_FORMAT else 3
+    total_steps = 4 if family == FUSION_ACTOR_FORMAT else 3
     if on_progress is not None:
         on_progress(0, total_steps, "building candidates from tracking...")
     _meta, events = read_jsonl(labels)
@@ -95,10 +95,10 @@ def run(
     ensure_action_frame_cache(video, cache_root=ACTION_FRAMES_DIR)
 
     audio_dir = None
-    if family == LEGACY_ACTOR_FORMAT:
+    if family == FUSION_ACTOR_FORMAT:
         if on_progress is not None:
-            on_progress(2, total_steps, "ensuring legacy Log-mel audio...")
-        audio_dir = _ensure_legacy_audio(video, labels, checkpoint)
+            on_progress(2, total_steps, "ensuring Log-mel audio...")
+        audio_dir = _ensure_fusion_audio(video, labels, checkpoint)
 
     with tempfile.TemporaryDirectory() as scratch:
         scratch_path = Path(scratch)
@@ -123,7 +123,7 @@ def run(
         else:
             command = [
                 str(SPOT_PYTHON),
-                "-m", LEGACY_ASSOCIATE_MODULE,
+                "-m", FUSION_ASSOCIATE_MODULE,
                 "--checkpoint_path", str(checkpoint),
                 "--frame_dir", str(ACTION_FRAMES_DIR),
                 "--label_file", str(labels),
@@ -214,11 +214,11 @@ def checkpoint_family(checkpoint: Path) -> str | None:
         config.get("predict_actor") is True
         and manifest.get("type") == FUSION_PACKAGE_TYPE
     ):
-        return LEGACY_ACTOR_FORMAT
+        return FUSION_ACTOR_FORMAT
     return None
 
 
-def _ensure_legacy_audio(
+def _ensure_fusion_audio(
     video: Path, labels: Path, checkpoint: Path
 ) -> Path | None:
     config = _read_package_json(checkpoint, "config.json")
@@ -289,13 +289,13 @@ def rejection(checkpoint: Path) -> str | None:
     if isinstance(state, dict) and any("_pred_actor" in key for key in state):
         return None
     return (
-        f"{checkpoint.parent.name}/{checkpoint.name} declares a legacy actor "
+        f"{checkpoint.parent.name}/{checkpoint.name} declares a fusion actor "
         "head, but its weights do not contain one"
     )
 
 
 def list_association_checkpoints() -> list[dict]:
-    """Association checkpoints, including supported legacy actor heads.
+    """Association checkpoints, independent and fusion actor heads alike.
 
     Read from each package's ``config.json`` rather than its weights: this
     feeds a status poll, and torch-loading every checkpoint on every poll to
@@ -331,7 +331,7 @@ def list_association_checkpoints() -> list[dict]:
         # compromised actor head, so this row points at the actor-best file.
         path, epoch = entry["path"], entry.get("epoch")
         actor_best = (summary.get("best_per_task") or {}).get("actor") or {}
-        if family == LEGACY_ACTOR_FORMAT and actor_best.get("file"):
+        if family == FUSION_ACTOR_FORMAT and actor_best.get("file"):
             candidate = package / actor_best["file"]
             if candidate.is_file():
                 path = checkpoint_ref(candidate)

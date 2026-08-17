@@ -403,7 +403,7 @@ class SpotActorInferenceContractTests(unittest.TestCase):
         )
 
     @staticmethod
-    def _declare_legacy(package: Path) -> None:
+    def _declare_fusion(package: Path) -> None:
         (package / "config.json").write_text(
             json.dumps({"predict_actor": True, "audio_backend": "logmel"}),
             encoding="utf-8",
@@ -502,13 +502,13 @@ class SpotActorInferenceContractTests(unittest.TestCase):
         )
         self.assertNotIn("--audio-dir", captured)
 
-    def test_picker_lists_a_legacy_actor_head_with_its_family(self) -> None:
+    def test_picker_lists_a_fusion_actor_head_with_its_family(self) -> None:
         with tempfile.TemporaryDirectory() as raw_dir:
             package = Path(raw_dir) / "yp_actor_only"
             package.mkdir()
             checkpoint = package / "checkpoint_best.pt"
             checkpoint.touch()
-            self._declare_legacy(package)
+            self._declare_fusion(package)
             with patch.object(
                 router.spot_associate.prelabel,
                 "list_checkpoints",
@@ -524,7 +524,7 @@ class SpotActorInferenceContractTests(unittest.TestCase):
 
         self.assertEqual(len(listed), 1)
         self.assertEqual(listed[0]["name"], "yp_actor_only")
-        self.assertEqual(listed[0]["family"], "legacy-actor-head")
+        self.assertEqual(listed[0]["family"], "fusion-actor-head")
         self.assertEqual(listed[0]["metrics"]["all_top1"], 0.84)
         self.assertEqual(listed[0]["validation_videos"], ["held-out-video"])
         self.assertEqual(listed[0]["actor_targets"], {"track": 12})
@@ -535,7 +535,7 @@ class SpotActorInferenceContractTests(unittest.TestCase):
             package.mkdir()
             checkpoint = package / "checkpoint_best.pt"
             checkpoint.touch()
-            self._declare_legacy(package)
+            self._declare_fusion(package)
             manifest = json.loads(
                 (package / "manifest.json").read_text(encoding="utf-8")
             )
@@ -575,13 +575,13 @@ class SpotActorInferenceContractTests(unittest.TestCase):
         self.assertEqual(listed[0]["metrics"]["occluded_recall"], 0.5)
         self.assertEqual(listed[0]["metrics"]["untracked_recall"], 0.25)
 
-    def test_submit_validation_accepts_legacy_actor_weights(self) -> None:
+    def test_submit_validation_accepts_fusion_actor_weights(self) -> None:
         with tempfile.TemporaryDirectory() as raw_dir:
             package = Path(raw_dir) / "yp_actor_only"
             package.mkdir()
             checkpoint = package / "checkpoint_best.pt"
             checkpoint.touch()
-            self._declare_legacy(package)
+            self._declare_fusion(package)
             with patch(
                 "torch.load",
                 return_value={"model._pred_actor.weight": object()},
@@ -590,14 +590,14 @@ class SpotActorInferenceContractTests(unittest.TestCase):
 
         self.assertIsNone(reason)
 
-    def test_legacy_actor_head_uses_the_original_inference_contract(self) -> None:
+    def test_fusion_actor_head_uses_the_original_inference_contract(self) -> None:
         with tempfile.TemporaryDirectory() as raw_dir:
             root = Path(raw_dir)
             package = root / "yp_actor_only"
             package.mkdir()
             checkpoint = package / "checkpoint_best.pt"
             checkpoint.touch()
-            self._declare_legacy(package)
+            self._declare_fusion(package)
             label_file = root / "video_actions.jsonl"
             label_file.touch()
             predictions = root / "video_predictions.json"
@@ -646,7 +646,7 @@ class SpotActorInferenceContractTests(unittest.TestCase):
                 ),
                 patch.object(
                     router.spot_associate,
-                    "_ensure_legacy_audio",
+                    "_ensure_fusion_audio",
                     return_value=audio_dir,
                 ),
                 patch.object(

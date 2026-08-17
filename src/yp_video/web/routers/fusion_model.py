@@ -1,7 +1,7 @@
 """Multi-head SPOT model recipes exposed as one train/predict surface.
 
 The registry is deliberately honest about capability.  Association + Action
-already exists as the legacy joint actor head in ``yp_spot.train``.  Rally
+already exists as the fusion actor head in ``yp_spot.train``.  Rally
 uses a different dense-segment data contract and sampling rate, so recipes
 that include it stay visible but unavailable until yp-spot gains a real
 multi-task trainer; the web page must never imply that running two unrelated
@@ -51,7 +51,7 @@ RECIPES = (
         "available": True,
         "trainable": True,
         "predict_outputs": ["association", "action"],
-        "checkpoint_family": spot_associate.LEGACY_ACTOR_FORMAT,
+        "checkpoint_family": spot_associate.FUSION_ACTOR_FORMAT,
         "description": (
             "One SPOT backbone with action, contact-location and actor heads."
         ),
@@ -125,7 +125,7 @@ def status() -> dict:
     checkpoints = [
         row
         for row in spot_associate.list_association_checkpoints()
-        if row["family"] == spot_associate.LEGACY_ACTOR_FORMAT
+        if row["family"] == spot_associate.FUSION_ACTOR_FORMAT
     ]
     return {
         "recipes": list(RECIPES),

@@ -124,7 +124,7 @@ def status() -> dict:
     association_checkpoints = spot_associate.list_association_checkpoints()
     return {
         # Visual models answer by looking at pixels and choosing among the
-        # tracked candidates; this also includes supported legacy actor heads.
+        # tracked candidates; this also includes fusion actor heads.
         "association_checkpoints": association_checkpoints,
         "spot_available": SPOT_DIR.exists() and SPOT_PYTHON.exists(),
         "init_checkpoints": [

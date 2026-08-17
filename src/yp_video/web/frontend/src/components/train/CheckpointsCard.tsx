@@ -7,7 +7,7 @@ const pct = (v: number | null | undefined) =>
   v == null ? '—' : `${(v * 100).toFixed(1)}%`;
 
 /** Association-family checkpoint listing, shared by the Association and
- *  Fusion train pages. Legacy fusion actor heads report a different metric
+ *  Fusion train pages. Fusion actor heads report a different metric
  *  set than independent yp-association runs, hence the two metric lines. */
 export function CheckpointsCard({
   title,
@@ -29,14 +29,14 @@ export function CheckpointsCard({
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-mono text-text-primary">{checkpoint.name}</span>
                 <Badge tone="success">Association Predict ready</Badge>
-                {checkpoint.family === 'legacy-actor-head' ? (
+                {checkpoint.family === 'fusion-actor-head' ? (
                   <Badge tone="neutral">fusion actor head</Badge>
                 ) : null}
                 {checkpoint.epoch != null ? (
                   <span className="text-text-muted">epoch {checkpoint.epoch + 1}</span>
                 ) : null}
               </div>
-              {checkpoint.family === 'legacy-actor-head' ? (
+              {checkpoint.family === 'fusion-actor-head' ? (
                 <div className="mt-1 flex flex-wrap gap-3 font-mono text-[11px] tabular-nums text-text-secondary">
                   <span>overall Top-1 {pct(checkpoint.metrics.all_top1)}</span>
                   <span>hard Top-1 {pct(checkpoint.metrics.hard_top1)}</span>

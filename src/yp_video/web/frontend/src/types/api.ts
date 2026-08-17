@@ -97,7 +97,7 @@ export interface FusionRecipe {
   available: boolean;
   trainable: boolean;
   predict_outputs: Array<'association' | 'action' | 'rally'>;
-  checkpoint_family: 'legacy-actor-head' | null;
+  checkpoint_family: 'fusion-actor-head' | null;
   description: string;
   blocked_on: string | null;
 }
@@ -668,7 +668,7 @@ export interface ReidAssociationDatasetSummary {
 export interface AssociationCheckpoint {
   path: string;
   name: string;
-  family: 'yp-association-v1' | 'legacy-actor-head';
+  family: 'yp-association-v1' | 'fusion-actor-head';
   epoch: number | null;
   mtime: number | null;
   holdout: string | null;
