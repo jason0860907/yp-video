@@ -10,6 +10,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, ORJSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.datastructures import MutableHeaders
 
 from yp_video.config import APP_LOG_PATH, FRONTEND_DIST_DIR, LOGS_DIR
 from yp_video.web import worklists
@@ -142,6 +143,34 @@ app = FastAPI(title="YP Video Analysis", lifespan=lifespan, default_response_cla
 # Level 4, not the default 9: on the 3.6 MB tracks payload that's 27 ms vs
 # 197 ms for a 10% larger body — the right trade for a LAN tool.
 app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=4)
+
+
+class _ApiNoStore:
+    """Cache-Control: no-store on every /api response.
+
+    Cloudflare's default cache keys on the URL extension, and most API paths
+    end in a video filename (…/annotations/<name>.mp4), so the edge would
+    otherwise serve stale JSON for its 2-hour default TTL. Pure ASGI, not
+    BaseHTTPMiddleware — the job SSE streams must pass through untouched.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or not scope["path"].startswith("/api/"):
+            await self.app(scope, receive, send)
+            return
+
+        async def send_no_store(message):
+            if message["type"] == "http.response.start":
+                MutableHeaders(scope=message)["Cache-Control"] = "no-store"
+            await send(message)
+
+        await self.app(scope, receive, send_no_store)
+
+
+app.add_middleware(_ApiNoStore)
 
 # Mount API routers
 app.include_router(download.router, prefix="/api/download", tags=["download"])
