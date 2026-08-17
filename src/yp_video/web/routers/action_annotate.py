@@ -30,6 +30,7 @@ from yp_video.contracts.action import (
 from yp_video.core import label_done
 from yp_video.core.annotation_ids import action_id
 from yp_video.core.ffmpeg import parse_optional_float as _parse_optional_float
+from yp_video.action.segments import pad_and_merge_spans
 from yp_video.core.rallies import load_rallies
 from yp_video.web import worklists
 from yp_video.web.action_annotations import (
@@ -686,6 +687,19 @@ async def _run_prelabel_batch_subprocess(
                     failure_lines.append(match.group(1))
                     return None
 
+                # Rally spans decide where pre-label looks — the same cascade
+                # the selfhost worker runs: dead time only contributes false
+                # positives, and labelable() drops out-of-rally events anyway.
+                # A video without rally annotations still scans in full.
+                segments = None
+                rallies = _load_rallies(video)
+                if rallies:
+                    segments = pad_and_merge_spans(
+                        rallies,
+                        pad_s=2.0,
+                        duration_s=float(video_metadata(video)["duration"]),
+                    )
+
                 cmd = prelabel.build_command(
                     video_path=video,
                     checkpoint_path=checkpoint,
@@ -695,6 +709,7 @@ async def _run_prelabel_batch_subprocess(
                     clip_len=req.clip_len,
                     prefetch_factor=req.prefetch_factor,
                     use_amp=req.use_amp,
+                    segments=segments,
                 )
 
                 rc, last_line = await stream_subprocess(
