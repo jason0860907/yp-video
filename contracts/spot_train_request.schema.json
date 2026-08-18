@@ -197,6 +197,12 @@
       "title": "Split Seed",
       "type": "integer"
     },
+    "predict_side": {
+      "default": false,
+      "description": "Add the side head: predict which court side won each rally (left/right/near/far) from its final seconds. Needs rally annotations that carry side labels.",
+      "title": "Predict Side",
+      "type": "boolean"
+    },
     "stop_vllm": {
       "default": false,
       "description": "Stop the vLLM server first to free its GPU memory for training.",

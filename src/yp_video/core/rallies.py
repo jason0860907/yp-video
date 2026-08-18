@@ -112,11 +112,12 @@ def number_rallies(segments: Sequence[Mapping]) -> tuple[list[dict], int]:
 
 
 def load_rallies(stem: str) -> list[dict]:
-    """The video's rally spans as ``{rally_id, start, end, label}``, in seconds.
+    """The video's rally spans as ``{rally_id, start, end, label, side}``, in seconds.
 
-    Sorted by (start, end, label) for the readers' benefit; ``rally_id`` comes
-    from the FILE (see resolve_rally_ids), never from that ordering. Every
-    consumer must come through this function.
+    ``side`` is the court side that won the rally (left/right/near/far), or
+    None where unannotated. Sorted by (start, end, label) for the readers'
+    benefit; ``rally_id`` comes from the FILE (see resolve_rally_ids), never
+    from that ordering. Every consumer must come through this function.
     """
     path = rally_annotation_path(stem)
     if path is None:
@@ -128,6 +129,7 @@ def load_rallies(stem: str) -> list[dict]:
             float(r.get("end", 0) or 0),
             str(r.get("label", "rally")),
             rid,
+            r.get("side"),
         )
         for r, rid in zip(records, resolve_rally_ids(records))
     ]
@@ -140,8 +142,9 @@ def load_rallies(stem: str) -> list[dict]:
             "start": start,
             "end": end,
             "label": label,
+            "side": side,
         }
-        for start, end, label, rid in parsed
+        for start, end, label, rid, side in parsed
     ]
 
 

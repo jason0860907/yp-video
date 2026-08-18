@@ -9,6 +9,7 @@ import shutil
 import tempfile
 import zipfile
 from pathlib import Path
+from typing import Literal
 from urllib.parse import unquote
 
 from fastapi import APIRouter, HTTPException, Request
@@ -52,6 +53,9 @@ class Annotation(StrictModel):
     start: float
     end: float
     label: str
+    #: Court side that won the rally (camera-frame): left/right for sideline
+    #: footage, near/far for broadcast. None = not annotated yet.
+    side: Literal["left", "right", "near", "far"] | None = None
 
 
 class SaveAnnotationsRequest(StrictModel):
@@ -205,14 +209,15 @@ def _write_annotations_atomic(
         if assigned is None:
             high += 1
             assigned = high
-        rows.append(
-            {
-                "start": a.start,
-                "end": a.end,
-                "label": a.label,
-                "rally_id": assigned,
-            }
-        )
+        row = {
+            "start": a.start,
+            "end": a.end,
+            "label": a.label,
+            "rally_id": assigned,
+        }
+        if a.side is not None:
+            row["side"] = a.side
+        rows.append(row)
     tmp_path = output_path.with_suffix(output_path.suffix + f".tmp.{os.getpid()}")
     with open(tmp_path, "w", encoding="utf-8") as f:
         meta = {

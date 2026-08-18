@@ -31,6 +31,7 @@ from yp_video.config import (
     cut_kind_of,
     find_cut,
 )
+from yp_video.contracts.action import SCORE_SIDES, SCORE_SIDES_ORDERED, SIDE_TAIL_S
 from yp_video.core.ffmpeg import FFmpegError, probe_video_metadata
 from yp_video.core.jsonl import read_jsonl, write_jsonl
 
@@ -131,6 +132,7 @@ def write_training_labels(
 
     videos = 0
     rallies = 0
+    sided_rallies = 0
     total_frames = 0
     rally_frames = 0
     for ann_path, video_path in items:
@@ -153,11 +155,15 @@ def write_training_labels(
                 continue
             first = max(0, min(int(round(start * extract_fps)), num_frames - 1))
             last = max(first, min(int(round(end * extract_fps)), num_frames - 1))
-            events.append({
+            event = {
                 "frame": first,
                 "end_frame": last,
                 "label": str(row.get("label") or RALLY_LABEL),
-            })
+            }
+            if row.get("side") in SCORE_SIDES:
+                event["side"] = row["side"]
+                sided_rallies += 1
+            events.append(event)
             rally_frames += last - first + 1
 
         stem = video_path.stem
@@ -186,6 +192,7 @@ def write_training_labels(
         "extract_fps": extract_fps,
         "videos": videos,
         "rallies": rallies,
+        "sided_rallies": sided_rallies,
         "frames": total_frames,
         "rally_frames": rally_frames,
     }
@@ -207,34 +214,57 @@ def events_to_rally_segments(
     heals brief mid-rally flickers; segments shorter than ``min_duration_s``
     are dropped as noise. ``score`` is the mean per-frame confidence of the
     frames that formed the segment.
+
+    Events from a side-head checkpoint also carry ``side_probs``; each
+    segment's last ``SIDE_TAIL_S`` seconds of them are averaged into
+    ``side`` / ``side_score`` — the winning court side. Events without
+    ``side_probs`` (older checkpoints) simply yield segments without a side.
     """
     if native_fps <= 0:
         raise ValueError(f"native_fps must be positive, got {native_fps}")
 
     ticks = sorted(
-        (event["frame"] / native_fps, float(event.get("score", 1.0)))
-        for event in events
-        if float(event.get("score", 1.0)) >= min_score
+        (
+            (event["frame"] / native_fps, float(event.get("score", 1.0)), event.get("side_probs"))
+            for event in events
+            if float(event.get("score", 1.0)) >= min_score
+        ),
+        key=lambda tick: tick[:2],
     )
 
     segments: list[dict] = []
-    for t, score in ticks:
+    for t, score, side_probs in ticks:
         if segments and t - segments[-1]["end"] <= max_gap_s:
             segments[-1]["end"] = t
             segments[-1]["scores"].append(score)
+            segments[-1]["side_ticks"].append((t, side_probs))
         else:
-            segments.append({"start": t, "end": t, "scores": [score]})
+            segments.append(
+                {"start": t, "end": t, "scores": [score], "side_ticks": [(t, side_probs)]}
+            )
 
-    return [
-        {
+    merged: list[dict] = []
+    for s in segments:
+        if s["end"] - s["start"] < min_duration_s:
+            continue
+        out = {
             "start": round(s["start"], 2),
             "end": round(s["end"], 2),
             "label": RALLY_LABEL,
             "score": round(sum(s["scores"]) / len(s["scores"]), 4),
         }
-        for s in segments
-        if s["end"] - s["start"] >= min_duration_s
-    ]
+        tail = [
+            probs
+            for t, probs in s["side_ticks"]
+            if probs is not None and t >= s["end"] - SIDE_TAIL_S
+        ]
+        if tail:
+            means = [sum(col) / len(tail) for col in zip(*tail)]
+            best = max(range(len(means)), key=means.__getitem__)
+            out["side"] = SCORE_SIDES_ORDERED[best]
+            out["side_score"] = round(means[best], 3)
+        merged.append(out)
+    return merged
 
 
 def predict_rally_segments(

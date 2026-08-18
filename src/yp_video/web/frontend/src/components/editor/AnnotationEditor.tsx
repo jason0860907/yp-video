@@ -58,11 +58,17 @@ function TimeField({ seconds, onCommit }: { seconds: number; onCommit: (value: n
   );
 }
 
+export type RallySide = 'left' | 'right' | 'near' | 'far';
+const RALLY_SIDES: RallySide[] = ['left', 'right', 'near', 'far'];
+const SIDE_DISPLAY: Record<RallySide, string> = { left: '左', right: '右', near: '近', far: '遠' };
+
 export interface EditorAnnotation {
   rally_id: number | null;
   start: number;
   end: number;
   label: string;
+  /** Court side that won the rally (camera-frame); null = not annotated. */
+  side: RallySide | null;
   score?: number | null;
 }
 export interface EditorData {
@@ -97,6 +103,8 @@ const normalizeRallyId = (v: unknown): number | null => {
   const n = Number(v);
   return Number.isInteger(n) && n > 0 ? n : null;
 };
+const normalizeSide = (v: unknown): RallySide | null =>
+  RALLY_SIDES.includes(v as RallySide) ? (v as RallySide) : null;
 const num = (...vals: unknown[]): number => {
   for (const v of vals) if (typeof v === 'number' && Number.isFinite(v)) return v;
   return 0;
@@ -150,6 +158,7 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
         start: num(r.start, r.start_time, (r.segment as number[] | undefined)?.[0]),
         end: num(r.end, r.end_time, (r.segment as number[] | undefined)?.[1]),
         label: 'rally',
+        side: normalizeSide(r.side),
         score: (r.confidence ?? r.score ?? null) as number | null,
       }))
       .sort((a, b) => a.start - b.start);
@@ -179,7 +188,7 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
         toast.warning('End must be after start');
         return ms;
       }
-      setAnnotations((prev) => [...prev, { rally_id: null, start: ms, end, label: 'rally' }].sort((a, b) => a.start - b.start));
+      setAnnotations((prev) => [...prev, { rally_id: null, start: ms, end, label: 'rally', side: null }].sort((a, b) => a.start - b.start));
       setDirty(true);
       return null;
     });
@@ -334,7 +343,7 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
         const body = {
           video: videoName,
           duration,
-          annotations: sent.map(({ rally_id, start, end, label }) => ({ rally_id, start, end, label })),
+          annotations: sent.map(({ rally_id, start, end, label, side }) => ({ rally_id, start, end, label, side })),
         };
         const saved = await apiFetch<{ saved: string; count: number; annotations: EditorAnnotation[] }>(
           saveEndpoint,
@@ -345,7 +354,8 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
         // Only if nothing changed while the request was in flight; otherwise
         // the newer edit stays and the next save reconciles.
         if (latestAnnotations.current === sent) {
-          setAnnotations(saved.annotations);
+          // Server rows omit `side` when null — normalize back to the editor shape.
+          setAnnotations(saved.annotations.map((r) => ({ ...r, side: normalizeSide(r.side) })));
           setDirty(false);
         }
         if (!silent) {
@@ -383,7 +393,7 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
         body: JSON.stringify({
           video: cur.videoName,
           duration: cur.duration,
-          annotations: latestAnnotations.current.map(({ rally_id, start, end, label }) => ({ rally_id, start, end, label })),
+          annotations: latestAnnotations.current.map(({ rally_id, start, end, label, side }) => ({ rally_id, start, end, label, side })),
         }),
       });
     };
@@ -439,6 +449,12 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
 
   const updateField = (idx: number, field: 'start' | 'end', value: number) => {
     setAnnotations((prev) => prev.map((a, i) => (i === idx ? { ...a, [field]: value } : a)));
+    setDirty(true);
+  };
+
+  // Click the active side again to clear it back to unannotated.
+  const updateSide = (idx: number, side: RallySide) => {
+    setAnnotations((prev) => prev.map((a, i) => (i === idx ? { ...a, side: a.side === side ? null : side } : a)));
     setDirty(true);
   };
 
@@ -646,6 +662,27 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
                       <TimeField seconds={a.end} onCommit={(value) => updateField(i, 'end', value)} />
                     </div>
                     <span className="rounded bg-surface-200/40 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-text-muted">{(a.end - a.start).toFixed(1)}s</span>
+                    <div
+                      className="flex items-center gap-0.5"
+                      onClick={(e) => e.stopPropagation()}
+                      title="得分側（畫面視角）— 再點一次取消"
+                    >
+                      {RALLY_SIDES.map((side) => (
+                        <button
+                          key={side}
+                          type="button"
+                          onClick={() => updateSide(i, side)}
+                          className={cn(
+                            'rounded px-1 py-0.5 text-[10px] leading-none transition-colors',
+                            a.side === side
+                              ? 'bg-accent/30 text-text-primary ring-1 ring-accent/60'
+                              : 'text-text-muted/50 hover:bg-surface-200/40 hover:text-text-muted',
+                          )}
+                        >
+                          {SIDE_DISPLAY[side]}
+                        </button>
+                      ))}
+                    </div>
                     {rowExtras?.(a)}
                     <button
                       type="button"

@@ -22,7 +22,7 @@ from enum import Enum
 from pydantic import BaseModel, Field
 
 # Bump on ANY breaking change to the label record, frame layout, or label set.
-ACTION_CONTRACT_VERSION = "1.2.0"
+ACTION_CONTRACT_VERSION = "1.3.0"
 
 # Env var carrying ACTION_CONTRACT_VERSION from producer to consumer.
 ACTION_CONTRACT_VERSION_ENV = "YP_ACTION_CONTRACT_VERSION"
@@ -66,6 +66,32 @@ ACTION_LABELS_ORDERED = tuple(label.value for label in ActionLabel)
 ACTION_LABELS = frozenset(ACTION_LABELS_ORDERED)
 
 
+class ActionSide(str, Enum):
+    """Court side that WON a rally, in camera-frame terms.
+
+    Sideline footage uses left/right, broadcast/baseline footage near/far —
+    one 4-class vocabulary so a single head serves both camera setups. The
+    winning side, not where the ball landed: an out ball lands on the loser's
+    side.
+    """
+
+    left = "left"
+    right = "right"
+    near = "near"
+    far = "far"
+
+
+# Index order matters to the model: 0/1 are horizontal mirrors of each other
+# (training flips them together with the frames), 2/3 are flip-invariant.
+SCORE_SIDES_ORDERED = tuple(side.value for side in ActionSide)
+SCORE_SIDES = frozenset(SCORE_SIDES_ORDERED)
+
+#: Seconds at the END of a rally that carry the side supervision, and the
+#: window inference aggregates over. The outcome is only visible around the
+#: final play; frames earlier in the rally cannot know who will win.
+SIDE_TAIL_S = 5.0
+
+
 class ActionEvent(BaseModel):
     """A single spotted action at one frame, with a normalized court location."""
 
@@ -94,6 +120,13 @@ class SegmentLabelEvent(BaseModel):
     frame: int = Field(ge=0, description="0-based first frame of the span")
     end_frame: int = Field(ge=0, description="0-based last frame of the span, inclusive")
     label: str = Field(description="Segment class, e.g. 'rally'")
+    side: ActionSide | None = Field(
+        default=None,
+        description=(
+            "Court side that won the rally (camera-frame). None = unannotated; "
+            "the model ignores the span's side supervision."
+        ),
+    )
 
 
 # ── Actor candidates (who performed each action) ──────────────────

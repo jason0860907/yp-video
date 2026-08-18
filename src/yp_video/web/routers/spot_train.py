@@ -199,6 +199,8 @@ def _build_command(
     ]
     if req.camera_view != "all":
         cmd.extend(["--camera_view", req.camera_view])
+    if req.predict_side:
+        cmd.append("--predict_side")
     if init_checkpoint is not None:
         cmd.extend(["--init_checkpoint", str(init_checkpoint)])
     if req.epoch_num_frames is not None:
@@ -311,6 +313,12 @@ async def start(req: RallyTrainRequest) -> dict:
                 extract_fps=req.extract_fps,
                 label_dir=save_dir / "labels" / "rally-annotations",
             )
+            if req.predict_side and not label_summary.get("sided_rallies"):
+                raise RuntimeError(
+                    "predict_side requested but no rally annotation in this "
+                    "run carries a side label — annotate winning sides in the "
+                    "rally editor first"
+                )
             await job_manager.update_job(
                 job.id,
                 progress=0.2,
