@@ -208,6 +208,37 @@ def spot_progress_message(data: dict) -> str:
     return "SPOT inference " + " · ".join(parts)
 
 
+def normalize_event(event: dict, *, num_frames: int, min_score: float) -> dict | None:
+    """Validate + normalize one raw SPOT event into the annotation shape.
+
+    Returns ``None`` when the event fails the label whitelist or ``min_score``.
+    Shared by ``predictions_to_annotation`` (final path) and the progressive
+    partial-event path so both normalize identically.
+    """
+    label = str(event.get("label", "")).lower()
+    if label not in ACTION_LABELS:
+        return None
+    score = _finite_float(event.get("score"), default=1.0)
+    if score < min_score:
+        return None
+    frame = int(round(_finite_float(event.get("frame"), default=0)))
+    if num_frames > 0:
+        frame = max(0, min(frame, num_frames - 1))
+    xy = event.get("xy") or [event.get("x", 0.5), event.get("y", 0.5)]
+    if not isinstance(xy, (list, tuple)) or len(xy) < 2:
+        xy = [0.5, 0.5]
+    x = _clamp(_finite_float(xy[0], default=0.5), 0.0, 1.0)
+    y = _clamp(_finite_float(xy[1], default=0.5), 0.0, 1.0)
+    return {
+        "frame": frame,
+        "label": label,
+        "xy": [round(x, 4), round(y, 4)],
+        # Visibility-head checkpoints predict the flag; older ones emit
+        # events without it, and an unannotated contact defaults visible.
+        "visible": bool(event.get("visible", True)),
+    }
+
+
 def predictions_to_annotation(
     predictions: list[dict],
     *,
@@ -223,28 +254,9 @@ def predictions_to_annotation(
 
     events = []
     for event in raw_events:
-        label = str(event.get("label", "")).lower()
-        if label not in ACTION_LABELS:
-            continue
-        score = _finite_float(event.get("score"), default=1.0)
-        if score < min_score:
-            continue
-        frame = int(round(_finite_float(event.get("frame"), default=0)))
-        if num_frames > 0:
-            frame = max(0, min(frame, num_frames - 1))
-        xy = event.get("xy") or [event.get("x", 0.5), event.get("y", 0.5)]
-        if not isinstance(xy, (list, tuple)) or len(xy) < 2:
-            xy = [0.5, 0.5]
-        x = _clamp(_finite_float(xy[0], default=0.5), 0.0, 1.0)
-        y = _clamp(_finite_float(xy[1], default=0.5), 0.0, 1.0)
-        events.append({
-            "frame": frame,
-            "label": label,
-            "xy": [round(x, 4), round(y, 4)],
-            # Visibility-head checkpoints predict the flag; older ones emit
-            # events without it, and an unannotated contact defaults visible.
-            "visible": bool(event.get("visible", True)),
-        })
+        normalized = normalize_event(event, num_frames=num_frames, min_score=min_score)
+        if normalized is not None:
+            events.append(normalized)
 
     events.sort(key=lambda e: (e["frame"], e["label"]))
     return {

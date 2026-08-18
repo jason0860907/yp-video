@@ -22,7 +22,7 @@ from enum import Enum
 from pydantic import BaseModel, Field
 
 # Bump on ANY breaking change to the label record, frame layout, or label set.
-ACTION_CONTRACT_VERSION = "1.3.0"
+ACTION_CONTRACT_VERSION = "1.4.0"
 
 # Env var carrying ACTION_CONTRACT_VERSION from producer to consumer.
 ACTION_CONTRACT_VERSION_ENV = "YP_ACTION_CONTRACT_VERSION"
@@ -252,10 +252,16 @@ class ActionLabelRecord(BaseModel):
 SPOT_PROGRESS_PREFIX = "SPOT_PROGRESS "
 
 # yp-spot may ALSO stream partial foreground events as inference runs, so the
-# consumer can surface rallies progressively instead of waiting for the final
-# ``predictions.json``. One line per inference batch, carrying that batch's new
-# foreground events (native frame numbers):
-#   ``SPOT_PARTIAL {"events":[{"frame":<int>,"score":<float>}, ...]}``
-# Optional and additive — a yp-spot build that never emits it degrades to the
-# existing all-at-once behaviour. Only the prefix is a hard contract.
+# consumer can surface results progressively instead of waiting for the final
+# ``predictions.json``. One line per inference batch (native frame numbers):
+#   ``SPOT_PARTIAL {"cumulative":<bool>,"events":[...]}``
+# Dense (rally) runs stream deltas — that batch's newly-settled per-frame
+# events, ``{"frame","score"}`` plus ``side_probs`` on side-head checkpoints —
+# with ``cumulative=false``: the reader accumulates them. Postprocessed
+# (action) runs stream the postprocessed events of the whole settled prefix,
+# ``{"label","frame","score"}`` plus ``xy``/``visible`` when predicted, with
+# ``cumulative=true``: each line REPLACES all previous ones (NMS is only
+# stable when re-run over the full prefix). Optional and additive — a yp-spot
+# build that never emits it degrades to the all-at-once behaviour. Only the
+# prefix is a hard contract.
 SPOT_PARTIAL_PREFIX = "SPOT_PARTIAL "

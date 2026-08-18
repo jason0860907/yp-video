@@ -52,11 +52,14 @@ def _spot_progress_ratio(line: str) -> float | None:
     return prelabel.spot_progress_fraction(data) if data is not None else None
 
 
-def _spot_partial_events(line: str) -> list[dict] | None:
-    """Parse a yp-spot ``SPOT_PARTIAL`` stdout line to this batch's new events.
+def _spot_partial_payload(line: str) -> tuple[bool, list[dict]] | None:
+    """Parse a yp-spot ``SPOT_PARTIAL`` stdout line to ``(cumulative, events)``.
 
+    ``cumulative=True`` (postprocessed/action runs) means ``events`` is the
+    full settled prefix and replaces everything streamed before;
+    ``cumulative=False`` (dense/rally runs) means it is that batch's delta.
     Returns ``None`` for any non-partial line. Defensive: a malformed payload
-    is treated as "no events" (``[]``) rather than crashing the reader — the
+    is treated as an empty delta rather than crashing the reader — the
     authoritative event set still arrives via ``predictions.json`` at the end.
     """
     if not line.startswith(SPOT_PARTIAL_PREFIX):
@@ -64,9 +67,10 @@ def _spot_partial_events(line: str) -> list[dict] | None:
     try:
         payload = json.loads(line[len(SPOT_PARTIAL_PREFIX):])
         events = payload.get("events")
-        return events if isinstance(events, list) else []
+        cumulative = bool(payload.get("cumulative"))
+        return cumulative, (events if isinstance(events, list) else [])
     except (ValueError, AttributeError):
-        return []
+        return False, []
 
 
 def _probe_fps_frames(video_path: Path) -> tuple[float, int]:
@@ -127,8 +131,8 @@ def run_spot_inference(
             ACTION_CONTRACT_VERSION_ENV: ACTION_CONTRACT_VERSION,
         }
         # Ask yp-spot to stream settled foreground events only when a consumer
-        # wants them (the rally path). Leaving it off for action runs keeps
-        # them from emitting SPOT_PARTIAL lines nobody reads.
+        # wants them. Leaving it off otherwise keeps runs from emitting
+        # SPOT_PARTIAL lines nobody reads.
         if on_events is not None:
             env["SPOT_EMIT_PARTIAL"] = "1"
         proc = subprocess.Popen(
@@ -157,13 +161,19 @@ def run_spot_inference(
                         on_progress(ratio)
                     continue
                 # Progressive foreground events (optional, only when a consumer
-                # asked for them). A yp-spot build that never emits SPOT_PARTIAL
-                # simply never triggers this and the final predictions.json is
-                # unchanged.
+                # asked for them). The callback always receives the cumulative
+                # event list: deltas (rally runs) accumulate, cumulative
+                # payloads (action runs) replace wholesale. A yp-spot build
+                # that never emits SPOT_PARTIAL simply never triggers this and
+                # the final predictions.json is unchanged.
                 if on_events is not None:
-                    batch = _spot_partial_events(line)
-                    if batch is not None:
-                        partial_events.extend(batch)
+                    parsed = _spot_partial_payload(line)
+                    if parsed is not None:
+                        cumulative, batch = parsed
+                        if cumulative:
+                            partial_events = batch
+                        else:
+                            partial_events.extend(batch)
                         on_events(partial_events)
                         continue
                 tail.append(line)
@@ -191,6 +201,7 @@ def predict_actions_to_jsonl(
     segments: Sequence[tuple[float, float]] | None = None,
     on_message: Callable[[str], None] | None = None,
     on_progress: Callable[[float], None] | None = None,
+    on_events: Callable[[list[dict]], None] | None = None,
 ) -> Path:
     """Run yp-spot action spotting on ``video_path`` and write the action JSONL.
 
@@ -207,6 +218,12 @@ def predict_actions_to_jsonl(
         on_progress: Optional ``(fraction) -> None`` callback fired per SPOT
             progress tick (0..1 of inference). Lets long-running callers push
             live sub-progress while the subprocess streams.
+        on_events: Optional progressive-delivery callback. Fired per settled
+            batch with the *cumulative* postprocessed events of the settled
+            prefix, normalized exactly like the final JSONL (label whitelist,
+            ``min_score``, frame clamp, xy/visible defaults) plus a ``time``
+            field in seconds, so callers need no fps plumbing. The final JSONL
+            stays authoritative.
 
     Returns:
         ``output_path``.
@@ -230,6 +247,17 @@ def predict_actions_to_jsonl(
     _msg("Reading video metadata...")
     fps, num_frames = _probe_fps_frames(video_path)
 
+    def _on_partial(events: list[dict]) -> None:
+        normalized = []
+        for event in events:
+            item = prelabel.normalize_event(
+                event, num_frames=num_frames, min_score=min_score
+            )
+            if item is not None:
+                item["time"] = item["frame"] / fps if fps > 0 else 0.0
+                normalized.append(item)
+        on_events(normalized)
+
     _msg("Running SPOT action inference...")
     predictions = run_spot_inference(
         video_path,
@@ -240,6 +268,7 @@ def predict_actions_to_jsonl(
         use_amp=use_amp,
         segments=segments,
         on_progress=on_progress,
+        on_events=_on_partial if on_events is not None else None,
     )
 
     data = prelabel.predictions_to_annotation(
