@@ -26,7 +26,6 @@ from yp_video.web.action_training import (
 from yp_video.web.jobs import JobSummary, JobType, job_manager
 from yp_video.web.r2_client import remote_cut_path
 from yp_video.web.spot_runs import (
-    SPOT_INIT_PACKAGE_TYPES,
     checkpoint_package_options,
     dedupe_run_name,
     performance_payload,
@@ -131,11 +130,12 @@ def status() -> dict:
         "recipes": list(RECIPES),
         "checkpoints": checkpoints,
         "spot_available": SPOT_DIR.exists() and SPOT_PYTHON.exists(),
-        # Only packages the SPOT trainer can warm-start from — the shared
-        # checkpoints dir also holds independent association packages, whose
-        # weights the shape-matching init would silently skip entirely.
+        # Fusion packages only: action-only packages lack the actor head, so
+        # warm-starting from one leaves that head randomly initialized while
+        # looking like a fine-tune; independent association packages would
+        # load zero tensors via the shape-matching init.
         "init_checkpoints": checkpoint_package_options(
-            ACTION_CHECKPOINTS_DIR, package_types=SPOT_INIT_PACKAGE_TYPES
+            ACTION_CHECKPOINTS_DIR, package_types=(FUSION_PACKAGE_TYPE,)
         ),
         "action_annotations": action_annotations,
         "supervision": {

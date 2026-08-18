@@ -65,8 +65,9 @@ def load_json_file(path: Path) -> dict | list | None:
 
 # ── Init-checkpoint options ───────────────────────────────────────
 
-#: Package types whose weights are a SPOT model — what the yp-spot trainers
-#: (Action, Fusion, Rally) can warm-start from. The independent association
+#: Package types whose weights are a SPOT model — what the Action and Rally
+#: trainers can warm-start from (Fusion restricts itself to fusion packages,
+#: whose actor head an action-only package lacks). The independent association
 #: package is deliberately absent: its weights are an AssociationModel, and
 #: the SPOT loader's shape-matching init would load zero tensors from it
 #: without a word of complaint.
