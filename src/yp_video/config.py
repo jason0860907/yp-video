@@ -136,8 +136,10 @@ REID_ANNOTATIONS_DIR = REID_DIR / "annotations"
 # R2_CATEGORIES.
 REID_DATASETS_DIR = REID_DIR / "datasets"
 # yp-reid checkpoint packages (Contract B: manifest.json + state dict +
-# metrics), written by yp-reid training / import_weights.
-REID_CHECKPOINTS_DIR = REID_DIR / "checkpoints"
+# metrics), written by yp-reid training / import_weights. Overridable apart
+# from VIDEOS_DIR: a caller that stages an isolated videos layout (the
+# selfhost worker's identify jobs) still embeds with the real checkpoints.
+REID_CHECKPOINTS_DIR = _env_path("YP_REID_CHECKPOINTS_DIR", REID_DIR / "checkpoints")
 
 # R2 category → local directory + glob pattern + display label. The category
 # key doubles as the bucket key prefix and matches the local dir relative to
