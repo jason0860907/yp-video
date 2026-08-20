@@ -64,7 +64,14 @@ export function LabelPage() {
   // Saving always writes the human store; if the user was viewing the
   // machine store, follow the save there so the screen shows what's saved.
   const onPanelSaved = () => setSource((s) => (s === 'pre-annotation' ? 'annotation' : s));
-  useEffect(() => setLoadedSource(null), [video, mode, source, vlm]);
+  // Rally's Download-Clips modal: the button sits in the picker row (next to
+  // Done) but the rally list it needs lives in the editor, so the page only
+  // holds the open bit and hands it down.
+  const [clipsOpen, setClipsOpen] = useState(false);
+  useEffect(() => {
+    setLoadedSource(null);
+    setClipsOpen(false);
+  }, [video, mode, source, vlm]);
 
   const active = MODES.find((m) => m.key === mode) ?? RALLY_MODE;
   // A status the current mode doesn't offer (left over from another tab)
@@ -266,6 +273,16 @@ export function LabelPage() {
               }}
             />
             <CopyFilenameButton name={video} />
+            {active.key === 'rally' && (
+              <Button
+                size="sm"
+                onClick={() => setClipsOpen(true)}
+                disabled={!video || Boolean(unavailable)}
+                title="Download rally clips"
+              >
+                Clips
+              </Button>
+            )}
             {active.doneApi && (
               <Button
                 size="sm"
@@ -327,6 +344,8 @@ export function LabelPage() {
           onLoaded={setLoadedSource}
           onSaved={onPanelSaved}
           clock={clock}
+          clipsOpen={clipsOpen}
+          onClipsClose={() => setClipsOpen(false)}
         />
       ) : mode === 'action' ? (
         <ActionPanel

@@ -62,6 +62,12 @@ export type RallySide = 'left' | 'right' | 'near' | 'far';
 const RALLY_SIDES: RallySide[] = ['left', 'right', 'near', 'far'];
 const SIDE_DISPLAY: Record<RallySide, string> = { left: '左', right: '右', near: '近', far: '遠' };
 
+/** Which pair of sides this video's camera angle offers. One axis per video —
+ *  picking it once up top keeps each row to two buttons instead of four. */
+type SideAxis = 'lr' | 'nf';
+const AXIS_SIDES: Record<SideAxis, RallySide[]> = { lr: ['left', 'right'], nf: ['near', 'far'] };
+const AXIS_DISPLAY: Record<SideAxis, string> = { lr: '左/右', nf: '遠/近' };
+
 export interface EditorAnnotation {
   rally_id: number | null;
   start: number;
@@ -84,7 +90,6 @@ interface AnnotationEditorProps {
   data: EditorData | null;
   saveEndpoint: string;
   videoStreamPath: (videoPath: string) => string;
-  rowExtras?: (a: EditorAnnotation) => ReactNode;
   previewBackoff?: number;
   /** Runs after an EXPLICIT save only. Autosave fires every couple of
    *  seconds while editing, and this hook is where the page pushes the whole
@@ -97,6 +102,11 @@ interface AnnotationEditorProps {
   initialTime?: () => number | null;
   /** Fired with the playhead position on every timeupdate (plays and seeks). */
   onTimeChange?: (t: number) => void;
+  /** The Download-Clips modal, controlled by the page: the button that opens
+   *  it lives up in the picker row (next to Done), but the rally list the
+   *  modal needs lives here. */
+  clipsOpen: boolean;
+  onClipsClose: () => void;
 }
 
 const normalizeRallyId = (v: unknown): number | null => {
@@ -117,7 +127,7 @@ const num = (...vals: unknown[]): number => {
 // below keep the window between screen and disk negligible.
 const AUTOSAVE_MS = 2000;
 
-export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtras, previewBackoff = 3, onSaved, initialTime, onTimeChange }: AnnotationEditorProps) {
+export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewBackoff = 3, onSaved, initialTime, onTimeChange, clipsOpen, onClipsClose }: AnnotationEditorProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
   const [annotations, setAnnotations] = useState<EditorAnnotation[]>([]);
@@ -129,8 +139,8 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
   const [currentTime, setCurrentTime] = useState(0);
   const [shift, setShift] = useState('0');
   const [saving, setSaving] = useState(false);
-  const [modalOpen, setModalOpen] = useState(false);
   const [playing, setPlaying] = useState(false);
+  const [sideAxis, setSideAxis] = useState<SideAxis>('lr');
 
   const togglePlay = () => {
     const el = videoRef.current;
@@ -163,6 +173,8 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
       }))
       .sort((a, b) => a.start - b.start);
     setAnnotations(fromServer);
+    const firstSide = fromServer.find((a) => a.side)?.side;
+    if (firstSide) setSideAxis(AXIS_SIDES.nf.includes(firstSide) ? 'nf' : 'lr');
     setDirty(false);
     setSelectedIdx(-1);
     setMarkStart(null);
@@ -591,16 +603,30 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
       </div>
 
       {/* Annotation list */}
-      <div className="lg:w-[420px] lg:flex-shrink-0">
+      <div className="lg:w-[460px] lg:flex-shrink-0">
         <Card>
           <div className="mb-3 flex items-center justify-between gap-2">
             <SectionLabel className="mb-0">
               Annotations ({annotations.length} rally){totalDuration > 0 ? ` · ${formatTime(totalDuration)} played` : ''}
             </SectionLabel>
             <div className="flex items-center gap-2">
-              <Button size="sm" onClick={() => setModalOpen(true)}>
-                Clips
-              </Button>
+              <div className="flex overflow-hidden rounded-lg border border-border" title="得分側方向（畫面視角）">
+                {(['lr', 'nf'] as const).map((axis) => (
+                  <button
+                    key={axis}
+                    type="button"
+                    onClick={() => setSideAxis(axis)}
+                    className={cn(
+                      'px-2 py-1 text-[11px] leading-none transition-colors',
+                      sideAxis === axis
+                        ? 'bg-primary/20 text-primary-text'
+                        : 'text-text-muted/60 hover:bg-surface-200/40 hover:text-text-primary',
+                    )}
+                  >
+                    {AXIS_DISPLAY[axis]}
+                  </button>
+                ))}
+              </div>
               <Button size="sm" intent="primary" onClick={() => void save()} disabled={saving}>
                 {dirty ? 'Save •' : 'Save'}
               </Button>
@@ -635,9 +661,11 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
                       playing && 'ring-1 ring-accent/50',
                     )}
                   >
-                    <span className="w-4 select-none text-right font-heading text-[10px] text-text-muted/60">{i + 1}</span>
+                    {/* Every cell has a fixed width so the columns line up
+                        across rows and the row never outgrows the card. */}
+                    <span className="w-4 shrink-0 select-none text-right font-heading text-[10px] text-text-muted/60">{i + 1}</span>
                     <span
-                      className="w-7 select-none font-mono text-[9px] text-text-muted/40"
+                      className="w-7 shrink-0 select-none font-mono text-[9px] text-text-muted/40"
                       title={a.rally_id === null ? 'New rally — gets its id on save' : `rally_id ${a.rally_id} — stable id, not the time order`}
                     >
                       {a.rally_id === null ? 'new' : `#${a.rally_id}`}
@@ -648,42 +676,54 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
                         e.stopPropagation();
                         void downloadClip(a);
                       }}
-                      className="flex items-center gap-1 rounded-full bg-primary/20 px-2 py-0.5 text-[11px] font-medium text-primary-text ring-1 ring-primary/30 transition-colors hover:bg-primary/30"
+                      className="shrink-0 rounded-full bg-primary/20 p-1 text-primary-text ring-1 ring-primary/30 transition-colors hover:bg-primary/30"
                       title="Download this rally clip"
                     >
                       <svg className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 11l5 5 5-5M12 16V4" />
                       </svg>
-                      rally
                     </button>
-                    <div className="ml-auto flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                    <div className="ml-auto flex shrink-0 items-center gap-1" onClick={(e) => e.stopPropagation()}>
                       <TimeField seconds={a.start} onCommit={(value) => updateField(i, 'start', value)} />
                       <span className="text-[10px] text-text-muted/40">→</span>
                       <TimeField seconds={a.end} onCommit={(value) => updateField(i, 'end', value)} />
                     </div>
-                    <span className="rounded bg-surface-200/40 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-text-muted">{(a.end - a.start).toFixed(1)}s</span>
+                    <span className="w-11 shrink-0 rounded bg-surface-200/40 px-1 py-0.5 text-right font-mono text-[10px] tabular-nums text-text-muted">{(a.end - a.start).toFixed(1)}s</span>
                     <div
-                      className="flex items-center gap-0.5"
+                      className="flex w-11 shrink-0 items-center justify-center gap-0.5"
                       onClick={(e) => e.stopPropagation()}
                       title="得分側（畫面視角）— 再點一次取消"
                     >
-                      {RALLY_SIDES.map((side) => (
+                      {a.side && !AXIS_SIDES[sideAxis].includes(a.side) ? (
+                        // A stored side from the other axis: show it alone so the
+                        // label never disappears silently — click clears it, then
+                        // the current axis's pair takes the cell back.
                         <button
-                          key={side}
                           type="button"
-                          onClick={() => updateSide(i, side)}
-                          className={cn(
-                            'rounded px-1 py-0.5 text-[10px] leading-none transition-colors',
-                            a.side === side
-                              ? 'bg-accent/30 text-text-primary ring-1 ring-accent/60'
-                              : 'text-text-muted/50 hover:bg-surface-200/40 hover:text-text-muted',
-                          )}
+                          onClick={() => updateSide(i, a.side!)}
+                          title="與目前方向不同的舊標記 — 點一下清除"
+                          className="w-5 rounded py-0.5 text-center text-[10px] leading-none bg-accent/30 text-text-primary ring-1 ring-accent/60"
                         >
-                          {SIDE_DISPLAY[side]}
+                          {SIDE_DISPLAY[a.side]}
                         </button>
-                      ))}
+                      ) : (
+                        AXIS_SIDES[sideAxis].map((side) => (
+                          <button
+                            key={side}
+                            type="button"
+                            onClick={() => updateSide(i, side)}
+                            className={cn(
+                              'w-5 rounded py-0.5 text-center text-[10px] leading-none transition-colors',
+                              a.side === side
+                                ? 'bg-accent/30 text-text-primary ring-1 ring-accent/60'
+                                : 'text-text-muted/50 hover:bg-surface-200/40 hover:text-text-muted',
+                            )}
+                          >
+                            {SIDE_DISPLAY[side]}
+                          </button>
+                        ))
+                      )}
                     </div>
-                    {rowExtras?.(a)}
                     <button
                       type="button"
                       onClick={(e) => {
@@ -691,7 +731,7 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
                         setSelectedIdx(i);
                         seekTo(Math.max(a.start, a.end - previewBackoff));
                       }}
-                      className="text-primary-light transition-colors hover:text-text-primary"
+                      className="shrink-0 text-primary-light transition-colors hover:text-text-primary"
                       title="Jump to end"
                     >
                       <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
@@ -706,7 +746,7 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
                         setDirty(true);
                         if (selectedIdx === i) setSelectedIdx(-1);
                       }}
-                      className="text-red-400/60 opacity-0 transition-all hover:text-red-400 group-hover:opacity-100"
+                      className="shrink-0 text-red-400/60 opacity-0 transition-all hover:text-red-400 group-hover:opacity-100"
                       title="Delete"
                     >
                       <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
@@ -734,7 +774,7 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, rowExtra
         </Card>
       </div>
 
-      {modalOpen && <DownloadClipsModal video={videoName} segments={annotations} onClose={() => setModalOpen(false)} />}
+      {clipsOpen && <DownloadClipsModal video={videoName} segments={annotations} onClose={onClipsClose} />}
     </div>
   );
 }

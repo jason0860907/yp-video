@@ -57,7 +57,7 @@ const loadRally = (name: string, source: LabelSource, vlm: boolean): Promise<Edi
 const loadedFromTag = (tag: unknown): LoadedSource =>
   tag === 'annotation' ? 'annotation' : tag === 'spot-pre-annotation' ? 'pre-annotation' : tag === 'pre-annotation' ? 'vlm' : 'none';
 
-export function RallyPanel({ video, source, vlm, onLoaded, onSaved, clock }: { video: string; source: LabelSource; vlm: boolean; onLoaded?: (s: LoadedSource) => void; onSaved?: () => void; clock?: PlaybackClock }) {
+export function RallyPanel({ video, source, vlm, onLoaded, onSaved, clock, clipsOpen, onClipsClose }: { video: string; source: LabelSource; vlm: boolean; onLoaded?: (s: LoadedSource) => void; onSaved?: () => void; clock?: PlaybackClock; clipsOpen: boolean; onClipsClose: () => void }) {
   const [data, setData] = useState<EditorData | null>(null);
   const [manifestUrl, setManifestUrl] = useState<string | null>(null);
 
@@ -127,6 +127,8 @@ export function RallyPanel({ video, source, vlm, onLoaded, onSaved, clock }: { v
         onSaved={pushToApp}
         initialTime={() => clock?.read(video) ?? null}
         onTimeChange={(t) => clock?.write(video, t)}
+        clipsOpen={clipsOpen}
+        onClipsClose={onClipsClose}
       />
 
       {manifestUrl && (
