@@ -16,10 +16,10 @@ Schema of one record::
 
     {
       "action": "spike",
-      "anchor": {"label": "spike", "time": 13.7, "frame": 410, "xy": [..]},
+      "anchor": {"id": "f410", "label": "spike", "time": 13.7, "frame": 410, "xy": [..]},
       "chain":  [ {receive..}, {set..}, {spike..} ],   # build-up, ends on anchor
       "rally":  {"index": 7, "start": 11.0, "end": 18.2} | None,
-      "next":   {label, time, frame, xy} | None,        # first action after anchor
+      "next":   {id, label, time, frame, xy} | None,    # first action after anchor
       "player_id": None,   # ← filled by a future re-id pass
       "outcome":   None,   # ← kill / error / blocked (future scoring pass)
       "team":      None,
@@ -54,9 +54,15 @@ def _public(ev: dict | None) -> dict | None:
     """Project a normalized event to the public, serializable shape."""
     if ev is None:
         return None
-    out: dict = {"label": ev.get("label"), "time": round(ev["_t"], 2)}
-    if ev.get("frame") is not None:
-        out["frame"] = ev["frame"]
+    frame = ev.get("frame")
+    if frame is None:
+        raise ValueError("public action events require a source frame")
+    out: dict = {
+        "id": str(ev.get("id") or f"f{int(frame)}"),
+        "label": ev.get("label"),
+        "time": round(ev["_t"], 2),
+        "frame": int(frame),
+    }
     if ev.get("xy") is not None:
         out["xy"] = ev["xy"]
     return out
@@ -313,8 +319,8 @@ def build_score_segments(
 
 
 def event_timeline(events: Sequence[dict], *, fps: float) -> list[dict]:
-    """Flat ``[{label, time}]`` of every spotted event, seconds-based and time
-    sorted.
+    """Flat ``[{id, label, time, frame, xy?}]`` of every spotted event,
+    seconds-based and time sorted.
 
     Unlike the segment builders (which only surface a spike's 接舉打 build-up),
     this carries *all* labels — serve / receive / set / spike / block / score —
@@ -322,10 +328,11 @@ def event_timeline(events: Sequence[dict], *, fps: float) -> list[dict]:
     """
     if fps <= 0:
         fps = 30.0
-    out = [
-        {"label": e.get("label"), "time": round(_event_time(e, fps), 2)}
-        for e in events
-    ]
+    out = []
+    for event in events:
+        item = _public({**event, "_t": _event_time(event, fps)})
+        if item is not None:
+            out.append(item)
     return sorted(out, key=lambda x: x["time"])
 
 

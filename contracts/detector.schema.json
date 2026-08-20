@@ -301,8 +301,13 @@
       "type": "object"
     },
     "SegmentEvent": {
-      "description": "One touch inside an action's build-up (receive / set / spike, \u2026).\n\nMirrors ``yp_video.action.segments._public``: a label plus a timestamp,\nwith the source frame and normalized court location carried when known.\nDistinct from ``contracts.action.ActionEvent`` (the frame-indexed label\nrecord yp-spot emits) \u2014 this is the seconds-based, app-facing shape.",
+      "description": "One touch inside an action's build-up (receive / set / spike, \u2026).\n\nMirrors ``yp_video.action.segments._public``: a stable event id, label,\ntimestamp and source frame, with normalized court location when known.\nDistinct from ``contracts.action.ActionEvent`` (the frame-indexed label\nrecord yp-spot emits) \u2014 this is the seconds-based, app-facing shape.",
       "properties": {
+        "id": {
+          "description": "Stable extraction id, normally f<source frame>",
+          "title": "Id",
+          "type": "string"
+        },
         "label": {
           "description": "Touch label, e.g. receive / set / spike",
           "title": "Label",
@@ -315,18 +320,10 @@
           "type": "number"
         },
         "frame": {
-          "anyOf": [
-            {
-              "minimum": 0,
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Source frame index, when known",
-          "title": "Frame"
+          "description": "Source frame index",
+          "minimum": 0,
+          "title": "Frame",
+          "type": "integer"
         },
         "xy": {
           "anyOf": [
@@ -348,8 +345,10 @@
         }
       },
       "required": [
+        "id",
         "label",
-        "time"
+        "time",
+        "frame"
       ],
       "title": "SegmentEvent",
       "type": "object"

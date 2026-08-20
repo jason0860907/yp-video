@@ -14,7 +14,9 @@ directory and points ``YP_VIDEOS_DIR`` at it in a subprocess — the same
 process-boundary pattern yp-spot and yp-reid already use — with
 ``YP_REID_CHECKPOINTS_DIR`` kept on the real checkpoint store.
 
-The ``__main__`` CLI is that subprocess entry point. It reports progress as
+This orchestration belongs in the extraction roof because it is the only layer
+allowed to combine tracking, actor association, extraction and ReID. The
+``__main__`` CLI is the subprocess entry point. It reports progress as
 ``PROGRESS <percent> 100 <message>`` lines on stdout, one phase-weighted
 number so the caller needs no knowledge of the stages.
 """

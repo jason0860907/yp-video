@@ -75,15 +75,16 @@ class Rally(BaseModel):
 class SegmentEvent(BaseModel):
     """One touch inside an action's build-up (receive / set / spike, …).
 
-    Mirrors ``yp_video.action.segments._public``: a label plus a timestamp,
-    with the source frame and normalized court location carried when known.
+    Mirrors ``yp_video.action.segments._public``: a stable event id, label,
+    timestamp and source frame, with normalized court location when known.
     Distinct from ``contracts.action.ActionEvent`` (the frame-indexed label
     record yp-spot emits) — this is the seconds-based, app-facing shape.
     """
 
+    id: str = Field(description="Stable extraction id, normally f<source frame>")
     label: str = Field(description="Touch label, e.g. receive / set / spike")
     time: float = Field(ge=0, description="Seconds from video start")
-    frame: int | None = Field(default=None, ge=0, description="Source frame index, when known")
+    frame: int = Field(ge=0, description="Source frame index")
     xy: list[float] | None = Field(
         default=None, min_length=2, max_length=2,
         description="Normalized [x, y] court location, each in [0, 1]",
