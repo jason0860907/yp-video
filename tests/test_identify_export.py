@@ -17,58 +17,48 @@ def _unit(key, rows, events=None):
     return Unit(key=key, event_ids=tuple(events or [f"e{r}" for r in rows]), rows=tuple(rows))
 
 
-def _records(count, crop=lambda i: f"{i}.jpg"):
-    return [{"id": f"e{i}", "crop": crop(i)} for i in range(count)]
+def test_context_cut_places_the_person_inside_the_photo():
+    import numpy as np
+
+    from yp_video.extraction.identify import _context_cut
+
+    frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+    cut, box = _context_cut(frame, [900, 400, 1000, 700])
+
+    # Wider than the person, and the person sits in the middle of it.
+    assert cut.shape[0] <= 448 and cut.shape[1] <= 448
+    x0, y0, x1, y1 = box
+    assert 0.0 <= x0 < x1 <= 1.0
+    assert 0.0 <= y0 < y1 <= 1.0
+    assert abs(((x0 + x1) / 2) - 0.5) < 0.02
+    assert abs(((y0 + y1) / 2) - 0.5) < 0.02
+    # The person takes about a third of each axis (the context scale).
+    assert 0.25 < (x1 - x0) < 0.4
 
 
-def _write_crops(tmp_path, names):
-    for name in names:
-        (tmp_path / name).write_bytes(b"x")
+def test_context_cut_clamps_at_the_frame_edge():
+    import numpy as np
+
+    from yp_video.extraction.identify import _context_cut
+
+    frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+    # A person hard against the left edge: the cut cannot extend past it, so
+    # they end up off-centre and the box must say so rather than claiming the
+    # middle.
+    cut, box = _context_cut(frame, [0, 400, 80, 700])
+    assert cut is not None
+    assert box[0] == 0.0
+    # Off-centre towards the edge they are pinned against.
+    assert ((box[0] + box[2]) / 2) < 0.4
 
 
-def _patch_crop_dir(monkeypatch, tmp_path):
-    import yp_video.extraction.store as store
-    monkeypatch.setattr(store, "crop_dir", lambda stem: tmp_path)
+def test_context_cut_rejects_a_degenerate_box():
+    import numpy as np
 
+    from yp_video.extraction.identify import _context_cut
 
-def test_representatives_are_nearest_the_units_own_centroid(monkeypatch, tmp_path):
-    _patch_crop_dir(monkeypatch, tmp_path)
-    _write_crops(tmp_path, ["0.jpg", "1.jpg", "2.jpg"])
-    # Three crops spread over a quarter turn. Row 1 sits between the other
-    # two, so it is closest to their mean and must lead; row 0 is the most
-    # extreme and drops out when only two representatives are kept.
-    matrix = np.array([[1.0, 0.0], [0.6, 0.8], [0.0, 1.0]])
-    matrix /= np.linalg.norm(matrix, axis=1, keepdims=True)
-
-    exported, kept = _with_crops("m", _records(3), matrix, [_unit("t:1:1", [0, 1, 2])], 2)
-
-    assert [u.key for u in exported] == ["t:1:1"]
-    assert [p.name for p in exported[0].crop_paths] == ["1.jpg", "2.jpg"]
-    assert len(kept) == 1
-
-
-def test_units_with_no_crop_on_disk_are_dropped_before_the_tree(monkeypatch, tmp_path):
-    _patch_crop_dir(monkeypatch, tmp_path)
-    _write_crops(tmp_path, ["0.jpg", "2.jpg"])  # unit 1's file never landed
-    matrix = np.eye(3)
-    units = [_unit("a", [0]), _unit("b", [1]), _unit("c", [2])]
-
-    exported, kept = _with_crops("m", _records(3), matrix, units, 3)
-
-    # The survivors keep their relative order — they become linkage leaves,
-    # so index i in `exported` must be index i in `kept`.
-    assert [u.key for u in exported] == ["a", "c"]
-    assert [u.key for u in kept] == ["a", "c"]
-
-
-def test_a_unit_whose_record_has_no_crop_field_is_dropped(monkeypatch, tmp_path):
-    _patch_crop_dir(monkeypatch, tmp_path)
-    _write_crops(tmp_path, ["0.jpg"])
-    records = [{"id": "e0", "crop": "0.jpg"}, {"id": "e1", "crop": None}]
-
-    exported, _kept = _with_crops("m", records, np.eye(2), [_unit("a", [0]), _unit("b", [1])], 3)
-
-    assert [u.key for u in exported] == ["a"]
+    frame = np.zeros((1080, 1920, 3), dtype=np.uint8)
+    assert _context_cut(frame, [100, 100, 100, 300]) is None
 
 
 def test_linkage_has_one_row_per_merge():

@@ -43,6 +43,22 @@ _BANDS = {
 
 
 @dataclass(frozen=True)
+class UnitCrop:
+    """One photo of a unit, cut wide enough to place the person.
+
+    A tight crop of a blurred player is often unidentifiable — the same body
+    in the same kit from any angle. Keeping the surroundings (who they are
+    next to, where on court, which side of the net) is usually what settles
+    it, so the cut is the person's box grown several times over and the box
+    itself rides along, normalized, for the viewer to draw.
+    """
+
+    path: Path
+    #: The person's box within this image, as [x0, y0, x1, y1] in 0–1.
+    box: tuple[float, float, float, float]
+
+
+@dataclass(frozen=True)
 class IdentifyUnit:
     """One person's crops within the video, as far as tracking can tell — a
     tracklet, or a lone action when tracking lost them.
@@ -56,8 +72,8 @@ class IdentifyUnit:
     key: str
     #: Action events this unit performed — the join back to the analysis result.
     event_ids: tuple[str, ...]
-    #: Representative crops, best-first (nearest this unit's own centroid).
-    crop_paths: tuple[Path, ...]
+    #: Representative photos, best-first (nearest this unit's own centroid).
+    crops: tuple[UnitCrop, ...]
 
 
 @dataclass(frozen=True)
@@ -130,7 +146,7 @@ def identify_players(
     # Crops first, tree second. Units with nothing on disk are dropped, and
     # the surviving order becomes the linkage leaf order — building the tree
     # before the filter would leave every leaf index off by the drops.
-    exported, kept = _with_crops(stem, records, matrix, tracked, reps_per_unit)
+    exported, kept = _with_crops(stem, video_path, records, matrix, tracked, reps_per_unit)
     unit_matrix = identity.unit_centroids(kept, matrix)
     tree = identity.linkage_tree(unit_matrix)
 
@@ -157,14 +173,25 @@ def _banded(on_progress: ProgressFn | None, phase: str) -> ProgressFn | None:
     return cb
 
 
+#: How far past the person's own box a photo reaches. Three times the box in
+#: each direction puts them in their half of the court with the net and the
+#: nearest team-mates in shot — enough context to tell two similar players
+#: apart, without shrinking the person past recognition.
+_CONTEXT_SCALE = 3.0
+#: Long edge of the exported photo. The person occupies roughly a third of it,
+#: so this keeps them near the 150px that stayed readable as a tight crop.
+_CONTEXT_LONG_EDGE = 448
+
+
 def _with_crops(
     stem: str,
+    video_path: Path,
     records: list[dict],
     matrix,
     units,
     reps_per_unit: int,
 ) -> tuple[list[IdentifyUnit], list]:
-    """Attach representative crops to each unit; drop the ones with none.
+    """Attach representative photos to each unit; drop the ones with none.
 
     Photos are scored against the UNIT's own centroid rather than a cluster's:
     a cluster is a threshold-dependent view now, and a photo has to identify
@@ -172,53 +199,130 @@ def _with_crops(
     what "I can't tell who this is" expands to, so the old spread-across-units
     pass is gone — a unit already IS one person's appearance.
 
+    Each photo is re-cut from the source video around the person rather than
+    reusing the tight extraction crop, and carries the person's box so a
+    viewer can draw it. Frames are visited in order, since a decoder seeking
+    backwards is the slow case.
+
     Returns the exported units and the matching `Unit` objects, in the same
     order: the caller turns the second list into the linkage leaves, so the
     two must not drift.
     """
+    import cv2
     import numpy as np
 
-    from yp_video.extraction.store import crop_dir
-
-    cdir = crop_dir(stem)
-    exported: list[IdentifyUnit] = []
-    kept: list = []
+    # Pick first, decode second: one ordered pass over the frames we settled
+    # on beats seeking per unit.
+    picks: dict[str, list[dict]] = {}
+    wanted: set[int] = set()
     for unit in units:
         centroid = matrix[list(unit.rows)].mean(axis=0)
         centroid /= np.linalg.norm(centroid) + 1e-12
-
-        scored: list[tuple[float, Path]] = []
-        for row in unit.rows:
-            crop = records[row].get("crop")
-            if not crop:
-                continue
-            path = cdir / crop
-            if not path.exists():
-                continue
-            scored.append((float(matrix[row] @ centroid), path))
+        scored = [
+            (float(matrix[row] @ centroid), records[row])
+            for row in unit.rows
+            if records[row].get("box") and records[row].get("frame") is not None
+        ]
         if not scored:
             continue
         scored.sort(key=lambda c: -c[0])
+        chosen = [record for _sim, record in scored[:reps_per_unit]]
+        picks[unit.key] = chosen
+        wanted.update(int(record["frame"]) for record in chosen)
 
-        seen: set[Path] = set()
-        reps: list[Path] = []
-        for _sim, path in scored:
-            if len(reps) >= reps_per_unit:
-                break
-            if path in seen:
+    images = _decode_frames(video_path, wanted)
+
+    out_dir = _context_dir(stem)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    exported: list[IdentifyUnit] = []
+    kept: list = []
+    for unit in units:
+        chosen = picks.get(unit.key)
+        if not chosen:
+            continue
+        crops: list[UnitCrop] = []
+        for record in chosen:
+            frame = images.get(int(record["frame"]))
+            if frame is None:
                 continue
-            seen.add(path)
-            reps.append(path)
-
+            cut = _context_cut(frame, record["box"])
+            if cut is None:
+                continue
+            image, box = cut
+            path = out_dir / f"{unit.key.replace(':', '_')}_{record['frame']}.jpg"
+            if cv2.imwrite(str(path), image, [cv2.IMWRITE_JPEG_QUALITY, 82]):
+                crops.append(UnitCrop(path=path, box=box))
+        if not crops:
+            continue
         exported.append(
-            IdentifyUnit(
-                key=unit.key,
-                event_ids=tuple(unit.event_ids),
-                crop_paths=tuple(reps),
-            )
+            IdentifyUnit(key=unit.key, event_ids=tuple(unit.event_ids), crops=tuple(crops))
         )
         kept.append(unit)
     return exported, kept
+
+
+def _context_dir(stem: str) -> Path:
+    """Where identify's own photos live — beside the extraction crops, not
+    among them: these are cut for a human to look at, not for the embedder."""
+    from yp_video.config import EXTRACTION_DIR
+
+    return EXTRACTION_DIR / "identify-context" / stem
+
+
+def _decode_frames(video_path: Path, wanted: set[int]) -> dict:
+    """The requested frames, read in ascending order."""
+    import cv2
+
+    images: dict = {}
+    if not wanted:
+        return images
+    capture = cv2.VideoCapture(str(video_path))
+    try:
+        for index in sorted(wanted):
+            capture.set(cv2.CAP_PROP_POS_FRAMES, index)
+            ok, frame = capture.read()
+            if ok:
+                images[index] = frame
+    finally:
+        capture.release()
+    return images
+
+
+def _context_cut(frame, box):
+    """A wide cut around ``box``, plus the box's place inside it (0–1)."""
+    import cv2
+
+    height, width = frame.shape[:2]
+    x0, y0, x1, y1 = (float(v) for v in box)
+    if x1 <= x0 or y1 <= y0:
+        return None
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    half_w = (x1 - x0) * _CONTEXT_SCALE / 2
+    half_h = (y1 - y0) * _CONTEXT_SCALE / 2
+    cx0 = max(0, int(cx - half_w))
+    cy0 = max(0, int(cy - half_h))
+    cx1 = min(width, int(cx + half_w))
+    cy1 = min(height, int(cy + half_h))
+    if cx1 - cx0 < 8 or cy1 - cy0 < 8:
+        return None
+
+    cut = frame[cy0:cy1, cx0:cx1]
+    span_x, span_y = float(cx1 - cx0), float(cy1 - cy0)
+    normalized = (
+        max(0.0, (x0 - cx0) / span_x),
+        max(0.0, (y0 - cy0) / span_y),
+        min(1.0, (x1 - cx0) / span_x),
+        min(1.0, (y1 - cy0) / span_y),
+    )
+    longest = max(cut.shape[0], cut.shape[1])
+    if longest > _CONTEXT_LONG_EDGE:
+        scale = _CONTEXT_LONG_EDGE / longest
+        cut = cv2.resize(
+            cut,
+            (max(1, round(cut.shape[1] * scale)), max(1, round(cut.shape[0] * scale))),
+            interpolation=cv2.INTER_AREA,
+        )
+    return cut, normalized
 
 
 def _main() -> None:
@@ -253,7 +357,9 @@ def _main() -> None:
             {
                 "key": u.key,
                 "events": list(u.event_ids),
-                "crop_paths": [str(path) for path in u.crop_paths],
+                "crops": [
+                    {"path": str(c.path), "box": list(c.box)} for c in u.crops
+                ],
             }
             for u in result.units
         ],
