@@ -1,12 +1,12 @@
-"""One video in, anonymous player clusters out — the batch identity pipeline.
+"""One video in, anonymous player-pairing suggestions out.
 
 Every stage already exists and answers one question (tracking: who is on
 court over time; extraction: who is on each action frame; association: who
 acted; embedding + clustering: who looks like whom). What did not exist is a
 caller that runs them in order without a person clicking through the Film
 Room — this module is that caller, plus the one genuinely new piece: an
-exporter that flattens unit-level cluster labels into per-event assignments
-and picks representative crops so a UI can show "this person" without a name.
+exporter that groups unit-level appearances at the model's calibrated cutoff
+and picks representative full frames so a UI can confirm who each person is.
 
 Runs against the VIDEOS_DIR layout like everything else. A caller that wants
 an isolated run (the selfhost worker) stages a minimal layout in a scratch
@@ -24,6 +24,7 @@ number so the caller needs no knowledge of the stages.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -43,15 +44,8 @@ _BANDS = {
 
 
 @dataclass(frozen=True)
-class UnitCrop:
-    """One photo of a unit, cut wide enough to place the person.
-
-    A tight crop of a blurred player is often unidentifiable — the same body
-    in the same kit from any angle. Keeping the surroundings (who they are
-    next to, where on court, which side of the net) is usually what settles
-    it, so the cut is the person's box grown several times over and the box
-    itself rides along, normalized, for the viewer to draw.
-    """
+class UnitImage:
+    """One complete source-video frame with this appearance boxed."""
 
     path: Path
     #: The person's box within this image, as [x0, y0, x1, y1] in 0–1.
@@ -59,34 +53,34 @@ class UnitCrop:
 
 
 @dataclass(frozen=True)
+class _UnitFrames:
+    key: str
+    event_ids: tuple[str, ...]
+    images: tuple[UnitImage, ...]
+
+
+@dataclass(frozen=True)
 class IdentifyUnit:
-    """One person's crops within the video, as far as tracking can tell — a
+    """One person's appearances within the video, as far as tracking can tell — a
     tracklet, or a lone action when tracking lost them.
 
-    THE thing a jersey number gets attached to. A unit is stable for the life
-    of one identify run whatever cutoff the viewer picks, which is why the
-    export ships units and a tree instead of clusters: re-cutting the tree
-    changes how units are grouped for display, never who a unit is.
+    THE thing a jersey number gets attached to. ``suggestion_id`` only groups
+    appearances the model thinks are the same player; correcting one member
+    never changes the identity or assignment of the other units.
     """
 
     key: str
+    suggestion_id: str
     #: Action events this unit performed — the join back to the analysis result.
     event_ids: tuple[str, ...]
     #: Representative photos, best-first (nearest this unit's own centroid).
-    crops: tuple[UnitCrop, ...]
+    images: tuple[UnitImage, ...]
 
 
 @dataclass(frozen=True)
 class IdentifyResult:
     embedder: str
-    #: Leaf order IS linkage leaf order: index i in this tuple is leaf i.
     units: tuple[IdentifyUnit, ...]
-    #: scipy (n-1)x4 average-linkage matrix over the unit centroids. Empty
-    #: below two units, where there is nothing to merge.
-    linkage: tuple[tuple[float, float, float, float], ...]
-    #: The embedder's calibrated slider band — consumers must not hardcode a
-    #: cosine-distance scale, it moves with every fine-tune.
-    threshold: dict[str, float]
 
 
 def identify_players(
@@ -138,25 +132,32 @@ def identify_players(
     embed_video(stem, models=[embedder], on_progress=_banded(on_progress, "embedding"))
 
     if on_progress:
-        on_progress(_BANDS["clustering"][0], 100, "grouping players...")
+        on_progress(_BANDS["clustering"][0], 100, "creating pairing suggestions...")
     unit_links = links.track_keys(stem)
     records, matrix = identity.load_embeddings(stem, model=embedder)
     tracked = identity.build_units(records, unit_links)
 
-    # Crops first, tree second. Units with nothing on disk are dropped, and
-    # the surviving order becomes the linkage leaf order — building the tree
-    # before the filter would leave every leaf index off by the drops.
-    exported, kept = _with_crops(stem, video_path, records, matrix, tracked, reps_per_unit)
+    # Photos first, suggestions second. Units with nothing on disk are dropped
+    # before grouping so the fixed suggestion ids describe only shipped units.
+    exported, kept = _with_images(stem, video_path, records, matrix, tracked, reps_per_unit)
     unit_matrix = identity.unit_centroids(kept, matrix)
-    tree = identity.linkage_tree(unit_matrix)
+    cutoff = float(threshold_calibration(embedder)["default"])
+    labels = identity.cluster(unit_matrix, threshold=cutoff)
+    identified = tuple(
+        IdentifyUnit(
+            key=unit.key,
+            suggestion_id=f"suggestion-{int(label) + 1}",
+            event_ids=unit.event_ids,
+            images=unit.images,
+        )
+        for unit, label in zip(exported, labels, strict=True)
+    )
 
     if on_progress:
-        on_progress(100, 100, f"{len(exported)} appearances grouped")
+        on_progress(100, 100, f"{len(identified)} appearances suggested")
     return IdentifyResult(
         embedder=embedder,
-        units=tuple(exported),
-        linkage=tuple(tuple(float(v) for v in row) for row in tree) if tree is not None else (),
-        threshold={k: float(v) for k, v in threshold_calibration(embedder).items()},
+        units=identified,
     )
 
 
@@ -173,40 +174,31 @@ def _banded(on_progress: ProgressFn | None, phase: str) -> ProgressFn | None:
     return cb
 
 
-#: How far past the person's own box a photo reaches. Three times the box in
-#: each direction puts them in their half of the court with the net and the
-#: nearest team-mates in shot — enough context to tell two similar players
-#: apart, without shrinking the person past recognition.
-_CONTEXT_SCALE = 3.0
-#: Long edge of the exported photo. The person occupies roughly a third of it,
-#: so this keeps them near the 150px that stayed readable as a tight crop.
-_CONTEXT_LONG_EDGE = 448
+#: Full frames stay cheap to upload while preserving their exact source ratio.
+_FRAME_LONG_EDGE = 448
 
 
-def _with_crops(
+def _with_images(
     stem: str,
     video_path: Path,
     records: list[dict],
     matrix,
     units,
     reps_per_unit: int,
-) -> tuple[list[IdentifyUnit], list]:
+) -> tuple[list[_UnitFrames], list]:
     """Attach representative photos to each unit; drop the ones with none.
 
-    Photos are scored against the UNIT's own centroid rather than a cluster's:
-    a cluster is a threshold-dependent view now, and a photo has to identify
-    the person whatever the slider says. Several photos of one unit is exactly
-    what "I can't tell who this is" expands to, so the old spread-across-units
-    pass is gone — a unit already IS one person's appearance.
+    Photos are scored against the UNIT's own centroid, so each independently
+    correctable appearance gets its own best evidence. Several photos of one
+    unit is exactly what "I can't tell who this is" expands to.
 
-    Each photo is re-cut from the source video around the person rather than
-    reusing the tight extraction crop, and carries the person's box so a
-    viewer can draw it. Frames are visited in order, since a decoder seeking
-    backwards is the slow case.
+    Each photo is the complete source-video frame, downscaled proportionally,
+    and carries the person's box normalized against that complete frame.
+    Frames are visited in order, since a decoder seeking backwards is the slow
+    case.
 
-    Returns the exported units and the matching `Unit` objects, in the same
-    order: the caller turns the second list into the linkage leaves, so the
-    two must not drift.
+    Returns the exported units and matching `Unit` objects in the same order,
+    so the model's fixed labels stay aligned with the shipped appearances.
     """
     import cv2
     import numpy as np
@@ -232,41 +224,44 @@ def _with_crops(
 
     images = _decode_frames(video_path, wanted)
 
-    out_dir = _context_dir(stem)
+    out_dir = _image_dir(stem)
     out_dir.mkdir(parents=True, exist_ok=True)
-    exported: list[IdentifyUnit] = []
+    exported: list[_UnitFrames] = []
     kept: list = []
     for unit in units:
         chosen = picks.get(unit.key)
         if not chosen:
             continue
-        crops: list[UnitCrop] = []
+        images_for_unit: list[UnitImage] = []
         for record in chosen:
             frame = images.get(int(record["frame"]))
             if frame is None:
                 continue
-            cut = _context_cut(frame, record["box"])
-            if cut is None:
+            rendered = _full_frame(frame, record["box"])
+            if rendered is None:
                 continue
-            image, box = cut
+            image, box = rendered
             path = out_dir / f"{unit.key.replace(':', '_')}_{record['frame']}.jpg"
             if cv2.imwrite(str(path), image, [cv2.IMWRITE_JPEG_QUALITY, 82]):
-                crops.append(UnitCrop(path=path, box=box))
-        if not crops:
+                images_for_unit.append(UnitImage(path=path, box=box))
+        if not images_for_unit:
             continue
         exported.append(
-            IdentifyUnit(key=unit.key, event_ids=tuple(unit.event_ids), crops=tuple(crops))
+            _UnitFrames(
+                key=unit.key,
+                event_ids=tuple(unit.event_ids),
+                images=tuple(images_for_unit),
+            )
         )
         kept.append(unit)
     return exported, kept
 
 
-def _context_dir(stem: str) -> Path:
-    """Where identify's own photos live — beside the extraction crops, not
-    among them: these are cut for a human to look at, not for the embedder."""
+def _image_dir(stem: str) -> Path:
+    """Where identify's complete human-review frames live."""
     from yp_video.config import EXTRACTION_DIR
 
-    return EXTRACTION_DIR / "identify-context" / stem
+    return EXTRACTION_DIR / "identify-frames" / stem
 
 
 def _decode_frames(video_path: Path, wanted: set[int]) -> dict:
@@ -288,41 +283,40 @@ def _decode_frames(video_path: Path, wanted: set[int]) -> dict:
     return images
 
 
-def _context_cut(frame, box):
-    """A wide cut around ``box``, plus the box's place inside it (0–1)."""
+def _full_frame(frame, box):
+    """Downscale a complete frame and normalize a valid, clamped person box."""
     import cv2
 
     height, width = frame.shape[:2]
-    x0, y0, x1, y1 = (float(v) for v in box)
+    if width <= 0 or height <= 0:
+        return None
+    try:
+        values = tuple(float(v) for v in box)
+    except (TypeError, ValueError):
+        return None
+    if len(values) != 4 or not all(math.isfinite(value) for value in values):
+        return None
+    x0, y0, x1, y1 = values
+    x0, x1 = max(0.0, x0), min(float(width), x1)
+    y0, y1 = max(0.0, y0), min(float(height), y1)
     if x1 <= x0 or y1 <= y0:
         return None
-    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
-    half_w = (x1 - x0) * _CONTEXT_SCALE / 2
-    half_h = (y1 - y0) * _CONTEXT_SCALE / 2
-    cx0 = max(0, int(cx - half_w))
-    cy0 = max(0, int(cy - half_h))
-    cx1 = min(width, int(cx + half_w))
-    cy1 = min(height, int(cy + half_h))
-    if cx1 - cx0 < 8 or cy1 - cy0 < 8:
-        return None
-
-    cut = frame[cy0:cy1, cx0:cx1]
-    span_x, span_y = float(cx1 - cx0), float(cy1 - cy0)
     normalized = (
-        max(0.0, (x0 - cx0) / span_x),
-        max(0.0, (y0 - cy0) / span_y),
-        min(1.0, (x1 - cx0) / span_x),
-        min(1.0, (y1 - cy0) / span_y),
+        x0 / width,
+        y0 / height,
+        x1 / width,
+        y1 / height,
     )
-    longest = max(cut.shape[0], cut.shape[1])
-    if longest > _CONTEXT_LONG_EDGE:
-        scale = _CONTEXT_LONG_EDGE / longest
-        cut = cv2.resize(
-            cut,
-            (max(1, round(cut.shape[1] * scale)), max(1, round(cut.shape[0] * scale))),
+    image = frame
+    longest = max(height, width)
+    if longest > _FRAME_LONG_EDGE:
+        scale = _FRAME_LONG_EDGE / longest
+        image = cv2.resize(
+            frame,
+            (max(1, round(width * scale)), max(1, round(height * scale))),
             interpolation=cv2.INTER_AREA,
         )
-    return cut, normalized
+    return image, normalized
 
 
 def _main() -> None:
@@ -349,21 +343,21 @@ def _main() -> None:
         on_progress=report,
     )
     payload = {
-        "version": 2,
+        "version": 3,
         "video": args.video.stem,
         "embedder": result.embedder,
-        "threshold": result.threshold,
         "units": [
             {
                 "key": u.key,
+                "suggestion_id": u.suggestion_id,
                 "events": list(u.event_ids),
-                "crops": [
-                    {"path": str(c.path), "box": list(c.box)} for c in u.crops
+                "images": [
+                    {"path": str(image.path), "box": list(image.box)}
+                    for image in u.images
                 ],
             }
             for u in result.units
         ],
-        "linkage": [list(row) for row in result.linkage],
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
