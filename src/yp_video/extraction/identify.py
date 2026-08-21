@@ -43,56 +43,34 @@ _BANDS = {
 
 
 @dataclass(frozen=True)
-class PlayerCluster:
-    """One appearance cluster — a person, as far as the embedder can tell."""
+class IdentifyUnit:
+    """One person's crops within the video, as far as tracking can tell — a
+    tracklet, or a lone action when tracking lost them.
 
-    id: str
-    #: How many action events this cluster's units cover.
-    count: int
-    #: Representative crops, best-first (closest to the cluster centroid,
-    #: spread across rallies). Absolute paths into EXTRACTION_DIR.
-    crop_paths: tuple[Path, ...]
-
-
-@dataclass(frozen=True)
-class ClusterVariant:
-    """One granularity of the same embeddings.
-
-    The calibrated per-embedder default is a corpus-level compromise; the
-    best cutoff drifts per video (a session with two similar kits merges at
-    the default), and re-cutting the linkage costs milliseconds against the
-    minutes the GPU stages took. So every run ships three granularities and
-    the picker UI lets the user flip between them instead of re-running.
+    THE thing a jersey number gets attached to. A unit is stable for the life
+    of one identify run whatever cutoff the viewer picks, which is why the
+    export ships units and a tree instead of clusters: re-cutting the tree
+    changes how units are grouped for display, never who a unit is.
     """
 
-    id: str  # "coarse" | "default" | "fine"
-    threshold: float
-    clusters: tuple[PlayerCluster, ...]
-    #: event id ("f<frame>" / "act_…") → cluster id.
-    event_assignments: dict[str, str]
+    key: str
+    #: Action events this unit performed — the join back to the analysis result.
+    event_ids: tuple[str, ...]
+    #: Representative crops, best-first (nearest this unit's own centroid).
+    crop_paths: tuple[Path, ...]
 
 
 @dataclass(frozen=True)
 class IdentifyResult:
     embedder: str
-    #: Coarse → fine, with the calibrated default in the middle.
-    variants: tuple[ClusterVariant, ...]
-
-
-def _variant_thresholds(embedder: str) -> dict[str, float]:
-    """Coarse / default / fine cutoffs from the embedder's calibrated band.
-
-    Coarse is the band's max (merge-happy), default the calibrated peak, fine
-    the midpoint between the peak and the band's min (split-happy) — far
-    enough to matter, not so far that every unit is its own cluster.
-    """
-    band = threshold_calibration(embedder)
-    default = float(band["default"])
-    return {
-        "coarse": float(band["max"]),
-        "default": default,
-        "fine": round((default + float(band["min"])) / 2, 4),
-    }
+    #: Leaf order IS linkage leaf order: index i in this tuple is leaf i.
+    units: tuple[IdentifyUnit, ...]
+    #: scipy (n-1)x4 average-linkage matrix over the unit centroids. Empty
+    #: below two units, where there is nothing to merge.
+    linkage: tuple[tuple[float, float, float, float], ...]
+    #: The embedder's calibrated slider band — consumers must not hardcode a
+    #: cosine-distance scale, it moves with every fine-tune.
+    threshold: dict[str, float]
 
 
 def identify_players(
@@ -101,10 +79,10 @@ def identify_players(
     embedder: str = DEFAULT_EMBEDDER,
     association_checkpoint: Path | None = None,
     tracking_stride: int = 1,
-    reps_per_cluster: int = 3,
+    reps_per_unit: int = 3,
     on_progress: ProgressFn | None = None,
 ) -> IdentifyResult:
-    """Track → detect → associate → embed → cluster one video, end to end.
+    """Track → detect → associate → embed → group one video, end to end.
 
     Prerequisites on disk (the same ones the Film Room stages require): rally
     spans (core/rallies.py) and an action annotation file
@@ -144,29 +122,26 @@ def identify_players(
     embed_video(stem, models=[embedder], on_progress=_banded(on_progress, "embedding"))
 
     if on_progress:
-        on_progress(_BANDS["clustering"][0], 100, "clustering players...")
+        on_progress(_BANDS["clustering"][0], 100, "grouping players...")
     unit_links = links.track_keys(stem)
     records, matrix = identity.load_embeddings(stem, model=embedder)
-    units, unit_matrix = identity.unit_embeddings(records, matrix, unit_links)
+    tracked = identity.build_units(records, unit_links)
 
-    variants: list[ClusterVariant] = []
-    for variant_id, threshold in _variant_thresholds(embedder).items():
-        labels = identity.cluster(unit_matrix, threshold=threshold)
-        clusters, assignments = _export(
-            stem, records, matrix, units, unit_matrix, labels, reps_per_cluster
-        )
-        variants.append(
-            ClusterVariant(
-                id=variant_id,
-                threshold=threshold,
-                clusters=tuple(clusters),
-                event_assignments=assignments,
-            )
-        )
+    # Crops first, tree second. Units with nothing on disk are dropped, and
+    # the surviving order becomes the linkage leaf order — building the tree
+    # before the filter would leave every leaf index off by the drops.
+    exported, kept = _with_crops(stem, records, matrix, tracked, reps_per_unit)
+    unit_matrix = identity.unit_centroids(kept, matrix)
+    tree = identity.linkage_tree(unit_matrix)
+
     if on_progress:
-        default = next(v for v in variants if v.id == "default")
-        on_progress(100, 100, f"{len(default.clusters)} players found")
-    return IdentifyResult(embedder=embedder, variants=tuple(variants))
+        on_progress(100, 100, f"{len(exported)} appearances grouped")
+    return IdentifyResult(
+        embedder=embedder,
+        units=tuple(exported),
+        linkage=tuple(tuple(float(v) for v in row) for row in tree) if tree is not None else (),
+        threshold={k: float(v) for k, v in threshold_calibration(embedder).items()},
+    )
 
 
 def _banded(on_progress: ProgressFn | None, phase: str) -> ProgressFn | None:
@@ -182,83 +157,68 @@ def _banded(on_progress: ProgressFn | None, phase: str) -> ProgressFn | None:
     return cb
 
 
-def _export(
+def _with_crops(
     stem: str,
     records: list[dict],
     matrix,
     units,
-    unit_matrix,
-    labels,
-    reps_per_cluster: int,
-) -> tuple[list[PlayerCluster], dict[str, str]]:
-    """Unit-level cluster labels → per-event assignments + representative crops.
+    reps_per_unit: int,
+) -> tuple[list[IdentifyUnit], list]:
+    """Attach representative crops to each unit; drop the ones with none.
 
-    Representatives are the crops most similar to the cluster centroid,
-    greedily spread across units (a person seen in several rallies should be
-    recognisable from any of them, and three near-identical frames of one
-    swing prove nothing). Clusters whose every crop is missing on disk are
-    dropped — there is nothing to show a user.
+    Photos are scored against the UNIT's own centroid rather than a cluster's:
+    a cluster is a threshold-dependent view now, and a photo has to identify
+    the person whatever the slider says. Several photos of one unit is exactly
+    what "I can't tell who this is" expands to, so the old spread-across-units
+    pass is gone — a unit already IS one person's appearance.
+
+    Returns the exported units and the matching `Unit` objects, in the same
+    order: the caller turns the second list into the linkage leaves, so the
+    two must not drift.
     """
     import numpy as np
 
     from yp_video.extraction.store import crop_dir
 
     cdir = crop_dir(stem)
-    by_cluster: dict[int, list[int]] = {}
-    for i, label in enumerate(labels):
-        by_cluster.setdefault(int(label), []).append(i)
-
-    clusters: list[PlayerCluster] = []
-    assignments: dict[str, str] = {}
-    for label, unit_indexes in sorted(by_cluster.items()):
-        cluster_id = f"c{label}"
-        cluster_units = [units[i] for i in unit_indexes]
-        for unit in cluster_units:
-            for event_id in unit.event_ids:
-                assignments[event_id] = cluster_id
-
-        centroid = unit_matrix[unit_indexes].mean(axis=0)
+    exported: list[IdentifyUnit] = []
+    kept: list = []
+    for unit in units:
+        centroid = matrix[list(unit.rows)].mean(axis=0)
         centroid /= np.linalg.norm(centroid) + 1e-12
 
-        # Candidate crops: every record row in the cluster, scored against the
-        # centroid; one representative per unit before a second from any.
-        candidates: list[tuple[float, str, Path]] = []
-        for unit in cluster_units:
-            for row in unit.rows:
-                crop = records[row].get("crop")
-                if not crop:
-                    continue
-                path = cdir / crop
-                if not path.exists():
-                    continue
-                sim = float(matrix[row] @ centroid)
-                candidates.append((sim, unit.key, path))
-        candidates.sort(key=lambda c: -c[0])
-
-        reps: list[Path] = []
-        seen_units: set[str] = set()
-        for _pass in ("spread", "fill"):
-            for sim, unit_key, path in candidates:
-                if len(reps) >= reps_per_cluster:
-                    break
-                if path in reps or (_pass == "spread" and unit_key in seen_units):
-                    continue
-                reps.append(path)
-                seen_units.add(unit_key)
-        if not reps:
-            for unit in cluster_units:
-                for event_id in unit.event_ids:
-                    assignments.pop(event_id, None)
+        scored: list[tuple[float, Path]] = []
+        for row in unit.rows:
+            crop = records[row].get("crop")
+            if not crop:
+                continue
+            path = cdir / crop
+            if not path.exists():
+                continue
+            scored.append((float(matrix[row] @ centroid), path))
+        if not scored:
             continue
+        scored.sort(key=lambda c: -c[0])
 
-        clusters.append(
-            PlayerCluster(
-                id=cluster_id,
-                count=sum(len(u.event_ids) for u in cluster_units),
+        seen: set[Path] = set()
+        reps: list[Path] = []
+        for _sim, path in scored:
+            if len(reps) >= reps_per_unit:
+                break
+            if path in seen:
+                continue
+            seen.add(path)
+            reps.append(path)
+
+        exported.append(
+            IdentifyUnit(
+                key=unit.key,
+                event_ids=tuple(unit.event_ids),
                 crop_paths=tuple(reps),
             )
         )
-    return clusters, assignments
+        kept.append(unit)
+    return exported, kept
 
 
 def _main() -> None:
@@ -270,7 +230,7 @@ def _main() -> None:
     parser.add_argument("--assoc-checkpoint", type=Path, default=None)
     parser.add_argument("--embedder", default=DEFAULT_EMBEDDER)
     parser.add_argument("--stride", type=int, default=1)
-    parser.add_argument("--reps", type=int, default=3)
+    parser.add_argument("--reps-per-unit", type=int, default=3)
     args = parser.parse_args()
 
     def report(done: int, total: int, msg: str) -> None:
@@ -281,29 +241,23 @@ def _main() -> None:
         embedder=args.embedder,
         association_checkpoint=args.assoc_checkpoint,
         tracking_stride=args.stride,
-        reps_per_cluster=args.reps,
+        reps_per_unit=args.reps_per_unit,
         on_progress=report,
     )
     payload = {
-        "version": 1,
+        "version": 2,
         "video": args.video.stem,
         "embedder": result.embedder,
-        "variants": [
+        "threshold": result.threshold,
+        "units": [
             {
-                "id": v.id,
-                "threshold": v.threshold,
-                "clusters": [
-                    {
-                        "id": c.id,
-                        "count": c.count,
-                        "crop_paths": [str(p) for p in c.crop_paths],
-                    }
-                    for c in v.clusters
-                ],
-                "event_assignments": v.event_assignments,
+                "key": u.key,
+                "events": list(u.event_ids),
+                "crop_paths": [str(path) for path in u.crop_paths],
             }
-            for v in result.variants
+            for u in result.units
         ],
+        "linkage": [list(row) for row in result.linkage],
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")

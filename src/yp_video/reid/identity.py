@@ -222,6 +222,31 @@ def build_units(records: list[dict], links: Mapping[str, str]) -> list[Unit]:
     return [Unit(key, tuple(events[key]), tuple(rows[key])) for key in order]
 
 
+def unit_centroids(units: list[Unit], matrix: np.ndarray) -> np.ndarray:
+    """(n_units, dim) L2-normalized means of each unit's crop embeddings.
+
+    Split out from ``unit_embeddings`` so a caller that already holds a
+    filtered unit list — the identify export drops units whose crops are
+    missing from disk — can get centroids for exactly those units, in that
+    order. Order matters there: it becomes the linkage leaf order.
+    """
+    if not units:
+        return np.empty((0, matrix.shape[1] if matrix.ndim == 2 else 0))
+    stacked = np.stack([matrix[list(u.rows)].mean(axis=0) for u in units])
+    stacked /= np.linalg.norm(stacked, axis=1, keepdims=True) + 1e-12
+    return stacked
+
+
+def linkage_tree(matrix: np.ndarray):
+    """The average-linkage tree over ``matrix`` rows, or None below two rows.
+
+    Threshold-independent, which is the whole reason it is worth shipping:
+    a client holding the tree re-cuts it at any cutoff in O(n) instead of
+    asking for another O(n²) build per granularity.
+    """
+    return _linkage(matrix)
+
+
 def unit_embeddings(
     records: list[dict], matrix: np.ndarray, links: Mapping[str, str]
 ) -> tuple[list[Unit], np.ndarray]:
@@ -233,11 +258,7 @@ def unit_embeddings(
     better query vector than any single crop of them.
     """
     units = build_units(records, links)
-    if not units:
-        return [], np.empty((0, matrix.shape[1] if matrix.ndim == 2 else 0))
-    stacked = np.stack([matrix[list(u.rows)].mean(axis=0) for u in units])
-    stacked /= np.linalg.norm(stacked, axis=1, keepdims=True) + 1e-12
-    return units, stacked
+    return units, unit_centroids(units, matrix)
 
 
 def seeded_groups(
