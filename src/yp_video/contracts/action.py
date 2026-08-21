@@ -17,6 +17,7 @@ field layout, frame layout, or label set below changes — and update both sides
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from enum import Enum
 
 from pydantic import BaseModel, Field
@@ -42,6 +43,21 @@ FRAME_GLOB = "*.jpg"
 def frame_filename(index: int) -> str:
     """Return the cache filename for a 0-based frame index."""
     return FRAME_PY_PATTERN.format(index)
+
+
+def event_id(event: Mapping) -> str:
+    """The stable id every stage joins an action event on.
+
+    Raw label records carry only a frame, so the id is derived — ``f<frame>``
+    — and stages that do carry an explicit ``id`` keep it. Deriving it in one
+    place matters: extraction records, actor candidates and the ReID exporter
+    all key on this string, and a stage that spelled it differently (or let it
+    fall through to ``str(None)``) would silently join against nothing.
+    """
+    explicit = event.get("id")
+    if explicit:
+        return str(explicit)
+    return f"f{int(event['frame'])}"
 
 
 # ── Label files ───────────────────────────────────────────────────

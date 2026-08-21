@@ -22,7 +22,7 @@ from collections.abc import Iterable, Mapping, Sequence
 
 from yp_video.actor import labels
 from yp_video.actor.labels import ActorVerdict
-from yp_video.contracts.action import ACTOR_WINDOW_OFFSETS, ActorTargetKind
+from yp_video.contracts.action import ACTOR_WINDOW_OFFSETS, ActorTargetKind, event_id
 from yp_video.core.jsonl import read_jsonl_cached
 from yp_video.extraction.store import records_path
 from yp_video.tracklets.geometry import TrackletIndex
@@ -107,7 +107,7 @@ def candidates_only(stem: str, events: Iterable[dict]) -> list[dict]:
             continue
         rows.append(
             {
-                "id": str(event.get("id")),
+                "id": event_id(event),
                 "frame": frame,
                 "contact": event.get("xy"),
                 "contact_visible": bool(event.get("visible", True)),
@@ -151,7 +151,7 @@ def build(stem: str, events: Iterable[dict]) -> tuple[list[dict], dict[str, int]
     rows: list[dict] = []
 
     for event in events:
-        label = verdicts.get(str(event.get("id")))
+        label = verdicts.get(event_id(event))
         if label is None:
             tally["unlabelled"] += 1
             continue
@@ -202,7 +202,7 @@ def build(stem: str, events: Iterable[dict]) -> tuple[list[dict], dict[str, int]
         tally[kind.value] += 1
         rows.append(
             {
-                "id": str(event.get("id")),
+                "id": event_id(event),
                 "frame": frame,
                 "contact": event.get("xy"),
                 "contact_visible": bool(event.get("visible", True)),

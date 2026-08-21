@@ -48,6 +48,7 @@ from yp_video.actor.labels import ActorLabel, ActorVerdict
 from yp_video.actor.policy import contact_point
 from yp_video.actor.resolution import ActorResolution, actor_resolution
 from yp_video.actor.service import ActorAssociationService
+from yp_video.contracts.action import event_id as action_event_id
 from yp_video.core.jsonl import read_jsonl, read_jsonl_cached, write_jsonl
 from yp_video.core.progress import ProgressFn
 from yp_video.extraction.cropping import (
@@ -224,7 +225,7 @@ def detect_video(
                         if decode_error:
                             raise decode_error[0]
             xy = event.get("xy")
-            event_id = str(event.get("id") or f"f{event['frame']}")
+            event_id = action_event_id(event)
             record = {
                 "id": event_id,
                 "frame": event["frame"],

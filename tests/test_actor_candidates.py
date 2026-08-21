@@ -86,6 +86,16 @@ class ActorCandidateExportTests(unittest.TestCase):
         )
         return rows[0] if rows else {}
 
+    def test_raw_label_events_derive_their_id_from_the_frame(self) -> None:
+        """Prediction reads the action label file, whose records carry only a
+        frame — no explicit id. Falling through to str(None) gave every event
+        the same key, so a whole video's answers collapsed onto one row and
+        ReID found nobody to cluster."""
+        rows = actor_labels.candidates_only(
+            STEM, [{"frame": EVENT_FRAME}, {"frame": EVENT_FRAME, "id": "act_7"}]
+        )
+        self.assertEqual([row["id"] for row in rows], [f"f{EVENT_FRAME}", "act_7"])
+
     def test_the_candidate_set_is_who_was_tracked_on_the_event_frame(self) -> None:
         """Only the event frame. A window would re-admit a player who had
         already left before the ball was touched."""
