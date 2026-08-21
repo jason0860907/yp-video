@@ -64,13 +64,11 @@ class IdentifyUnit:
     """One person's appearances within the video, as far as tracking can tell — a
     tracklet, or a lone action when tracking lost them.
 
-    THE thing a jersey number gets attached to. ``suggestion_id`` only groups
-    appearances the model thinks are the same player; correcting one member
-    never changes the identity or assignment of the other units.
+    THE thing a jersey number gets attached to. The linkage tree groups units
+    for display; correcting one member never changes any other unit.
     """
 
     key: str
-    suggestion_id: str
     #: Action events this unit performed — the join back to the analysis result.
     event_ids: tuple[str, ...]
     #: Representative photos, best-first (nearest this unit's own centroid).
@@ -81,6 +79,11 @@ class IdentifyUnit:
 class IdentifyResult:
     embedder: str
     units: tuple[IdentifyUnit, ...]
+    #: scipy average-linkage tree over unit centroids. The app cuts this tree
+    #: locally while the user moves the suggestion-granularity slider.
+    linkage: tuple[tuple[float, float, float, float], ...]
+    #: Calibrated distance band for the active embedder.
+    threshold: dict[str, float]
 
 
 def identify_players(
@@ -141,16 +144,15 @@ def identify_players(
     # before grouping so the fixed suggestion ids describe only shipped units.
     exported, kept = _with_images(stem, video_path, records, matrix, tracked, reps_per_unit)
     unit_matrix = identity.unit_centroids(kept, matrix)
-    cutoff = float(threshold_calibration(embedder)["default"])
-    labels = identity.cluster(unit_matrix, threshold=cutoff)
+    calibration = threshold_calibration(embedder)
+    tree = identity.linkage_tree(unit_matrix)
     identified = tuple(
         IdentifyUnit(
             key=unit.key,
-            suggestion_id=f"suggestion-{int(label) + 1}",
             event_ids=unit.event_ids,
             images=unit.images,
         )
-        for unit, label in zip(exported, labels, strict=True)
+        for unit in exported
     )
 
     if on_progress:
@@ -158,6 +160,10 @@ def identify_players(
     return IdentifyResult(
         embedder=embedder,
         units=identified,
+        linkage=tuple(tuple(float(value) for value in row) for row in tree)
+        if tree is not None
+        else (),
+        threshold={key: float(value) for key, value in calibration.items()},
     )
 
 
@@ -198,7 +204,7 @@ def _with_images(
     case.
 
     Returns the exported units and matching `Unit` objects in the same order,
-    so the model's fixed labels stay aligned with the shipped appearances.
+    so linkage leaf indices stay aligned with the shipped appearances.
     """
     import cv2
     import numpy as np
@@ -343,13 +349,14 @@ def _main() -> None:
         on_progress=report,
     )
     payload = {
-        "version": 3,
+        "version": 4,
         "video": args.video.stem,
         "embedder": result.embedder,
+        "threshold": result.threshold,
+        "linkage": [list(row) for row in result.linkage],
         "units": [
             {
                 "key": u.key,
-                "suggestion_id": u.suggestion_id,
                 "events": list(u.event_ids),
                 "images": [
                     {"path": str(image.path), "box": list(image.box)}

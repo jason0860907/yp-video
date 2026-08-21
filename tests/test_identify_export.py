@@ -1,8 +1,10 @@
-"""Contract tests for complete representative frames exported by identify."""
+"""Contracts for complete frames and the client-cuttable suggestion tree."""
 
 import numpy as np
+from scipy.cluster.hierarchy import fcluster
 
 from yp_video.extraction.identify import _full_frame
+from yp_video.reid.identity import linkage_tree
 
 
 def test_landscape_export_keeps_the_complete_frame_and_ratio():
@@ -49,3 +51,46 @@ def test_invalid_boxes_are_rejected():
     assert _full_frame(frame, [-100, 100, -10, 300]) is None
     assert _full_frame(frame, [100, 100, float("nan"), 300]) is None
     assert _full_frame(frame, [100, 100, 300]) is None
+
+
+def _cut_like_the_app(unit_count, merges, threshold):
+    parent = list(range(unit_count))
+
+    def find(node):
+        while parent[node] != node:
+            parent[node] = parent[parent[node]]
+            node = parent[node]
+        return node
+
+    subtree_max = [0.0] * (2 * unit_count - 1)
+    leaf = list(range(unit_count)) + [0] * (unit_count - 1)
+    for index, (left, right, distance, _size) in enumerate(merges):
+        left, right = int(left), int(right)
+        node = unit_count + index
+        subtree_max[node] = max(distance, subtree_max[left], subtree_max[right])
+        leaf[node] = leaf[left]
+        if subtree_max[node] <= threshold:
+            root_left, root_right = find(leaf[left]), find(leaf[right])
+            if root_left != root_right:
+                parent[root_right] = root_left
+    return [find(index) for index in range(unit_count)]
+
+
+def _partition(labels):
+    groups = {}
+    for index, label in enumerate(labels):
+        groups.setdefault(label, []).append(index)
+    return sorted(tuple(group) for group in groups.values())
+
+
+def test_client_side_slider_cut_matches_scipy():
+    rng = np.random.default_rng(20260821)
+    for _ in range(20):
+        unit_count = int(rng.integers(2, 40))
+        matrix = rng.normal(size=(unit_count, 16))
+        matrix /= np.linalg.norm(matrix, axis=1, keepdims=True)
+        tree = linkage_tree(matrix)
+        for threshold in np.linspace(0.0, float(tree[:, 2].max()) * 1.1, 25):
+            assert _partition(_cut_like_the_app(unit_count, tree, threshold)) == _partition(
+                fcluster(tree, t=threshold, criterion="distance")
+            )
