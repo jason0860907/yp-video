@@ -73,12 +73,16 @@ class Rally(BaseModel):
 
 
 class SegmentEvent(BaseModel):
-    """One touch inside an action's build-up (receive / set / spike, …).
+    """One spotted touch (serve / receive / set / spike / block / score).
 
     Mirrors ``yp_video.action.segments._public``: a stable event id, label,
     timestamp and source frame, with normalized court location when known.
     Distinct from ``contracts.action.ActionEvent`` (the frame-indexed label
     record yp-spot emits) — this is the seconds-based, app-facing shape.
+
+    ``id`` is the join key player identification points back at
+    (``IdentifyUnit.event_ids``), so it is also what a clip, a per-touch
+    player override and a per-player stat are all keyed by.
     """
 
     id: str = Field(description="Stable extraction id, normally f<source frame>")
@@ -89,35 +93,6 @@ class SegmentEvent(BaseModel):
         default=None, min_length=2, max_length=2,
         description="Normalized [x, y] court location, each in [0, 1]",
     )
-
-
-class RallyBounds(BaseModel):
-    """The rally an action sits in: its 1-based timeline index and span."""
-
-    index: int = Field(ge=1, description="1-based rally number (matches Rally.index)")
-    start: float = Field(ge=0, description="Seconds from video start")
-    end: float = Field(ge=0, description="Seconds from video start")
-
-
-class ActionSegment(BaseModel):
-    """A per-action highlight segment, anchored on a spike.
-
-    Mode-agnostic: it carries the *structure* around the anchor (build-up
-    chain, the rally it sits in, the next action) and leaves the clip-window
-    choice to the client. ``player_id`` / ``outcome`` / ``team`` are reserved
-    for a future re-id + scoring pass and are null until then, so adding those
-    features never breaks this decode.
-    """
-
-    action: str = Field(description="Anchor action label (currently always 'spike')")
-    anchor: SegmentEvent = Field(description="The anchor action itself")
-    chain: list[SegmentEvent] = Field(description="Build-up touches, ending on the anchor")
-    rally: RallyBounds | None = Field(default=None, description="Rally bounds, null if unmatched")
-    prev: SegmentEvent | None = Field(default=None, description="Action immediately before the anchor")
-    next: SegmentEvent | None = Field(default=None, description="First action after the anchor")
-    player_id: str | None = Field(default=None, description="Reserved: filled by a future re-id pass")
-    outcome: str | None = Field(default=None, description="Reserved: kill / error / blocked (future scoring pass)")
-    team: str | None = Field(default=None, description="Reserved: owning team (future pass)")
 
 
 class DetectorInput(BaseModel):
@@ -145,38 +120,17 @@ class DetectorInput(BaseModel):
 class SuccessResult(BaseModel):
     """Payload returned when detection succeeds."""
 
-    result_version: int = Field(
-        default=1,
-        description="Result JSON schema version; bumped when the shape changes so clients can branch.",
-    )
     total_duration: float = Field(ge=0, description="Source video length in seconds")
     rallies: list[Rally]
-    action_segments: list[ActionSegment] = Field(
-        default_factory=list,
-        description=(
-            "Per-action (spike) highlight segments for the Action scope. "
-            "Additive and may be empty — absent/empty when SPOT action spotting "
-            "did not run. The client projects each clip window on demand and "
-            "decodes an empty list when the field is missing, so older workers "
-            "stay compatible."
-        ),
-    )
-    score_segments: list[ActionSegment] = Field(
-        default_factory=list,
-        description=(
-            "Point-decided (score) segments for the Score scope: each anchors "
-            "on a score event and its `chain` is the deciding 接舉打 build-up. "
-            "Same shape as `action_segments`; `outcome` (won/lost) stays null "
-            "until a scoring pass fills it. Additive and may be empty."
-        ),
-    )
     action_events: list[SegmentEvent] = Field(
         default_factory=list,
         description=(
             "Flat, time-sorted list of every spotted event (serve / receive / "
-            "set / spike / block / score) with seconds-based `time`. Powers the "
-            "rally-wide touch timeline, which needs the full action set rather "
-            "than just a spike's build-up. Additive and may be empty."
+            "set / spike / block / score) with seconds-based `time`. This is "
+            "the entire action payload: the client projects clips, touch "
+            "timelines and per-player stats from it, and joins player "
+            "identification to it by event `id`. Empty when SPOT action "
+            "spotting did not run (a rally-only result)."
         ),
     )
     locale_echo: str | None = Field(
