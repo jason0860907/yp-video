@@ -1,4 +1,4 @@
-/** Rally Label panel: edit one video's rally spans and push them to the app.
+/** Rally Label panel: edit one video's rally spans.
  *
  *  The panel is keyed by the cut filename (`video` prop) — the annotation
  *  file it loads is `<stem>_annotations.jsonl`, the same mapping the backend
@@ -13,9 +13,7 @@
 
 import { useEffect, useState } from 'react';
 import { API, ApiError, apiFetch, apiUrl, errMsg } from '@/lib/api';
-import { copyText } from '@/lib/download';
 import { Badge } from '@/components/ui/Badge';
-import { Button } from '@/components/ui/Button';
 import { AnnotationEditor, type EditorData } from '@/components/editor/AnnotationEditor';
 import { toast } from '@/components/feedback/toast';
 import { rallyStatus } from '@/lib/labelStatus';
@@ -59,14 +57,12 @@ const loadedFromTag = (tag: unknown): LoadedSource =>
 
 export function RallyPanel({ video, source, vlm, onLoaded, onSaved, clock, clipsOpen, onClipsClose }: { video: string; source: LabelSource; vlm: boolean; onLoaded?: (s: LoadedSource) => void; onSaved?: () => void; clock?: PlaybackClock; clipsOpen: boolean; onClipsClose: () => void }) {
   const [data, setData] = useState<EditorData | null>(null);
-  const [manifestUrl, setManifestUrl] = useState<string | null>(null);
 
   // Load on video pick and on Source change — the picked file is already
   // open, so a Source switch re-reads it from the newly chosen store.
   useEffect(() => {
     if (!video) {
       setData(null);
-      setManifestUrl(null);
       return;
     }
     let stale = false;
@@ -75,7 +71,6 @@ export function RallyPanel({ video, source, vlm, onLoaded, onSaved, clock, clips
         const d = await loadRally(rallyResultName(video), source, vlm);
         if (stale) return;
         setData(d);
-        setManifestUrl(null);
         onLoaded?.(loadedFromTag(d.source));
         toast.success(`Loaded ${d.results?.length ?? 0} annotations (${String(d.source || '')})`);
       } catch (e) {
@@ -85,7 +80,6 @@ export function RallyPanel({ video, source, vlm, onLoaded, onSaved, clock, clips
         // an error: rally spans can be drawn from scratch.
         if (e instanceof ApiError && e.status === 404) {
           setData({ video, results: [] });
-          setManifestUrl(null);
         } else {
           toast.error(`Failed to load: ${errMsg(e)}`);
         }
@@ -97,24 +91,11 @@ export function RallyPanel({ video, source, vlm, onLoaded, onSaved, clock, clips
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [video, source, vlm]);
 
-  // Post-save: push the match to the app's R2 library. Never throws.
-  const pushToApp = async (videoName: string) => {
-    if (!videoName) return;
-    // The save just wrote the annotation store — whatever was loaded before,
-    // that is what the editor is showing now.
+  // The save just wrote the annotation store — whatever was loaded before,
+  // that is what the editor is showing now.
+  const afterSave = () => {
     onLoaded?.('annotation');
     onSaved?.();
-    toast.info('Pushing this match to the app…');
-    try {
-      const res = await apiFetch<{ manifest_url: string; video_uploaded: boolean; rally_count: number }>(API.annotate.publish, {
-        method: 'POST',
-        body: { video: videoName },
-      });
-      setManifestUrl(res.manifest_url);
-      toast.success(res.video_uploaded ? `Pushed to the app — video + ${res.rally_count} rallies uploaded` : `Pushed to the app — ${res.rally_count} rallies updated`);
-    } catch (e) {
-      toast.error(`Saved locally, but push to app failed: ${errMsg(e)}`);
-    }
   };
 
   return (
@@ -124,34 +105,12 @@ export function RallyPanel({ video, source, vlm, onLoaded, onSaved, clock, clips
         saveEndpoint={API.annotate.annotations}
         videoStreamPath={streamPath}
         previewBackoff={3}
-        onSaved={pushToApp}
+        onSaved={afterSave}
         initialTime={() => clock?.read(video) ?? null}
         onTimeChange={(t) => clock?.write(video, t)}
         clipsOpen={clipsOpen}
         onClipsClose={onClipsClose}
       />
-
-      {manifestUrl && (
-        <div className="rounded-xl border border-border bg-surface-100 p-4 text-xs">
-          <div className="text-text-muted">App import URL — paste into VolleyIQ → Settings → Library manifest URL</div>
-          <div className="mt-2 flex items-center gap-2">
-            <input readOnly value={manifestUrl} className="min-w-0 flex-1 rounded-lg border border-border-light bg-surface-50 px-2.5 py-1.5 font-mono text-text-secondary" />
-            <Button
-              size="sm"
-              onClick={async () => {
-                try {
-                  await copyText(manifestUrl);
-                  toast.success('Manifest URL copied');
-                } catch {
-                  toast.error('Copy failed');
-                }
-              }}
-            >
-              Copy
-            </Button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

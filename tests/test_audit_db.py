@@ -313,7 +313,7 @@ class AuditDatabaseTests(unittest.IsolatedAsyncioTestCase):
     async def test_worklog_ignores_instantaneous_actions(self) -> None:
         """A publish or a delete spans nothing and must not inflate a total."""
         now = datetime.now(UTC)
-        for action in ("POST /api/annotate/publish",
+        for action in ("POST /api/annotate/clip",
                        "POST /api/upload/delete-r2",
                        "job.completed"):
             await audit._write(audit.AuditEvent(

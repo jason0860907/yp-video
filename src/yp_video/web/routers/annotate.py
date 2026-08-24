@@ -17,7 +17,6 @@ from fastapi.responses import FileResponse, Response
 from pydantic import Field
 from starlette.background import BackgroundTask
 
-from yp_video.app_export import AppExportError, export_one_match
 from yp_video.config import (
     CUT_R2_CATEGORIES,
     RALLY_ANNOTATIONS_DIR,
@@ -399,28 +398,3 @@ async def cut_clip_zip(req: ClipZipRequest):
         media_type="application/zip",
         headers={"Content-Disposition": 'attachment; filename="rally-clips.zip"'},
     )
-
-
-class PublishRequest(StrictModel):
-    video: str
-
-
-@router.post("/publish")
-async def publish_to_app(req: PublishRequest) -> dict:
-    """Mark a match complete and push it to the iOS app.
-
-    Uploads the cut video plus a single-match manifest to R2, then returns
-    the manifest URL the user pastes into VolleyIQ. Expects the rally
-    annotations to have been saved first (the Annotate UI saves before
-    calling this). Heavy network I/O runs off the event loop.
-    """
-    basename = Path(req.video).stem
-    # Publishing pushes the cut video and its manifest out to R2 and the iOS
-    # library — the one action here with an effect outside this machine.
-    audit.detail(target=basename)
-    try:
-        return await asyncio.to_thread(export_one_match, basename)
-    except AppExportError as e:
-        raise HTTPException(400, str(e))
-    except Exception as e:  # noqa: BLE001 — surface R2 / network failures
-        raise HTTPException(502, f"Export to app failed: {e}")

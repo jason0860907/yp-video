@@ -140,8 +140,6 @@ yp-video/
 │   ├── action/                 # Action (SPOT) 流程編排：frame 快取、預標、推論輸出轉換
 │   ├── rally_spot.py           # Rally 分段的 SPOT 訓練/推論編排
 │   ├── contracts/              # 跨進程資料格式（yp-video ↔ yp-spot）
-│   ├── app_export.py           # 校正後的比賽發佈到 iOS app library（R2）
-│   ├── app_library.py          # app library 共用 helper
 │   ├── youtube/                # CLI 工具
 │   │   ├── download.py         # YouTube 下載
 │   │   └── rename_tpvl.py      # TPVL 重命名

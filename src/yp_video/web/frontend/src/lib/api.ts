@@ -146,7 +146,6 @@ export const API = {
     video: (path: string) => `/annotate/video/${encodeURIComponent(path)}`,
     clip: '/annotate/clip',
     clipZip: '/annotate/clip-zip',
-    publish: '/annotate/publish',
     done: (name: string) => `/annotate/done/${encodeURIComponent(name)}`,
   },
   actionAnnotate: {

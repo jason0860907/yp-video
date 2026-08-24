@@ -32,7 +32,6 @@ const ACTION_LABELS: Record<string, string> = {
   'POST /api/detect/convert': 'VLM 片段轉 Rally',
   'POST /api/annotate/clip': '下載單一片段',
   'POST /api/annotate/clip-zip': '下載片段壓縮檔',
-  'POST /api/annotate/publish': '發佈到 iOS app',
 
   // Training and inference.
   'POST /api/spot-train/start': '啟動 Rally SPOT 訓練',
