@@ -28,6 +28,7 @@ import {
   EMPTY_ACTION_EDITOR,
   OUTSIDE_RALLY_KEY,
   clamp,
+  findRallyAtTime,
   formatActionTime,
   hasActiveActionAnnotation,
   makeActionId,
@@ -38,6 +39,7 @@ import {
   type ActionEditor,
 } from '@/lib/actionEditorModel';
 import { useActionWaveform } from '@/lib/useActionWaveform';
+import { scrollRallyTop } from '@/lib/sidebarScroll';
 import { ACTION_COLORS, actionColor } from '@/lib/actionColors';
 import type { ActionAnnotationData, ActionEvent, ActionVideo } from '@/types/api';
 import { actionStatus } from '@/lib/labelStatus';
@@ -66,6 +68,8 @@ export const ACTION_MODE: ModeDescriptor = {
 export function ActionPanel({ video, source = 'annotation', onLoaded, onSaved, registerGuard, clock }: { video: string; source?: LabelSource; onLoaded?: (s: LoadedSource) => void; onSaved?: () => void; registerGuard?: RegisterGuard; clock?: PlaybackClock }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
+  // The rally list's scroll box — the panel pins rows to its top through it.
+  const listRef = useRef<HTMLDivElement>(null);
   const [pointMode, setPointMode] = useState(false);
   const [aspect, setAspect] = useState(16 / 9);
   const { waveform, loadWaveform } = useActionWaveform();
@@ -242,9 +246,27 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, onSaved, r
     // sitting at 0.
     const t = takeHandover();
     if (t == null) return;
-    const toFrame = () => seekFrame(Math.round(t * (edRef.current.fps || 30)));
-    if (el.seekable.length > 0) toFrame();
-    else el.addEventListener('canplay', toFrame, { once: true });
+    const arriveAt = () => {
+      const f = Math.round(t * (edRef.current.fps || 30));
+      seekFrame(f);
+      // Arriving from another tab means arriving at a POSITION, not at rally 1.
+      // load() had to guess before it knew where the playhead would land; now
+      // that it is known, point the sidebar at the rally that holds it.
+      //
+      // Looked up by the handed-over time rather than the rounded frame: at a
+      // rally's first frame the rounding can land a hair before `start`. And
+      // spans are half-open everywhere else, but the Rally tab parks the
+      // playhead exactly ON a rally's end when it plays one through — arriving
+      // there means arriving in that rally, so fall back to the rally holding
+      // the frame before.
+      const step = 1 / (edRef.current.fps || 30);
+      const rally = findRallyAtTime(t, edRef.current) ?? findRallyAtTime(t - step, edRef.current);
+      setSelectedRallyId(rally?.rally_id ?? 'all');
+      setExpanded(rally ? String(rally.rally_id) : null);
+      if (rally) scrollRallyTop(listRef.current, rally.rally_id);
+    };
+    if (el.seekable.length > 0) arriveAt();
+    else el.addEventListener('canplay', arriveAt, { once: true });
   };
 
   const onVideoClick = (e: ReactMouseEvent) => {
@@ -497,6 +519,7 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, onSaved, r
     if (!evt) return;
     setSelectedId(id);
     revealEvent(evt);
+    scrollRallyTop(listRef.current, evt.rally_id ?? OUTSIDE_RALLY_KEY);
     videoRef.current?.pause();
     seekFrame(evt.frame);
   };
@@ -515,15 +538,24 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, onSaved, r
     if (f === before.frame) return;
     editEvent(selectedId, { frame: f });
     // mutate() writes edRef synchronously, so the re-homed event is readable
-    // here, before React has re-rendered.
+    // here, before React has re-rendered. Follow it only when the nudge pushed
+    // it into a different rally — otherwise every keypress would yank the list
+    // back and fight the user's own scrolling.
     const after = edRef.current.events.find((e) => e.id === selectedId);
-    if (after) revealEvent(after);
+    if (after && after.rally_id !== before.rally_id) {
+      revealEvent(after);
+      scrollRallyTop(listRef.current, after.rally_id ?? OUTSIDE_RALLY_KEY);
+    }
     videoRef.current?.pause();
     seekFrame(f);
   };
   const selectRally = (id: number | 'all', seek = true) => {
     setSelectedRallyId(id);
     setExpanded(id === 'all' ? null : String(id));
+    // The pick can come from far outside the visible list (Prev/Next, the
+    // dropdown), and even a clicked row wants its freshly expanded actions
+    // on screen rather than pushed below the fold.
+    if (id !== 'all') scrollRallyTop(listRef.current, id);
     if (seek && id !== 'all') {
       const r = ed.rallies.find((x) => x.rally_id === id);
       if (r) seekFrame(Math.round(r.start * ed.fps));
@@ -757,7 +789,7 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, onSaved, r
           </div>
           <div className="h-px bg-border" />
 
-          <div className="mt-2 max-h-[calc(100vh-18rem)] space-y-1.5 overflow-y-auto pr-1">
+          <div ref={listRef} className="mt-2 max-h-[calc(100vh-18rem)] space-y-1.5 overflow-y-auto pr-1">
             {!ed.video ? (
               <EmptyState icon={<DotIcon />} title="No video loaded" />
             ) : ed.rallies.length === 0 && outside.length === 0 ? (
@@ -773,6 +805,7 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, onSaved, r
                   return (
                     <div key={rally.rally_id} className="space-y-1.5">
                       <div
+                        data-rally-row={rally.rally_id}
                         onClick={() => selectRally(rally.rally_id)}
                         className={cn(
                           'flex cursor-pointer items-center gap-2.5 rounded-xl border px-3 py-2.5 transition-colors',
@@ -810,7 +843,7 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, onSaved, r
                 })}
                 {outside.length > 0 && (
                   <div className="space-y-1.5">
-                    <div onClick={() => setExpanded(OUTSIDE_RALLY_KEY)} className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-amber-500/20 bg-amber-500/[0.04] px-3 py-2.5 hover:bg-amber-500/[0.08]">
+                    <div data-rally-row={OUTSIDE_RALLY_KEY} onClick={() => setExpanded(OUTSIDE_RALLY_KEY)} className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-amber-500/20 bg-amber-500/[0.04] px-3 py-2.5 hover:bg-amber-500/[0.08]">
                       <span className="w-4 select-none text-right font-heading text-[10px] text-text-muted/60">out</span>
                       <span className="w-7 select-none" />
                       <button

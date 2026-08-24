@@ -44,10 +44,11 @@ const normalizeRallyId = (value: unknown): number | null => {
   return Number.isInteger(id) && id > 0 ? id : null;
 };
 
-export const findActionRally = (frame: number, editor: ActionEditor): ActionRally | null => {
-  const time = frame / (editor.fps || 30);
-  return editor.rallies.find((rally) => time >= rally.start && time < rally.end) ?? null;
-};
+export const findRallyAtTime = (time: number, editor: ActionEditor): ActionRally | null =>
+  editor.rallies.find((rally) => time >= rally.start && time < rally.end) ?? null;
+
+export const findActionRally = (frame: number, editor: ActionEditor): ActionRally | null =>
+  findRallyAtTime(frame / (editor.fps || 30), editor);
 
 export const withActionRally = (event: ActionEvent, editor: ActionEditor): ActionEvent => {
   const frame = Math.max(0, Math.round(event.frame || 0));

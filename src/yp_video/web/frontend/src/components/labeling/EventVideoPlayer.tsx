@@ -15,6 +15,7 @@ import { API, apiFetch } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { actionColor } from '@/lib/actionColors';
 import { hasRealTime, seekWhenSeekable, usePlayheadHandover } from '@/lib/playheadHandover';
+import { scrollRallyTop } from '@/lib/sidebarScroll';
 import type { PlaybackClock } from '@/pages/label/mode';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -144,7 +145,7 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
   useImperativeHandle(ref, () => ({
     jumpToEvent: (a: { id: string; frame: number; time: number | null }) => {
       const rally = seekEvent(a);
-      scrollRallyTop(rally ? rally.rally_id : OUTSIDE);
+      scrollRallyTop(listRef.current, rally ? rally.rally_id : OUTSIDE);
       videoRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     },
   }));
@@ -489,20 +490,6 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
   const selectAllRallies = useCallback(() => onSelectRally('all'), [onSelectRally]);
 
   const listRef = useRef<HTMLDivElement>(null);
-  /** Pin a rally row (or the outside header) to the top of the sidebar list.
-   *  Measured a frame later, so the expand/collapse this jump caused has
-   *  already re-laid-out the list. */
-  const scrollRallyTop = (key: number | string) => {
-    requestAnimationFrame(() => {
-      const list = listRef.current;
-      const row = list?.querySelector<HTMLElement>(`[data-rally-row="${CSS.escape(String(key))}"]`);
-      if (!list || !row) return;
-      list.scrollTo({
-        top: row.getBoundingClientRect().top - list.getBoundingClientRect().top + list.scrollTop,
-        behavior: 'smooth',
-      });
-    });
-  };
   /** Scroll an action row into the list's view, centering it, but only when
    *  it's actually off-screen — avoids constant re-centering jitter as the
    *  playhead crosses each action during playback. */
