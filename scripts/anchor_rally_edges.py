@@ -1,43 +1,40 @@
-"""Anchor every rally's start to a fixed lead-in before its serve.
+"""Anchor a rally edge to the action that defines it.
 
-A rally span's start had no common basis. The serve that opens it sits
-anywhere from 0.01 s to 12.5 s after it (median ~2 s), and that spread rides
-straight into the SPOT sampling window while leaving rally boundaries with no
-comparable baseline to review against. This rewrites ``start`` to the serve's
-time minus ``LEAD_S``, clamped at 0. ``end`` is never touched, and neither is
-``rally_id``, ``label`` or ``side``.
+A rally opens on a `serve` and closes on a `score`, but its boundaries sat
+wherever they were drawn — the serve anywhere from 0.01 s to 12.5 s after
+`start`, the score anywhere before `end`. That spread rides into the SPOT
+sampling window and leaves boundaries with no comparable baseline to review
+against. This pins one edge to its action:
 
-Only rallies whose FIRST in-span action is a serve are moved. A span whose
-first action is something else — or that holds no action at all — is an
-annotation problem in its own right, and gets left for a human.
+    start = serve - 1.5s        end = score + 1.0s
 
-Shortening is safe by construction: the serve is already the first event in
-the span, so the region trimmed away holds no action events. Lengthening can
-pull in events that used to sit outside every rally, which is new labelling
-work rather than lost work.
+Only rallies whose edge action is already AT that edge are moved. A span whose
+first action is not a serve, whose last is not a score, or that holds no
+action at all is an annotation problem of its own and gets left for a human —
+scripts/scan_rally_edges.py lists them.
 
-Association labels are deliberately untouched. They live in their own files
-keyed by event id and reference a tracklet as ``"{rally_id}:{track_id}"``;
-every rally_id survives here, so those keys go on meaning what they meant.
-What WOULD cost them is re-running rally tracking, which renumbers track_id.
+Shortening is safe by construction: the edge action is already the outermost
+one, so the stretch trimmed away holds no events. Lengthening can pull in
+events that used to fall outside every rally, which is new labelling work
+rather than lost work — and, where those turn out to be the same action
+annotated twice, work worth doing before this runs.
 
-Which is the catch worth spelling out. ``rally_fingerprint`` hashes
-``(rally_id, start, end)``, so moving a start flips it and
-``extraction.prerequisites._tracks_stale`` then tells every tracked video to
-re-run tracking — the one action that costs those labels. So the tracks
-header fingerprint is re-stamped, but only where the claim can be PROVEN:
-tracking scanned the old spans, so the stored tracklets still serve the new
-ones unless a newly admitted event now sits in a lead-in that was never
-scanned. Videos where that happens keep the stale flag, because there it is
-honest. (``_tracks_stale`` still describes rally_id as positional; that has
-not been true since freeze_rally_ids.py made it a stable id.)
+Association labels are untouched. They key on event id and name a tracklet as
+"{rally_id}:{track_id}"; every rally_id survives here, so those keys go on
+meaning what they meant. What would cost them is re-running rally tracking,
+which renumbers track_id — and rally_fingerprint hashes (rally_id, start,
+end), so a moved edge flips it and _tracks_stale then tells every tracked
+video to re-track. The tracks header fingerprint is therefore re-stamped where
+that can be PROVEN: tracking scanned the old spans, so the stored tracklets
+still serve the new ones unless a newly admitted event now sits in a stretch
+that was never scanned. Videos where that happens keep the stale flag.
 
 Only the human stores take part: a video needs both
-``rally-spot/annotations/`` and ``action/annotations/``. Pre-annotations are
-model output and are regenerated, never edited here.
+`rally-spot/annotations/` and `action/annotations/`. Pre-annotations are model
+output, regenerated rather than edited.
 
-    uv run python scripts/anchor_rally_start_to_serve.py            # dry run
-    uv run python scripts/anchor_rally_start_to_serve.py --apply    # do it
+    uv run python scripts/anchor_rally_edges.py --edge end
+    uv run python scripts/anchor_rally_edges.py --edge end --apply
 """
 
 from __future__ import annotations
@@ -57,13 +54,32 @@ from yp_video.tracklets.store import tracks_path
 from yp_video.web.r2_client import r2_client
 from yp_video.web.routers.annotate import Annotation, _write_annotations_atomic
 
-#: How long before the serve a rally should begin.
-LEAD_S = 1.5
-SERVE = "serve"
 R2_CATEGORY = "rally-spot/annotations"
 #: Matches rally_fingerprint's own rounding, so a re-stamp cannot disagree
 #: with the value it is about to compute.
 PRECISION = 3
+
+
+@dataclass(frozen=True)
+class Edge:
+    """One end of a rally, the action that defines it, and how far off it."""
+
+    name: str
+    label: str
+    #: True for the opening edge; False for the close.
+    opening: bool
+    #: Seconds before the serve, or after the score.
+    lead: float
+
+    @property
+    def field(self) -> str:
+        return "start" if self.opening else "end"
+
+
+EDGES = {
+    "start": Edge("start", "serve", opening=True, lead=1.5),
+    "end": Edge("end", "score", opening=False, lead=1.0),
+}
 
 
 @dataclass
@@ -72,18 +88,13 @@ class Tally:
     extended: int = 0
     unchanged: int = 0
     no_actions: int = 0
-    not_serve: int = 0
+    wrong_action: int = 0
     seconds_trimmed: float = 0.0
     admitted: int = 0
 
     def add(self, other: "Tally") -> None:
-        self.trimmed += other.trimmed
-        self.extended += other.extended
-        self.unchanged += other.unchanged
-        self.no_actions += other.no_actions
-        self.not_serve += other.not_serve
-        self.seconds_trimmed += other.seconds_trimmed
-        self.admitted += other.admitted
+        for name in vars(self):
+            setattr(self, name, getattr(self, name) + getattr(other, name))
 
 
 @dataclass
@@ -93,7 +104,7 @@ class Plan:
     meta: dict
     rows: list[dict]
     tally: Tally = field(default_factory=Tally)
-    #: False when a newly admitted event landed in a never-scanned lead-in.
+    #: False when a newly admitted event landed in a never-scanned stretch.
     restampable: bool = True
 
     @property
@@ -101,8 +112,8 @@ class Plan:
         return bool(self.tally.trimmed or self.tally.extended)
 
 
-def _load_actions(stem: str) -> tuple[float, list[tuple[float, str]]] | None:
-    """(fps, [(time, label)]) sorted the way every reader sorts events."""
+def _actions(stem: str) -> list[tuple[float, str]] | None:
+    """[(time, label)] sorted the way every reader sorts events."""
     path = ACTION_ANNOTATIONS_DIR / f"{stem}{LABEL_FILE_SUFFIX}"
     if not path.exists():
         return None
@@ -112,25 +123,23 @@ def _load_actions(stem: str) -> tuple[float, list[tuple[float, str]]] | None:
         print(f"  {stem}: action file unparseable, left for a human")
         return None
     fps = float(meta.get("fps") or 30.0) or 30.0
-    events = sorted(
+    return sorted(
         (int(r["frame"]) / fps, str(r.get("label") or ""))
         for r in records
         if r.get("frame") is not None
     )
-    return fps, events
 
 
-def _plan(stem: str, rally_path: Path) -> Plan | None:
-    """Work out this video's new spans without writing anything."""
-    loaded = _load_actions(stem)
-    if loaded is None:
+def _plan(stem: str, rally_path: Path, edge: Edge) -> Plan | None:
+    events = _actions(stem)
+    if events is None:
         return None
-    _fps, events = loaded
     try:
         meta, records = read_jsonl(rally_path)
     except (json.JSONDecodeError, OSError):
         print(f"  {stem}: rally file unparseable, left for a human")
         return None
+    duration = float(meta.get("duration") or 0.0)
 
     plan = Plan(stem=stem, path=rally_path, meta=meta, rows=[])
     for record in records:
@@ -141,25 +150,45 @@ def _plan(stem: str, rally_path: Path) -> Plan | None:
         inside = [e for e in events if start <= e[0] <= end]
         if not inside:
             plan.tally.no_actions += 1
-        elif inside[0][1] != SERVE:
-            plan.tally.not_serve += 1
         else:
-            new_start = round(max(0.0, inside[0][0] - LEAD_S), PRECISION)
-            if new_start > start:
-                plan.tally.trimmed += 1
-                plan.tally.seconds_trimmed += new_start - start
-            elif new_start < start:
-                plan.tally.extended += 1
-                # Events the longer span now admits. Tracking never scanned
-                # this stretch, so a tracklet cannot exist for them — which is
-                # exactly what makes the fingerprint unprovable here.
-                admitted = sum(1 for e in events if new_start <= e[0] < start)
-                plan.tally.admitted += admitted
-                if admitted:
-                    plan.restampable = False
+            at_edge = inside[0] if edge.opening else inside[-1]
+            if at_edge[1] != edge.label:
+                plan.tally.wrong_action += 1
             else:
-                plan.tally.unchanged += 1
-            row["start"] = new_start
+                old = start if edge.opening else end
+                new = at_edge[0] - edge.lead if edge.opening else at_edge[0] + edge.lead
+                new = max(0.0, new)
+                if not edge.opening and duration > 0:
+                    new = min(new, duration)
+                new = round(new, PRECISION)
+                # A trim must never cross the other edge; it cannot, since the
+                # edge action lies inside, but a clamp could make it degenerate.
+                if (new >= end) if edge.opening else (new <= start):
+                    plan.tally.unchanged += 1
+                    plan.rows.append(row)
+                    continue
+                grew = new < old if edge.opening else new > old
+                if new == old:
+                    plan.tally.unchanged += 1
+                elif grew:
+                    plan.tally.extended += 1
+                    # Tracking never scanned this stretch, so no tracklet can
+                    # exist for what it admits — which is what makes the
+                    # fingerprint unprovable here.
+                    # Spans are inclusive at both ends, so the event
+                    # sitting exactly on the old edge was already inside.
+                    admitted = sum(
+                        1
+                        for t, _ in events
+                        if ((new <= t < old) if edge.opening else (old < t <= new))
+                    )
+                    plan.tally.admitted += admitted
+                    if admitted:
+                        plan.restampable = False
+                else:
+                    plan.tally.trimmed += 1
+                    plan.tally.seconds_trimmed += abs(new - old)
+                row[edge.field] = new
         plan.rows.append(row)
     return plan
 
@@ -206,19 +235,20 @@ def _restamp(stem: str) -> bool:
     return True
 
 
-def run(apply: bool) -> None:
+def run(edge: Edge, apply: bool) -> None:
     files = sorted(RALLY_ANNOTATIONS_DIR.glob(annotation_name("*")))
     print(f"{RALLY_ANNOTATIONS_DIR.name}/: {len(files)} rally file(s)")
+    print(f"anchoring `{edge.field}` to {edge.label} "
+          f"{'−' if edge.opening else '+'} {edge.lead}s")
 
     plans: list[Plan] = []
     for path in files:
         stem = path.name[: -len(annotation_name(""))]
-        plan = _plan(stem, path)
+        plan = _plan(stem, path, edge)
         if plan is not None:
             plans.append(plan)
-    paired = len(plans)
     changed = [p for p in plans if p.changed]
-    print(f"  {paired} paired with an action annotation")
+    print(f"  {len(plans)} paired with an action annotation")
 
     total = Tally()
     for plan in plans:
@@ -226,9 +256,9 @@ def run(apply: bool) -> None:
     print(f"  {'moved' if apply else 'would move'} {len(changed)} video(s):")
     print(f"    shortened      {total.trimmed}  (−{total.seconds_trimmed:.0f}s total)")
     print(f"    lengthened     {total.extended}  (+{total.admitted} event(s) admitted)")
-    print(f"    already at {LEAD_S}s  {total.unchanged}")
-    print(f"    left alone     {total.not_serve} first action not a serve"
-          f", {total.no_actions} with no actions")
+    print(f"    already there  {total.unchanged}")
+    print(f"    left alone     {total.wrong_action} edge action is not a"
+          f" {edge.label}, {total.no_actions} with no actions")
 
     if apply and changed:
         stamp = date.today().strftime("%Y%m%d")
@@ -260,17 +290,20 @@ def run(apply: bool) -> None:
         print(f"  re-stamped {stamped} fingerprint(s)")
     else:
         print(f"  would re-stamp {len(provable)} fingerprint(s)")
-    print(f"  left stale {len(refused)} — a newly admitted event sits in a"
-          f" stretch tracking never scanned:")
-    for plan in refused:
-        print(f"    {plan.stem}  (+{plan.tally.admitted} event(s))")
+    if refused:
+        print(f"  left stale {len(refused)} — a newly admitted event sits in a"
+              f" stretch tracking never scanned:")
+        for plan in refused:
+            print(f"    {plan.stem}  (+{plan.tally.admitted} event(s))")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--edge", choices=sorted(EDGES), required=True,
+                        help="which boundary to anchor")
     parser.add_argument("--apply", action="store_true", help="write changes (default: dry run)")
     args = parser.parse_args()
-    run(args.apply)
+    run(EDGES[args.edge], args.apply)
     if not args.apply:
         print("\nDry run — re-run with --apply to write.")
 
