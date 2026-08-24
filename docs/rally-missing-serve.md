@@ -4,24 +4,23 @@
 
 重跑：`uv run python scripts/scan_rally_edges.py`
 
-判定：rally span `[start, end]` 內最前的動作事件不是 `serve`。共 88 筆。
+判定：rally span `[start, end]` 內最前的動作事件不是 `serve`。共 87 筆。
 
 分類：`開頭切太晚` = span 外 3 秒內就有 `serve`，標註在、是邊界偏了；`serve 不在最前` = span 內有 `serve`，但前面還有別的動作；`疑似漏標` = 前後都找不到鄰近的 `serve`。
 
-## 疑似漏標 — 75 筆
+## 疑似漏標 — 74 筆
 
 | 影片 | Rally | 起 | 訖 | 最前動作 | 動作序列（前 6） |
 |---|---:|---:|---:|---|---|
-| 03⧸14(六) 16_00｜例行賽G104 #獅子王 vs. #屏東台電｜企業21年甲級男女排球聯賽_set2 | 13 | 8:32 | 8:48 | set | set → receive → spike → receive → receive → receive |
-| 03⧸14(六) 16_00｜例行賽G104 #獅子王 vs. #屏東台電｜企業21年甲級男女排球聯賽_set2 | 27 | 15:38 | 15:42 | receive | receive → set → spike → score |
-| 03⧸14(六) 18_00｜例行賽G105 #高雄台電 vs. #新北中纖｜企業21年甲級男女排球聯賽_set1 | 36 | 22:00 | 22:04 | set | set → spike → block → score |
+| 03⧸14(六) 16_00｜例行賽G104 #獅子王 vs. #屏東台電｜企業21年甲級男女排球聯賽_set2 | 27 | 15:37 | 15:42 | receive | receive → set → spike → score |
+| 03⧸14(六) 18_00｜例行賽G105 #高雄台電 vs. #新北中纖｜企業21年甲級男女排球聯賽_set1 | 1 | 0:00 | 0:06 | receive | receive → set → spike |
+| 03⧸14(六) 18_00｜例行賽G105 #高雄台電 vs. #新北中纖｜企業21年甲級男女排球聯賽_set1 | 36 | 22:00 | 22:04 | receive | receive → set → spike → block → score |
 | 03⧸15(日) 13_00｜例行賽G106 #屏東台電 vs. #雲林美津濃｜企業21年甲級男女排球聯賽_set3 | 41 | 24:48 | 24:51 | set | set → spike → block → score |
-| 03⧸15(日) 17_00｜例行賽G108 #新北中纖 vs. #高雄台電｜企業21年甲級男女排球聯賽_set1 | 19 | 9:18 | 9:32 | receive | receive → set → spike → block → receive → set |
 | 03⧸15(日) 17_00｜例行賽G108 #新北中纖 vs. #高雄台電｜企業21年甲級男女排球聯賽_set3 | 7 | 3:43 | 3:52 | set | set → spike → receive → set → spike → block |
-| 03⧸20(五) 14_00｜挑戰賽G110 #高雄台電 vs. #新北中纖｜企業21年甲級男女排球聯賽_set2 | 6 | 2:25 | 3:31 | receive | receive → set → spike → receive → set → spike |
-| 03⧸21(六) 18_00｜男子組冠軍賽G114 #雲林美津濃 vs. #屏東台電｜企業21年甲級男女排球聯賽_set1 | 18 | 10:06 | 10:16 | block | block → block → receive → receive → receive → receive |
+| 03⧸20(五) 14_00｜挑戰賽G110 #高雄台電 vs. #新北中纖｜企業21年甲級男女排球聯賽_set2 | 6 | 2:24 | 3:31 | receive | receive → set → spike → receive → set → spike |
+| 03⧸21(六) 18_00｜男子組冠軍賽G114 #雲林美津濃 vs. #屏東台電｜企業21年甲級男女排球聯賽_set1 | 18 | 10:06 | 10:16 | block | block → block → receive → set → receive → receive |
 | 03⧸22(日) 17_00｜男子組冠軍賽 G117 #屏東台電 vs. #雲林美津濃｜企業21年甲級男女排球聯賽_set1 | 30 | 16:33 | 16:38 | set | set → spike → block → score |
-| 03⧸22(日) 17_00｜男子組冠軍賽 G117 #屏東台電 vs. #雲林美津濃｜企業21年甲級男女排球聯賽_set2 | 2 | 0:25 | 0:36 | receive | receive → set → spike → receive → set → spike |
+| 03⧸22(日) 17_00｜男子組冠軍賽 G117 #屏東台電 vs. #雲林美津濃｜企業21年甲級男女排球聯賽_set2 | 2 | 0:25 | 0:36 | set | set → spike → receive → set → block → spike |
 | 0601小窩季打 2 | 1 | 0:04 | 0:59 | receive | receive → set → spike → receive → set → spike |
 | 0601小窩季打 2 | 14 | 4:40 | 4:54 | receive | receive → set → spike → receive → set → spike |
 | 0601小窩季打 2 | 22 | 6:50 | 7:03 | receive | receive → set → spike → receive → set → spike |
@@ -108,28 +107,22 @@ span 內有 `serve`，但它不是最前的事件。
 | Bulgaria 🇧🇬 vs. Canada 🇨🇦 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 40 | 23:08 | 23:16 | receive | 1.5s | receive → serve → receive → set → spike → block |
 | Bulgaria 🇧🇬 vs. Canada 🇨🇦 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 46 | 27:32 | 27:38 | set | 1.5s | set → serve → receive → set → spike → score |
 
-## 附錄 A：span 內有 2 個以上 `serve` — 147 筆
+## 附錄 A：span 內有 2 個以上 `serve` — 125 筆
 
 間隔不到 0.5 秒的，是同一個 `serve` 被標了兩次，不是兩個。
 
 | 影片 | Rally | 起 | 訖 | serve 數 | 最小間隔 |
 |---|---:|---:|---:|---:|---:|
-| 0225小窩臨打 4 | 27 | 10:33 | 10:47 | 2 | 4.40s |
-| 03⧸14(六) 14_00｜例行賽G103 #雲林美津濃 vs. #桃園臺灣產險｜企業21年甲級男女排球聯賽_set2 | 24 | 12:21 | 12:28 | 2 | 0.05s |
 | 03⧸14(六) 14_00｜例行賽G103 #雲林美津濃 vs. #桃園臺灣產險｜企業21年甲級男女排球聯賽_set3 | 18 | 12:45 | 12:52 | 5 | 0.00s |
 | 03⧸14(六) 14_00｜例行賽G103 #雲林美津濃 vs. #桃園臺灣產險｜企業21年甲級男女排球聯賽_set3 | 24 | 16:28 | 16:34 | 2 | 0.22s |
 | 03⧸14(六) 16_00｜例行賽G104 #獅子王 vs. #屏東台電｜企業21年甲級男女排球聯賽_set1 | 15 | 6:18 | 6:27 | 2 | 0.88s |
-| 03⧸14(六) 18_00｜例行賽G105 #高雄台電 vs. #新北中纖｜企業21年甲級男女排球聯賽_set1 | 5 | 1:44 | 2:08 | 2 | 21.35s |
 | 03⧸14(六) 18_00｜例行賽G105 #高雄台電 vs. #新北中纖｜企業21年甲級男女排球聯賽_set1 | 11 | 4:46 | 4:53 | 4 | 0.00s |
 | 03⧸14(六) 18_00｜例行賽G105 #高雄台電 vs. #新北中纖｜企業21年甲級男女排球聯賽_set1 | 28 | 15:58 | 16:28 | 2 | 0.30s |
 | 03⧸14(六) 18_00｜例行賽G105 #高雄台電 vs. #新北中纖｜企業21年甲級男女排球聯賽_set1 | 30 | 17:23 | 17:29 | 2 | 0.38s |
-| 03⧸14(六) 18_00｜例行賽G105 #高雄台電 vs. #新北中纖｜企業21年甲級男女排球聯賽_set1 | 39 | 23:24 | 23:32 | 2 | 0.28s |
 | 03⧸15(日) 13_00｜例行賽G106 #屏東台電 vs. #雲林美津濃｜企業21年甲級男女排球聯賽_set1 | 41 | 24:13 | 24:19 | 5 | 0.00s |
-| 03⧸15(日) 13_00｜例行賽G106 #屏東台電 vs. #雲林美津濃｜企業21年甲級男女排球聯賽_set1 | 48 | 10:26 | 10:33 | 2 | 0.02s |
 | 03⧸15(日) 13_00｜例行賽G106 #屏東台電 vs. #雲林美津濃｜企業21年甲級男女排球聯賽_set2 | 13 | 5:36 | 5:44 | 5 | 0.00s |
 | 03⧸15(日) 13_00｜例行賽G106 #屏東台電 vs. #雲林美津濃｜企業21年甲級男女排球聯賽_set2 | 28 | 24:29 | 24:39 | 2 | 1.05s |
 | 03⧸15(日) 13_00｜例行賽G106 #屏東台電 vs. #雲林美津濃｜企業21年甲級男女排球聯賽_set2 | 45 | 29:16 | 29:41 | 2 | 0.63s |
-| 03⧸15(日) 13_00｜例行賽G106 #屏東台電 vs. #雲林美津濃｜企業21年甲級男女排球聯賽_set3 | 45 | 27:42 | 27:50 | 2 | 0.13s |
 | 03⧸15(日) 17_00｜例行賽G108 #新北中纖 vs. #高雄台電｜企業21年甲級男女排球聯賽_set3 | 6 | 3:17 | 3:28 | 3 | 0.02s |
 | 03⧸15(日) 17_00｜例行賽G108 #新北中纖 vs. #高雄台電｜企業21年甲級男女排球聯賽_set3 | 13 | 7:20 | 7:34 | 2 | 0.10s |
 | 03⧸15(日) 17_00｜例行賽G108 #新北中纖 vs. #高雄台電｜企業21年甲級男女排球聯賽_set3 | 17 | 10:06 | 10:21 | 2 | 0.50s |
@@ -138,16 +131,9 @@ span 內有 `serve`，但它不是最前的事件。
 | 03⧸15(日) 17_00｜例行賽G108 #新北中纖 vs. #高雄台電｜企業21年甲級男女排球聯賽_set5 | 29 | 21:51 | 21:58 | 3 | 0.02s |
 | 03⧸21(六) 18_00｜男子組冠軍賽G114 #雲林美津濃 vs. #屏東台電｜企業21年甲級男女排球聯賽_set1 | 22 | 13:38 | 13:49 | 2 | 0.07s |
 | 03⧸22(日) 17_00｜男子組冠軍賽 G117 #屏東台電 vs. #雲林美津濃｜企業21年甲級男女排球聯賽_set1 | 26 | 14:38 | 14:46 | 2 | 0.22s |
-| 0914小窩季打 2 | 3 | 0:40 | 0:53 | 2 | 6.00s |
-| 10⧸4 3 | 15 | 4:02 | 4:18 | 2 | 7.47s |
 | 20241103 霖度C-1 | 22 | 9:36 | 9:40 | 2 | 0.20s |
 | 20241103 霖度C-1 | 23 | 9:45 | 9:50 | 2 | 0.53s |
-| 2025-09-27_G1_臺北伊斯特_vs_臺中連莊_set1 | 40 | 27:34 | 27:42 | 2 | 0.07s |
-| 2025-09-28_G2_臺北伊斯特_vs_桃園雲豹飛將_set1 | 26 | 17:22 | 17:37 | 2 | 5.69s |
-| 2025-09-28_G2_臺北伊斯特_vs_桃園雲豹飛將_set2 | 39 | 23:12 | 23:21 | 2 | 3.87s |
-| 2025-10-12_G10_臺北伊斯特_vs_桃園雲豹飛將_set1 | 5 | 1:57 | 2:01 | 2 | 0.07s |
 | 2025-10-25_G11_臺北伊斯特_vs_桃園雲豹飛將_set1 | 16 | 7:52 | 8:09 | 3 | 0.02s |
-| 2025-10-25_G12_台鋼天鷹_vs_臺中連莊_set1 | 5 | 2:12 | 2:21 | 2 | 2.20s |
 | 20250424 排島惡館-6 | 10 | 3:26 | 3:36 | 2 | 0.27s |
 | 20250424 排島惡館-6 | 30 | 9:14 | 9:30 | 3 | 0.03s |
 | 20250424 排島惡館-6 | 35 | 11:00 | 11:10 | 3 | 0.00s |
@@ -164,7 +150,6 @@ span 內有 `serve`，但它不是最前的事件。
 | 20251109-排島本館-03 | 24 | 8:16 | 8:24 | 4 | 0.00s |
 | 20251109-排島本館-03 | 37 | 12:34 | 12:45 | 5 | 0.00s |
 | 20251109-排島本館-03 | 40 | 13:30 | 13:40 | 2 | 0.40s |
-| 20251227-排島本館-3 | 1 | 0:17 | 0:24 | 2 | 0.00s |
 | 20251227-排島本館-3 | 25 | 7:10 | 7:34 | 2 | 0.33s |
 | 20251227-排島本館-3 | 30 | 9:18 | 9:26 | 2 | 0.03s |
 | 20251227-排島本館-3 | 34 | 10:14 | 10:22 | 2 | 0.10s |
@@ -202,7 +187,6 @@ span 內有 `serve`，但它不是最前的事件。
 | Brazil 🇧🇷 vs. Poland 🇵🇱 ｜ VNL 2025 - Full Match ｜ Week 2_set1 | 15 | 7:32 | 7:56 | 2 | 0.36s |
 | Bulgaria 🇧🇬 vs. Argentina 🇦🇷 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 6 | 2:16 | 2:20 | 2 | 0.64s |
 | Bulgaria 🇧🇬 vs. Argentina 🇦🇷 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 10 | 4:02 | 4:06 | 4 | 0.00s |
-| Bulgaria 🇧🇬 vs. Argentina 🇦🇷 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 22 | 10:46 | 10:54 | 2 | 5.32s |
 | Bulgaria 🇧🇬 vs. Canada 🇨🇦 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 17 | 10:30 | 10:34 | 2 | 0.04s |
 | Bulgaria 🇧🇬 vs. Japan 🇯🇵 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 22 | 11:27 | 11:34 | 2 | 0.24s |
 | Canada 🇨🇦 vs Japan 🇯🇵 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 2 | 0:27 | 0:46 | 2 | 0.52s |
@@ -215,9 +199,7 @@ span 內有 `serve`，但它不是最前的事件。
 | Canada 🇨🇦 vs Japan 🇯🇵 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 43 | 24:04 | 24:07 | 2 | 0.04s |
 | China 🇨🇳 vs. Japan 🇯🇵 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 11 | 5:26 | 5:42 | 2 | 0.12s |
 | China 🇨🇳 vs. Japan 🇯🇵 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 34 | 15:22 | 15:28 | 2 | 0.48s |
-| France vs. Iran - Semi Final 2 ｜ Boys' U19 World Champs 2025 - Full Match_set1 | 35 | 17:26 | 17:47 | 2 | 14.60s |
 | France 🇫🇷 vs. Japan 🇯🇵 ｜ VNL 2025 - Full Match ｜ Week 2_set1 | 12 | 5:08 | 5:26 | 2 | 0.40s |
-| Full Match ｜ Bulgaria vs Luxembourg ｜ CEV U22 Volleyball European Championship 2026 Women ｜ Pool E_set1 | 16 | 7:26 | 7:37 | 2 | 4.40s |
 | Full Match ｜ Poland vs. England ｜ CEV U22 Volleyball European Championship 2026 Women ｜ Pool C_set1 | 1 | 0:01 | 0:16 | 2 | 0.70s |
 | Full Match ｜ Poland vs. England ｜ CEV U22 Volleyball European Championship 2026 Women ｜ Pool C_set1 | 2 | 0:31 | 0:43 | 2 | 0.83s |
 | Full Match ｜ Poland vs. England ｜ CEV U22 Volleyball European Championship 2026 Women ｜ Pool C_set1 | 4 | 1:24 | 1:32 | 2 | 0.10s |
@@ -241,13 +223,9 @@ span 內有 `serve`，但它不是最前的事件。
 | Japan 🇯🇵 vs. Netherlands 🇳🇱 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 14 | 6:38 | 6:46 | 2 | 0.28s |
 | Japan 🇯🇵 vs. Netherlands 🇳🇱 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 30 | 14:41 | 14:48 | 2 | 0.56s |
 | Japan 🇯🇵 vs. Serbia 🇷🇸 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 20 | 8:20 | 8:28 | 2 | 0.08s |
-| Jtekt Stings 🇯🇵 - Suntory Sunbirds Osaka 🇯🇵 ｜ SV League 2026 ｜ Full Match - Volleyball_set1 | 19 | 10:51 | 11:00 | 2 | 3.34s |
-| Osaka Bluteon vs Diamond Food Fine Chef - Full Match ｜ SV. League World Tour 2025 ｜ Volleyball_set1 | 34 | 17:23 | 17:30 | 2 | 0.03s |
 | Poland vs. France - Final ｜ Boys' U19 World Champs 2025 - Full Match_set1 | 47 | 22:14 | 22:23 | 2 | 0.35s |
 | Suntory Sunbirds vs. Osaka Bluteon ｜ SV.LEAGUE 2025⧸26 ｜ Full Match - Volleyball_set1 | 4 | 1:20 | 1:41 | 3 | 0.00s |
 | Suntory Sunbirds vs. Osaka Bluteon ｜ SV.LEAGUE 2025⧸26 ｜ Full Match - Volleyball_set1 | 25 | 11:42 | 11:50 | 2 | 0.28s |
-| 【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G22 11⧸9 18_30 臺北伊斯特 vs 台鋼天鷹_set1 | 30 | 16:05 | 16:14 | 2 | 0.07s |
-| 【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G22 11⧸9 18_30 臺北伊斯特 vs 台鋼天鷹_set1 | 40 | 23:02 | 23:12 | 2 | 0.18s |
 | 【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G26 11⧸16 18_30 臺中連莊 vs 臺北伊斯特_set1 | 13 | 7:28 | 7:36 | 2 | 0.28s |
 | 【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G26 11⧸16 18_30 臺中連莊 vs 臺北伊斯特_set1 | 32 | 17:53 | 18:00 | 2 | 0.40s |
 | 【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G26 11⧸16 18_30 臺中連莊 vs 臺北伊斯特_set1 | 43 | 25:37 | 25:44 | 2 | 0.02s |
@@ -260,4 +238,3 @@ span 內有 `serve`，但它不是最前的事件。
 | 【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G30 11⧸23 18_30 桃園雲豹飛將 vs 台鋼天鷹_set1 | 13 | 9:11 | 9:18 | 2 | 0.15s |
 | 【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G30 11⧸23 18_30 桃園雲豹飛將 vs 台鋼天鷹_set1 | 21 | 13:47 | 13:54 | 2 | 0.02s |
 | 【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G30 11⧸23 18_30 桃園雲豹飛將 vs 台鋼天鷹_set1 | 42 | 28:26 | 28:33 | 2 | 0.07s |
-| 【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G6 10⧸5 18_30 臺中連莊 vs 台鋼天鷹_set1 | 15 | 7:22 | 7:29 | 2 | 0.10s |

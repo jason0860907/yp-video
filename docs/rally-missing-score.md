@@ -4,11 +4,11 @@
 
 重跑：`uv run python scripts/scan_rally_edges.py`
 
-判定：rally span `[start, end]` 內最後的動作事件不是 `score`。共 353 筆。
+判定：rally span `[start, end]` 內最後的動作事件不是 `score`。共 351 筆。
 
 分類：`結尾切太早` = span 外 3 秒內就有 `score`，標註在、是邊界偏了；`score 不在最後` = span 內有 `score`，但後面還有別的動作；`疑似漏標` = 前後都找不到鄰近的 `score`。
 
-## 疑似漏標 — 208 筆
+## 疑似漏標 — 206 筆
 
 | 影片 | Rally | 起 | 訖 | 最後動作 | 動作序列（後 6） |
 |---|---:|---:|---:|---|---|
@@ -36,7 +36,7 @@
 | 03⧸14(六) 16_00｜例行賽G104 #獅子王 vs. #屏東台電｜企業21年甲級男女排球聯賽_set1 | 30 | 13:53 | 14:00 | block | serve → receive → set → spike → block |
 | 03⧸14(六) 16_00｜例行賽G104 #獅子王 vs. #屏東台電｜企業21年甲級男女排球聯賽_set1 | 41 | 20:20 | 20:25 | receive | serve → receive |
 | 03⧸14(六) 16_00｜例行賽G104 #獅子王 vs. #屏東台電｜企業21年甲級男女排球聯賽_set2 | 3 | 2:10 | 2:21 | block | set → spike → block → set → spike → block |
-| 03⧸14(六) 18_00｜例行賽G105 #高雄台電 vs. #新北中纖｜企業21年甲級男女排球聯賽_set1 | 1 | 0:00 | 0:06 | spike | serve → receive → set → spike |
+| 03⧸14(六) 18_00｜例行賽G105 #高雄台電 vs. #新北中纖｜企業21年甲級男女排球聯賽_set1 | 1 | 0:00 | 0:06 | spike | receive → set → spike |
 | 03⧸15(日) 15_00｜例行賽G107 #桃園臺灣產險 vs. #獅子王｜企業21年甲級男女排球聯賽_set1 | 45 | 25:11 | 25:19 | receive | serve → receive → set → spike → block → receive |
 | 03⧸15(日) 17_00｜例行賽G108 #新北中纖 vs. #高雄台電｜企業21年甲級男女排球聯賽_set2 | 35 | 24:29 | 24:48 | receive | block → receive → set → spike → block → receive |
 | 03⧸20(五) 14_00｜挑戰賽G110 #高雄台電 vs. #新北中纖｜企業21年甲級男女排球聯賽_set1 | 10 | 4:34 | 4:44 | receive | serve → receive → set → spike → receive → receive |
@@ -71,7 +71,6 @@
 | 2025-09-27_G1_臺北伊斯特_vs_臺中連莊_set1 | 17 | 10:42 | 10:55 | receive | spike → block → receive → set → spike → receive |
 | 2025-09-27_G1_臺北伊斯特_vs_臺中連莊_set1 | 20 | 12:29 | 12:35 | receive | serve → receive → set → spike → receive |
 | 2025-09-27_G1_臺北伊斯特_vs_臺中連莊_set1 | 38 | 23:44 | 23:58 | spike | set → spike → block → receive → set → spike |
-| 2025-09-27_G1_臺北伊斯特_vs_臺中連莊_set1 | 40 | 27:34 | 27:42 | serve | serve → serve |
 | 2025-09-28_G2_臺北伊斯特_vs_桃園雲豹飛將_set1 | 38 | 26:41 | 26:48 | receive | serve → receive → set → spike → receive |
 | 2025-09-28_G2_臺北伊斯特_vs_桃園雲豹飛將_set2 | 30 | 17:48 | 17:57 | receive | set → spike → block → receive → receive → receive |
 | 2025-10-04_G3_臺中連莊_vs_桃園雲豹飛將_set1 | 13 | 5:53 | 5:59 | receive | serve → receive → set → receive |
@@ -126,7 +125,6 @@
 | 20260507 工資管友誼賽2 | 10 | 3:19 | 3:28 | receive | serve → receive → set → spike → receive |
 | 2026⧸03⧸25 3 | 27 | 9:46 | 10:05 | spike | set → receive → spike → receive → set → spike |
 | 37-39 Thriller! - Japan 🇯🇵 vs. Poland 🇵🇱 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 44 | 17:51 | 17:58 | spike | serve → receive → set → spike |
-| Bulgaria 🇧🇬 vs. Argentina 🇦🇷 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 22 | 10:46 | 10:54 | serve | receive → set → spike → block → receive → serve |
 | Bulgaria 🇧🇬 vs. Argentina 🇦🇷 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 25 | 11:53 | 12:02 | spike | receive → set → spike → receive → set → spike |
 | Bulgaria 🇧🇬 vs. Argentina 🇦🇷 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 35 | 18:08 | 18:27 | block | set → spike → block → receive → spike → block |
 | Champions crowned in Final 24⧸25 (2⧸2) ｜ Suntory Sunbirds Osaka - Stings Aichi ｜ SV League 24⧸25_set1 | 18 | 8:18 | 8:28 | spike | receive → set → spike → receive → set → spike |
