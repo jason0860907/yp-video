@@ -77,7 +77,21 @@ export interface EditorAnnotation {
   /** Court side that won the rally (camera-frame); null = not annotated. */
   side: RallySide | null;
   score?: number | null;
+  /** Client-only, never sent: what "the selected rally" means while editing.
+   *  A freshly drawn rally has no rally_id until the server mints one, and the
+   *  list is re-sorted by start on load, on add, and when a save's result is
+   *  adopted — so an array index silently comes to mean a different rally. */
+  key?: number;
 }
+
+//: Monotonic within the session; only identity matters, never the value.
+let nextRowKey = 1;
+const withKey = (a: EditorAnnotation): EditorAnnotation => ({ ...a, key: nextRowKey++ });
+
+//: The server writes rows in this order, so the editor sorts its outgoing rows
+//: the same way to line the two lists up when adopting the result.
+const byStart = (a: EditorAnnotation, b: EditorAnnotation) =>
+  a.start - b.start || a.end - b.end || a.label.localeCompare(b.label);
 export interface EditorData {
   video?: string;
   /** Which store the file was loaded from (e.g. rally-spot-pre-annotations). */
@@ -138,7 +152,7 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewB
   const [videoName, setVideoName] = useState('');
   const [duration, setDuration] = useState(0);
   const [markStart, setMarkStart] = useState<number | null>(null);
-  const [selectedIdx, setSelectedIdx] = useState(-1);
+  const [selectedKey, setSelectedKey] = useState<number | null>(null);
   const [dirty, setDirty] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [shift, setShift] = useState('0');
@@ -175,12 +189,13 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewB
         side: normalizeSide(r.side),
         score: (r.confidence ?? r.score ?? null) as number | null,
       }))
-      .sort((a, b) => a.start - b.start);
+      .sort(byStart)
+      .map(withKey);
     setAnnotations(fromServer);
     const firstSide = fromServer.find((a) => a.side)?.side;
     if (firstSide) setSideAxis(AXIS_SIDES.nf.includes(firstSide) ? 'nf' : 'lr');
     setDirty(false);
-    setSelectedIdx(-1);
+    setSelectedKey(null);
     setMarkStart(null);
     const el = videoRef.current;
     if (path && el) {
@@ -204,7 +219,9 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewB
         toast.warning('End must be after start');
         return ms;
       }
-      setAnnotations((prev) => [...prev, { rally_id: null, start: ms, end, label: 'rally', side: null }].sort((a, b) => a.start - b.start));
+      setAnnotations((prev) =>
+        [...prev, withKey({ rally_id: null, start: ms, end, label: 'rally', side: null })].sort(byStart),
+      );
       setDirty(true);
       return null;
     });
@@ -225,31 +242,30 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewB
 
   // Nudge the selected rally's boundary and park the video on it, paused —
   // the frame on screen IS the boundary being placed.
+  // Depends on the selection rather than reading it through a ref: the
+  // keydown effect already lists `nudge`, so it rebinds when the selection
+  // changes and the handler can never act on a stale rally.
   const nudge = useCallback((field: 'start' | 'end', delta: number) => {
-    setSelectedIdx((idx) => {
-      if (idx < 0) {
-        toast.warning('Select a rally first');
-        return idx;
-      }
-      setAnnotations((prev) => {
-        const a = prev[idx];
-        if (!a) return prev;
-        const value = Math.max(0, Math.round((a[field] + delta) * 1000) / 1000);
-        if (field === 'start' ? value >= a.end : value <= a.start) {
-          toast.warning('Start must stay before end');
-          return prev;
-        }
-        const el = videoRef.current;
-        if (el) {
-          el.pause();
-          el.currentTime = value;
-        }
-        setDirty(true);
-        return prev.map((row, i) => (i === idx ? { ...row, [field]: value } : row));
-      });
-      return idx;
-    });
-  }, []);
+    const key = selectedKey;
+    if (key == null) {
+      toast.warning('Select a rally first');
+      return;
+    }
+    const a = annotations.find((row) => row.key === key);
+    if (!a) return;
+    const value = Math.max(0, Math.round((a[field] + delta) * 1000) / 1000);
+    if (field === 'start' ? value >= a.end : value <= a.start) {
+      toast.warning('Start must stay before end');
+      return;
+    }
+    const el = videoRef.current;
+    if (el) {
+      el.pause();
+      el.currentTime = value;
+    }
+    setAnnotations((prev) => prev.map((row) => (row.key === key ? { ...row, [field]: value } : row)));
+    setDirty(true);
+  }, [annotations, selectedKey]);
 
   // ── Keyboard ──
   useEffect(() => {
@@ -283,14 +299,11 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewB
           break;
         case 'Delete':
         case 'Backspace':
-          setSelectedIdx((idx) => {
-            if (idx >= 0) {
-              setAnnotations((prev) => prev.filter((_, i) => i !== idx));
-              setDirty(true);
-              return -1;
-            }
-            return idx;
-          });
+          if (selectedKey != null) {
+            setAnnotations((prev) => prev.filter((row) => row.key !== selectedKey));
+            setSelectedKey(null);
+            setDirty(true);
+          }
           break;
         // Boundary nudges for the selected rally, on the left home row:
         // a/s move start, d/f move end — 0.1 s steps, Shift makes them 1 s.
@@ -318,7 +331,10 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewB
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [addAnnotation, doMarkStart, nudge]);
+  }, [addAnnotation, doMarkStart, nudge, selectedKey]);
+
+  const selectedAnnotation =
+    selectedKey == null ? undefined : annotations.find((a) => a.key === selectedKey);
 
   const onTimeUpdate = () => {
     const el = videoRef.current;
@@ -328,13 +344,14 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewB
     // reports 0, and writing that to the shared clock discards the position a
     // handover just brought in.
     if (hasRealTime(el)) onTimeChange?.(el.currentTime);
-    if (selectedIdx >= 0 && selectedIdx < annotations.length) {
-      const a = annotations[selectedIdx]!;
-      if (!el.paused && el.currentTime >= a.end) {
-        el.pause();
-        el.currentTime = a.end;
-        setSelectedIdx(-1);
-      }
+    const a = selectedAnnotation;
+    if (a && !el.paused && el.currentTime >= a.end) {
+      // Stop the preview at the boundary and STAY on this rally: the reviewer
+      // has just watched its end and the next thing they do is nudge it with
+      // a/s/d/f, which needs a selection. Idempotent — once paused, this
+      // branch cannot re-enter.
+      el.pause();
+      el.currentTime = a.end;
     }
   };
 
@@ -373,8 +390,20 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewB
         // Only if nothing changed while the request was in flight; otherwise
         // the newer edit stays and the next save reconciles.
         if (latestAnnotations.current === sent) {
-          // Server rows omit `side` when null — normalize back to the editor shape.
-          setAnnotations(saved.annotations.map((r) => ({ ...r, side: normalizeSide(r.side) })));
+          // Server rows omit `side` when null — normalize back to the editor
+          // shape. Row keys are ours and never leave the browser, so carry
+          // them across by the order the server writes in (byStart, the same
+          // comparator): without this the selection would jump to whichever
+          // rally landed at the old one's position, and the next nudge would
+          // silently edit the wrong rally.
+          const mine = [...sent].sort(byStart);
+          setAnnotations(
+            saved.annotations.map((r, i) => ({
+              ...r,
+              side: normalizeSide(r.side),
+              key: mine[i]?.key ?? nextRowKey++,
+            })),
+          );
           setDirty(false);
         }
         if (!silent) {
@@ -482,7 +511,6 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewB
   // Playhead-relative highlight: the row currently under the playhead.
   const playingIdx = annotations.findIndex((a) => currentTime >= a.start && currentTime < a.end);
 
-  const selectedAnnotation = selectedIdx >= 0 ? annotations[selectedIdx] : undefined;
 
   return (
     <div className="flex flex-col gap-5 lg:flex-row lg:items-start">
@@ -658,13 +686,13 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewB
               />
             ) : (
               annotations.map((a, i) => {
-                const selected = selectedIdx === i;
+                const selected = a.key != null && a.key === selectedKey;
                 const playing = playingIdx === i;
                 return (
                   <div
-                    key={i}
+                    key={a.key ?? i}
                     onClick={() => {
-                      setSelectedIdx(i);
+                      setSelectedKey(a.key ?? null);
                       seekTo(a.start);
                     }}
                     className={cn(
@@ -740,7 +768,7 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewB
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        setSelectedIdx(i);
+                        setSelectedKey(a.key ?? null);
                         seekTo(Math.max(a.start, a.end - previewBackoff));
                       }}
                       className="shrink-0 text-primary-light transition-colors hover:text-text-primary"
@@ -754,9 +782,9 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewB
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        setAnnotations((prev) => prev.filter((_, j) => j !== i));
+                        setAnnotations((prev) => prev.filter((row) => row.key !== a.key));
                         setDirty(true);
-                        if (selectedIdx === i) setSelectedIdx(-1);
+                        if (a.key === selectedKey) setSelectedKey(null);
                       }}
                       className="shrink-0 text-red-400/60 opacity-0 transition-all hover:text-red-400 group-hover:opacity-100"
                       title="Delete"
