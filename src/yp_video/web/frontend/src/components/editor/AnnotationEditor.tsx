@@ -8,6 +8,7 @@ import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { toast } from '@/components/feedback/toast';
+import { hasRealTime, seekWhenSeekable, usePlayheadHandover } from '@/lib/playheadHandover';
 import { useVideoRecovery } from '@/lib/useVideoRecovery';
 import { DownloadClipsModal } from './DownloadClipsModal';
 import { RallyTimeline } from './RallyTimeline';
@@ -129,6 +130,9 @@ const AUTOSAVE_MS = 2000;
 
 export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewBackoff = 3, onSaved, initialTime, onTimeChange, clipsOpen, onClipsClose }: AnnotationEditorProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  // Taken during the first render for this video, before the element exists
+  // and can report 0 into the shared clock.
+  const takeHandover = usePlayheadHandover(initialTime, data?.video ?? '');
 
   const [annotations, setAnnotations] = useState<EditorAnnotation[]>([]);
   const [videoName, setVideoName] = useState('');
@@ -320,7 +324,10 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewB
     const el = videoRef.current;
     if (!el) return;
     setCurrentTime(el.currentTime);
-    onTimeChange?.(el.currentTime);
+    // Not while the element is being reloaded: removeAttribute('src') + load()
+    // reports 0, and writing that to the shared clock discards the position a
+    // handover just brought in.
+    if (hasRealTime(el)) onTimeChange?.(el.currentTime);
     if (selectedIdx >= 0 && selectedIdx < annotations.length) {
       const a = annotations[selectedIdx]!;
       if (!el.paused && el.currentTime >= a.end) {
@@ -492,10 +499,15 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewB
               onLoadedMetadata={(e) => {
                 const el = e.currentTarget;
                 setDuration(el.duration);
-                const t = initialTime?.();
-                if (t) el.currentTime = Math.min(t, el.duration || t);
+                const t = takeHandover();
+                // seekable can still be empty here (the src is a 302 to a
+                // presigned URL), and a seek then silently does nothing.
+                if (t != null) seekWhenSeekable(el, t);
               }}
               onTimeUpdate={onTimeUpdate}
+              // Reaching the natural end fires `ended`, never `pause`, so
+              // without this the play button stays stuck on the pause icon.
+              onEnded={() => setPlaying(false)}
             />
           </div>
           <div className="mt-3">

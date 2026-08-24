@@ -34,7 +34,7 @@ import { useVideoLabelingData } from '@/components/labeling/useVideoLabelingData
 import { LiveJob } from '@/components/job/LiveJob';
 import type { Job, ReidClusters, ReidOptions, ReidPlayers, ReidRecord, ReidVideo } from '@/types/api';
 import { reidStatus } from '@/lib/labelStatus';
-import { STATUS_OPTIONS, type ModeDescriptor, type RegisterGuard } from './mode';
+import { STATUS_OPTIONS, type ModeDescriptor, type PlaybackClock, type RegisterGuard } from './mode';
 
 // Embedders and their threshold-slider calibration both come from
 // /reid/options (types/api.ts ReidOptions) — cosine-distance scales differ
@@ -81,7 +81,7 @@ export const REID_MODE: ModeDescriptor = {
   listKey: 'reid-videos',
 };
 
-export function ReidPanel({ video, registerGuard }: { video: string; registerGuard?: RegisterGuard }) {
+export function ReidPanel({ video, registerGuard, clock }: { video: string; registerGuard?: RegisterGuard; clock?: PlaybackClock }) {
   const qc = useQueryClient();
   const [selectedRally, setSelectedRally] = useState<number | 'all'>('all');
   // Where locked groups live on the groups board: pinned on top as full rows,
@@ -283,6 +283,7 @@ export function ReidPanel({ video, registerGuard }: { video: string; registerGua
       {video && showVideo && meta.fps && meta.frame_size && (
         <EventVideoPlayer
           ref={playerRef}
+          clock={clock}
           src={apiUrl(API.actionAnnotate.video(video))}
           fps={meta.fps}
           frameSize={meta.frame_size}

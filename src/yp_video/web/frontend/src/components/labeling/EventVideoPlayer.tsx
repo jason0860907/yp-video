@@ -14,6 +14,8 @@ import { useQuery } from '@tanstack/react-query';
 import { API, apiFetch } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { actionColor } from '@/lib/actionColors';
+import { hasRealTime, seekWhenSeekable, usePlayheadHandover } from '@/lib/playheadHandover';
+import type { PlaybackClock } from '@/pages/label/mode';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { RallyTimeline } from '@/components/editor/RallyTimeline';
@@ -58,6 +60,9 @@ export interface EventVideoPlayerProps {
   src: string;
   /** The picked video's name — track-mask lookups key on it. */
   videoName: string;
+  /** Shared playhead, so switching Label tabs resumes where you were.
+   *  See lib/playheadHandover.ts for why this is not just currentTime. */
+  clock?: PlaybackClock;
   /** Raw tracklets (frames arrays align mask rows to the playhead). */
   tracklets: TrackData['tracklets'];
   fps: number;
@@ -92,10 +97,14 @@ export interface EventVideoPlayerProps {
 }
 
 export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(function EventVideoPlayer(
-  { src, videoName, tracklets, fps, frameSize, records, actionEvents, matches, rallies, selectedRally, onSelectRally, onFixActor, onConfirmActor, confirmableIds, onConfirmRally, fixing = false, onJumpToCrop, trackLinks },
+  { src, videoName, clock, tracklets, fps, frameSize, records, actionEvents, matches, rallies, selectedRally, onSelectRally, onFixActor, onConfirmActor, confirmableIds, onConfirmRally, fixing = false, onJumpToCrop, trackLinks },
   ref,
 ) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const takeHandover = usePlayheadHandover(
+    clock ? () => clock.read(videoName) : undefined,
+    videoName,
+  );
   const [frame, setFrame] = useState(0);
   const [duration, setDuration] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -553,7 +562,17 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
                 onPlay={() => setPlaying(true)}
                 onPause={() => setPlaying(false)}
                 onEnded={() => setPlaying(false)}
-                onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
+                onTimeUpdate={(e) => {
+                  if (hasRealTime(e.currentTarget)) {
+                    clock?.write(videoName, e.currentTarget.currentTime);
+                  }
+                }}
+                onLoadedMetadata={(e) => {
+                  const el = e.currentTarget;
+                  setDuration(el.duration);
+                  const t = takeHandover();
+                  if (t != null) seekWhenSeekable(el, t);
+                }}
                 className="block h-full w-full cursor-pointer bg-black object-contain"
               />
               <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="pointer-events-none absolute left-0 top-0 h-full w-full">

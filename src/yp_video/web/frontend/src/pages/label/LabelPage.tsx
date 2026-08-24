@@ -96,7 +96,7 @@ export function LabelPage() {
     guardRef.current = g;
   }, []);
 
-  // Shared playhead: Rally and Action write while playing, read on load, so
+  // Shared playhead: every panel writes while playing and reads on load, so
   // a tab switch resumes at the same time. A ref, not state — position moves
   // several times a second and nothing here needs to re-render for it.
   const clockStore = useRef<{ video: string; t: number } | null>(null);
@@ -357,9 +357,9 @@ export function LabelPage() {
           clock={clock}
         />
       ) : mode === 'association' ? (
-        <AssociationPanel video={video} />
+        <AssociationPanel video={video} clock={clock} />
       ) : (
-        <ReidPanel video={video} registerGuard={registerGuard} />
+        <ReidPanel video={video} registerGuard={registerGuard} clock={clock} />
       )}
     </div>
   );

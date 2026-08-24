@@ -12,6 +12,7 @@ import { useQuery } from '@tanstack/react-query';
 import { API, apiFetch, apiUrl, errMsg } from '@/lib/api';
 import { fieldCls } from '@/components/form/Field';
 import { cn } from '@/lib/cn';
+import { hasRealTime, usePlayheadHandover } from '@/lib/playheadHandover';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -81,6 +82,11 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, onSaved, r
   const [expanded, setExpanded] = useState<string | null>(null);
   const [frame, setFrame] = useState(0);
   const [playing, setPlaying] = useState(false);
+
+  const takeHandover = usePlayheadHandover(
+    clock ? () => clock.read(video) : undefined,
+    video,
+  );
 
   // Frame-clock refs (read inside the requestVideoFrameCallback loop).
   const lockedFrame = useRef<number | null>(null);
@@ -227,10 +233,18 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, onSaved, r
   const onVideoMetadata = (e: SyntheticEvent<HTMLVideoElement>) => {
     const el = e.currentTarget;
     if (el.videoWidth && el.videoHeight) setAspect(el.videoWidth / el.videoHeight);
-    // Resume at the position handed over from another tab's player —
-    // through seekFrame so the frame clock stays in step with the seek.
-    const t = clock?.read(video);
-    if (t) seekFrame(Math.round(t * (edRef.current.fps || 30)));
+    // Resume at the position handed over from another tab's player — through
+    // seekFrame so the frame clock stays in step with the seek. Deferred until
+    // the element can actually seek: at loadedmetadata `seekable` may still be
+    // empty (the src is a 302 to a presigned URL) and the seek is dropped
+    // without error. seekFrame would still have locked the frame counter, so
+    // the failure used to show up as a correct-looking readout over a video
+    // sitting at 0.
+    const t = takeHandover();
+    if (t == null) return;
+    const toFrame = () => seekFrame(Math.round(t * (edRef.current.fps || 30)));
+    if (el.seekable.length > 0) toFrame();
+    else el.addEventListener('canplay', toFrame, { once: true });
   };
 
   const onVideoClick = (e: ReactMouseEvent) => {
@@ -588,7 +602,9 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, onSaved, r
                 onContextMenu={onVideoContextMenu}
                 onLoadedMetadata={onVideoMetadata}
                 onTimeUpdate={(e) => {
-                  if (ed.video) clock?.write(video, e.currentTarget.currentTime);
+                  if (ed.video && hasRealTime(e.currentTarget)) {
+                    clock?.write(video, e.currentTarget.currentTime);
+                  }
                 }}
               />
               <div className="pointer-events-none absolute inset-0">

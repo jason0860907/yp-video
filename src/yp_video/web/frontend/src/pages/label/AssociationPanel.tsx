@@ -31,7 +31,7 @@ import type {
   ReidRecord,
 } from '@/types/api';
 import { assocStatus } from '@/lib/labelStatus';
-import { STATUS_OPTIONS, type ModeDescriptor } from './mode';
+import { STATUS_OPTIONS, type ModeDescriptor, type PlaybackClock } from './mode';
 
 export const ASSOCIATION_MODE: ModeDescriptor = {
   key: 'association',
@@ -67,7 +67,7 @@ export const ASSOCIATION_MODE: ModeDescriptor = {
   listKey: 'association-videos',
 };
 
-export function AssociationPanel({ video }: { video: string }) {
+export function AssociationPanel({ video, clock }: { video: string; clock?: PlaybackClock }) {
   const qc = useQueryClient();
   const [selectedRally, setSelectedRally] = useState<number | 'all'>('all');
   const playerRef = useRef<PlayerHandle>(null);
@@ -207,6 +207,7 @@ export function AssociationPanel({ video }: { video: string }) {
       {video && meta.fps && meta.frame_size && (
         <EventVideoPlayer
           ref={playerRef}
+          clock={clock}
           src={apiUrl(API.actionAnnotate.video(video))}
           fps={meta.fps}
           frameSize={meta.frame_size}
