@@ -44,12 +44,12 @@ interface ActionTimelineProps {
   rallies: ActionRally[];
   events: ActionEvent[];
   selectedRallyId: number | 'all';
-  selectedIdx: number;
+  selectedId: string | null;
   playing: boolean;
   waveform: WaveformData;
   colors: Record<string, string>;
   onSeekFrame: (f: number) => void;
-  onJumpEvent: (idx: number) => void;
+  onJumpEvent: (id: string) => void;
 }
 
 /** Zoomable, horizontally-scrollable Action Label timeline. A rally-band lane
@@ -64,7 +64,7 @@ export function ActionTimeline({
   rallies,
   events,
   selectedRallyId,
-  selectedIdx,
+  selectedId,
   playing,
   waveform,
   colors,
@@ -253,11 +253,10 @@ export function ActionTimeline({
               );
             })}
             {events
-              .map((e, idx) => ({ e, idx }))
-              .filter(({ e }) => selectedRallyId === 'all' || e.rally_id === selectedRallyId)
-              .map(({ e, idx }) => {
+              .filter((e) => selectedRallyId === 'all' || e.rally_id === selectedRallyId)
+              .map((e) => {
                 const color = colors[e.label] || '#8E8E93';
-                const active = idx === selectedIdx;
+                const active = e.id === selectedId;
                 return (
                   <button
                     key={e.id}
@@ -265,7 +264,7 @@ export function ActionTimeline({
                     type="button"
                     onClick={(ev) => {
                       ev.stopPropagation();
-                      onJumpEvent(idx);
+                      onJumpEvent(e.id);
                     }}
                     title={`${e.label} · frame ${e.frame}`}
                     className={cn('absolute top-1/2 -translate-y-1/2 rounded-full border border-black/50 transition-transform', active ? '-ml-[7px] h-5 w-3.5 scale-105' : '-ml-px h-4 w-1.5 hover:scale-125')}

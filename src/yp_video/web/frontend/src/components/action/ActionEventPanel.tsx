@@ -4,8 +4,12 @@ import { actionColor } from '@/lib/actionColors';
 import { formatActionTime } from '@/lib/actionEditorModel';
 import type { ActionEvent } from '@/types/api';
 
-/** Inline frame editor. Edits commit live, but the raw text stays a local
- *  draft so clearing the cell doesn't yank the event to frame 0. */
+/** Inline frame editor. Typing only moves a local draft — Enter or leaving the
+ *  cell applies it, Escape reverts.
+ *
+ *  Committing per keystroke cannot work here: every commit re-derives the
+ *  event's rally_id from the new frame, so a half-typed number re-homes the
+ *  event to another rally, unmounting the very row being typed in. */
 function FrameCell({ frame, onCommit }: { frame: number; onCommit: (frame: number) => void }) {
   const [draft, setDraft] = useState<string | null>(null);
   return (
@@ -13,37 +17,47 @@ function FrameCell({ frame, onCommit }: { frame: number; onCommit: (frame: numbe
       value={draft ?? String(frame)}
       onClick={(event) => event.stopPropagation()}
       onFocus={(event) => setDraft(event.target.value)}
-      onChange={(event) => {
-        setDraft(event.target.value);
-        const parsed = Number(event.target.value);
-        if (event.target.value.trim() !== '' && Number.isFinite(parsed)) {
-          onCommit(Math.max(0, Math.round(parsed)));
-        }
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={() => {
+        const parsed = draft !== null && draft.trim() !== '' ? Number(draft) : NaN;
+        const next = Math.max(0, Math.round(parsed));
+        // Tabbing through a cell, or typing the value back to what it was,
+        // must not mark the editor dirty and re-sort the list for nothing.
+        if (Number.isFinite(parsed) && next !== frame) onCommit(next);
+        setDraft(null);
       }}
-      onBlur={() => setDraft(null)}
+      onKeyDown={(event) => {
+        // Escape deliberately does NOT blur: setDraft is async, so blurring in
+        // the same tick would let onBlur read the stale draft and commit it
+        // anyway. Clearing the draft alone puts the true frame back on screen,
+        // and the later blur becomes a no-op.
+        if (event.key === 'Enter') event.currentTarget.blur();
+        else if (event.key === 'Escape') setDraft(null);
+      }}
+      title="frame 號碼 — Enter 或離開欄位才套用，Esc 還原"
       className="w-full border-0 border-b border-white/10 bg-transparent text-center font-heading text-[11px] tabular-nums text-text-primary focus:border-primary-light focus:outline-none"
     />
   );
 }
 
 interface ActionEventPanelProps {
-  entries: Array<{ e: ActionEvent; idx: number }>;
+  entries: ActionEvent[];
   empty: string;
   labels: string[];
-  selectedIdx: number;
+  selectedId: string | null;
   fps: number;
   /** Current playhead frame — rows within ±½ s light up. */
   frame: number;
-  onEdit: (idx: number, patch: Partial<ActionEvent>) => void;
-  onDelete: (idx: number) => void;
-  onJump: (idx: number) => void;
+  onEdit: (id: string, patch: Partial<ActionEvent>) => void;
+  onDelete: (id: string) => void;
+  onJump: (id: string) => void;
 }
 
 export function ActionEventPanel({
   entries,
   empty,
   labels,
-  selectedIdx,
+  selectedId,
   fps,
   frame,
   onEdit,
@@ -60,16 +74,16 @@ export function ActionEventPanel({
   const windowFrames = Math.max(1, Math.round((fps || 30) / 2));
   return (
     <div className="ml-6 space-y-1.5 rounded-xl border border-border bg-surface-100 p-2">
-      {entries.map(({ e, idx }, row) => {
+      {entries.map((e, row) => {
         const color = actionColor(e.label);
         const active = Math.abs(e.frame - frame) <= windowFrames;
         return (
           <div
             key={e.id}
-            onClick={() => onJump(idx)}
+            onClick={() => onJump(e.id)}
             className={cn(
               'grid cursor-pointer grid-cols-[1rem_minmax(5rem,1fr)_3.6rem_2.6rem_2.4rem] items-center gap-1.5 rounded-lg border px-2 py-1.5 transition-colors',
-              idx === selectedIdx
+              e.id === selectedId
                 ? 'border-primary/35 bg-primary/10'
                 : 'border-border bg-surface-50 hover:bg-surface-200/40',
               active && 'ring-1 ring-accent/50',
@@ -84,7 +98,7 @@ export function ActionEventPanel({
             >
               <button
                 type="button"
-                onClick={() => onEdit(idx, { visible: !e.visible })}
+                onClick={() => onEdit(e.id, { visible: !e.visible })}
                 className={cn(
                   'h-2.5 w-2.5 flex-shrink-0 rounded-full',
                   !e.visible && 'border',
@@ -98,7 +112,7 @@ export function ActionEventPanel({
               />
               <select
                 value={e.label}
-                onChange={(event) => onEdit(idx, { label: event.target.value })}
+                onChange={(event) => onEdit(e.id, { label: event.target.value })}
                 className="w-full min-w-0 rounded-lg border border-border bg-surface-100 px-1.5 py-1 text-xs text-text-primary"
               >
                 {labels.map((label) => (
@@ -108,7 +122,7 @@ export function ActionEventPanel({
                 ))}
               </select>
             </span>
-            <FrameCell frame={e.frame} onCommit={(f) => onEdit(idx, { frame: f })} />
+            <FrameCell frame={e.frame} onCommit={(f) => onEdit(e.id, { frame: f })} />
             <span className="text-center font-heading text-[10px] tabular-nums text-text-muted">
               {formatActionTime(e.frame / (fps || 30))}
             </span>
@@ -118,7 +132,7 @@ export function ActionEventPanel({
             >
               <button
                 type="button"
-                onClick={() => onJump(idx)}
+                onClick={() => onJump(e.id)}
                 className="text-primary-light hover:text-text-primary"
                 title="Jump to event"
               >
@@ -126,7 +140,7 @@ export function ActionEventPanel({
               </button>
               <button
                 type="button"
-                onClick={() => onDelete(idx)}
+                onClick={() => onDelete(e.id)}
                 className="text-red-400/60 hover:text-red-400"
                 title="Delete"
               >

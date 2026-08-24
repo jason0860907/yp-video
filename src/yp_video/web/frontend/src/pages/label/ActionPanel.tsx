@@ -77,7 +77,7 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, onSaved, r
   // Every persisted editor mutation advances this counter. Saves capture it
   // before sending so an older response can never mark newer work clean.
   const editRevision = useRef(0);
-  const [selectedIdx, setSelectedIdx] = useState(-1);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedRallyId, setSelectedRallyId] = useState<number | 'all'>('all');
   const [expanded, setExpanded] = useState<string | null>(null);
   const [frame, setFrame] = useState(0);
@@ -259,10 +259,10 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, onSaved, r
     if (p) addEvent(p[0], p[1], false);
   };
 
-  const startDrag = (e: ReactPointerEvent, evt: ActionEvent, idx: number) => {
+  const startDrag = (e: ReactPointerEvent, evt: ActionEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    setSelectedIdx(idx);
+    setSelectedId(evt.id);
     videoRef.current?.pause();
     drag.current = { id: evt.id, moved: false };
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
@@ -327,7 +327,7 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, onSaved, r
       editRevision.current += 1;
       setEd(next);
       edRef.current = next;
-      setSelectedIdx(-1);
+      setSelectedId(null);
       setSelectedRallyId(next.rallies[0]?.rally_id ?? 'all');
       setExpanded(next.rallies[0] ? String(next.rallies[0].rally_id) : null);
       lockedFrame.current = null;
@@ -381,7 +381,7 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, onSaved, r
     mutate((prev) => {
       const evt = withActionRally({ id: makeActionId(), rally_id: null, frame: f, time: null, relative_frame: null, label: selectedLabel, xy: [round4(x), round4(y)], visible }, prev);
       const events = sortActionEvents([...prev.events, evt]);
-      setSelectedIdx(events.indexOf(evt));
+      setSelectedId(evt.id);
       if (evt.rally_id) {
         setSelectedRallyId(evt.rally_id);
         setExpanded(String(evt.rally_id));
@@ -390,14 +390,14 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, onSaved, r
     });
   };
 
-  const editEvent = (idx: number, patch: Partial<ActionEvent>) =>
+  const editEvent = (id: string, patch: Partial<ActionEvent>) =>
     mutate((prev) => {
-      const events = prev.events.map((e, i) => (i === idx ? withActionRally({ ...e, ...patch }, prev) : e));
+      const events = prev.events.map((e) => (e.id === id ? withActionRally({ ...e, ...patch }, prev) : e));
       return { ...prev, events: patch.frame !== undefined ? sortActionEvents(events) : events };
     });
-  const deleteEvent = (idx: number) => {
-    setSelectedIdx(-1);
-    mutate((prev) => ({ ...prev, events: prev.events.filter((_, i) => i !== idx) }));
+  const deleteEvent = (id: string) => {
+    setSelectedId(null);
+    mutate((prev) => ({ ...prev, events: prev.events.filter((e) => e.id !== id) }));
   };
 
   const save = useSerializedSave({
@@ -479,10 +479,11 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, onSaved, r
     const t = setTimeout(() => void save(true), ACTION_AUTOSAVE_MS);
     return () => clearTimeout(t);
   }, [ed, save]);
-  const jumpToEvent = (idx: number) => {
-    const evt = ed.events[idx];
-    if (!evt) return;
-    setSelectedIdx(idx);
+  // Point the sidebar at the rally holding this event and open that group.
+  // A frame edit re-derives rally_id, so anything that moves an event has to
+  // re-point the sidebar too — otherwise the row it just touched is left
+  // sitting inside a collapsed group somewhere else.
+  const revealEvent = (evt: ActionEvent) => {
     if (evt.rally_id) {
       setSelectedRallyId(evt.rally_id);
       setExpanded(String(evt.rally_id));
@@ -490,8 +491,35 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, onSaved, r
       setSelectedRallyId('all');
       setExpanded(OUTSIDE_RALLY_KEY);
     }
+  };
+  const jumpToEvent = (id: string) => {
+    const evt = ed.events.find((e) => e.id === id);
+    if (!evt) return;
+    setSelectedId(id);
+    revealEvent(evt);
     videoRef.current?.pause();
     seekFrame(evt.frame);
+  };
+  // Nudge the selected action by whole frames and carry the playhead with it,
+  // so the next nudge is judged against what is actually on screen. The seek
+  // goes through seekFrame: writing currentTime directly desyncs the frame
+  // clock (see onVideoMetadata).
+  const nudgeEvent = (d: number) => {
+    if (!selectedId) {
+      toast.warning('先選一個動作');
+      return;
+    }
+    const before = edRef.current.events.find((e) => e.id === selectedId);
+    if (!before) return;
+    const f = clamp(before.frame + d, 0, Math.max(0, edRef.current.numFrames - 1));
+    if (f === before.frame) return;
+    editEvent(selectedId, { frame: f });
+    // mutate() writes edRef synchronously, so the re-homed event is readable
+    // here, before React has re-rendered.
+    const after = edRef.current.events.find((e) => e.id === selectedId);
+    if (after) revealEvent(after);
+    videoRef.current?.pause();
+    seekFrame(f);
   };
   const selectRally = (id: number | 'all', seek = true) => {
     setSelectedRallyId(id);
@@ -550,16 +578,26 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, onSaved, r
       } else if (e.key.toLowerCase() === 'p') {
         e.preventDefault();
         setPointMode((m) => !m);
-      } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIdx >= 0) {
-        deleteEvent(selectedIdx);
+      } else if ((e.key === 'a' || e.key === 'A') && !e.ctrlKey && !e.metaKey) {
+        // Frame nudges for the selected action, on the left home row: the
+        // arrows move the playhead, a/s move the event. Shift makes them 10.
+        // Ctrl/Cmd+S returned long before this, and the modifier check leaves
+        // Ctrl/Cmd+A (select all) to the browser.
+        e.preventDefault();
+        nudgeEvent(e.shiftKey ? -10 : -1);
+      } else if ((e.key === 's' || e.key === 'S') && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        nudgeEvent(e.shiftKey ? 10 : 1);
+      } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
+        deleteEvent(selectedId);
       }
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   });
 
-  const eventsByRally = (rid: number) => ed.events.map((e, idx) => ({ e, idx })).filter(({ e }) => e.rally_id === rid);
-  const outside = ed.events.map((e, idx) => ({ e, idx })).filter(({ e }) => !e.rally_id);
+  const eventsByRally = (rid: number) => ed.events.filter((e) => e.rally_id === rid);
+  const outside = ed.events.filter((e) => !e.rally_id);
 
   return (
     <div className="flex flex-col gap-5 lg:flex-row">
@@ -609,18 +647,17 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, onSaved, r
               />
               <div className="pointer-events-none absolute inset-0">
                 {ed.events
-                  .map((e, idx) => ({ e, idx }))
-                  .filter(({ e }) => e.visible && (selectedRallyId === 'all' || e.rally_id === selectedRallyId) && Math.abs(e.frame - frame) <= 2)
-                  .map(({ e, idx }) => {
+                  .filter((e) => e.visible && (selectedRallyId === 'all' || e.rally_id === selectedRallyId) && Math.abs(e.frame - frame) <= 2)
+                  .map((e) => {
                     const color = actionColor(e.label);
                     return (
                       <button
                         key={e.id}
                         type="button"
-                        onPointerDown={(ev) => startDrag(ev, e, idx)}
+                        onPointerDown={(ev) => startDrag(ev, e)}
                         onClick={(ev) => {
                           ev.stopPropagation();
-                          if (!suppressClick.current) jumpToEvent(idx);
+                          if (!suppressClick.current) jumpToEvent(e.id);
                         }}
                         className="pointer-events-auto absolute -ml-3 -mt-3 h-6 w-6 cursor-grab touch-none active:cursor-grabbing"
                         style={{ left: `${e.xy[0] * 100}%`, top: `${e.xy[1] * 100}%` }}
@@ -647,7 +684,7 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, onSaved, r
               rallies={ed.rallies}
               events={ed.events}
               selectedRallyId={selectedRallyId}
-              selectedIdx={selectedIdx}
+              selectedId={selectedId}
               playing={playing}
               waveform={waveform}
               colors={ACTION_COLORS}
@@ -683,6 +720,7 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, onSaved, r
           <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">1-6</kbd> label ·{' '}
           <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">← →</kbd> frame ·{' '}
           <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">Enter</kbd> add ·{' '}
+          <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">A S</kbd> nudge frame ·{' '}
           <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">P</kbd> point mode ·{' '}
           <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">Del</kbd> remove
         </p>
@@ -766,7 +804,7 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, onSaved, r
                         </span>
                         <span className="rounded bg-surface-200/40 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-text-muted">{Math.max(0, rally.end - rally.start).toFixed(1)}s</span>
                       </div>
-                      {isOpen && <ActionEventPanel entries={entries} empty="No actions in this rally" {...{ labels, selectedIdx, fps: ed.fps, frame, onEdit: editEvent, onDelete: deleteEvent, onJump: jumpToEvent }} />}
+                      {isOpen && <ActionEventPanel entries={entries} empty="No actions in this rally" {...{ labels, selectedId, fps: ed.fps, frame, onEdit: editEvent, onDelete: deleteEvent, onJump: jumpToEvent }} />}
                     </div>
                   );
                 })}
@@ -787,7 +825,7 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, onSaved, r
                       </button>
                       <span className="ml-auto font-heading text-[11px] text-text-muted">outside rally</span>
                     </div>
-                    {expanded === OUTSIDE_RALLY_KEY && <ActionEventPanel entries={outside} empty="No outside actions" {...{ labels, selectedIdx, fps: ed.fps, frame, onEdit: editEvent, onDelete: deleteEvent, onJump: jumpToEvent }} />}
+                    {expanded === OUTSIDE_RALLY_KEY && <ActionEventPanel entries={outside} empty="No outside actions" {...{ labels, selectedId, fps: ed.fps, frame, onEdit: editEvent, onDelete: deleteEvent, onJump: jumpToEvent }} />}
                   </div>
                 )}
               </>
