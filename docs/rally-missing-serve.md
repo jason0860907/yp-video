@@ -4,49 +4,8 @@
 
 判定：rally span `[start, end]` 內第一個動作事件不是 `serve`。共 121 筆。
 
-分類：`切界太緊` = 前一個 serve 落在 rally start 前 3 秒內（發球接觸幀被切在 span 外）；`serve 不在最前` = span 內有 serve，但前面還有別的動作；`疑似漏標` = span 內外都找不到鄰近 serve。
+分類：`serve 不在最前` = span 內有 serve，但前面還有別的動作；`疑似漏標` = span 內外都找不到鄰近 serve。
 
-
-## 切界太緊 — 36 筆
-
-| 影片 | Rally | 起 | 訖 | 首個動作 | 距前一個 serve | 動作序列（前 6） |
-|---|---:|---:|---:|---|---:|---|
-| 03⧸15(日) 17_00｜例行賽G108 #新北中纖 vs. #高雄台電｜企業21年甲級男女排球聯賽_set1 | 16 | 7:50 | 7:56 | receive | 0.1s | receive → set → spike → score |
-| 03⧸15(日) 17_00｜例行賽G108 #新北中纖 vs. #高雄台電｜企業21年甲級男女排球聯賽_set1 | 29 | 15:25 | 15:30 | receive | 0.1s | receive → set → spike → block → score |
-| 03⧸20(五) 14_00｜挑戰賽G110 #高雄台電 vs. #新北中纖｜企業21年甲級男女排球聯賽_set1 | 23 | 12:15 | 12:28 | receive | 0.0s | receive → set → spike → receive → receive → set |
-| 03⧸20(五) 14_00｜挑戰賽G110 #高雄台電 vs. #新北中纖｜企業21年甲級男女排球聯賽_set1 | 32 | 17:55 | 18:00 | receive | 0.3s | receive → set → spike → score |
-| 03⧸22(日) 17_00｜男子組冠軍賽 G117 #屏東台電 vs. #雲林美津濃｜企業21年甲級男女排球聯賽_set1 | 30 | 16:35 | 16:39 | set | 0.0s | set → spike → block → score |
-| 2025-10-12_G9_臺中連莊_vs_台鋼天鷹_set1 | 26 | 13:06 | 13:23 | receive | 0.0s | receive → receive → receive → serve → receive → set |
-| 20250424 排島惡館-8 | 5 | 3:02 | 3:12 | receive | 0.7s | receive → set → spike → receive → set → spike |
-| 20250424 排島惡館-8 | 6 | 3:24 | 3:34 | receive | 0.2s | receive → set → spike → receive → set → spike |
-| 20250424 排島惡館-8 | 10 | 4:58 | 5:04 | receive | 0.1s | receive → set → spike → score |
-| 20250424 排島惡館-8 | 18 | 7:08 | 7:34 | receive | 0.3s | receive → set → spike → receive → set → spike |
-| 20250424 排島惡館-8 | 22 | 8:34 | 8:58 | receive | 0.1s | receive → set → spike → receive → set → spike |
-| 20250424 排島惡館-8 | 26 | 10:12 | 10:25 | receive | 0.8s | receive → set → spike → receive → set → spike |
-| 20251227-排島本館-3 | 22 | 6:38 | 6:44 | receive | 0.0s | receive → set → spike → receive → score |
-| 20260403-霖度C-02 | 26 | 8:02 | 8:09 | receive | 0.3s | receive → set → spike → score |
-| 20260426-小窩-01 | 1 | 0:05 | 0:24 | receive | 0.2s | receive → set → spike → receive → set → receive |
-| 20260426-小窩-01 | 6 | 2:32 | 2:42 | receive | 0.1s | receive → receive → receive → receive → set → spike |
-| 20260426-小窩-01 | 7 | 2:58 | 3:08 | receive | 0.0s | receive → set → spike → receive → set → spike |
-| 20260426-小窩-01 | 22 | 8:38 | 8:50 | receive | 0.1s | receive → set → spike → receive → set → spike |
-| 20260502-排島本館-02 | 2 | 1:54 | 2:06 | receive | 0.1s | receive → set → spike → block → receive → receive |
-| 20260510邷力豹臨打1 | 15 | 8:18 | 8:27 | receive | 1.2s | receive → set → spike → receive → set → spike |
-| Canada 🇨🇦 vs Japan 🇯🇵 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 25 | 11:52 | 12:08 | set | 1.1s | set → spike → block → receive → set → spike |
-| Canada 🇨🇦 vs Japan 🇯🇵 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 31 | 15:40 | 15:54 | receive | 1.2s | receive → set → spike → receive → set → spike |
-| Canada 🇨🇦 vs Japan 🇯🇵 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 32 | 16:24 | 16:30 | receive | 0.6s | receive → set → spike → score |
-| Canada 🇨🇦 vs Japan 🇯🇵 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 34 | 17:09 | 17:14 | receive | 0.8s | receive → set → spike → score |
-| Canada 🇨🇦 vs Japan 🇯🇵 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 48 | 34:02 | 34:18 | receive | 0.8s | receive → set → spike → block → receive → set |
-| Full Match ｜ Poland vs. England ｜ CEV U22 Volleyball European Championship 2026 Women ｜ Pool C_set1 | 14 | 6:14 | 6:28 | receive | 1.1s | receive → set → spike → block → receive → set |
-| Full Match ｜ Poland vs. Slovakia ｜ CEV U22 Volleyball European Championship 2026 Women ｜ Pool C_set1 | 1 | 0:18 | 0:24 | receive | 0.5s | receive → set → spike → score |
-| Full Match ｜ Slovakia vs. England ｜ CEV U22 Volleyball European Championship 2026 Women ｜ Pool C_set1 | 1 | 0:20 | 0:28 | receive | 0.3s | receive → set → spike → block → receive → score |
-| Japan 🇯🇵 vs. Czechia 🇨🇿 ｜ VNL 2025 - Full Match ｜ Week 2_set1 | 21 | 9:28 | 9:34 | receive | 0.2s | receive → set → spike → score |
-| Japan 🇯🇵 vs. Serbia 🇷🇸 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 8 | 3:20 | 3:26 | receive | 0.1s | receive → set → spike → block → score |
-| Suntory Sunbirds vs. Osaka Bluteon ｜ SV.LEAGUE 2025⧸26 ｜ Full Match - Volleyball_set1 | 1 | 0:08 | 0:12 | receive | 0.7s | receive → set → spike → block → score |
-| 【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G22 11⧸9 18_30 臺北伊斯特 vs 台鋼天鷹_set1 | 24 | 12:56 | 13:02 | receive | 0.0s | receive → set → spike → receive → score |
-| 【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G22 11⧸9 18_30 臺北伊斯特 vs 台鋼天鷹_set1 | 25 | 13:26 | 13:30 | receive | 0.3s | receive → set → spike → score |
-| 【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G22 11⧸9 18_30 臺北伊斯特 vs 台鋼天鷹_set1 | 44 | 26:14 | 26:18 | receive | 0.6s | receive → set → spike |
-| 【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G24 11⧸15 18_30 桃園雲豹飛將 vs 臺北伊斯特_set1 | 33 | 15:45 | 15:52 | receive | 1.2s | receive → set → spike → block → receive → set |
-| 【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G30 11⧸23 18_30 桃園雲豹飛將 vs 台鋼天鷹_set1 | 14 | 10:30 | 10:35 | receive | 0.5s | receive → set → spike → block → receive → receive |
 
 ## serve 不在最前 — 7 筆
 
