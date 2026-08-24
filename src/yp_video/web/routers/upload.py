@@ -332,7 +332,7 @@ async def _run_batch_transfer_inner(
 async def start_upload(req: UploadRequest):
     """Start a single upload job for all selected files."""
     if not r2_client.configured:
-        raise HTTPException(400, "R2 not configured. Fill in r2.env file.")
+        raise HTTPException(400, "R2 not configured. Fill in the workspace .env.")
 
     base_dir = _get_base_dir(req.category)
     valid = [f for f in req.files if (base_dir / f).exists()]

@@ -188,7 +188,7 @@ export function UploadPage() {
 
       {!configured && (
         <div className="rounded-xl border border-amber-500/25 bg-amber-500/[0.06] px-4 py-3 text-sm text-amber-300">
-          R2 not configured — fill in <code className="rounded bg-surface-200 px-1.5 py-0.5 text-text-secondary">r2.env</code> with your Cloudflare R2 credentials.
+          R2 not configured — fill in the R2 keys in <code className="rounded bg-surface-200 px-1.5 py-0.5 text-text-secondary">~/volleyiq/.env</code>.
         </div>
       )}
 

@@ -9,7 +9,7 @@ from yp_video.config import (
     RALLY_PRE_ANNOTATIONS_DIR,
     SEG_ANNOTATIONS_DIR,
     find_cut,
-    load_vllm_env,
+    load_env,
 )
 from yp_video.web.job_helpers import (
     batch_message,
@@ -27,7 +27,7 @@ from yp_video.web.vllm_manager import vllm_manager
 
 router = APIRouter()
 
-_default_max_seqs = int(load_vllm_env()["VLLM_MAX_NUM_SEQS"])
+_default_max_seqs = int(load_env()["VLLM_MAX_NUM_SEQS"])
 
 
 class DetectRequest(StrictModel):

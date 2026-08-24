@@ -47,11 +47,13 @@ REID_PYTHON = _env_path("YP_REID_PYTHON", REID_PKG_DIR / ".venv" / "bin" / "pyth
 REID_EMBED_MODULE = "yp_reid.embed"
 REID_TRAIN_MODULE = "yp_reid.train"
 PROMPTS_DIR = PROJECT_ROOT / "prompts"
-VLLM_ENV_PATH = PROJECT_ROOT / "vllm.env"
-R2_ENV_PATH = PROJECT_ROOT / "r2.env"
-# Shared across the volleyiq projects, so it lives at the workspace root
-# (PROJECT_ROOT.parent), not inside yp-video.
-TOKENS_ENV_PATH = PROJECT_ROOT.parent / "tokens.env"
+# One env file for the whole workspace, at PROJECT_ROOT.parent — R2 keys,
+# service tokens, Cloudflare Access, the audit database, vLLM settings. It
+# used to be five files (r2.env, vllm.env, tokens.env, plus a second r2.env at
+# the workspace root that a sync script kept updating and nothing read), which
+# is how yp-video ended up signing R2 with a different key pair than every
+# other component.
+ENV_PATH = PROJECT_ROOT.parent / ".env"
 VENV_PYTHON = PROJECT_ROOT / ".venv" / "bin" / "python"
 LOGS_DIR = PROJECT_ROOT / "logs"
 APP_LOG_PATH = LOGS_DIR / "yp-app.log"
@@ -236,20 +238,13 @@ def _load_env_file(path: Path) -> dict[str, str]:
     return config
 
 
-def load_vllm_env() -> dict[str, str]:
-    """Load key=value pairs from vllm.env."""
-    return _load_env_file(VLLM_ENV_PATH)
+def load_env() -> dict[str, str]:
+    """Every key=value pair from the workspace .env.
 
-
-def load_r2_env() -> dict[str, str]:
-    """Load key=value pairs from r2.env."""
-    return _load_env_file(R2_ENV_PATH)
-
-
-def load_tokens_env() -> dict[str, str]:
-    """Load key=value pairs from tokens.env (iOS upload worker URL +
-    auth token + library user id, used by the app-export flow)."""
-    return _load_env_file(TOKENS_ENV_PATH)
+    Read on demand rather than cached, so editing the file and hitting reload
+    (r2_client.reload()) picks the change up without a restart.
+    """
+    return _load_env_file(ENV_PATH)
 
 
 def load_prompt(filename: str) -> str:

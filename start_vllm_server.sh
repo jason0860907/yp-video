@@ -1,18 +1,19 @@
 #!/bin/bash
-# Start vLLM server in a tmux session (config from vllm.env)
+# Start vLLM server in a tmux session (config from the workspace .env)
 #
 # Usage:
 #   ./start_vllm_server.sh [MODEL_NAME] [PORT]
 #
 # Examples:
-#   ./start_vllm_server.sh                                    # Use defaults from vllm.env
+#   ./start_vllm_server.sh                                    # Use defaults from .env
 #   ./start_vllm_server.sh Qwen/Qwen3-VL-4B-Instruct 8001    # Override model and port
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SESSION_NAME="vllm"
 
 # Load shared config
-source "${SCRIPT_DIR}/vllm.env"
+# One env file for the whole workspace, one directory up from yp-video.
+set -a; source "${SCRIPT_DIR}/../.env"; set +a
 
 MODEL_NAME="${1:-$VLLM_MODEL}"
 PORT="${2:-$VLLM_PORT}"

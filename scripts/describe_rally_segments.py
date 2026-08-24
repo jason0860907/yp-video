@@ -33,8 +33,7 @@ from yp_video.config import (
     ANNOTATIONS_DIR,
     VIDEOS_DIR,
     find_cut,
-    load_tokens_env,
-    load_vllm_env,
+    load_env,
 )
 from yp_video.core.ffmpeg import FFmpegError, extract_clip
 
@@ -238,7 +237,7 @@ def build_chunk_ranges(start: float, duration: float, chunk_seconds: float) -> l
 
 
 def main() -> int:
-    cfg = load_vllm_env()
+    cfg = load_env()
     default_server = f"http://localhost:{cfg.get('VLLM_PORT', '8001')}"
     default_vllm_model = cfg.get("VLLM_MODEL", "")
     default_gemini_model = "gemini-2.5-flash"
@@ -273,10 +272,10 @@ def main() -> int:
 
     gemini_api_key = ""
     if args.backend == "gemini":
-        tokens = load_tokens_env()
+        tokens = load_env()
         gemini_api_key = tokens.get("GEMINI_API_KEY", "").strip()
         if not gemini_api_key:
-            print("error: GEMINI_API_KEY missing from tokens.env", file=sys.stderr)
+            print("error: GEMINI_API_KEY missing from .env", file=sys.stderr)
             return 1
 
     annotations_path = args.annotations or pick_default_annotations()

@@ -28,10 +28,10 @@ import aiohttp
 import requests
 from tqdm import tqdm
 
-from yp_video.config import load_prompt, load_vllm_env
+from yp_video.config import load_env, load_prompt
 from yp_video.core.ffmpeg import FFmpegError, extract_clip, get_video_duration
 
-_VLLM_CONFIG = load_vllm_env()
+_VLLM_CONFIG = load_env()
 # Two prompts: broadcast footage (the original) vs. amateur side-court
 # practice recordings (no replays/ads, but lots of drill activity that
 # isn't a real served rally). _select_prompt() picks based on which

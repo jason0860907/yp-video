@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from yp_video.config import PROJECT_ROOT, load_tokens_env
+from yp_video.config import PROJECT_ROOT, load_env
 
 # Stable Match/Rally UUIDs are cached here so re-publishing after annotation
 # tweaks updates existing iOS rows instead of duplicating them.
@@ -36,21 +36,21 @@ class AppLibraryConfig:
     user_id: str
 
 
-def resolve_config(*, include_tokens_env: bool, required: bool) -> AppLibraryConfig:
-    """Resolve app-library config from env, optionally falling back to tokens.env."""
-    tokens = load_tokens_env() if include_tokens_env else {}
+def resolve_config(*, include_shared_env: bool, required: bool) -> AppLibraryConfig:
+    """Resolve app-library config, optionally falling back to the shared .env."""
+    shared = load_env() if include_shared_env else {}
     endpoint = (
         os.environ.get("UPLOAD_ENDPOINT")
-        or tokens.get("WORKER_URL")
+        or shared.get("UPLOAD_SERVICE_URL")
         or ""
     ).rstrip("/")
-    token = os.environ.get("UPLOAD_TOKEN") or tokens.get("AUTH_TOKEN") or ""
-    user_id = os.environ.get("LIBRARY_USER_ID") or tokens.get("LIBRARY_USER_ID") or ""
+    token = os.environ.get("UPLOAD_TOKEN") or shared.get("AUTH_TOKEN") or ""
+    user_id = os.environ.get("LIBRARY_USER_ID") or shared.get("LIBRARY_USER_ID") or ""
 
     missing = [
         name
         for name, value in (
-            ("UPLOAD_ENDPOINT/WORKER_URL", endpoint),
+            ("UPLOAD_ENDPOINT/UPLOAD_SERVICE_URL", endpoint),
             ("UPLOAD_TOKEN/AUTH_TOKEN", token),
             ("LIBRARY_USER_ID", user_id),
         )

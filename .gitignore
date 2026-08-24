@@ -23,9 +23,9 @@ ENV/
 # OS
 .DS_Store
 
-# Secrets
-r2.env
-tokens.env
+# Secrets — the real file is the workspace-level ../.env; this guards against
+# anyone dropping a stray copy inside the repo.
+.env
 
 # Project specific
 *.json

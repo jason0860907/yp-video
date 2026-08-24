@@ -3,7 +3,7 @@
 import asyncio
 import logging
 
-from yp_video.config import PROJECT_ROOT, load_vllm_env
+from yp_video.config import PROJECT_ROOT, load_env
 
 log = logging.getLogger(__name__)
 
@@ -12,7 +12,7 @@ class VLLMManager:
     """Manage vLLM server process lifecycle."""
 
     def __init__(self):
-        self.config = load_vllm_env()
+        self.config = load_env()
         self._health_task: asyncio.Task | None = None
         self._status = "stopped"  # stopped, starting, running, error
         self._model = self.config["VLLM_MODEL"]

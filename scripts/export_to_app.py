@@ -9,8 +9,8 @@ The Annotate web page uses `yp_video.app_export` for single-match manifests;
 both paths share the same app-library helpers.
 
 Env/config:
-  UPLOAD_ENDPOINT or tokens.env WORKER_URL
-  UPLOAD_TOKEN or tokens.env AUTH_TOKEN
+  UPLOAD_ENDPOINT or .env UPLOAD_SERVICE_URL
+  UPLOAD_TOKEN or .env AUTH_TOKEN
   LIBRARY_USER_ID
 
 Usage:
@@ -75,7 +75,7 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        config = resolve_config(include_tokens_env=True, required=not args.dry_run)
+        config = resolve_config(include_shared_env=True, required=not args.dry_run)
     except AppLibraryExportError as exc:
         print(str(exc), file=sys.stderr)
         return 2

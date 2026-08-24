@@ -118,7 +118,7 @@ async def lifespan(app: FastAPI):
     # mid-job and we lose hours of feature extraction.
     signal.signal(signal.SIGHUP, signal.SIG_IGN)
 
-    # Eager-load R2 config so a misconfigured r2.env surfaces at boot
+    # Eager-load R2 config so a misconfigured .env surfaces at boot
     # rather than on the first upload deep inside a job handler.
     r2_client.reload()
     print(f"R2: {'configured' if r2_client.configured else 'not configured (uploads will be skipped)'}")

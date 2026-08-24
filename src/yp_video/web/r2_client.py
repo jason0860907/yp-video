@@ -8,7 +8,7 @@ import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from yp_video.config import CUT_KINDS, CutKind, find_cut, iter_all_cuts, load_r2_env
+from yp_video.config import CUT_KINDS, CutKind, find_cut, iter_all_cuts, load_env
 
 log = logging.getLogger(__name__)
 
@@ -32,9 +32,9 @@ class R2Client:
             self.reload()
 
     def reload(self):
-        """Reload configuration from r2.env and reset the boto3 client."""
+        """Reload configuration from the workspace .env and reset the client."""
         self._client = None
-        self._config = load_r2_env()
+        self._config = load_env()
         self._loaded = True
 
     @property
@@ -43,13 +43,13 @@ class R2Client:
         return bool(
             self._config.get("R2_ACCESS_KEY_ID")
             and self._config.get("R2_SECRET_ACCESS_KEY")
-            and self._config.get("R2_BUCKET_NAME")
+            and self._config.get("R2_BUCKET_PIPELINE")
         )
 
     @property
     def bucket(self) -> str:
         self._ensure_config()
-        return self._config.get("R2_BUCKET_NAME", "")
+        return self._config.get("R2_BUCKET_PIPELINE", "")
 
     def _get_client(self):
         if self._client is None:

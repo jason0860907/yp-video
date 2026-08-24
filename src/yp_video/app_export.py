@@ -42,7 +42,7 @@ def export_one_match(basename: str) -> dict:
 
     `basename` is the cut-video stem, e.g. ``20260426-小窩-01``.
     """
-    config = resolve_config(include_tokens_env=True, required=True)
+    config = resolve_config(include_shared_env=True, required=True)
 
     ann_path = RALLY_ANNOTATIONS_DIR / f"{basename}_annotations.jsonl"
     if not ann_path.exists():
