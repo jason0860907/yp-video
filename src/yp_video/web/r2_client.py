@@ -1,7 +1,6 @@
 """Cloudflare R2 storage client (S3-compatible)."""
 
 import asyncio
-import ipaddress
 import logging
 import threading
 import time
@@ -325,41 +324,22 @@ def cut_media_source(path: Path) -> str | None:
     )
 
 
-def _lan_client(host: str | None) -> bool:
-    """True when the request's Host header names this machine directly
-    (localhost or a private IP) rather than the public tunnel domain."""
-    if not host:
-        return False
-    name = host[1:host.index("]")] if host.startswith("[") else host.rsplit(":", 1)[0]
-    if name == "localhost":
-        return True
-    try:
-        return ipaddress.ip_address(name).is_private or ipaddress.ip_address(name).is_loopback
-    except ValueError:
-        return False
-
-
 def serve_video_or_r2_redirect(
     local_path: Path,
     r2_categories: Sequence[str] = ("cuts-broadcast", "cuts-sideline", "videos"),
-    *,
-    host: str | None = None,
 ):
-    """Serve a video from wherever is fastest for THIS client.
+    """Serve a video, preferring Cloudflare's edge over this machine's uplink.
 
-    Which source wins depends on where the request came from (``host`` is
-    the request's Host header):
+    A presigned R2 redirect streams straight from the edge instead of riding
+    the tunnel out and back; local disk answers whatever R2 does not hold —
+    raw videos are ``local_only``, so the Cut page always lands there.
+    FileResponse handles Range either way. Returns None if the video exists
+    nowhere.
 
-    - Through the public tunnel domain, R2 wins: a presigned redirect
-      streams the video straight from Cloudflare's edge, never riding the
-      server's home uplink through the tunnel and back.
-    - From localhost / a LAN address, local disk wins: the bytes never
-      touch the internet at all. FileResponse handles Range, so seeking
-      works either way.
-
-    Either way the other source is the fallback, so local-only and
-    R2-only videos both play from anywhere. Returns a FastAPI response,
-    or None if the video exists nowhere.
+    This used to branch on the Host header, serving local disk to LAN clients.
+    Direct access to this machine is closed now — everything arrives through
+    the tunnel with a Cloudflare Access identity — so the branch had exactly
+    one live side left.
 
     24h presign expiry: a <video> element holds one URL for the whole
     labeling session, and an expired signature kills it mid-seek.
@@ -381,8 +361,6 @@ def serve_video_or_r2_redirect(
                 return RedirectResponse(url)
         return None
 
-    if _lan_client(host):
-        return from_disk() or from_r2()
     return from_r2() or from_disk()
 
 

@@ -46,6 +46,88 @@ export interface Job {
   started_at?: number | null;
   // items is the batch sub-progress; other keys are job-type-specific payloads.
   params?: { items?: JobItem[]; [k: string]: unknown };
+  /** Cloudflare Access identity of whoever started the run. */
+  actor?: string;
+}
+
+/** One row of the audit trail (GET /audit/events).
+ *
+ *  `action` is the FastAPI route template ("POST /api/annotate/annotations")
+ *  or a job transition ("job.completed") — see lib/auditLabels.ts for the
+ *  display names. `repeats` counts autosaves folded into this row. */
+export interface AuditEvent {
+  id: number;
+  /** Session start — the first save folded into this row. ISO-8601, UTC. */
+  first_at: string;
+  /** Session end — the last save folded into this row. ISO-8601, UTC. */
+  at: string;
+  actor: string;
+  action: string;
+  target: string | null;
+  summary: Record<string, unknown>;
+  outcome: 'ok' | 'error';
+  status: number | null;
+  duration_ms: number | null;
+  repeats: number;
+}
+
+export interface AuditPage {
+  events: AuditEvent[];
+  /** Cursor for the next page, or null at the end of the trail. */
+  next_before: number | null;
+}
+
+/** GET /audit/worklog — labeling time per person over a range. */
+export interface WorklogPerson {
+  actor: string;
+  /** Rows in the range — one per work session. */
+  sessions: number;
+  /** Saves folded into those sessions. */
+  saves: number;
+  /** Summed first_at → at across the sessions. */
+  seconds: number;
+}
+
+export interface Worklog {
+  since: string;
+  until: string;
+  people: WorklogPerson[];
+}
+
+/** One item changed by a save: added / removed / edited, or a truncation
+ *  marker when a single save changed more items than are worth listing. */
+export interface AuditChange {
+  op: 'added' | 'removed' | 'edited' | 'truncated';
+  id?: string | number;
+  /** The whole item, for added and removed. */
+  item?: Record<string, unknown>;
+  /** Only the fields that moved: field -> [before, after]. */
+  fields?: Record<string, [unknown, unknown]>;
+  /** How many further changes were not listed (op: 'truncated'). */
+  count?: number;
+}
+
+export interface AuditSave {
+  /** ISO-8601. */
+  at: string;
+  changes: AuditChange[];
+}
+
+/** GET /audit/events/{id}/saves — every save folded into one row. */
+export interface AuditSaves {
+  /** Oldest first. */
+  saves: AuditSave[];
+}
+
+export interface AuditFilters {
+  actors: string[];
+  actions: string[];
+  /** Video names / categories already present in the trail. */
+  targets: string[];
+}
+
+export interface Me {
+  email: string;
 }
 
 export interface JobLogs {

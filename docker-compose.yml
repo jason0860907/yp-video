@@ -1,0 +1,31 @@
+# Audit-trail database. Local only: the port is bound to loopback, and the
+# app reaches it over 127.0.0.1 from the same box.
+#
+# Config comes from the workspace .env (one directory up), which compose is
+# pointed at by `make db-up`. Only POSTGRES_PASSWORD is interpolated in —
+# handing the whole file to `env_file:` would put the R2 keys and service
+# tokens inside the Postgres container for no reason.
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: yp-video-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ypvideo
+      POSTGRES_USER: ypvideo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in ../.env}
+    # 127.0.0.1 is load-bearing: Docker publishes ports via the nat PREROUTING
+    # chain, which bypasses the host firewall. A bare "5433:5432" would expose
+    # Postgres to the whole LAN — the same door the app itself just closed.
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ypvideo -d ypvideo"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:

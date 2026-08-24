@@ -1,18 +1,28 @@
 import { useLocation } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { API, apiFetch } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { PALETTES, setPalette, toggleTheme, useTheme } from '@/lib/theme';
 import { PAGE_TITLES, PATH_SECTION } from './nav';
+import type { Me } from '@/types/api';
 
 interface TopbarProps {
   onToggleSidebar: () => void;
 }
 
-/** Slim app bar — sidebar toggle, brand mark, the current page heading, and
- *  the theme + palette controls. (No workspace switcher / teams: yp-video is
- *  the Pipeline workspace only.) */
+/** Slim app bar — sidebar toggle, brand mark, the current page heading, the
+ *  signed-in identity, and the theme + palette controls. (No workspace
+ *  switcher / teams: yp-video is the Pipeline workspace only.) */
 export function Topbar({ onToggleSidebar }: TopbarProps) {
   const { theme, palette } = useTheme();
   const { pathname } = useLocation();
+  // Cloudflare Access decides this; showing it means nobody has to wonder
+  // which identity the Audit page is about to record their work under.
+  const me = useQuery({
+    queryKey: ['me'],
+    queryFn: () => apiFetch<Me>(API.system.me),
+    staleTime: Infinity,
+  });
   const title = PAGE_TITLES[pathname];
   const section = PATH_SECTION[pathname];
 
@@ -51,6 +61,15 @@ export function Topbar({ onToggleSidebar }: TopbarProps) {
       )}
 
       <div className="flex-1" />
+
+      {me.data?.email && (
+        <span
+          className="hidden max-w-[220px] truncate font-mono text-[11.5px] text-text-muted sm:inline"
+          title={`Signed in via Cloudflare Access as ${me.data.email}`}
+        >
+          {me.data.email}
+        </span>
+      )}
 
       {/* theme toggle */}
       <button

@@ -57,7 +57,7 @@ from yp_video.reid import store as reid_store
 from yp_video.reid.embedder import DEFAULT_EMBEDDER, base_embedder_name
 from yp_video.tracklets import store as tracks_store
 from yp_video.tracklets.geometry import TrackRef
-from yp_video.web import worklists
+from yp_video.web import audit, worklists
 from yp_video.web.job_helpers import (
     ProgressParser,
     fail_job_from_exc,
@@ -697,7 +697,17 @@ def confirm(name: str, req: ConfirmRequest) -> dict:
     # Which VERDICT each event got, not just that it landed: endorsing a
     # pick and endorsing an occlusion are two different answers, and a caller
     # that assumes one of them shows the wrong badge for the other.
+    before = _actor_rows(actor_labels.load(stem))
     landed = actor_labels.confirm_auto(stem, confirmable)
+    # A bulk endorsement writes many durable verdicts at once. Not folded into
+    # a session: it is one click, not a stretch of work.
+    audit.record_diff(
+        target=stem,
+        before=before,
+        after=_actor_rows(actor_labels.load(stem)),
+        key=lambda r: r["id"],
+        confirmed=len(landed),
+    )
     return {"confirmed": {event_id: confirmable[event_id].verdict.value for event_id in landed}}
 
 
@@ -781,6 +791,15 @@ def _synchronous_model(stem: str) -> str | None:
     )
 
 
+def _actor_rows(labels) -> list[dict]:
+    """The video's actor verdicts as records, for auditing.
+
+    One per event that carries a human verdict. The payload is what actually
+    lands on disk, so a diff of two of these is exactly what the save changed.
+    """
+    return [{"id": event_id, **label.payload()} for event_id, label in labels.items()]
+
+
 @router.post("/fix/{name}")
 def fix(
     name: str, req: ActorFixRequest, background_tasks: BackgroundTasks
@@ -799,6 +818,7 @@ def fix(
     if not extraction_store.records_path(stem).exists():
         raise HTTPException(404, f"No extraction records for {stem}")
 
+    before = _actor_rows(actor_labels.load(stem))
     command: actor_fix.ActorFixCommand = req.command
     try:
         result = actor_fix.apply(
@@ -826,6 +846,17 @@ def fix(
     if tracks_store.tracks_path(stem).exists():
         ref = links.event_tracks(stem).get(req.event_id)
         track_link = ref.payload() if ref else None
+    # Association is labeling work like the other three panels: one call per
+    # event the reviewer re-points. Folded into a session (see audit's
+    # _COALESCING) so an afternoon of it reads as hours worked rather than as
+    # hundreds of instantaneous rows totalling nothing.
+    audit.record_diff(
+        target=stem,
+        before=before,
+        after=_actor_rows(actor_labels.load(stem)),
+        key=lambda r: r["id"],
+        event=req.event_id,
+    )
     background_tasks.add_task(
         actor_fix.refresh_deferred,
         stem,

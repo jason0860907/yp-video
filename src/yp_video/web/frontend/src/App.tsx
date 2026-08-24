@@ -20,6 +20,7 @@ import { AssociationPredictPage } from '@/pages/AssociationPredictPage';
 import { AssociationTrainPage } from '@/pages/AssociationTrainPage';
 import { FusionTrainPage } from '@/pages/FusionTrainPage';
 import { ReidTrainPage } from '@/pages/ReidTrainPage';
+import { AuditPage } from '@/pages/AuditPage';
 
 /** Migrated pages, by route. Paths absent here fall back to a Placeholder. */
 const PAGES: Record<string, ReactElement> = {
@@ -40,6 +41,7 @@ const PAGES: Record<string, ReactElement> = {
   '/reid-train': <ReidTrainPage />,
   '/upload': <UploadPage />,
   '/jobs': <JobsPage />,
+  '/audit': <AuditPage />,
 };
 
 /** Retired routes → where the work went. Bookmarks and muscle memory are

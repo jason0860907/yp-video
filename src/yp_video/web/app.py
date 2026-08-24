@@ -13,13 +13,15 @@ from fastapi.staticfiles import StaticFiles
 from starlette.datastructures import MutableHeaders
 
 from yp_video.config import APP_LOG_PATH, FRONTEND_DIST_DIR, LOGS_DIR
-from yp_video.web import worklists
+from yp_video.web import audit, db, worklists
+from yp_video.web.access import AccessAuth, verifier
 from yp_video.web.r2_client import r2_client
 from yp_video.web.routers import (
     action_annotate,
     action_train,
     actor_association,
     annotate,
+    audit_log,
     cut,
     detect,
     download,
@@ -111,6 +113,14 @@ async def lifespan(app: FastAPI):
     """Handle startup and shutdown."""
     print("Starting YP Video Analysis...")
 
+    # Identity and the audit trail come up before anything can be served.
+    # Both failures are fatal on purpose: serving without knowing who is
+    # acting is exactly the state this app just left behind.
+    verifier.configure()
+    await db.open_pool()
+    audit.start_writer()
+    print("Audit: Cloudflare Access identity + Postgres trail ready")
+
     # Let uvicorn own SIGINT/SIGTERM so Ctrl+C and `make dev` shutdown
     # follow uvicorn's normal graceful server-close path.
     # Survive controlling-tty close (tmux pane exit, SSH disconnect without
@@ -132,6 +142,8 @@ async def lifespan(app: FastAPI):
 
     # Cleanup
     print("Shutting down...")
+    await audit.stop_writer()
+    await db.close_pool()
 
 
 # orjson serializes the big numeric payloads (reid tracks ships ~100k boxes)
@@ -172,6 +184,13 @@ class _ApiNoStore:
 
 app.add_middleware(_ApiNoStore)
 
+# add_middleware inserts at the front and the stack is built in reverse, so
+# the LAST one added is the outermost. AccessAuth therefore runs first and a
+# rejected request never reaches the audit trail — there is no identity on it
+# to record.
+app.add_middleware(audit.AuditTrail)
+app.add_middleware(AccessAuth)
+
 # Mount API routers
 app.include_router(download.router, prefix="/api/download", tags=["download"])
 app.include_router(cut.router, prefix="/api/cut", tags=["cut"])
@@ -195,6 +214,7 @@ app.include_router(
 app.include_router(jobs.router, prefix="/api/jobs", tags=["jobs"])
 app.include_router(system.router, prefix="/api/system", tags=["system"])
 app.include_router(upload.router, prefix="/api/upload", tags=["upload"])
+app.include_router(audit_log.router, prefix="/api/audit", tags=["audit"])
 
 # ── Built React SPA (frontend/dist) ──────────────────────────────
 # Hashed JS/CSS live under /assets; every other non-API path returns the
@@ -231,8 +251,13 @@ async def spa_fallback(full_path: str):
     return FileResponse(_INDEX_FILE)
 
 
-def run_server(host: str = "0.0.0.0", port: int = 8080):
-    """Run the unified app server."""
+def run_server(host: str = "127.0.0.1", port: int = 8080):
+    """Run the unified app server.
+
+    Loopback only: cloudflared is the sole client. Reaching the port directly
+    would be an unauthenticated path around Cloudflare Access, which is the
+    one hole the audit trail cannot tolerate.
+    """
     import uvicorn
     uvicorn.run(app, host=host, port=port)
 

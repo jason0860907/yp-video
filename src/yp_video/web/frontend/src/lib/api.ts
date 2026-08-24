@@ -42,10 +42,34 @@ export class ApiError extends Error {
 export const errMsg = (e: unknown): string =>
   e instanceof ApiError ? e.body : e instanceof Error ? e.message : String(e);
 
+/** Fetch, reloading the page if the Cloudflare Access session has lapsed.
+ *
+ *  Access sessions expire while a labeling tab sits open all afternoon. When
+ *  that happens the edge answers an XHR with a redirect to the login page on
+ *  another origin, which fetch reports as an opaque TypeError — every page
+ *  would show a bogus "network error" and no amount of retrying would fix it.
+ *  Only a top-level navigation can complete the login flow, so reload and let
+ *  Access take over. A 403 from our own origin means the same thing.
+ */
+async function fetchOrReauth(path: string, init: RequestInit): Promise<Response> {
+  let res: Response;
+  try {
+    res = await fetch(apiUrl(path), { credentials: 'same-origin', ...init });
+  } catch {
+    window.location.reload();
+    throw new ApiError(0, 'Session expired — reloading');
+  }
+  if (res.status === 403) {
+    window.location.reload();
+    throw new ApiError(403, 'Session expired — reloading');
+  }
+  return res;
+}
+
 /** Fetch a JSON endpoint relative to /api. Throws {@link ApiError} on non-2xx. */
 export async function apiFetch<T = unknown>(path: string, options: ApiOptions = {}): Promise<T> {
   const { body, headers, ...rest } = options;
-  const res = await fetch(apiUrl(path), {
+  const res = await fetchOrReauth(path, {
     headers: { 'Content-Type': 'application/json', ...headers },
     ...rest,
     body: body !== undefined ? JSON.stringify(body) : undefined,
@@ -58,7 +82,7 @@ export async function apiFetch<T = unknown>(path: string, options: ApiOptions = 
 
 /** POST JSON and return the response body as a Blob (mp4 / zip clip endpoints). */
 export async function apiPostBlob(path: string, body: unknown): Promise<Blob> {
-  const res = await fetch(apiUrl(path), {
+  const res = await fetchOrReauth(path, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -81,6 +105,7 @@ export const API = {
   },
   system: {
     videos: '/system/videos',
+    me: '/system/me',
     presence: '/system/presence',
     vllmStart: '/system/vllm/start',
     vllmStop: '/system/vllm/stop',
@@ -192,6 +217,22 @@ export const API = {
       `/reid-train/performance${model ? `?model=${encodeURIComponent(model)}` : ''}`,
     exportPlan: (p: { split_mode: string; test_ratio: number; seed: number; masked: boolean }) =>
       `/reid-train/export?split_mode=${p.split_mode}&test_ratio=${p.test_ratio}&seed=${p.seed}&masked=${p.masked}`,
+  },
+  // Who did what, when. Written by the backend for every state-changing call
+  // and every job transition; this is the read side.
+  audit: {
+    filters: '/audit/filters',
+    worklog: (p: { since: string; until: string }) => `/audit/worklog${q(p)}`,
+    saves: (id: number) => `/audit/events/${id}/saves`,
+    events: (p: {
+      actor?: string;
+      action?: string;
+      target?: string;
+      since?: string;
+      until?: string;
+      before?: number;
+      limit?: number;
+    }) => `/audit/events${q(p)}`,
   },
   association: {
     videos: '/actor-association/videos',

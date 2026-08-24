@@ -10,11 +10,12 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import unquote
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import Field, field_validator
 
 from yp_video.action import prelabel
+from yp_video.action.segments import pad_and_merge_spans
 from yp_video.config import (
     ACTION_ANNOTATIONS_DIR,
     CUT_R2_CATEGORIES,
@@ -26,13 +27,14 @@ from yp_video.contracts.action import (
     ACTION_CONTRACT_VERSION_ENV,
     ACTION_LABELS_ORDERED,
     SPOT_PROGRESS_PREFIX,
+    event_id,
 )
 from yp_video.core import label_done
 from yp_video.core.annotation_ids import action_id
 from yp_video.core.ffmpeg import parse_optional_float as _parse_optional_float
-from yp_video.action.segments import pad_and_merge_spans
+from yp_video.core.jsonl import read_jsonl
 from yp_video.core.rallies import load_rallies
-from yp_video.web import worklists
+from yp_video.web import audit, worklists
 from yp_video.web.action_annotations import (
     annotation_path,
     load_annotation,
@@ -193,6 +195,18 @@ def _truthy_event_visible(value: object) -> bool:
     if isinstance(value, str):
         return value.strip().lower() not in {"0", "false", "no", "off"}
     return value is not False
+
+
+def _prior_events(output_path: Path) -> list[dict]:
+    """The events currently on disk, or [] when there is no file yet."""
+    if not output_path.exists():
+        return []
+    try:
+        return read_jsonl(output_path)[1]
+    except (OSError, ValueError, json.JSONDecodeError):
+        # An unreadable prior file must not block the save; it only means
+        # every event counts as new in the audit summary.
+        return []
 
 
 def _write_annotation_atomic(output_path: Path, data: dict) -> None:
@@ -461,8 +475,19 @@ async def save_annotations(req: SaveActionAnnotationsRequest) -> dict:
         "events": events,
     }
     output_path = annotation_path(video.name)
+    before = await asyncio.to_thread(_prior_events, output_path)
     await asyncio.to_thread(_write_annotation_atomic, output_path, data)
     sync_to_r2(output_path, "action/annotations")
+
+    # Same autosave timer as the rally editor: an unchanged rewrite is not an
+    # edit, so it leaves no audit row.
+    audit.record_diff(
+        target=video.stem,
+        before=before,
+        after=events,
+        key=event_id,
+        events=len(events),
+    )
     return {"saved": str(output_path), "count": len(events)}
 
 
@@ -814,14 +839,12 @@ def export_dataset() -> Response:
 
 
 @router.get("/video/{path:path}")
-def stream_video(path: str, request: Request):
+def stream_video(path: str):
     decoded_path = unquote(path)
     video_path = resolve_cut(Path(decoded_path).name)
     if video_path is None:
         raise HTTPException(404, "Video not found")
-    response = serve_video_or_r2_redirect(
-        video_path, CUT_R2_CATEGORIES, host=request.headers.get("host")
-    )
+    response = serve_video_or_r2_redirect(video_path, CUT_R2_CATEGORIES)
     if response:
         return response
     raise HTTPException(404, "Video not found")

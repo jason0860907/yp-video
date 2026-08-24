@@ -11,6 +11,8 @@ from enum import Enum
 
 from pydantic import BaseModel
 
+from yp_video.web import access, audit
+
 log = logging.getLogger(__name__)
 MAX_LOG_LINES = 5_000
 MAX_RETAINED_JOBS = 200
@@ -71,6 +73,7 @@ class JobSummary(BaseModel):
     log_count: int
     created_at: float
     started_at: float | None
+    actor: str
 
 
 @dataclass
@@ -86,6 +89,10 @@ class Job:
     logs: deque[str] = field(default_factory=lambda: deque(maxlen=MAX_LOG_LINES))
     created_at: float = field(default_factory=time.time)
     started_at: float | None = None
+    #: Who asked for this run. Captured at creation, because the terminal
+    #: transitions arrive from executor threads where the request context is
+    #: no longer reachable.
+    actor: str = ""
     _task: asyncio.Task | None = field(default=None, repr=False)
     _subscribers: list[asyncio.Queue] = field(default_factory=list, repr=False)
 
@@ -107,6 +114,7 @@ class Job:
             "log_count": len(self.logs),
             "created_at": self.created_at,
             "started_at": self.started_at,
+            "actor": self.actor,
         }
 
 
@@ -153,7 +161,13 @@ class JobManager:
             type=JobType(job_type).value,
             name=name,
             params=params or {},
+            # Read here rather than passed in by each of the seventeen call
+            # sites, so a new job type cannot forget to attribute itself.
+            actor=access.current_actor(),
         )
+        # Lets the request's own audit row name the job it started, which is
+        # how the two are correlated later.
+        audit.detail(job=job.id)
         self.jobs[job.id] = job
         self._prune_terminal_jobs()
         return job
@@ -233,17 +247,21 @@ class JobManager:
         job = self.jobs.get(job_id)
         if not job:
             return
+        if error is not None:
+            job.error = error
         if status is not None:
             new_status = JobStatus(status) if not isinstance(status, JobStatus) else status
             if new_status is JobStatus.RUNNING and job.started_at is None:
                 job.started_at = time.time()
-            job.status = new_status
+            # Only a real transition: several jobs report "running" more than
+            # once, and progress ticks arrive by the hundred.
+            if new_status is not job.status:
+                job.status = new_status
+                audit.job_transition(job, new_status.value)
         if progress is not None:
             job.progress = progress
         if message is not None:
             job.message = message
-        if error is not None:
-            job.error = error
         if name is not None:
             job.name = name
         if params is not None:
@@ -274,20 +292,17 @@ class JobManager:
     async def cancel_job(self, job_id: str) -> bool:
         # PENDING is cancellable too: routers count pending jobs as active,
         # so the UI must be able to cancel what it reports as running.
+        #
+        # Goes through update_job rather than setting the status here. It used
+        # to do both by hand, which made update_job only *look* like the single
+        # funnel for status changes — and left cancellation, the transition
+        # most worth recording, outside the audit trail.
         job = self.jobs.get(job_id)
         if not job or job.status not in (JobStatus.PENDING, JobStatus.RUNNING):
             return False
         if job._task:
             job._task.cancel()
-        job.status = JobStatus.CANCELLED
-        job.message = "Cancelled"
-        # Notify subscribers
-        event = job.to_dict()
-        for q in job._subscribers:
-            try:
-                q.put_nowait(event)
-            except asyncio.QueueFull:
-                log.debug("SSE queue full for job %s, dropping event", job.id)
+        await self.update_job(job_id, status=JobStatus.CANCELLED, message="Cancelled")
         return True
 
     def attach_task(self, jobs: "list[Job] | Job", task: asyncio.Task) -> None:

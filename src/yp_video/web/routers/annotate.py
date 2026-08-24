@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import unquote
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, Response
 from pydantic import Field
 from starlette.background import BackgroundTask
@@ -29,7 +29,7 @@ from yp_video.core import label_done
 from yp_video.core.ffmpeg import FFmpegError, export_segment
 from yp_video.core.jsonl import read_jsonl, read_jsonl_header
 from yp_video.core.rallies import RALLY_SOURCES, SOURCE_BY_TAG, resolve_rally_ids
-from yp_video.web import worklists
+from yp_video.web import audit, worklists
 from yp_video.web.r2_client import r2_client, serve_video_or_r2_redirect, sync_to_r2
 from yp_video.web.schemas import StrictModel
 
@@ -145,7 +145,7 @@ async def get_result(name: str, source: str) -> dict:
 
 
 @router.get("/video/{path:path}")
-def stream_video(path: str, request: Request):
+def stream_video(path: str):
     from yp_video.config import find_cut
     decoded_path = unquote(path)
     basename = Path(decoded_path).name
@@ -164,9 +164,7 @@ def stream_video(path: str, request: Request):
                 alt = RAW_VIDEOS_DIR / decoded_path
                 if alt.exists():
                     video_path = alt
-    response = serve_video_or_r2_redirect(
-        video_path, (*CUT_R2_CATEGORIES, "videos"), host=request.headers.get("host")
-    )
+    response = serve_video_or_r2_redirect(video_path, (*CUT_R2_CATEGORIES, "videos"))
     if response:
         return response
     raise HTTPException(404, f"Video not found: {video_path}")
@@ -188,15 +186,32 @@ def _prior_max_rally_id(output_path: Path) -> int:
         return 0
 
 
+def _prior_rows(output_path: Path) -> list[dict]:
+    """The rows currently on disk, or [] when there is no file yet."""
+    if not output_path.exists():
+        return []
+    try:
+        return read_jsonl(output_path)[1]
+    except (OSError, ValueError, json.JSONDecodeError):
+        # An unreadable prior file is not a reason to refuse the save; it just
+        # means every row counts as new for the audit summary.
+        return []
+
+
 def _write_annotations_atomic(
     output_path: Path, video: str, duration: float, annotations: list[Annotation]
-) -> list[dict]:
-    """Write JSONL via tmp file + atomic rename; returns the saved rows.
+) -> tuple[list[dict], list[dict]]:
+    """Write JSONL via tmp file + atomic rename.
+
+    Returns the rows as written and the rows that were there before, so the
+    caller can audit the difference. The comparison itself belongs to the
+    handler: this function's job is the file.
 
     Ids are assigned here and only here: rows that carry one keep it —
     identity follows the row, sorting is presentation order — and new (None)
     rows are minted ids above the high-water mark, in start order.
     """
+    before = _prior_rows(output_path)
     high = max(
         _prior_max_rally_id(output_path),
         *(a.rally_id for a in annotations if a.rally_id is not None),
@@ -232,7 +247,7 @@ def _write_annotations_atomic(
         f.flush()
         os.fsync(f.fileno())
     os.replace(tmp_path, output_path)
-    return rows
+    return rows, before
 
 
 @router.post("/annotations")
@@ -251,7 +266,7 @@ async def save_annotations(req: SaveAnnotationsRequest) -> dict:
 
     # Run file I/O in a thread so we don't block the event loop
     # (fsync can be slow under concurrent load).
-    saved = await asyncio.to_thread(
+    saved, before = await asyncio.to_thread(
         _write_annotations_atomic,
         output_path,
         req.video,
@@ -261,6 +276,16 @@ async def save_annotations(req: SaveAnnotationsRequest) -> dict:
 
     # Auto-sync to R2 (fire-and-forget; safe to call from async context)
     sync_to_r2(output_path, "rally-spot/annotations")
+
+    # An unchanged rewrite — the autosave timer, or the tab-close flush —
+    # leaves no row at all.
+    audit.record_diff(
+        target=video_path.stem,
+        before=before,
+        after=saved,
+        key=lambda r: r["rally_id"],
+        rallies=len(saved),
+    )
 
     # The rows as written, ids assigned — the editor adopts these so a new
     # rally does not get a fresh id minted on every autosave.
@@ -335,6 +360,7 @@ async def _cut(source: Path, seg: ClipSegment, out: Path) -> None:
 async def cut_clip(req: ClipRequest):
     """Cut a single rally segment and return it as an mp4 download."""
     source = _resolve_clip_source(req.video)
+    audit.detail(target=source.stem, segments=1)
     tmp = Path(tempfile.mkdtemp(prefix="rally-clip-"))
     out = tmp / _clip_name(source.stem, req.segment, 1)
     try:
@@ -355,6 +381,7 @@ async def cut_clip_zip(req: ClipZipRequest):
     if not req.segments:
         raise HTTPException(400, "No segments selected")
     source = _resolve_clip_source(req.video)
+    audit.detail(target=source.stem, segments=len(req.segments))
     tmp = Path(tempfile.mkdtemp(prefix="rally-clips-"))
     try:
         buf = io.BytesIO()
@@ -388,6 +415,9 @@ async def publish_to_app(req: PublishRequest) -> dict:
     calling this). Heavy network I/O runs off the event loop.
     """
     basename = Path(req.video).stem
+    # Publishing pushes the cut video and its manifest out to R2 and the iOS
+    # library — the one action here with an effect outside this machine.
+    audit.detail(target=basename)
     try:
         return await asyncio.to_thread(export_one_match, basename)
     except AppExportError as e:

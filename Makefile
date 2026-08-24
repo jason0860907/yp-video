@@ -1,4 +1,4 @@
-.PHONY: install build-web dev tunnel serve attach url stop contract contract-check
+.PHONY: install build-web dev db-up db-down serve attach stop contract contract-check
 
 SESSION ?= yp
 
@@ -10,7 +10,7 @@ install:
 	curl -LsSf https://astral.sh/uv/install.sh | sh
 	uv venv -p 3.12 --seed
 	uv sync
-	sudo iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 8080
+	@echo "Next: fill in ../.env (see ../.env.example), then make db-up."
 
 # Build the React SPA that FastAPI serves at :8080. Rebuilds only when the
 # frontend sources change (make compares against dist/index.html).
@@ -26,35 +26,39 @@ build-web: $(WEB_DIST)
 dev: build-web
 	uv run yp-app
 
-tunnel:
-	cloudflared tunnel --url http://localhost:8080
+# The audit database. Loopback-only; the app refuses to start without it.
+# --env-file on EVERY compose call: it defaults to .env beside the compose
+# file, and ours lives one level up with the rest of the config. A bare
+# `docker compose ps` fails to interpolate POSTGRES_PASSWORD.
+COMPOSE = docker compose --env-file ../.env
 
-# 一鍵把 dev + tunnel 丟進 tmux 背景跑，關掉 SSH 也不會斷。
+db-up:
+	$(COMPOSE) up -d
+	@$(COMPOSE) ps
+
+db-down:
+	$(COMPOSE) down
+
+# 沒有 tunnel target:cloudflared 是常駐的 systemd service(remotely-managed,
+# token 在 unit 檔裡,設定全在 Cloudflare dashboard),開機自啟、不隨這個
+# tmux session 起落。狀態看 `systemctl status cloudflared`。
+
+# 一鍵把 yp-app 丟進 tmux 背景跑，關掉 SSH 也不會斷。
 # 進程若崩潰會留在原視窗(掉回 shell)方便看錯誤、重跑。
-# 可重複執行 = 重啟:若已在跑,會先砍掉舊 session 再全新啟動
-# (quick tunnel 會換一個新的公開網址,重跑後記得 make url)。
+# 可重複執行 = 重啟:若已在跑,會先砍掉舊 session 再全新啟動。
 serve:
-	@# 已在跑就整個砍掉重開:先關舊 session(含 yp-app + tunnel)
+	@# 已在跑就整個砍掉重開
 	@tmux kill-session -t $(SESSION) 2>/dev/null && echo "✓ 已關閉舊 tmux session '$(SESSION)'" || true
 	@# 再清掉殘留、仍佔著 :8080 的 yp-app(session 被砍但進程沒死),避免新進程綁不到 port
 	@if pkill -x yp-app 2>/dev/null; then \
 		echo "✓ 已關閉殘留的 yp-app"; \
 		for i in 1 2 3 4 5; do pgrep -x yp-app >/dev/null 2>&1 || break; sleep 1; done; \
 	fi
-	@tmux new-session -d -s $(SESSION) -n dev    '$(MAKE) dev;    exec $$SHELL'
-	@tmux new-window  -t $(SESSION)   -n tunnel  '$(MAKE) tunnel; exec $$SHELL'
-	@echo "✓ 已在 tmux session '$(SESSION)' 啟動 dev + tunnel"
-	@echo "   make url     取得公開網址(等幾秒讓 tunnel 起來)"
+	@tmux new-session -d -s $(SESSION) -n dev '$(MAKE) dev; exec $$SHELL'
+	@echo "✓ 已在 tmux session '$(SESSION)' 啟動 yp-app"
+	@echo "   https://label.volley-iq.com  公開網址(Cloudflare Access 登入)"
 	@echo "   make attach  進去看畫面(離開按 Ctrl-b 再按 d)"
 	@echo "   make stop    關閉整個服務"
-
-# 從 tunnel 視窗的輸出撈出 trycloudflare 公開網址。
-# (排除 api.trycloudflare.com — 那是 cloudflared 自己的 API,錯誤訊息裡會出現)
-url:
-	@u=$$(tmux capture-pane -t $(SESSION):tunnel -p -S - 2>/dev/null \
-		| grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' | grep -v '^https://api\.' | tail -1); \
-	if [ -n "$$u" ]; then echo "$$u"; \
-	else echo "⏳ 還抓不到網址 — tunnel 可能還在啟動,等幾秒再 make url(或 make attach 看 tunnel 視窗)"; fi
 
 attach:
 	@tmux attach -t $(SESSION)

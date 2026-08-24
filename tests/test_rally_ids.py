@@ -79,7 +79,7 @@ class SaveTests(unittest.TestCase):
     def test_ids_follow_rows_and_new_rows_mint_above_high_water(self) -> None:
         with tempfile.TemporaryDirectory() as raw_dir:
             out = Path(raw_dir) / "m_annotations.jsonl"
-            rows = annotate._write_annotations_atomic(
+            rows, _ = annotate._write_annotations_atomic(
                 out, "m", 60.0,
                 [self._annotation(10, 20), self._annotation(5, 8)],
             )
@@ -87,7 +87,7 @@ class SaveTests(unittest.TestCase):
             self.assertEqual([r["start"] for r in rows], [5, 10])
 
             # Move a span and insert one BEFORE it: identity follows the row.
-            rows = annotate._write_annotations_atomic(
+            rows, _ = annotate._write_annotations_atomic(
                 out, "m", 60.0,
                 [
                     self._annotation(9, 21, rally_id=2),
@@ -113,7 +113,7 @@ class SaveTests(unittest.TestCase):
                 [self._annotation(1, 2), self._annotation(3, 4)],
             )
             # Delete rally 2, then add a new one.
-            rows = annotate._write_annotations_atomic(
+            rows, _ = annotate._write_annotations_atomic(
                 out, "m", 60.0,
                 [self._annotation(1, 2, rally_id=1), self._annotation(5, 6)],
             )

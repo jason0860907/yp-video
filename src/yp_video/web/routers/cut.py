@@ -2,7 +2,7 @@
 
 import asyncio
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from yp_video.config import (
@@ -10,6 +10,7 @@ from yp_video.config import (
     RAW_VIDEOS_DIR,
 )
 from yp_video.core.ffmpeg import FFmpegError, export_segment
+from yp_video.web import audit
 from yp_video.web.r2_client import serve_video_or_r2_redirect, sync_to_r2
 from yp_video.web.schemas import StrictModel
 
@@ -47,10 +48,8 @@ def list_videos() -> list[str]:
 
 
 @router.get("/video/{name}")
-def stream_video(name: str, request: Request):
-    response = serve_video_or_r2_redirect(
-        RAW_VIDEOS_DIR / name, ("videos",), host=request.headers.get("host")
-    )
+def stream_video(name: str):
+    response = serve_video_or_r2_redirect(RAW_VIDEOS_DIR / name, ("videos",))
     if response:
         return response
     raise HTTPException(404, "Video not found")
@@ -102,4 +101,7 @@ async def export_segments(req: ExportRequest) -> ExportResult:
             except FFmpegError:
                 failed.append(output_name)
 
+    audit.detail(
+        target=req.source, kind=req.kind, sets=len(success), failed=len(failed)
+    )
     return ExportResult(success=success, failed=failed)

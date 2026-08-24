@@ -10,6 +10,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 
 from yp_video.config import R2_CATEGORIES
+from yp_video.web import audit
 from yp_video.web.job_helpers import (
     batch_message,
     fail_job_from_exc,
@@ -449,6 +450,11 @@ def delete_local_files(req: DeleteLocalRequest):
         if parent != base_dir and parent.is_dir() and not any(parent.iterdir()):
             parent.rmdir()
 
+    # Destructive and irreversible: the audit row is the only record that a
+    # file was here at all.
+    audit.detail(
+        target=req.category, deleted=len(deleted), skipped=len(skipped), force=req.force
+    )
     return {"deleted": deleted, "skipped": skipped}
 
 
@@ -465,6 +471,7 @@ def delete_r2_files(req: DeleteR2Request):
         return {"deleted": 0}
 
     deleted = r2_client.delete_objects([f"{req.category}/{p}" for p in req.files])
+    audit.detail(target=req.category, deleted=deleted)
     return {"deleted": deleted}
 
 

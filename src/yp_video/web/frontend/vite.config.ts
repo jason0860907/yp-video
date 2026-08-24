@@ -22,7 +22,16 @@ export default defineConfig({
     port: 5173,
     fs: { allow: [searchForWorkspaceRoot(process.cwd()), contractsDir] },
     proxy: {
-      '/api': { target: 'http://localhost:8080', changeOrigin: true },
+      // The backend requires a Cloudflare Access assertion on every request,
+      // and the dev server is not behind Access. Rather than give the app a
+      // bypass — the one hole the audit trail cannot have — carry a real
+      // token, minted with:
+      //   export YP_ACCESS_TOKEN=$(cloudflared access token -app=https://label.volley-iq.com)
+      '/api': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+        headers: { 'Cf-Access-Jwt-Assertion': process.env.YP_ACCESS_TOKEN ?? '' },
+      },
     },
   },
   build: {

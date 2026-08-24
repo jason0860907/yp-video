@@ -12,6 +12,7 @@
 - **Train** - 用校正後的標註訓練 SPOT 模型（rally 分段與 action 事件各一套流程）
 - **Predict** - 用訓練好的 SPOT checkpoint 對影片做推論
 - **Jobs** - 監控背景任務、控制 vLLM 伺服器
+- **Audit** - 誰在什麼時候做了什麼：每個會改變狀態的操作與背景工作都留下紀錄
 
 SPOT 模型本體住在獨立的 `~/yp-spot` repo（自己的 venv），yp-video 透過 subprocess + JSON 檔案跨進程呼叫它——這裡只負責組指令、解析 checkpoint、轉換輸出格式。
 
@@ -20,9 +21,44 @@ SPOT 模型本體住在獨立的 `~/yp-spot` repo（自己的 venv），yp-video
 ```bash
 # 使用 uv 安裝依賴
 uv sync
+
+# 所有設定都在 workspace 根目錄的單一 .env（R2 金鑰、服務 token、
+# Cloudflare Access、稽核資料庫、vLLM 參數全都在裡面）
+cp ../.env.example ../.env    # 填好之後 ../scripts/sync-env.sh 會散佈給後端兩個元件
+
+# 稽核資料庫（本機 Postgres，只綁 loopback）
+make db-up
 ```
 
-需要系統安裝 `ffmpeg` 和 `ffprobe`。
+需要系統安裝 `ffmpeg` 和 `ffprobe`，以及 `docker compose`。
+
+## 存取與稽核
+
+這個 dashboard 只從 `https://label.volley-iq.com` 進入，由 **Cloudflare Access**
+擋在 named tunnel 前面。yp-app 只綁 `127.0.0.1`，cloudflared 是它唯一的客戶端：
+沒有 LAN 直連、沒有本機後門，因為任何繞過登入的路徑都會在稽核紀錄裡變成一筆
+沒有名字的操作。
+
+每個非 GET 的 `/api` 請求，以及每次背景工作的狀態轉換，都會寫進 Postgres 的
+`audit_events`：時間、執行者（Access 驗出來的 email）、動作、對象、關鍵數字與
+結果。請求內容本身不會存。Rally / Action 編輯器的自動存檔會摺疊成一列（`repeats`），
+否則一次標註就會把整張表淹掉。
+
+一次性設定（在 Cloudflare Zero Trust 後台）：
+
+1. **Networks → Tunnels** 建立 named tunnel `yp-video`，Public Hostname 設成
+   `label.volley-iq.com` → `http://localhost:8080`。
+2. **Access → Applications** 新增 self-hosted application，網域填同一個 hostname，
+   policy 允許標註人員的 email。
+3. 把該 application 的 **Application Audience (AUD) Tag** 與 team 網域填進 `~/volleyiq/.env`
+   的 `CF_ACCESS_AUD` / `CF_ACCESS_TEAM_DOMAIN`。
+
+前端開發（`npm run dev`）也需要一張真的 Access token，因為後端不接受無身分請求：
+
+```bash
+cloudflared access login https://label.volley-iq.com
+export YP_ACCESS_TOKEN=$(cloudflared access token -app=https://label.volley-iq.com)
+```
 
 ReID 的可選外部模型:SAM 3D Body 住在 repo 外的 `../third_party/`,CLIP-ReIdent 系譜的訓練/推論住在 sibling package `../yp-reid/`(獨立 venv,subprocess 邊界,比照 yp-spot)。重建步驟見 [docs/third_party.md](docs/third_party.md) —— 缺權重時對應功能自動退場,不影響其他部分。
 
@@ -111,12 +147,17 @@ yp-video/
 │   │   └── rename_tpvl.py      # TPVL 重命名
 │   └── web/                    # Web Dashboard
 │       ├── app.py              # FastAPI 應用
+│       ├── access.py           # Cloudflare Access 驗證（誰在操作）
+│       ├── audit.py            # 稽核軌跡：middleware + 寫入佇列
+│       ├── db.py               # 稽核用 Postgres 連線池與 migration
+│       │                       # （設定一律讀 workspace 根目錄的 ../.env）
 │       ├── jobs.py             # 背景任務管理
 │       ├── vllm_manager.py     # vLLM 生命週期管理
 │       ├── routers/            # API 路由
-│       └── static/             # 前端 SPA
+│       └── frontend/           # React SPA（build 到 frontend/dist）
+├── migrations/                 # 稽核資料庫 schema（NNNN_*.sql）
+├── docker-compose.yml          # 本機 Postgres
 ├── prompts/                    # VLM Prompt 模板
-├── vllm.env                    # vLLM 伺服器設定
 ├── rally.sh                    # 批次偵測腳本
 ├── start_vllm_server.sh        # vLLM 啟動腳本
 └── pyproject.toml
@@ -147,7 +188,7 @@ yp-video/
 
 | 指令 | Pipeline 順序 | 說明 |
 |------|:---:|------|
-| `yp-app` | — | 啟動 Web Dashboard（port 8080） |
+| `yp-app` | — | 啟動 Web Dashboard（port 8080，只綁 loopback） |
 | `yp-download` | 1 | 下載 YouTube 影片 |
 | `yp-vlm-segment` | 2 | VLM 排球偵測 |
 | `yp-vlm-to-rally` | 3 | VLM 片段偵測 → Rally 標註合併 |

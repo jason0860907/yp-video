@@ -12,10 +12,21 @@ from yp_video.config import (
     iter_all_cuts,
 )
 from yp_video.web import worklists
+from yp_video.web.access import current_actor
 from yp_video.web.schemas import StrictModel
 from yp_video.web.vllm_manager import vllm_manager
 
 router = APIRouter()
+
+
+@router.get("/me")
+def me() -> dict:
+    """Who Cloudflare Access says is making this request.
+
+    The top bar shows it, so a labeler can see which identity their actions
+    are being recorded under.
+    """
+    return {"email": current_actor()}
 
 # ── Presence (who has the page open right now) ────────────────────
 # Each browser sends a heartbeat with a persistent random id every ~30 s;

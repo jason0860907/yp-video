@@ -32,6 +32,11 @@ dependencies = [
     "scipy>=1.11",
     "onnxruntime>=1.20",
     "orjson>=3.11.9",
+    # Audit trail: Cloudflare Access identity + the Postgres it is written to.
+    # PyJWT ships PyJWKClient, which fetches and caches the Access JWKS for us;
+    # it already arrives via vllm, but the audit gate depends on it directly.
+    "pyjwt[crypto]>=2.10",
+    "psycopg[binary,pool]>=3.2",
 ]
 
 

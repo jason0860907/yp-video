@@ -31,7 +31,7 @@ from yp_video.reid.embedder import (
     build_embedders,
     threshold_calibration,
 )
-from yp_video.web import worklists
+from yp_video.web import audit, worklists
 from yp_video.web.job_helpers import init_batch_items, spawn_batch_video_job
 from yp_video.web.jobs import JobSummary, JobType, job_manager
 from yp_video.web.schemas import StrictModel
@@ -245,6 +245,19 @@ def put_done(name: str, req: DoneRequest) -> dict:
     return {"done": req.done, "confirmed_auto_actors": confirmed}
 
 
+def _naming_rows(players) -> list[dict]:
+    """The two naming maps as one list of records, for auditing.
+
+    Tracks and assignments are keyed independently, so the scope prefix keeps
+    a track and an event that share a key from looking like the same item.
+    """
+    return [
+        {"id": f"track:{k}", "name": v} for k, v in players.tracks.items()
+    ] + [
+        {"id": f"event:{k}", "name": v} for k, v in players.assignments.items()
+    ]
+
+
 @router.put("/players/{name}")
 def put_players(name: str, req: SavePlayersRequest) -> dict:
     """Persist the naming maps. Returns them without matches — a save must
@@ -252,7 +265,18 @@ def put_players(name: str, req: SavePlayersRequest) -> dict:
     stem = Path(unquote(name)).stem
     if not extraction_store.records_path(stem).exists():
         raise HTTPException(404, f"No extraction records for {stem}")
+    before = _naming_rows(store.load_players(stem))
     store.save_players(stem, tracks=req.tracks, assignments=req.assignments)
+    # Read back rather than trusting the request: save_players cleans empty
+    # names out, so the request is not what landed.
+    audit.record_diff(
+        target=stem,
+        before=before,
+        after=_naming_rows(store.load_players(stem)),
+        key=lambda r: r["id"],
+        tracks=len(req.tracks),
+        assignments=len(req.assignments),
+    )
     return {
         "tracks": req.tracks,
         "assignments": req.assignments,

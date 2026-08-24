@@ -54,6 +54,9 @@ PROMPTS_DIR = PROJECT_ROOT / "prompts"
 # is how yp-video ended up signing R2 with a different key pair than every
 # other component.
 ENV_PATH = PROJECT_ROOT.parent / ".env"
+# Applied at startup by web.db; NNNN_snake_case.sql, same convention the
+# sibling upload-service worker uses.
+MIGRATIONS_DIR = PROJECT_ROOT / "migrations"
 VENV_PYTHON = PROJECT_ROOT / ".venv" / "bin" / "python"
 LOGS_DIR = PROJECT_ROOT / "logs"
 APP_LOG_PATH = LOGS_DIR / "yp-app.log"
