@@ -2,12 +2,12 @@
 
 掃描日期：2026-08-24 · 資料：`videos/rally-spot/annotations` × `videos/action/annotations`（197 支影片、8,722 rallies）
 
-判定：rally span `[start, end]` 內第一個動作事件不是 `serve`。共 121 筆。
+判定：rally span `[start, end]` 內第一個動作事件不是 `serve`。共 85 筆。
 
 分類：`serve 不在最前` = span 內有 serve，但前面還有別的動作；`疑似漏標` = span 內外都找不到鄰近 serve。
 
 
-## serve 不在最前 — 7 筆
+## serve 不在最前 — 7 筆 (已改)
 
 | 影片 | Rally | 起 | 訖 | 首個動作 | 距前一個 serve | 動作序列（前 6） |
 |---|---:|---:|---:|---|---:|---|
