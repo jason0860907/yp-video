@@ -26,7 +26,7 @@ from yp_video.contracts.action import ACTOR_WINDOW_OFFSETS, ActorTargetKind, eve
 from yp_video.core.jsonl import read_jsonl_cached
 from yp_video.extraction.store import records_path
 from yp_video.tracklets.geometry import TrackletIndex
-from yp_video.tracklets.store import tracks_path
+from yp_video.tracklets.store import tracks_path, tracks_stride
 
 
 def _frame_size(stem: str) -> tuple[int, int] | None:
@@ -173,7 +173,15 @@ def build(stem: str, events: Iterable[dict]) -> tuple[list[dict], dict[str, int]
         if label.verdict is ActorVerdict.OCCLUDED:
             kind, target = ActorTargetKind.OCCLUDED, None
         else:
-            named = label.track
+            # Not label.track: after a re-track the stored pair still
+            # resolves, to whoever inherited the number, and training on that
+            # teaches the ranker the wrong player. A pick the anchor no longer
+            # bears out falls to the box rule below, same as a box verdict.
+            named = (
+                label.borne_out_by(index, frame, stride=tracks_stride(stem))
+                if index is not None
+                else None
+            )
             if named is None and index is not None:
                 # A verdict that names a person by box alone — a legacy
                 # hand-drawn pick, or a confirm snapshot of the rule's box.

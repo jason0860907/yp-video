@@ -53,7 +53,6 @@ from yp_video.tracklets.geometry import (
     BoxQuery,
     TrackletIndex,
     TrackRef,
-    anchor_names_another,
     link_boxes,
 )
 from yp_video.tracklets.store import (
@@ -62,6 +61,7 @@ from yp_video.tracklets.store import (
     tracklet_index,
     tracks_masks_path,
     tracks_path,
+    tracks_stride,
 )
 
 # Keyed by stem on its source files. Tiny values (one small dict per video).
@@ -101,56 +101,60 @@ def _anchor(label: ActorLabel | None, record: dict) -> tuple[int, list[float]]:
     would quietly hand the pick back to whoever the policy preferred — the
     very thing naming a tracklet was for.
     """
-    frame = record.get("crop_frame") or record["frame"]
-    if label is not None and label.track is not None and label.box is not None:
-        # A cross-frame pick was drawn on its own frame; look there.
-        return int(frame if label.frame is None else label.frame), list(label.box)
-    return int(frame), list(record.get("actor_box") or record["box"])
+    frame = int(record.get("crop_frame") or record["frame"])
+    anchor = label.anchor_at(frame) if label is not None else None
+    return anchor or (frame, list(record.get("actor_box") or record["box"]))
 
 
-def _borne_out(
-    index: TrackletIndex,
-    named: TrackRef,
-    *,
-    by_human: bool,
-    frame: int,
-    anchor: list[float],
-    stride: int,
-) -> bool:
-    """Whether the tracklets still bear out the name somebody gave.
+def borne_out_track(stem: str, label: ActorLabel, frame: int) -> TrackRef | None:
+    """The tracklet this label names, once the tracklets bear it out.
 
-    A PERSON's pick is checked against its anchor as well: after a re-track
-    the pair usually still exists but wears a different player, and only the
-    box they pointed at tells those apart. It takes a positive contradiction
-    to overturn one — silence is not evidence, see ``anchor_names_another``.
+    None in the two ways a re-track invalidates a stored pick — the pair is
+    gone, or the anchor names somebody else — so a caller falls back to what
+    the person actually clicked rather than cropping, ranking or training on
+    whoever inherited the number.
 
-    A POLICY's pick is checked for existence, as before. It lives in the
-    records file, which extraction regenerates from the tracklets it is being
-    compared against, so it is not a durable answer that has to survive a
-    re-run — and its box is the display box for the same event, which for an
-    overlapping pair can name the other player. Anchoring it would reject
-    answers that are simply the policy disagreeing with geometry, which is the
-    disagreement naming a tracklet exists to settle.
+    The same question ``_event_tracks`` asks for the whole board, for the
+    callers that hold one label at a time. It lives here and not at each of
+    them because a second opinion about who a pick names is exactly how the
+    crop, the candidate list and the board come to disagree about one event.
     """
-    if index.tracklet(named) is None:
-        return False
-    return not by_human or not anchor_names_another(
-        index, named, frame, anchor, stride=stride
+    if label.track is None or not tracks_path(stem).exists():
+        return None
+    return label.borne_out_by(
+        tracklet_index(stem), frame, stride=tracks_stride(stem)
     )
 
 
-def _named_track(label: ActorLabel | None, record: dict) -> TrackRef | None:
-    """The tracklet somebody NAMED for this event, human before policy.
+def _honoured(
+    index: TrackletIndex,
+    label: ActorLabel | None,
+    record: dict,
+    *,
+    stride: int,
+) -> TrackRef | None:
+    """The tracklet to take at face value here, or None to re-derive one.
 
-    A human's pick outranks a policy's for the same reason it does everywhere
-    else: they looked. Neither is checked for existence here — the caller does
-    that, because "named a tracklet that is gone" and "named nothing" lead to
-    the same place but are not the same fact.
+    A PERSON's pick answers through ``ActorLabel.borne_out_by``: the anchor
+    has to still bear the name out, because after a re-track the stored pair
+    resolves perfectly well — to whoever inherited the number. Their pick
+    outranks a policy's for the reason it does everywhere else: they looked.
+
+    A POLICY's pick is checked for existence, as it always was. It lives in
+    the records file, which extraction regenerates from the very tracklets it
+    would be compared against, so it is not a durable answer that has to
+    survive a re-run — and its box is the display box for the same event,
+    which for an overlapping pair can name the other player. Anchoring it
+    would reject answers that are merely the policy disagreeing with geometry,
+    and settling that disagreement is what naming a tracklet is for.
     """
     if label is not None and label.track is not None:
-        return label.track
+        return label.borne_out_by(
+            index, int(record.get("crop_frame") or record["frame"]), stride=stride
+        )
     stored = record.get("track")
-    return TrackRef.parse(stored) if stored else None
+    named = TrackRef.parse(stored) if stored else None
+    return named if named is not None and index.tracklet(named) is not None else None
 
 
 def _event_tracks(stem: str) -> dict[str, TrackRef]:
@@ -170,15 +174,13 @@ def _event_tracks(stem: str) -> dict[str, TrackRef]:
         event_id = record["id"]
         label = verdicts.get(str(event_id))
         by_human = label is not None and label.track is not None
-        named = _named_track(label, record)
+        honoured = _honoured(index, label, record, stride=stride)
+        if honoured is not None:
+            out[event_id] = honoured
+            continue
         # A cross-frame pick's box lives on crop_frame, not the event frame
         # (the actor was not trackable there) — look it up THERE.
         frame, anchor = _anchor(label, record)
-        if named is not None and _borne_out(
-            index, named, by_human=by_human, frame=frame, anchor=anchor, stride=stride
-        ):
-            out[event_id] = named
-            continue
         queries.append(
             BoxQuery(
                 key=event_id,

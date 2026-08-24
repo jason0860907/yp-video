@@ -62,7 +62,11 @@ from pathlib import Path
 from yp_video.actor.resolution import ActorResolution, actor_resolution
 from yp_video.config import ASSOCIATION_ANNOTATIONS_DIR
 from yp_video.core.sidecar import JsonSidecar
-from yp_video.tracklets.geometry import TrackRef
+from yp_video.tracklets.geometry import (
+    TrackletIndex,
+    TrackRef,
+    anchor_names_another,
+)
 
 SCHEMA_VERSION = 2
 #: The name this package owns inside the shared annotations directory.
@@ -93,6 +97,41 @@ class ActorLabel:
     #: only attach an occluder. Meaningless for a tracklet label — the track
     #: already names the person.
     snap: bool = True
+
+    def anchor_at(self, frame: int) -> tuple[int, list[float]] | None:
+        """Where the person pointed — (frame, box) — when they named a track.
+
+        None when there is nothing to check a name against: no pick, or a pick
+        with no box. That is silence, and silence overturns nothing.
+        """
+        if self.track is None or self.box is None:
+            return None
+        # A cross-frame pick was drawn on its own frame; look there.
+        return int(frame if self.frame is None else self.frame), list(self.box)
+
+    def borne_out_by(
+        self, index: TrackletIndex, frame: int, *, stride: int = 1
+    ) -> TrackRef | None:
+        """The tracklet this label names, once ``index`` bears it out.
+
+        None in the two ways a re-track invalidates a stored pick — the pair
+        is gone, or the anchor names somebody else — so every caller falls
+        back to the box instead of cropping, ranking or training on whoever
+        inherited the number.
+
+        Existence alone is not the test, which is the trap this exists for:
+        ``track_id`` restarts per rally and gets reused, so after a re-track
+        the stored pair almost always still resolves, just to somebody else.
+        The anchor is the durable half of the label; the id is a pointer.
+        """
+        if self.track is None or index.tracklet(self.track) is None:
+            return None
+        anchor = self.anchor_at(frame)
+        if anchor is None:
+            return self.track
+        if anchor_names_another(index, self.track, anchor[0], anchor[1], stride=stride):
+            return None
+        return self.track
 
     @property
     def overrides_auto(self) -> bool:

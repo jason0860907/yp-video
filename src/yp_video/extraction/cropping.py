@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from yp_video.actor.labels import ActorLabel
-from yp_video.extraction.links import resolve_track
+from yp_video.extraction.links import borne_out_track, resolve_track
 from yp_video.person.detector import PersonBox, iou, person_from_detection
 from yp_video.tracklets.geometry import TrackRef
 from yp_video.tracklets.store import TrackMasks
@@ -126,11 +126,16 @@ def label_target(
     the tracklet cannot be resolved — ``track_id`` restarts per rally, so
     re-tracking renumbers everything. Falling back to what the human actually
     clicked keeps the label meaningful; dropping it would not.
+
+    "Cannot be resolved" is borne_out_track's question, not "does the pair
+    exist": after a re-track it almost always does, wearing whoever inherited
+    the number, and cropping THAT is how a re-extraction would quietly cut a
+    stranger for every pick a person made.
     """
     return crop_target(
         stem,
         record,
-        label.track,
+        borne_out_track(stem, label, int(record.get("crop_frame") or record["frame"])),
         (
             CropTarget(
                 label.box,

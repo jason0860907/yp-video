@@ -32,6 +32,7 @@ from yp_video.extraction.store import (
 from yp_video.tracklets.store import (
     tracks_masks_path,
     tracks_path,
+    tracks_stride,
 )
 
 _dataset_cache: StatCache = StatCache()
@@ -132,7 +133,12 @@ def build_track_dataset(stems: Sequence[str] | None = None) -> TrackDataset:
                 if label.verdict is ActorVerdict.OCCLUDED:
                     target = None
                 else:
-                    named = label.track
+                    # Not label.track — see actor/candidates.py: a re-track
+                    # renumbers, and the stored pair goes on resolving to
+                    # somebody else. Unborne-out picks take the box path.
+                    named = label.borne_out_by(
+                        video.tracks, int(record["frame"]), stride=tracks_stride(stem)
+                    )
                     if named is None:
                         # A box verdict names a PERSON, not a candidate in
                         # this list. Resolving it by overlap is not a liberty:

@@ -22,7 +22,7 @@ import numpy as np
 
 from yp_video.config import TRACKS_DIR
 from yp_video.core.cache import StatCache
-from yp_video.core.jsonl import atomic_binary, read_jsonl_cached
+from yp_video.core.jsonl import atomic_binary, read_jsonl_cached, read_jsonl_header
 from yp_video.tracklets.geometry import TrackletIndex
 
 
@@ -33,6 +33,19 @@ def track_key(rally_id: int, track_id: int) -> str:
 
 def tracks_path(stem: str) -> Path:
     return TRACKS_DIR / f"{stem}_tracks.jsonl"
+
+
+def tracks_stride(stem: str) -> int:
+    """The frame stride these tracklets were cut at; 1 when unrecorded.
+
+    Every "was this tracklet near frame N" question has to widen by it, or a
+    stride > 1 run answers "not detected there" for a player standing in plain
+    sight on the frames it skipped.
+    """
+    path = tracks_path(stem)
+    if not path.exists():
+        return 1
+    return int(read_jsonl_header(path).get("stride") or 1)
 
 
 def tracks_masks_path(stem: str) -> Path:

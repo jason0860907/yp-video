@@ -363,6 +363,98 @@ class EventTrackPrecedenceTests(unittest.TestCase):
             self.assertEqual(links._event_tracks("match")["e1"], TrackRef(1, 3))
 
 
+class LabelBorneOutTests(unittest.TestCase):
+    """The single rule the board, the crop and the candidate list share.
+
+    Testing it here rather than three times over: extraction/links,
+    extraction/cropping and actor/candidates all answer "who does this label
+    name TODAY" through ActorLabel.borne_out_by, so a second opinion about it
+    cannot exist to drift.
+    """
+
+    ACTOR = _tracklet(1, 1, [100], [100, 100, 140, 200])
+    BYSTANDER = _tracklet(1, 2, [100], [104, 100, 148, 200])
+    INDEX = TrackletIndex([ACTOR, BYSTANDER])
+
+    def _pick(self, track, box=(104, 100, 148, 200), frame=None):
+        return ActorLabel(ActorVerdict.MANUAL, track=track, box=box, frame=frame)
+
+    def test_an_anchor_that_still_fits_keeps_the_pick(self) -> None:
+        self.assertEqual(
+            self._pick(TrackRef(1, 2)).borne_out_by(self.INDEX, 100), TrackRef(1, 2)
+        )
+
+    def test_a_renumbered_id_loses_the_pick(self) -> None:
+        """The re-track: 1:2 still exists, wearing the other player."""
+        swapped = TrackletIndex(
+            [_tracklet(1, 2, [100], [100, 100, 140, 200]),
+             _tracklet(1, 1, [100], [104, 100, 148, 200])]
+        )
+        self.assertIsNone(self._pick(TrackRef(1, 2)).borne_out_by(swapped, 100))
+
+    def test_a_pair_that_is_gone_loses_the_pick(self) -> None:
+        self.assertIsNone(self._pick(TrackRef(9, 9)).borne_out_by(self.INDEX, 100))
+
+    def test_a_pick_with_no_box_has_nothing_to_check(self) -> None:
+        """Silence, not contradiction — the pick stands."""
+        self.assertEqual(
+            self._pick(TrackRef(1, 2), box=None).borne_out_by(self.INDEX, 100),
+            TrackRef(1, 2),
+        )
+
+    def test_a_frame_with_no_detections_is_silence_too(self) -> None:
+        self.assertEqual(
+            self._pick(TrackRef(1, 2)).borne_out_by(self.INDEX, 400), TrackRef(1, 2)
+        )
+
+    def test_a_cross_frame_pick_is_judged_on_its_own_frame(self) -> None:
+        """label.frame is where they clicked; the event frame would say 1:1."""
+        elsewhere = TrackletIndex(
+            [_tracklet(1, 1, [100, 400], [0, 0, 10, 10]),
+             _tracklet(1, 2, [400], [104, 100, 148, 200])]
+        )
+        pick = self._pick(TrackRef(1, 2), frame=400)
+        self.assertEqual(pick.borne_out_by(elsewhere, 100), TrackRef(1, 2))
+
+    def test_a_box_only_verdict_names_no_tracklet(self) -> None:
+        bare = ActorLabel(ActorVerdict.MANUAL, box=(104, 100, 148, 200))
+        self.assertIsNone(bare.borne_out_by(self.INDEX, 100))
+
+
+class CropFallsBackToTheClickTests(unittest.TestCase):
+    """A re-track must not send re-extraction to crop a stranger.
+
+    crop_target resolves a tracklet whenever it is given one, so the guard has
+    to be that label_target stops handing it a pick the anchor disowns — then
+    the fallback it already carries, the box the person actually clicked,
+    takes over.
+    """
+
+    def test_a_disowned_pick_crops_the_box_the_human_clicked(self) -> None:
+        from yp_video.extraction import cropping
+
+        swapped = TrackletIndex(
+            [_tracklet(1, 2, [100], [100, 100, 140, 200]),
+             _tracklet(1, 1, [100], [104, 100, 148, 200])]
+        )
+        record = {"id": "e1", "frame": 100, "box": [90, 90, 160, 210]}
+        label = ActorLabel(
+            ActorVerdict.MANUAL, track=TrackRef(1, 2), box=(104, 100, 148, 200)
+        )
+        with tempfile.TemporaryDirectory() as raw:
+            tracks = Path(raw) / "t.jsonl"
+            write_jsonl(tracks, {"stride": 1}, [])
+            with (
+                patch.object(links, "tracks_path", return_value=tracks),
+                patch.object(links, "tracklet_index", return_value=swapped),
+                patch.object(links, "tracks_stride", return_value=1),
+                patch.object(cropping, "resolve_track") as resolve,
+            ):
+                target = cropping.label_target("match", record, label)
+        resolve.assert_not_called()
+        self.assertEqual(list(target.box), [104, 100, 148, 200])
+
+
 class UnresolvedLabelsTests(unittest.TestCase):
     """The re-pick worklist: a labeled event resolvable to no tracklet.
 
