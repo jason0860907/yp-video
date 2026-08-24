@@ -258,19 +258,19 @@ class EventTrackPrecedenceTests(unittest.TestCase):
     }
 
     @contextmanager
-    def _video(self, labels):
+    def _video(self, labels, tracklets=None):
+        """``tracklets`` stands in for a re-tracking run that renumbered."""
+        tracklets = [self.ACTOR, self.BYSTANDER] if tracklets is None else tracklets
         with tempfile.TemporaryDirectory() as raw_dir:
             root = Path(raw_dir)
             tracks, records = root / "t.jsonl", root / "r.jsonl"
-            write_jsonl(tracks, {"stride": 1}, [self.ACTOR, self.BYSTANDER])
+            write_jsonl(tracks, {"stride": 1}, tracklets)
             write_jsonl(records, {"video": "match"}, [self.RECORD])
             with (
                 patch.object(links, "tracks_path", return_value=tracks),
                 patch.object(links, "records_path", return_value=records),
                 patch.object(
-                    links,
-                    "tracklet_index",
-                    return_value=TrackletIndex([self.ACTOR, self.BYSTANDER]),
+                    links, "tracklet_index", return_value=TrackletIndex(tracklets)
                 ),
                 patch.object(links.actor_labels, "load", return_value=labels),
             ):
@@ -297,10 +297,70 @@ class EventTrackPrecedenceTests(unittest.TestCase):
 
     def test_a_named_tracklet_that_no_longer_exists_falls_back(self) -> None:
         """Re-tracking renumbers every id — honouring a stale name would point
-        at whoever inherited the number."""
+        at whoever inherited the number.
+
+        It falls back to the HUMAN's anchor, not the record's box: they
+        pointed at the bystander, so re-deriving hands them the bystander even
+        though the policy's box names the actor.
+        """
         label = ActorLabel(ActorVerdict.MANUAL, track=TrackRef(9, 9), box=(104, 100, 148, 200))
         with self._video({"e1": label}):
+            self.assertEqual(links._event_tracks("match")["e1"], TrackRef(1, 2))
+
+    def test_a_pick_survives_a_re_track_that_swapped_the_ids(self) -> None:
+        """The whole point: re-running tracking must not move a human's pick.
+
+        ByteTrack numbers per rally and reuses the numbers, so a re-run can
+        hand 1:2 to the other player. The stored pair still EXISTS — which is
+        why existence was never proof — but the anchor says it is somebody
+        else now, and the same anchor re-derives the person they picked under
+        whatever id that person wears today.
+        """
+        swapped = [_tracklet(1, 2, [100], [100, 100, 140, 200]),   # was the actor's id
+                   _tracklet(1, 1, [100], [104, 100, 148, 200])]   # bystander, renumbered
+        label = ActorLabel(ActorVerdict.MANUAL, track=TrackRef(1, 2), box=(104, 100, 148, 200))
+        with self._video({"e1": label}, tracklets=swapped):
             self.assertEqual(links._event_tracks("match")["e1"], TrackRef(1, 1))
+
+    def test_a_re_track_that_kept_the_id_keeps_the_pick(self) -> None:
+        """The other half: an id that survived is honoured, untouched."""
+        label = ActorLabel(ActorVerdict.MANUAL, track=TrackRef(1, 2), box=(104, 100, 148, 200))
+        with self._video({"e1": label}):
+            self.assertEqual(links._event_tracks("match")["e1"], TrackRef(1, 2))
+
+    def test_a_re_derived_pick_refuses_a_near_tie(self) -> None:
+        """Two players a hair apart: re-deriving must not guess between them.
+
+        No answer sends the event to the re-pick worklist. A wrong one would
+        silently reassign a deliberate pick — the 6.7% this module exists to
+        stop.
+        """
+        twins = [_tracklet(1, 3, [100], [100, 100, 140, 200]),
+                 _tracklet(1, 4, [100], [101, 100, 141, 200])]
+        # 1:4 exists, so only the anchor can say it is the wrong player now.
+        label = ActorLabel(ActorVerdict.MANUAL, track=TrackRef(1, 4), box=(100, 100, 140, 200))
+        with self._video({"e1": label}, tracklets=twins):
+            self.assertNotIn("e1", links._event_tracks("match"))
+
+    def test_silence_is_not_grounds_to_overturn_a_pick(self) -> None:
+        """A tracklet not detected at the anchor frame proves nothing.
+
+        Absence of evidence would otherwise drop a working label: 1.6% of real
+        picks name a tracklet the anchor frame has no detection for.
+        """
+        elsewhere = [_tracklet(1, 2, [400], [104, 100, 148, 200]),
+                     _tracklet(1, 1, [400], [100, 100, 140, 200])]
+        label = ActorLabel(ActorVerdict.MANUAL, track=TrackRef(1, 2), box=(104, 100, 148, 200))
+        with self._video({"e1": label}, tracklets=elsewhere):
+            self.assertEqual(links._event_tracks("match")["e1"], TrackRef(1, 2))
+
+    def test_a_policy_box_still_takes_the_best_candidate(self) -> None:
+        """The margin is for human picks only — a policy answer wants an
+        answer, and nobody deliberated over it."""
+        twins = [_tracklet(1, 3, [100], [100, 100, 140, 200]),
+                 _tracklet(1, 4, [100], [101, 100, 141, 200])]
+        with self._video({}, tracklets=twins):
+            self.assertEqual(links._event_tracks("match")["e1"], TrackRef(1, 3))
 
 
 class UnresolvedLabelsTests(unittest.TestCase):

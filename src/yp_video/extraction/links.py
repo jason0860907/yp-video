@@ -20,8 +20,16 @@ that get picked by hand in the first place.
 
 Nothing is stored. The answer is recomputed from the label file, the records
 and the tracklets, so re-running tracking can never leave a stale pointer
-behind — a named tracklet that no longer exists falls through to geometry
-rather than pointing at whoever inherited its id.
+behind — a name the anchor contradicts falls through to geometry rather than
+pointing at whoever inherited its id.
+
+"Contradicts" and not "no longer exists": ``track_id`` restarts per rally and
+gets reused, so after a re-track the stored pair almost always still
+resolves, just to somebody else. Existence cannot tell a surviving id from an
+inherited one. The ANCHOR can — the box whoever picked was pointing at, which
+no re-run moves — so a person's named tracklet stops being honoured once the
+anchor names somebody else (``anchor_names_another``), and is re-derived from
+that same anchor instead.
 """
 
 from __future__ import annotations
@@ -41,8 +49,11 @@ from yp_video.extraction.store import (
 from yp_video.person.detector import iou
 from yp_video.tracklets.geometry import (
     BOX_MATCH_IOU,
+    LINK_MIN_MARGIN,
     BoxQuery,
+    TrackletIndex,
     TrackRef,
+    anchor_names_another,
     link_boxes,
 )
 from yp_video.tracklets.store import (
@@ -80,6 +91,54 @@ def event_tracks(stem: str) -> dict[str, TrackRef]:
     return _links_cache.get(stem, sources, lambda: _event_tracks(stem))
 
 
+def _anchor(label: ActorLabel | None, record: dict) -> tuple[int, list[float]]:
+    """(frame, box) the pick was made at — what re-derives it when ids move.
+
+    A person's own box outranks the record's. For a tracklet label the box IS
+    the anchor and not the answer (actor/labels.py): it is where they pointed,
+    while the record's box is the POLICY's answer to the same event and can
+    name the other player of an overlapping pair. Re-deriving from the record
+    would quietly hand the pick back to whoever the policy preferred — the
+    very thing naming a tracklet was for.
+    """
+    frame = record.get("crop_frame") or record["frame"]
+    if label is not None and label.track is not None and label.box is not None:
+        # A cross-frame pick was drawn on its own frame; look there.
+        return int(frame if label.frame is None else label.frame), list(label.box)
+    return int(frame), list(record.get("actor_box") or record["box"])
+
+
+def _borne_out(
+    index: TrackletIndex,
+    named: TrackRef,
+    *,
+    by_human: bool,
+    frame: int,
+    anchor: list[float],
+    stride: int,
+) -> bool:
+    """Whether the tracklets still bear out the name somebody gave.
+
+    A PERSON's pick is checked against its anchor as well: after a re-track
+    the pair usually still exists but wears a different player, and only the
+    box they pointed at tells those apart. It takes a positive contradiction
+    to overturn one — silence is not evidence, see ``anchor_names_another``.
+
+    A POLICY's pick is checked for existence, as before. It lives in the
+    records file, which extraction regenerates from the tracklets it is being
+    compared against, so it is not a durable answer that has to survive a
+    re-run — and its box is the display box for the same event, which for an
+    overlapping pair can name the other player. Anchoring it would reject
+    answers that are simply the policy disagreeing with geometry, which is the
+    disagreement naming a tracklet exists to settle.
+    """
+    if index.tracklet(named) is None:
+        return False
+    return not by_human or not anchor_names_another(
+        index, named, frame, anchor, stride=stride
+    )
+
+
 def _named_track(label: ActorLabel | None, record: dict) -> TrackRef | None:
     """The tracklet somebody NAMED for this event, human before policy.
 
@@ -101,31 +160,39 @@ def _event_tracks(stem: str) -> dict[str, TrackRef]:
     index = tracklet_index(stem)
     verdicts = actor_labels.load(stem)
 
+    stride = int(tmeta.get("stride") or 1)
+
     out: dict[str, TrackRef] = {}
     queries: list[BoxQuery] = []
     for record in records:
         if not record.get("box"):
             continue
         event_id = record["id"]
-        named = _named_track(verdicts.get(str(event_id)), record)
-        # A named tracklet that no longer exists is not an answer: re-tracking
-        # renumbers every id, so honouring it would point at whoever inherited
-        # the number. Those fall through to geometry, which re-derives from
-        # pixels that did not move.
-        if named is not None and index.tracklet(named) is not None:
+        label = verdicts.get(str(event_id))
+        by_human = label is not None and label.track is not None
+        named = _named_track(label, record)
+        # A cross-frame pick's box lives on crop_frame, not the event frame
+        # (the actor was not trackable there) — look it up THERE.
+        frame, anchor = _anchor(label, record)
+        if named is not None and _borne_out(
+            index, named, by_human=by_human, frame=frame, anchor=anchor, stride=stride
+        ):
             out[event_id] = named
             continue
         queries.append(
             BoxQuery(
                 key=event_id,
-                # A cross-frame pick's box lives on crop_frame, not the event
-                # frame (the actor was not trackable there) — look it up THERE.
-                frame=record.get("crop_frame") or record["frame"],
-                anchor=record.get("actor_box") or record["box"],
+                frame=frame,
+                anchor=anchor,
                 gate=record["box"],
+                # Re-deriving what a PERSON chose: a near-tie between two
+                # overlapping players is not an answer here. Refusing sends the
+                # event to unresolved_labels, which is already the re-pick
+                # worklist, instead of silently reassigning their pick.
+                margin=LINK_MIN_MARGIN if by_human else 0.0,
             )
         )
-    out.update(link_boxes(index, queries, stride=int(tmeta.get("stride") or 1)))
+    out.update(link_boxes(index, queries, stride=stride))
     return out
 
 
