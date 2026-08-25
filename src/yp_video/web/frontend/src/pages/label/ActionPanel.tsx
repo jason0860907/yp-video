@@ -263,7 +263,18 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, onSaved, r
       const rally = findRallyAtTime(t, edRef.current) ?? findRallyAtTime(t - step, edRef.current);
       setSelectedRallyId(rally?.rally_id ?? 'all');
       setExpanded(rally ? String(rally.rally_id) : null);
-      if (rally) scrollRallyTop(listRef.current, rally.rally_id);
+      if (!rally) return;
+      scrollRallyTop(listRef.current, rally.rally_id);
+      // What waits on this tab is an action, not the rally that holds it: land
+      // on the one nearest the arrival time within that rally. Selection only —
+      // the playhead stays where the Rally tab left it, so the arrival position
+      // is still what is on screen. A rally with nothing labeled yet leaves the
+      // selection as the load left it (null).
+      const near = edRef.current.events.reduce<ActionEvent | null>(
+        (best, e) => (e.rally_id !== rally.rally_id || (best !== null && Math.abs(best.frame - f) <= Math.abs(e.frame - f)) ? best : e),
+        null,
+      );
+      if (near) setSelectedId(near.id);
     };
     if (el.seekable.length > 0) arriveAt();
     else el.addEventListener('canplay', arriveAt, { once: true });
