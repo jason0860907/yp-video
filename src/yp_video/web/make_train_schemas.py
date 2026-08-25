@@ -8,26 +8,19 @@ One model per file, the model itself as the schema root, so
 ``npm run gen:types`` (json2ts) produces a named interface per request and
 the frontend forms can read defaults, bounds, enum options and field
 descriptions straight from the schema. Do not edit the JSON by hand.
-
-Only ``AnnotationActionTrainRequest`` is emitted for action training — the
-UI never builds a VNL request.
 """
 
 import json
 from pathlib import Path
 
 from yp_video.web.train_requests import (
-    AnnotationActionTrainRequest,
     AssociationTrainRequest,
     FusionTrainRequest,
-    RallyTrainRequest,
     ReidExportRequest,
     ReidTrainRequest,
 )
 
 _SCHEMAS = {
-    "spot_train_request.schema.json": RallyTrainRequest,
-    "action_train_request.schema.json": AnnotationActionTrainRequest,
     "fusion_train_request.schema.json": FusionTrainRequest,
     "association_train_request.schema.json": AssociationTrainRequest,
     "reid_export_request.schema.json": ReidExportRequest,

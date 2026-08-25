@@ -34,8 +34,8 @@ from yp_video.actor import spot_associate, spot_predictions
 from yp_video.actor.ranking import RULE_BASED
 from yp_video.actor.training_labels import prepare_action_training_labels
 from yp_video.config import (
-    ACTION_CHECKPOINTS_DIR,
     ACTION_FRAMES_DIR,
+    SPOT_CHECKPOINTS_DIR,
     SPOT_DIR,
     SPOT_PYTHON,
     find_cut,
@@ -148,7 +148,7 @@ def train_performance(run: str | None = None) -> dict:
     """Per-epoch metrics for independent association runs, in the shared
     performance shape — the same card every other Train page renders."""
     return performance_payload(
-        ACTION_CHECKPOINTS_DIR, run, package_types=(ASSOCIATION_PACKAGE_TYPE,)
+        SPOT_CHECKPOINTS_DIR, run, package_types=(ASSOCIATION_PACKAGE_TYPE,)
     )
 
 
@@ -256,7 +256,7 @@ async def _train_locked(req: AssociationTrainRequest) -> dict:
             400,
             "Run name may contain only letters, numbers, dot, underscore and dash",
         )
-    checkpoint_dir = ACTION_CHECKPOINTS_DIR / name
+    checkpoint_dir = SPOT_CHECKPOINTS_DIR / name
     save_dir = SPOT_DIR / "exp" / name
     if checkpoint_dir.exists() or save_dir.exists():
         raise HTTPException(
@@ -295,10 +295,9 @@ def _export_association_package(
     summary = export_checkpoint_package(
         run_dir=run_dir,
         package_dir=package_dir,
-        checkpoints_root=ACTION_CHECKPOINTS_DIR,
+        checkpoints_root=SPOT_CHECKPOINTS_DIR,
         package_type=ASSOCIATION_PACKAGE_TYPE,
-        label_subdir="action-annotations",
-        label_glob="*_actions.jsonl",
+        label_subdirs=(TASKS["action"].label_subdir, TASKS["actor"].label_subdir),
         training={
             "purpose": "association",
             "frame_dir": str(ACTION_FRAMES_DIR),
@@ -307,12 +306,6 @@ def _export_association_package(
         },
         cmd=cmd,
     )
-    source = run_dir / "labels" / ACTOR_LABEL_SUBDIR
-    destination = package_dir / "labels" / ACTOR_LABEL_SUBDIR
-    if source.exists():
-        if destination.exists():
-            shutil.rmtree(destination)
-        shutil.copytree(source, destination)
     manifest_path = package_dir / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     best = manifest.get("best") or {}
@@ -324,13 +317,6 @@ def _export_association_package(
                 best["metrics"] = record.get("val") or {}
                 break
     manifest["best"] = best
-    manifest["files"] = [
-        *manifest.get("files", []),
-        *(
-            str(path.relative_to(package_dir))
-            for path in sorted(destination.glob(ACTOR_FILE_GLOB))
-        ),
-    ]
     manifest_path.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
@@ -378,12 +364,15 @@ async def _start_association_training(
                 items=items,
                 frame_dir=ACTION_FRAMES_DIR,
                 save_dir=save_dir,
+                tasks=("action", "location", "actor"),
                 camera_view="all",
             )
+            val_stems = {label.stem.removesuffix("_actions") for label, _video in val_items}
             split = await asyncio.to_thread(
                 materialize_holdout_split,
                 Path(label_summary["label_dir"]),
-                [label.name for label, _video in val_items],
+                val_stems,
+                known_stems=val_stems,
             )
             label_summary = {**label_summary, **split}
             cmd = [

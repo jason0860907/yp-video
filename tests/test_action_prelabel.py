@@ -4,34 +4,52 @@ import unittest
 from pathlib import Path
 
 from yp_video.action import prelabel
+from yp_video.contracts.action import ASSOCIATION_PACKAGE_TYPE, SPOT_PACKAGE_TYPE
 
 
-def _make_package(root: Path, name: str, config: dict | None) -> None:
+def _make_package(root: Path, name: str, manifest: dict | None, files=("checkpoint_best.pt",)) -> None:
     package = root / name
     package.mkdir()
-    (package / "checkpoint_best.pt").write_bytes(b"")
-    if config is not None:
-        (package / "config.json").write_text(json.dumps(config), encoding="utf-8")
+    for file in files:
+        (package / file).write_bytes(b"")
+    if manifest is not None:
+        (package / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
 
 
-class ListCheckpointsActorHeadTest(unittest.TestCase):
-    def test_predicts_actor_reflects_the_package_config(self):
+class ListCheckpointsByTaskTest(unittest.TestCase):
+    def test_rows_follow_the_manifest_task_list_and_per_task_best_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            _make_package(root, "yp_fusion_run", {"predict_actor": True})
-            _make_package(root, "yp_action_run", {"predict_actor": False})
-            _make_package(root, "legacy_run", None)
+            _make_package(
+                root, "fusion",
+                {
+                    "type": SPOT_PACKAGE_TYPE,
+                    "tasks": ["action", "location", "actor"],
+                    "best": {"epoch": 5, "metric": "val_mAP", "value": 0.3},
+                    "best_per_task": {
+                        "action": {"epoch": 5, "file": "checkpoint_best.pt"},
+                        "actor": {"epoch": 2, "file": "checkpoint_best_actor.pt", "metric": "player_top1", "value": 0.6},
+                    },
+                },
+                files=("checkpoint_best.pt", "checkpoint_best_actor.pt"),
+            )
+            _make_package(root, "rally", {"type": SPOT_PACKAGE_TYPE, "tasks": ["rally", "winner"], "best": {"epoch": 1}})
+            _make_package(root, "independent", {"type": ASSOCIATION_PACKAGE_TYPE})
+            _make_package(root, "legacy", None)
 
-            by_experiment = {
-                row["experiment"]: row["predicts_actor"]
-                for row in prelabel.list_checkpoints(root)
-            }
+            action = {row["experiment"]: row for row in prelabel.list_checkpoints(root, task="action")}
+            actor = {row["experiment"]: row for row in prelabel.list_checkpoints(root, task="actor")}
+            rally = {row["experiment"]: row for row in prelabel.list_checkpoints(root, task="rally")}
+            independent = prelabel.list_checkpoints(root, package_type=ASSOCIATION_PACKAGE_TYPE)
 
-        self.assertEqual(by_experiment, {
-            "yp_fusion_run": True,
-            "yp_action_run": False,
-            "legacy_run": False,
-        })
+        self.assertEqual(set(action), {"fusion"})
+        self.assertEqual(action["fusion"]["name"], "fusion/checkpoint_best.pt")
+        self.assertEqual(action["fusion"]["tasks"], ["action", "location", "actor"])
+        # The actor row points at the actor-best weights, not the headline.
+        self.assertEqual(actor["fusion"]["name"], "fusion/checkpoint_best_actor.pt")
+        self.assertEqual(actor["fusion"]["epoch"], 2)
+        self.assertEqual(set(rally), {"rally"})
+        self.assertEqual([row["experiment"] for row in independent], ["independent"])
 
 
 if __name__ == "__main__":

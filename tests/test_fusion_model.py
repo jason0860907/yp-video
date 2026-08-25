@@ -3,17 +3,21 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 from fastapi import HTTPException
 
 from yp_video.actor import training_labels
+from yp_video.contracts.action import RECIPES
 from yp_video.core.jsonl import write_jsonl
+from yp_video.web import spot_training
+from yp_video.web.label_sources import PreparedLabels, check_task_supervision
 from yp_video.web.routers import fusion_model
+from yp_video.web.train_requests import FusionTrainRequest
 
 
 class FusionModelStatusTests(unittest.TestCase):
-    def test_registry_exposes_current_and_future_recipes_honestly(self) -> None:
+    def test_status_serves_the_registry_and_per_recipe_init_options(self) -> None:
         with (
             patch.object(
                 fusion_model.training,
@@ -28,165 +32,106 @@ class FusionModelStatusTests(unittest.TestCase):
                 },
             ),
             patch.object(
-                fusion_model, "checkpoint_package_options", return_value=[]
+                fusion_model, "checkpoint_package_options",
+                side_effect=lambda _dir, tasks: [{"label": ",".join(tasks), "value": "x"}],
             ),
-            patch.object(
-                fusion_model.association_labels,
-                "labeled_stems",
-                return_value=["joint"],
-            ),
-            patch.object(
-                fusion_model.spot_associate,
-                "list_association_checkpoints",
-                return_value=[
-                    {"name": "joint", "family": "fusion-actor-head"},
-                    {"name": "independent", "family": "yp-association-v1"},
-                ],
-            ),
+            patch.object(fusion_model.association_labels, "labeled_stems", return_value=["joint"]),
+            patch.object(fusion_model.rally_spot, "select_training_items", return_value=([], [])),
+            patch.object(fusion_model.rally_spot, "rally_stats", return_value={"videos": 0}),
+            patch.object(fusion_model.rally_spot, "frame_cache_stats", return_value=[]),
         ):
             payload = fusion_model.status()
 
         recipes = {row["id"]: row for row in payload["recipes"]}
-        self.assertTrue(recipes["association_action"]["available"])
-        self.assertEqual(
-            recipes["association_action"]["predict_outputs"],
-            ["association", "action"],
-        )
-        self.assertFalse(recipes["rally_action"]["available"])
-        self.assertIn("sampling rates", recipes["rally_action"]["blocked_on"])
-        self.assertFalse(recipes["association_action_rally"]["available"])
-        self.assertEqual(
-            [row["name"] for row in payload["checkpoints"]],
-            ["joint"],
-        )
+        self.assertEqual(set(recipes), set(RECIPES))
+        self.assertEqual(recipes["rally_winner"]["tasks"], ["rally", "winner"])
+        self.assertEqual(recipes["rally_winner"]["fields"], ["extract_fps", "video_limit"])
+        self.assertEqual(recipes["association_action"]["serveable_tasks"], ["action", "actor"])
+        self.assertEqual(payload["init_checkpoints"]["rally"], [{"label": "rally", "value": "x"}])
+        self.assertEqual(payload["task_labels"]["winner"], "Winner")
         self.assertEqual(
             payload["supervision"],
-            {
-                "action_videos": 2,
-                "joint_videos": 1,
-                "action_only_videos": 1,
-            },
-        )
-
-    def test_performance_uses_the_shared_task_metrics_reader(self) -> None:
-        with patch.object(
-            fusion_model,
-            "performance_payload",
-            return_value={"run": "yp_fusion_one", "entries": []},
-        ) as read:
-            payload = fusion_model.performance("yp_fusion_one")
-
-        self.assertEqual(payload["run"], "yp_fusion_one")
-        read.assert_called_once_with(
-            fusion_model.ACTION_CHECKPOINTS_DIR,
-            "yp_fusion_one",
-            package_types=(fusion_model.FUSION_PACKAGE_TYPE,),
+            {"action_videos": 2, "joint_videos": 1, "action_only_videos": 1},
         )
 
 
-class FusionModelTrainTests(unittest.IsolatedAsyncioTestCase):
-    async def test_association_action_maps_to_the_joint_actor_trainer(self) -> None:
-        start = AsyncMock(return_value={"id": "job"})
-        request = fusion_model.FusionTrainRequest(
-            run_name="joint_run",
-            audio_backend="none",
-            num_epochs=7,
-            batch_size=3,
+class BuildCommandTests(unittest.TestCase):
+    def _prepared(self, dataset: str, extra=()) -> PreparedLabels:
+        return PreparedLabels(
+            label_dir=Path("/run/labels/x"),
+            label_subdirs=("x",),
+            frame_dir=Path("/frames"),
+            dataset=dataset,
+            extra_args=list(extra),
         )
-        label_item = (
-            Path("/labels/joint_actions.jsonl"),
-            Path("/videos/joint.mp4"),
+
+    def test_rally_winner_command(self) -> None:
+        req = FusionTrainRequest(recipe="rally_winner", extract_fps=5, audio_backend="logmel", acc_grad_iter=4, batch_size=8)
+        cmd = spot_training.build_command(
+            req, RECIPES["rally_winner"], self._prepared("yp_rally"),
+            save_dir=Path("/run"), init_checkpoint=None, audio_dir=None,
         )
-        with (
-            patch.object(
-                fusion_model,
-                "start_training_job",
-                start,
-            ),
-            patch.object(
-                fusion_model.training,
-                "label_items",
-                return_value=[label_item],
-            ),
-            patch.object(
-                fusion_model.association_labels,
-                "labeled_stems",
-                return_value=["joint"],
-            ),
-        ):
-            result = await fusion_model.train(request)
+        joined = " ".join(cmd)
+        self.assertIn(" yp_rally /frames ", joined)
+        self.assertIn("--tasks rally,winner", joined)
+        self.assertIn("--sample_fps 5", joined)
+        # Rally is visual-only and never accumulates, whatever the form sent.
+        self.assertIn("--audio_backend none", joined)
+        self.assertIn("--acc_grad_iter 1", joined)
+        self.assertIn("--label_dir /run/labels/x --val_ratio 0.2 --split_seed 42", joined)
+        self.assertNotIn("--predict", joined)
 
-        self.assertEqual(result, {"id": "job"})
-        action_request = start.await_args.args[0]
-        flavor = start.await_args.kwargs["flavor"]
-        self.assertTrue(action_request.predict_location)
-        self.assertTrue(action_request.predict_actor)
-        self.assertEqual(action_request.audio_backend, "none")
-        self.assertEqual(action_request.num_epochs, 7)
-        self.assertEqual(action_request.batch_size, 3)
-        self.assertTrue(action_request.save_dir.endswith("/exp/joint_run"))
-        self.assertTrue(action_request.checkpoint_dir.endswith("/joint_run"))
-        self.assertEqual(flavor.job_type, "fusion_model_train")
-        self.assertEqual(flavor.package_type, "actor-association-spot")
-        self.assertEqual(start.await_args.kwargs["label_items"], [label_item])
-        self.assertTrue(start.await_args.kwargs["require_actor_targets"])
-
-
-
-    async def test_manual_validation_videos_map_to_the_holdout_contract(self) -> None:
-        start = AsyncMock(return_value={"id": "holdout-job"})
-        with patch.object(
-            fusion_model,
-            "start_training_job",
-            start,
-        ):
-            await fusion_model.train(
-                fusion_model.FusionTrainRequest(
-                    run_name="manual_holdout",
-                    dataset_scope="partial_labels",
-                    validation_mode="manual",
-                    validation_videos=[
-                        "match_a_actions.jsonl",
-                        "match_b_actions.jsonl",
-                    ],
-                )
-            )
-
-        action_request = start.await_args.args[0]
-        self.assertEqual(action_request.training_mode, "holdout")
-        self.assertEqual(
-            action_request.holdout_videos,
-            ["match_a_actions.jsonl", "match_b_actions.jsonl"],
+    def test_association_action_manual_validation_command(self) -> None:
+        req = FusionTrainRequest(
+            recipe="association_action", validation="manual", validation_videos=["a"],
+            sample_fps=30, acc_grad_iter=2, batch_size=8, audio_backend="logmel",
         )
-        self.assertIsNone(start.await_args.kwargs["label_items"])
-        self.assertFalse(start.await_args.kwargs["require_actor_targets"])
+        cmd = spot_training.build_command(
+            req, RECIPES["association_action"],
+            self._prepared("yp_actions", ["--actor_dir", "/run/labels/actor-candidates"]),
+            save_dir=Path("/run"), init_checkpoint=None, audio_dir=Path("/audio"),
+        )
+        joined = " ".join(cmd)
+        self.assertIn("--tasks action,location,actor", joined)
+        self.assertIn("--actor_dir /run/labels/actor-candidates", joined)
+        self.assertIn("--audio_backend logmel --actor_dir", joined)
+        self.assertIn("--audio_dir /audio", joined)
+        self.assertIn("--train_labels /run/labels/train --val_labels /run/labels/val", joined)
 
-    async def test_manual_validation_refuses_an_empty_selection(self) -> None:
+    def test_run_name_token_per_recipe(self) -> None:
+        self.assertEqual(spot_training.recipe_token(RECIPES["rally_winner"]), "ral_win")
+        self.assertEqual(spot_training.recipe_token(RECIPES["association_action"]), "ass_act")
+        self.assertEqual(spot_training.recipe_token(RECIPES["action"]), "act")
+
+    def test_bad_run_name_is_refused(self) -> None:
         with self.assertRaises(HTTPException) as caught:
-            await fusion_model.train(
-                fusion_model.FusionTrainRequest(
-                    validation_mode="manual",
-                    validation_videos=[],
-                )
+            spot_training.resolve_run_name(
+                FusionTrainRequest(run_name="../escape"), RECIPES["action"]
             )
-
         self.assertEqual(caught.exception.status_code, 400)
-        self.assertIn("at least one validation video", str(caught.exception.detail))
 
-    async def test_unimplemented_recipe_is_refused_before_starting_a_job(self) -> None:
-        with self.assertRaises(HTTPException) as caught:
-            await fusion_model.train(
-                fusion_model.FusionTrainRequest(recipe="rally_action")
+
+class SupervisionGateTests(unittest.TestCase):
+    def _prepared(self, summary: dict) -> PreparedLabels:
+        return PreparedLabels(Path("/x"), ("x",), Path("/f"), "yp_rally", summary=summary)
+
+    def test_winner_head_needs_winner_labels(self) -> None:
+        with self.assertRaises(RuntimeError) as caught:
+            check_task_supervision(RECIPES["rally_winner"], self._prepared({"rallies_with_winner": 0}))
+        self.assertIn("winner", str(caught.exception))
+        check_task_supervision(RECIPES["rally_winner"], self._prepared({"rallies_with_winner": 3}))
+        check_task_supervision(RECIPES["rally"], self._prepared({"rallies_with_winner": 0}))
+
+    def test_actor_head_needs_actor_targets(self) -> None:
+        with self.assertRaises(RuntimeError):
+            check_task_supervision(
+                RECIPES["association_action"], self._prepared({"actor_targets": {"track": 0}})
             )
-
-        self.assertEqual(caught.exception.status_code, 409)
-        self.assertIn("multi-task", str(caught.exception.detail))
+        check_task_supervision(RECIPES["action"], self._prepared({"actor_targets": {"track": 0}}))
 
 
 class FusionLabelScopeTests(unittest.TestCase):
-    def test_joint_only_snapshot_fails_when_a_video_has_no_actor_targets(
-        self,
-    ) -> None:
+    def test_joint_only_snapshot_fails_when_a_video_has_no_actor_targets(self) -> None:
         with tempfile.TemporaryDirectory() as raw_dir:
             root = Path(raw_dir)
             label = root / "match_actions.jsonl"
@@ -198,31 +143,46 @@ class FusionLabelScopeTests(unittest.TestCase):
                 [{"id": "event", "frame": 10, "label": "spike"}],
             )
             with (
-                patch.object(
-                    training_labels,
-                    "inspect_action_frame_cache",
-                    return_value={"frame_count": 100},
-                ),
-                patch.object(
-                    training_labels,
-                    "cut_kind_of",
-                    return_value="sideline",
-                ),
-                patch.object(
-                    training_labels.candidates,
-                    "build",
-                    return_value=([], {}),
-                ),
+                patch.object(training_labels, "inspect_action_frame_cache", return_value={"frame_count": 100}),
+                patch.object(training_labels, "cut_kind_of", return_value="sideline"),
+                patch.object(training_labels.candidates, "build", return_value=([], {})),
             ):
                 with self.assertRaises(RuntimeError) as caught:
                     training_labels.prepare_action_training_labels(
                         items=[(label, video)],
                         frame_dir=root / "frames",
                         save_dir=root / "run",
+                        tasks=("action", "location", "actor"),
                         require_actor_targets=True,
                     )
 
         self.assertIn("produced no usable actor targets", str(caught.exception))
+
+    def test_action_only_recipe_writes_no_actor_sidecar(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_dir:
+            root = Path(raw_dir)
+            label = root / "match_actions.jsonl"
+            video = root / "match.mp4"
+            video.touch()
+            write_jsonl(
+                label,
+                {"video": "match", "num_frames": 100, "fps": 30},
+                [{"id": "event", "frame": 10, "label": "spike"}],
+            )
+            with (
+                patch.object(training_labels, "inspect_action_frame_cache", return_value={"frame_count": 100}),
+                patch.object(training_labels, "cut_kind_of", return_value="sideline"),
+                patch.object(training_labels.candidates, "build") as build,
+            ):
+                summary = training_labels.prepare_action_training_labels(
+                    items=[(label, video)],
+                    frame_dir=root / "frames",
+                    save_dir=root / "run",
+                    tasks=("action", "location"),
+                )
+            build.assert_not_called()
+            self.assertFalse((root / "run" / "labels" / "actor-candidates").exists())
+            self.assertEqual(summary["videos"], 1)
 
 
 if __name__ == "__main__":

@@ -91,17 +91,19 @@ ACTION_FRAMES_DIR = VIDEOS_DIR / "action" / "frames"
 # ("none" backend) needs nothing here.
 ACTION_AUDIO_DIR = VIDEOS_DIR / "action" / "audio"
 ACTION_WAVEFORMS_DIR = VIDEOS_DIR / "action" / "waveforms"
-ACTION_CHECKPOINTS_DIR = VIDEOS_DIR / "action" / "checkpoints"
-# Validation set for "holdout" Action Train mode: one video filename per line
-# (stem, <stem>.mp4, or <stem>_actions.jsonl all accepted; blank lines and lines
-# starting with "#" are ignored). Edit this file to pick the val videos by hand.
+# Every SPOT checkpoint package (any recipe: rally, action, fusion) and the
+# independent association packages, in one place; readers pick by the task a
+# package's manifest declares, not by directory.
+SPOT_CHECKPOINTS_DIR = VIDEOS_DIR / "spot" / "checkpoints"
+# Default validation set for manual validation on action recipes: one video
+# filename per line (stem, <stem>.mp4, or <stem>_actions.jsonl all accepted;
+# blank lines and lines starting with "#" are ignored).
 ACTION_VAL_SET_FILE = VIDEOS_DIR / "action-val-set.txt"
 # SPOT rally (segment) training. Frame caches are extracted at a reduced fps —
 # native-fps caches for 800+ full matches would need ~1 TB — and keyed per rate:
 # rally-spot/frames/fps2/<stem>/000000.jpg. Labels are written in the same
 # reduced-fps frame space, so yp-spot trains on them unchanged.
 RALLY_SPOT_FRAMES_DIR = VIDEOS_DIR / "rally-spot" / "frames"
-RALLY_SPOT_CHECKPOINTS_DIR = VIDEOS_DIR / "rally-spot" / "checkpoints"
 # SPOT rally predictions live apart from the VLM pre-annotations so the two
 # model families never overwrite each other; Rally Label can load either.
 RALLY_SPOT_PRE_ANNOTATIONS_DIR = VIDEOS_DIR / "rally-spot" / "pre-annotations"
@@ -164,10 +166,9 @@ R2_CATEGORIES: dict[str, R2Category] = {
     "rally/pre-annotations": R2Category(RALLY_PRE_ANNOTATIONS_DIR, "*.jsonl", "Rally Predictions (VLM)"),
     "rally-spot/annotations": R2Category(RALLY_ANNOTATIONS_DIR, "*.jsonl", "Rally Annotations"),
     "rally-spot/pre-annotations": R2Category(RALLY_SPOT_PRE_ANNOTATIONS_DIR, "*.jsonl", "Rally Predictions (SPOT)"),
-    "rally-spot/checkpoints": R2Category(RALLY_SPOT_CHECKPOINTS_DIR, "**/*", "Rally Checkpoints"),
     "action/annotations": R2Category(ACTION_ANNOTATIONS_DIR, "*.jsonl", "Action Annotations"),
     "action/pre-annotations": R2Category(ACTION_PRE_ANNOTATIONS_DIR, "*.jsonl", "Action Pre-Annotations"),
-    "action/checkpoints": R2Category(ACTION_CHECKPOINTS_DIR, "**/*", "Action Checkpoints"),
+    "spot/checkpoints": R2Category(SPOT_CHECKPOINTS_DIR, "**/*", "SPOT Checkpoints"),
     # The two kinds of human label are two categories, because they are two
     # answers with different lifetimes — a player name survives a re-run of
     # association, an actor verdict survives a re-run of ReID.

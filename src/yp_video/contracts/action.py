@@ -17,8 +17,10 @@ field layout, frame layout, or label set below changes — and update both sides
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -63,9 +65,169 @@ def event_id(event: Mapping) -> str:
 # ── Label files ───────────────────────────────────────────────────
 # Per-video label files are JSONL with a ``_meta`` header line followed by one
 # record per video (see yp_video.core.jsonl).
-LABEL_FILE_SUFFIX = "_actions.jsonl"
-LABEL_FILE_GLOB = "*_actions.jsonl"
 DEFAULT_FPS = 30.0
+
+
+# ── Tasks ─────────────────────────────────────────────────────────
+# Every head a SPOT training run can learn, declared once. Both repos derive
+# from this table: yp-video builds the label snapshot (one ``labels/<subdir>``
+# per distinct ``label_subdir``), the ``--tasks`` argument and the package
+# manifest from it; yp-spot builds heads, the loss sum, per-task metrics and
+# inference from the same names. A checkpoint's ``config.json["tasks"]`` and
+# ``manifest.json["tasks"]`` carry the list, so a predict surface asks "does
+# this package serve task X" instead of matching on a package type string.
+@dataclass(frozen=True)
+class TaskSpec:
+    name: str
+    #: UI label.
+    label: str
+    #: ``segment``/``point`` is THE classification head of a run (rally spans
+    #: vs. action frames — exactly one per run); ``aux`` heads ride on it.
+    kind: Literal["segment", "point", "aux"]
+    #: ``labels/<subdir>`` in a run and its package; the file glob inside it.
+    label_subdir: str
+    label_glob: str
+    #: Label-event keys that must be present for this head to be supervised.
+    #: Empty for actor: its supervision is a sidecar file, not an event key.
+    event_fields: tuple[str, ...]
+    #: Heads this one cannot exist without (the model wires them together).
+    requires: tuple[str, ...]
+    #: Validation metric that picks this task's best epoch (``criterion=map``).
+    primary_metric: str
+    #: Whether a predict surface can load this head on its own — only then
+    #: does the package carry its own best-epoch weights file.
+    serveable: bool
+    loss_weight: float = 1.0
+
+
+TASKS: dict[str, TaskSpec] = {
+    spec.name: spec
+    for spec in (
+        TaskSpec(
+            "rally", "Rally", "segment", "rally-annotations", "*_rally.jsonl",
+            ("frame", "end_frame"), (), "segment_mAP", True,
+        ),
+        TaskSpec(
+            "winner", "Winner", "aux", "rally-annotations", "*_rally.jsonl",
+            ("winner",), ("rally",), "winner_top1", True,
+        ),
+        TaskSpec(
+            "action", "Action", "point", "action-annotations", "*_actions.jsonl",
+            ("frame", "label"), (), "harmonic_mAP", True,
+        ),
+        TaskSpec(
+            "location", "Location", "aux", "action-annotations", "*_actions.jsonl",
+            ("xy",), ("action",), "spatial_mAP", False,
+        ),
+        TaskSpec(
+            "actor", "Actor", "aux", "actor-candidates", "*_actor_candidates.jsonl",
+            (), ("action", "location"), "player_top1", True,
+        ),
+    )
+}
+
+SPOTTING_KINDS = ("segment", "point")
+
+
+def spotting_task(tasks: Sequence[str]) -> str:
+    """The one classification task of a run."""
+    (name,) = [t for t in tasks if TASKS[t].kind in SPOTTING_KINDS]
+    return name
+
+
+def label_subdirs(tasks: Sequence[str]) -> tuple[str, ...]:
+    """Distinct ``labels/<subdir>`` a run with these tasks snapshots, in task order."""
+    return tuple(dict.fromkeys(TASKS[t].label_subdir for t in tasks))
+
+
+def validate_tasks(tasks: Sequence[str]) -> tuple[str, ...]:
+    """Fail loud on an unknown name, a missing dependency, or 0/2+ spotting tasks.
+
+    The single-spotting-task rule is what keeps rally and action out of one
+    run until the trainer has a second classification head and a second
+    frame source; the registry itself can already express that recipe.
+    """
+    names = tuple(tasks)
+    unknown = [t for t in names if t not in TASKS]
+    if unknown:
+        raise ValueError(f"Unknown task(s) {unknown}; known: {sorted(TASKS)}")
+    for t in names:
+        missing = [r for r in TASKS[t].requires if r not in names]
+        if missing:
+            raise ValueError(f"Task {t!r} requires {missing}")
+    spotting = [t for t in names if TASKS[t].kind in SPOTTING_KINDS]
+    if len(spotting) != 1:
+        raise ValueError(
+            f"A run needs exactly one segment/point task, got {spotting or 'none'}"
+        )
+    return names
+
+
+@dataclass(frozen=True)
+class Recipe:
+    """A named task set the Fusion Train page offers."""
+
+    id: str
+    name: str
+    tasks: tuple[str, ...]
+    description: str
+    #: Request fields the UI shows for this recipe (on top of the common ones).
+    fields: tuple[str, ...]
+    #: Request defaults the form resets to when this recipe is picked.
+    defaults: Mapping[str, object]
+
+
+_RALLY_FIELDS = ("extract_fps", "video_limit")
+_RALLY_DEFAULTS = {
+    "batch_size": 8, "acc_grad_iter": 1, "num_epochs": 30,
+    "warm_up_epochs": 2, "learning_rate": 3e-4, "audio_backend": "none",
+}
+_ACTION_FIELDS = ("sample_fps", "acc_grad_iter", "audio_backend", "include_predictions")
+_ACTION_DEFAULTS = {
+    "batch_size": 32, "acc_grad_iter": 4, "num_epochs": 100,
+    "warm_up_epochs": 3, "learning_rate": 1e-5, "audio_backend": "logmel",
+}
+_FUSION_DEFAULTS = {
+    "batch_size": 8, "acc_grad_iter": 1, "num_epochs": 50,
+    "warm_up_epochs": 3, "learning_rate": 3e-5, "audio_backend": "logmel",
+}
+
+RECIPES: dict[str, Recipe] = {
+    recipe.id: recipe
+    for recipe in (
+        Recipe(
+            "rally", "Rally", ("rally",),
+            "Rally on/off segments from the rally annotations.",
+            _RALLY_FIELDS, _RALLY_DEFAULTS,
+        ),
+        Recipe(
+            "rally_winner", "Rally + Winner", ("rally", "winner"),
+            "Rally segments plus which court side won each rally.",
+            _RALLY_FIELDS, _RALLY_DEFAULTS,
+        ),
+        Recipe(
+            "action", "Action", ("action", "location"),
+            "Touch spotting with the contact-point location head.",
+            _ACTION_FIELDS, _ACTION_DEFAULTS,
+        ),
+        Recipe(
+            "association_action", "Association + Action",
+            ("action", "location", "actor"),
+            "Touch spotting plus which player acted, from the actor-candidate sidecar.",
+            _ACTION_FIELDS + ("dataset_scope",), _FUSION_DEFAULTS,
+        ),
+    )
+}
+
+for _recipe in RECIPES.values():
+    validate_tasks(_recipe.tasks)
+del _recipe
+
+# Derived so there is one truth for the file layout.
+LABEL_FILE_GLOB = TASKS["action"].label_glob
+LABEL_FILE_SUFFIX = LABEL_FILE_GLOB.removeprefix("*")
+RALLY_LABEL_FILE_GLOB = TASKS["rally"].label_glob
+RALLY_LABEL_FILE_SUFFIX = RALLY_LABEL_FILE_GLOB.removeprefix("*")
 
 
 class ActionLabel(str, Enum):
@@ -152,10 +314,10 @@ class SegmentLabelEvent(BaseModel):
 # labels are read by every spotting run over every video; actor supervision
 # exists for a handful of videos and carries ~11 boxes per event, so folding it
 # in would inflate the file every run reads with data almost none of them use.
-ACTOR_FILE_SUFFIX = "_actor_candidates.jsonl"
-ACTOR_FILE_GLOB = "*_actor_candidates.jsonl"
+ACTOR_FILE_GLOB = TASKS["actor"].label_glob
+ACTOR_FILE_SUFFIX = ACTOR_FILE_GLOB.removeprefix("*")
 #: Sub-directory of a training run's label snapshot.
-ACTOR_LABEL_SUBDIR = "actor-candidates"
+ACTOR_LABEL_SUBDIR = TASKS["actor"].label_subdir
 
 #: Frame offsets, relative to the event, at which each candidate's box is
 #: exported. The model samples its visual features at the candidate's OWN box
@@ -171,14 +333,13 @@ ACTOR_WINDOW_OFFSETS = tuple(
 
 
 # ── Checkpoint packages ───────────────────────────────────────────
-# The manifest ``type`` each trainer stamps on its exported package. Every
-# reader — init-checkpoint pickers, family detection, predict surfaces —
-# matches on these strings, so they live here rather than at each export
-# site, where a rename would silently break every matcher.
-ACTION_PACKAGE_TYPE = "yp-video-action-checkpoint"
-FUSION_PACKAGE_TYPE = "actor-association-spot"
+# The manifest ``type`` a trainer stamps on its exported package. A SPOT
+# package (any recipe) is one type; WHICH heads it carries is
+# ``manifest["tasks"]``, and every reader — init-checkpoint pickers, predict
+# surfaces — asks for the task it needs. The independent association trainer
+# exports a different model class, hence its own type.
+SPOT_PACKAGE_TYPE = "yp-video-spot-checkpoint"
 ASSOCIATION_PACKAGE_TYPE = "yp-video-association-checkpoint"
-RALLY_PACKAGE_TYPE = "yp-video-rally-spot-checkpoint"
 
 
 class ActorTargetKind(str, Enum):

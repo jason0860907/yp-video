@@ -18,7 +18,6 @@ from yp_video.web.access import AccessAuth, verifier
 from yp_video.web.r2_client import r2_client
 from yp_video.web.routers import (
     action_annotate,
-    action_train,
     actor_association,
     annotate,
     audit_log,
@@ -32,7 +31,6 @@ from yp_video.web.routers import (
     reid,
     reid_train,
     spot_predict,
-    spot_train,
     system,
     tracklets,
     upload,
@@ -217,10 +215,8 @@ app.add_middleware(AccessAuth)
 app.include_router(download.router, prefix="/api/download", tags=["download"])
 app.include_router(cut.router, prefix="/api/cut", tags=["cut"])
 app.include_router(action_annotate.router, prefix="/api/action-annotate", tags=["action-annotate"])
-app.include_router(action_train.router, prefix="/api/action-train", tags=["action-train"])
 app.include_router(annotate.router, prefix="/api/annotate", tags=["annotate"])
 app.include_router(detect.router, prefix="/api/detect", tags=["detect"])
-app.include_router(spot_train.router, prefix="/api/spot-train", tags=["spot-train"])
 app.include_router(spot_predict.router, prefix="/api/spot-predict", tags=["spot-predict"])
 app.include_router(tracklets.router, prefix="/api/tracklets", tags=["tracklets"])
 app.include_router(extraction.router, prefix="/api/extraction", tags=["extraction"])

@@ -2,14 +2,16 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$comment": "Generated from yp_video/web/train_requests.py via make_train_schemas.py \u2014 do not edit by hand.",
   "additionalProperties": false,
+  "description": "One SPOT training run: a recipe (which heads) plus how to train it.\n\nFields outside the chosen recipe's ``fields`` (contract ``RECIPES``) are\naccepted and ignored \u2014 the form sends every field with its default \u2014 so\na rally run carries ``sample_fps`` harmlessly and an action run\n``extract_fps``.",
   "properties": {
     "recipe": {
       "default": "association_action",
-      "description": "Which task heads share the one fused checkpoint.",
+      "description": "Which task heads share the one checkpoint.",
       "enum": [
-        "association_action",
-        "rally_action",
-        "association_action_rally"
+        "rally",
+        "rally_winner",
+        "action",
+        "association_action"
       ],
       "title": "Recipe",
       "type": "string"
@@ -24,7 +26,7 @@
         }
       ],
       "default": null,
-      "description": "Run name; empty picks {date}_{view}_ass_act_{model}.",
+      "description": "Run name; empty picks {date}_{view}_{recipe}_{model}.",
       "title": "Run Name"
     },
     "init_checkpoint": {
@@ -37,36 +39,8 @@
         }
       ],
       "default": null,
-      "description": "Empty trains from scratch; a package from action-checkpoints/ fine-tunes from it.",
+      "description": "Empty trains from scratch; a package carrying every head of this recipe fine-tunes from it (extra heads are skipped on load).",
       "title": "Init Checkpoint"
-    },
-    "validation_mode": {
-      "default": "ratio",
-      "description": "manual validates on validation_videos; ratio holds out a seeded val_ratio.",
-      "enum": [
-        "manual",
-        "ratio"
-      ],
-      "title": "Validation Mode",
-      "type": "string"
-    },
-    "validation_videos": {
-      "description": "manual mode: the exact videos held out as the validation set.",
-      "items": {
-        "type": "string"
-      },
-      "title": "Validation Videos",
-      "type": "array"
-    },
-    "dataset_scope": {
-      "default": "joint_only",
-      "description": "joint_only trains on videos with both action and association labels; partial_labels also uses action-only videos (their association head sees no supervision).",
-      "enum": [
-        "joint_only",
-        "partial_labels"
-      ],
-      "title": "Dataset Scope",
-      "type": "string"
     },
     "camera_view": {
       "default": "all",
@@ -79,15 +53,89 @@
       "title": "Camera View",
       "type": "string"
     },
+    "validation": {
+      "default": "ratio",
+      "description": "ratio holds out a seeded val_ratio of the videos; manual validates on validation_videos; none validates on the training set (a final fit, no model selection).",
+      "enum": [
+        "ratio",
+        "manual",
+        "none"
+      ],
+      "title": "Validation",
+      "type": "string"
+    },
+    "validation_videos": {
+      "description": "manual: the videos (stems) held out as the validation set.",
+      "items": {
+        "type": "string"
+      },
+      "title": "Validation Videos",
+      "type": "array"
+    },
+    "val_ratio": {
+      "default": 0.2,
+      "description": "ratio: fraction of videos held out as the validation split.",
+      "exclusiveMaximum": 1,
+      "exclusiveMinimum": 0,
+      "title": "Val Ratio",
+      "type": "number"
+    },
+    "split_seed": {
+      "default": 42,
+      "description": "Seed for the train/val video shuffle \u2014 keep it fixed to compare runs.",
+      "title": "Split Seed",
+      "type": "integer"
+    },
+    "dataset_scope": {
+      "default": "joint_only",
+      "description": "association_action: joint_only trains on videos with both action and association labels; partial_labels also uses action-only videos (their actor head sees no supervision).",
+      "enum": [
+        "joint_only",
+        "partial_labels"
+      ],
+      "title": "Dataset Scope",
+      "type": "string"
+    },
     "include_predictions": {
       "default": false,
-      "description": "Also train on videos that only have SPOT pre-annotations (no human labels). Needs partial_labels scope (predictions carry no association labels) and manual validation, so pseudo-labeled videos never validate.",
+      "description": "Action recipes: also train on videos that only have SPOT pre-annotations (no human labels). Needs manual validation so pseudo-labeled videos never validate, and partial_labels scope.",
       "title": "Include Predictions",
       "type": "boolean"
     },
+    "extract_fps": {
+      "default": 2.0,
+      "description": "Rally recipes: frame-extraction rate, also the model's sample_fps. Rally on/off is a slow signal \u2014 2 fps gives clip_len=64 a 32 s window and keeps the whole library's frame cache around 30 GB.",
+      "maximum": 10,
+      "minimum": 0.5,
+      "title": "Extract Fps",
+      "type": "number"
+    },
+    "video_limit": {
+      "default": 100,
+      "description": "Rally recipes: 0 = every annotated video. A positive limit takes a seeded-shuffle subset (stable across runs) so a quick experiment doesn't extract hundreds of hours of frames first.",
+      "minimum": 0,
+      "title": "Video Limit",
+      "type": "integer"
+    },
+    "sample_fps": {
+      "default": 30.0,
+      "description": "Action recipes: per-video frame stride targeting this sampling rate. 0 = every frame.",
+      "maximum": 120,
+      "minimum": 0,
+      "title": "Sample Fps",
+      "type": "number"
+    },
+    "acc_grad_iter": {
+      "default": 1,
+      "description": "Action recipes: split each optimizer step into N micro-batches (batch_size must divide evenly).",
+      "maximum": 64,
+      "minimum": 1,
+      "title": "Acc Grad Iter",
+      "type": "integer"
+    },
     "audio_backend": {
       "default": "logmel",
-      "description": "logmel adds late-fusion audio (precomputed before training); none trains a pure-visual model. Must match at inference.",
+      "description": "Action recipes: logmel adds late-fusion audio (precomputed before training); none trains a pure-visual model. Must match at inference. Rally recipes are always visual-only.",
       "enum": [
         "logmel",
         "none"
@@ -148,27 +196,11 @@
       "title": "Clip Len",
       "type": "integer"
     },
-    "sample_fps": {
-      "default": 30.0,
-      "description": "Per-video frame stride targeting this sampling rate. 0 = every frame.",
-      "maximum": 120,
-      "minimum": 0,
-      "title": "Sample Fps",
-      "type": "number"
-    },
     "batch_size": {
       "default": 8,
       "maximum": 64,
       "minimum": 1,
       "title": "Batch Size",
-      "type": "integer"
-    },
-    "acc_grad_iter": {
-      "default": 1,
-      "description": "Split each optimizer step into N micro-batches (batch_size must divide evenly).",
-      "maximum": 64,
-      "minimum": 1,
-      "title": "Acc Grad Iter",
       "type": "integer"
     },
     "num_epochs": {
@@ -230,20 +262,6 @@
       "default": null,
       "description": "Frames sampled per epoch; empty uses the trainer's default budget.",
       "title": "Epoch Num Frames"
-    },
-    "val_ratio": {
-      "default": 0.2,
-      "description": "ratio mode: fraction of videos held out as the validation split.",
-      "exclusiveMaximum": 1,
-      "exclusiveMinimum": 0,
-      "title": "Val Ratio",
-      "type": "number"
-    },
-    "split_seed": {
-      "default": 42,
-      "description": "Seed for the train/val video shuffle \u2014 keep it fixed to compare runs.",
-      "title": "Split Seed",
-      "type": "integer"
     },
     "gpu": {
       "default": 0,

@@ -28,35 +28,9 @@ from yp_video.web.routers.actor_association import (
     OccludedActorRequest,
     PickActorRequest,
 )
-from yp_video.web.train_requests import (
-    ActionTrainRequest,
-    AnnotationActionTrainRequest,
-    VnlActionTrainRequest,
-)
 
 
 class DiscriminatedRequestTests(unittest.TestCase):
-    def test_action_train_source_owns_its_fields(self) -> None:
-        adapter = TypeAdapter(ActionTrainRequest)
-
-        vnl = adapter.validate_python({"source": "vnl_1_5"})
-        self.assertIsInstance(vnl, VnlActionTrainRequest)
-        annotation = adapter.validate_python(
-            {
-                "source": "action_annotations",
-                "training_mode": "holdout",
-                "holdout_videos": ["match.mp4"],
-            }
-        )
-        self.assertIsInstance(annotation, AnnotationActionTrainRequest)
-
-        with self.assertRaises(ValidationError):
-            adapter.validate_python(
-                {"source": "vnl_1_5", "training_mode": "holdout"}
-            )
-        with self.assertRaises(ValidationError):
-            adapter.validate_python({"source": "vnl_1_5", "resume": True})
-
     def test_actor_fix_mode_owns_its_fields(self) -> None:
         adapter = TypeAdapter(ActorFixRequest)
 

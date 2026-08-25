@@ -21,6 +21,7 @@ from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import write_jsonl
 from yp_video.extraction import actor_fix, done
 from yp_video.person.detector import PersonBox
+from yp_video.contracts.action import SPOT_PACKAGE_TYPE
 from yp_video.web.routers import actor_association as router
 
 
@@ -315,7 +316,7 @@ class NeuralAssociationTrainTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as raw_dir:
             root = Path(raw_dir)
             with (
-                patch.object(router, "ACTION_CHECKPOINTS_DIR", root / "checkpoints"),
+                patch.object(router, "SPOT_CHECKPOINTS_DIR", root / "checkpoints"),
                 patch.object(router, "SPOT_DIR", root / "yp-spot"),
                 patch.object(
                     router,
@@ -405,13 +406,14 @@ class SpotActorInferenceContractTests(unittest.TestCase):
     @staticmethod
     def _declare_fusion(package: Path) -> None:
         (package / "config.json").write_text(
-            json.dumps({"predict_actor": True, "audio_backend": "logmel"}),
+            json.dumps({"tasks": ["action", "location", "actor"], "audio_backend": "logmel"}),
             encoding="utf-8",
         )
         (package / "manifest.json").write_text(
             json.dumps(
                 {
-                    "type": "actor-association-spot",
+                    "type": SPOT_PACKAGE_TYPE,
+                    "tasks": ["action", "location", "actor"],
                     "holdout": "held-out-video",
                     "actor_targets": {"track": 12},
                     "holdout_metrics": {"all_top1": 0.84},
@@ -512,12 +514,9 @@ class SpotActorInferenceContractTests(unittest.TestCase):
             with patch.object(
                 router.spot_associate.prelabel,
                 "list_checkpoints",
-                return_value=[
-                    {
-                        "path": str(checkpoint),
-                        "epoch": 4,
-                        "mtime": 123.0,
-                    }
+                side_effect=[
+                    [],
+                    [{"path": str(checkpoint), "epoch": 4, "mtime": 123.0}],
                 ],
             ):
                 listed = router.spot_associate.list_association_checkpoints()
@@ -560,12 +559,9 @@ class SpotActorInferenceContractTests(unittest.TestCase):
             with patch.object(
                 router.spot_associate.prelabel,
                 "list_checkpoints",
-                return_value=[
-                    {
-                        "path": str(checkpoint),
-                        "epoch": 4,
-                        "mtime": 123.0,
-                    }
+                side_effect=[
+                    [],
+                    [{"path": str(checkpoint), "epoch": 4, "mtime": 123.0}],
                 ],
             ):
                 listed = router.spot_associate.list_association_checkpoints()

@@ -11,6 +11,176 @@
     "zero_based": true
   },
   "x-label-file-glob": "*_actions.jsonl",
+  "x-tasks": {
+    "rally": {
+      "name": "rally",
+      "label": "Rally",
+      "kind": "segment",
+      "label_subdir": "rally-annotations",
+      "label_glob": "*_rally.jsonl",
+      "event_fields": [
+        "frame",
+        "end_frame"
+      ],
+      "requires": [],
+      "primary_metric": "segment_mAP",
+      "serveable": true,
+      "loss_weight": 1.0
+    },
+    "winner": {
+      "name": "winner",
+      "label": "Winner",
+      "kind": "aux",
+      "label_subdir": "rally-annotations",
+      "label_glob": "*_rally.jsonl",
+      "event_fields": [
+        "winner"
+      ],
+      "requires": [
+        "rally"
+      ],
+      "primary_metric": "winner_top1",
+      "serveable": true,
+      "loss_weight": 1.0
+    },
+    "action": {
+      "name": "action",
+      "label": "Action",
+      "kind": "point",
+      "label_subdir": "action-annotations",
+      "label_glob": "*_actions.jsonl",
+      "event_fields": [
+        "frame",
+        "label"
+      ],
+      "requires": [],
+      "primary_metric": "harmonic_mAP",
+      "serveable": true,
+      "loss_weight": 1.0
+    },
+    "location": {
+      "name": "location",
+      "label": "Location",
+      "kind": "aux",
+      "label_subdir": "action-annotations",
+      "label_glob": "*_actions.jsonl",
+      "event_fields": [
+        "xy"
+      ],
+      "requires": [
+        "action"
+      ],
+      "primary_metric": "spatial_mAP",
+      "serveable": false,
+      "loss_weight": 1.0
+    },
+    "actor": {
+      "name": "actor",
+      "label": "Actor",
+      "kind": "aux",
+      "label_subdir": "actor-candidates",
+      "label_glob": "*_actor_candidates.jsonl",
+      "event_fields": [],
+      "requires": [
+        "action",
+        "location"
+      ],
+      "primary_metric": "player_top1",
+      "serveable": true,
+      "loss_weight": 1.0
+    }
+  },
+  "x-recipes": {
+    "rally": {
+      "id": "rally",
+      "name": "Rally",
+      "tasks": [
+        "rally"
+      ],
+      "description": "Rally on/off segments from the rally annotations.",
+      "fields": [
+        "extract_fps",
+        "video_limit"
+      ],
+      "defaults": {
+        "batch_size": 8,
+        "acc_grad_iter": 1,
+        "num_epochs": 30,
+        "warm_up_epochs": 2,
+        "learning_rate": 0.0003,
+        "audio_backend": "none"
+      }
+    },
+    "rally_winner": {
+      "id": "rally_winner",
+      "name": "Rally + Winner",
+      "tasks": [
+        "rally",
+        "winner"
+      ],
+      "description": "Rally segments plus which court side won each rally.",
+      "fields": [
+        "extract_fps",
+        "video_limit"
+      ],
+      "defaults": {
+        "batch_size": 8,
+        "acc_grad_iter": 1,
+        "num_epochs": 30,
+        "warm_up_epochs": 2,
+        "learning_rate": 0.0003,
+        "audio_backend": "none"
+      }
+    },
+    "action": {
+      "id": "action",
+      "name": "Action",
+      "tasks": [
+        "action",
+        "location"
+      ],
+      "description": "Touch spotting with the contact-point location head.",
+      "fields": [
+        "sample_fps",
+        "acc_grad_iter",
+        "audio_backend",
+        "include_predictions"
+      ],
+      "defaults": {
+        "batch_size": 32,
+        "acc_grad_iter": 4,
+        "num_epochs": 100,
+        "warm_up_epochs": 3,
+        "learning_rate": 1e-05,
+        "audio_backend": "logmel"
+      }
+    },
+    "association_action": {
+      "id": "association_action",
+      "name": "Association + Action",
+      "tasks": [
+        "action",
+        "location",
+        "actor"
+      ],
+      "description": "Touch spotting plus which player acted, from the actor-candidate sidecar.",
+      "fields": [
+        "sample_fps",
+        "acc_grad_iter",
+        "audio_backend",
+        "include_predictions",
+        "dataset_scope"
+      ],
+      "defaults": {
+        "batch_size": 8,
+        "acc_grad_iter": 1,
+        "num_epochs": 50,
+        "warm_up_epochs": 3,
+        "learning_rate": 3e-05,
+        "audio_backend": "logmel"
+      }
+    }
+  },
   "$defs": {
     "ActionEvent": {
       "additionalProperties": false,

@@ -11,7 +11,7 @@ stay HTTP-thin.
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Literal
 
 from pydantic import Field, model_validator
 
@@ -42,353 +42,138 @@ CameraView = Literal["all", "broadcast", "sideline"]
 Criterion = Literal["map", "loss"]
 
 
-class RallyTrainRequest(StrictModel):
+RecipeId = Literal["rally", "rally_winner", "action", "association_action"]
+
+#: One of the two label families a recipe draws from; which request fields
+#: apply follows from it (see ``Recipe.fields`` in the contract).
+Validation = Literal["ratio", "manual", "none"]
+
+
+class FusionTrainRequest(StrictModel):
+    """One SPOT training run: a recipe (which heads) plus how to train it.
+
+    Fields outside the chosen recipe's ``fields`` (contract ``RECIPES``) are
+    accepted and ignored — the form sends every field with its default — so
+    a rally run carries ``sample_fps`` harmlessly and an action run
+    ``extract_fps``.
+    """
+
+    recipe: RecipeId = Field(
+        default="association_action",
+        description="Which task heads share the one checkpoint.",
+    )
+    run_name: str | None = Field(
+        default=None,
+        description="Run name; empty picks {date}_{view}_{recipe}_{model}.",
+    )
+    init_checkpoint: str | None = Field(
+        default=None,
+        description=(
+            "Empty trains from scratch; a package carrying every head of this "
+            "recipe fine-tunes from it (extra heads are skipped on load)."
+        ),
+    )
+    camera_view: CameraView = Field(
+        default="all",
+        description="Train on all views together or restrict to one camera view.",
+    )
+    validation: Validation = Field(
+        default="ratio",
+        description=(
+            "ratio holds out a seeded val_ratio of the videos; manual validates "
+            "on validation_videos; none validates on the training set (a "
+            "final fit, no model selection)."
+        ),
+    )
+    validation_videos: list[str] = Field(
+        default_factory=list,
+        description="manual: the videos (stems) held out as the validation set.",
+    )
+    val_ratio: float = Field(
+        default=0.2,
+        gt=0,
+        lt=1,
+        description="ratio: fraction of videos held out as the validation split.",
+    )
+    split_seed: int = Field(
+        default=42,
+        description="Seed for the train/val video shuffle — keep it fixed to compare runs.",
+    )
+    dataset_scope: Literal["joint_only", "partial_labels"] = Field(
+        default="joint_only",
+        description=(
+            "association_action: joint_only trains on videos with both action "
+            "and association labels; partial_labels also uses action-only "
+            "videos (their actor head sees no supervision)."
+        ),
+    )
+    include_predictions: bool = Field(
+        default=False,
+        description=(
+            "Action recipes: also train on videos that only have SPOT "
+            "pre-annotations (no human labels). Needs manual validation so "
+            "pseudo-labeled videos never validate, and partial_labels scope."
+        ),
+    )
+    # ── Rally recipes ────────────────────────────────────────────
     extract_fps: float = Field(
         default=2.0,
         ge=0.5,
         le=10,
         description=(
-            "Frame-extraction rate; also the model's sample_fps. Rally on/off "
-            "is a slow signal — 2 fps gives clip_len=64 a 32 s window and "
-            "keeps the whole library's frame cache around 30 GB."
+            "Rally recipes: frame-extraction rate, also the model's "
+            "sample_fps. Rally on/off is a slow signal — 2 fps gives "
+            "clip_len=64 a 32 s window and keeps the whole library's frame "
+            "cache around 30 GB."
         ),
     )
     video_limit: int = Field(
         default=100,
         ge=0,
         description=(
-            "0 = every annotated video. A positive limit takes a "
-            "seeded-shuffle subset (stable across runs) so a quick experiment "
-            "doesn't extract hundreds of hours of frames first."
+            "Rally recipes: 0 = every annotated video. A positive limit takes "
+            "a seeded-shuffle subset (stable across runs) so a quick "
+            "experiment doesn't extract hundreds of hours of frames first."
         ),
     )
-    camera_view: CameraView = Field(
-        default="all",
-        description="Train on all views together or restrict to one camera view.",
-    )
-    save_dir: str | None = Field(
-        default=None,
-        description="Run directory override; empty picks a timestamped dir under exp/.",
-    )
-    init_checkpoint: str | None = Field(
-        default=None,
-        description=(
-            "Empty trains from scratch; a checkpoint package (rally or "
-            "action) fine-tunes from it — mismatched heads are skipped on load."
-        ),
-    )
-    gpu: int = Field(default=0, ge=0, le=7, description="CUDA device index.")
-    feature_arch: FeatureArch = Field(
-        default="rny008_tv_gsm", description="Visual backbone."
-    )
-    temporal_arch: TemporalArch = Field(
-        default="gru", description="Temporal head over the frame features."
-    )
-    clip_len: int = Field(
-        default=64,
-        ge=8,
-        le=256,
-        description="Frames per training clip; with extract_fps this sets the temporal window.",
-    )
-    batch_size: int = Field(default=8, ge=1, le=64)
-    num_epochs: int = Field(default=30, ge=1, le=1000)
-    warm_up_epochs: int = Field(
-        default=2, ge=0, le=100, description="Linear LR warm-up epochs."
-    )
-    learning_rate: float = Field(default=0.0003, gt=0)
-    num_workers: int = Field(
-        default=4, ge=0, le=32, description="DataLoader worker processes."
-    )
-    criterion: Criterion = Field(
-        default="map", description="Which epoch counts as best: top validation mAP or lowest loss."
-    )
-    start_val_epoch: int = Field(
-        default=0,
-        ge=0,
-        description="Skip validation before this epoch to save time early in a long run.",
-    )
-    epoch_num_frames: int | None = Field(
-        default=None,
-        ge=1,
-        description="Frames sampled per epoch; empty uses the trainer's default budget.",
-    )
-    val_ratio: float = Field(
-        default=0.2,
-        gt=0,
-        lt=1,
-        description="Fraction of videos held out as the validation split.",
-    )
-    split_seed: int = Field(
-        default=42, description="Seed for the train/val video shuffle — keep it fixed to compare runs."
-    )
-    predict_winner: bool = Field(
-        default=False,
-        description=(
-            "Add the winner head: predict which court side the winner of each "
-            "rally played on (left/right/near/far) from its final seconds. "
-            "Needs rally annotations that carry winner labels."
-        ),
-    )
-    stop_vllm: bool = Field(
-        default=False,
-        description="Stop the vLLM server first to free its GPU memory for training.",
-    )
-
-
-class ActionTrainBase(StrictModel):
-
-    dataset: str | None = Field(
-        default=None, description="Dataset name recorded in the run; empty uses the source's default."
-    )
-    frame_dir: str | None = Field(
-        default=None, description="Frame-cache directory; empty uses the source's default."
-    )
-    save_dir: str | None = Field(
-        default=None,
-        description="Run directory override; empty picks a timestamped dir under exp/.",
-    )
-    checkpoint_dir: str | None = Field(
-        default=None,
-        description="Checkpoint-package directory override; empty derives it from the run name.",
-    )
-    init_checkpoint: str | None = Field(
-        default=None,
-        description="Empty trains from scratch; a package from action-checkpoints/ fine-tunes from it.",
-    )
-    gpu: int = Field(default=0, ge=0, le=7, description="CUDA device index.")
-    audio_backend: Literal["logmel", "none"] = Field(
-        default="logmel",
-        description=(
-            "logmel adds late-fusion audio (precomputed before training); "
-            "none trains a pure-visual model. Must match at inference."
-        ),
-    )
-    feature_arch: FeatureArch = Field(
-        default="rny008_tv_gsm", description="Visual backbone."
-    )
-    temporal_arch: TemporalArch = Field(
-        default="gru", description="Temporal head over the frame features."
-    )
-    pred_loc_arch: str = Field(
-        default="mlp", description="Location-prediction head architecture."
-    )
-    clip_len: int = Field(
-        default=64, ge=8, le=256, description="Frames per training clip."
-    )
+    # ── Action recipes ───────────────────────────────────────────
     sample_fps: float = Field(
         default=30.0,
         ge=0,
         le=120,
         description=(
-            "Per-video frame stride targeting this sampling rate, so clip_len "
-            "spans the same wall-clock time on 30fps and 60fps sources. "
-            "0 = every frame."
+            "Action recipes: per-video frame stride targeting this sampling "
+            "rate. 0 = every frame."
         ),
     )
-    batch_size: int = Field(default=32, ge=1, le=64)
-    acc_grad_iter: int = Field(
-        default=4,
-        ge=1,
-        le=64,
-        description=(
-            "Split each optimizer step into N micro-batches (batch_size must "
-            "divide evenly) — heavy backbones keep the effective batch "
-            "without the VRAM."
-        ),
-    )
-    num_epochs: int = Field(default=100, ge=1, le=1000)
-    warm_up_epochs: int = Field(
-        default=3, ge=0, le=100, description="Linear LR warm-up epochs."
-    )
-    learning_rate: float = Field(default=0.00001, gt=0)
-    num_workers: int = Field(
-        default=4, ge=0, le=32, description="DataLoader worker processes."
-    )
-    criterion: Criterion = Field(
-        default="map", description="Which epoch counts as best: top validation mAP or lowest loss."
-    )
-    start_val_epoch: int = Field(
-        default=0,
-        ge=0,
-        description="Skip validation before this epoch to save time early in a long run.",
-    )
-    epoch_num_frames: int | None = Field(
-        default=None,
-        ge=1,
-        description="Frames sampled per epoch; empty uses the trainer's default budget.",
-    )
-    predict_location: bool = Field(
-        default=True, description="Also learn WHERE on the court each action happens."
-    )
-    predict_actor: bool = Field(
-        default=False,
-        description=(
-            "Also learn WHICH PLAYER acted, from the actor-candidate sidecar. "
-            "Rejected up front when the label snapshot has no actor work."
-        ),
-    )
-    stop_vllm: bool = Field(
-        default=False,
-        description="Stop the vLLM server first to free its GPU memory for training.",
-    )
-
-    @model_validator(mode="after")
-    def _check_acc_grad_divides_batch(self) -> "ActionTrainBase":
-        if self.batch_size % self.acc_grad_iter != 0:
-            raise ValueError(
-                f"batch_size ({self.batch_size}) must be divisible by "
-                f"acc_grad_iter ({self.acc_grad_iter})"
-            )
-        return self
-
-
-class VnlActionTrainRequest(ActionTrainBase):
-    """Built-in VNL data owns its train/val split and has no camera-view mode."""
-
-    source: Literal["vnl_1_5"] = "vnl_1_5"
-
-
-class AnnotationActionTrainRequest(ActionTrainBase):
-    source: Literal["action_annotations"]
-    dataset: str | None = Field(
-        default="yp_actions",
-        description="Dataset name recorded in the run.",
-    )
-    training_mode: Literal["split", "all", "holdout"] = Field(
-        default="split",
-        description=(
-            "split holds out a seeded val_ratio of videos; all trains on "
-            "everything; holdout validates on exactly holdout_videos."
-        ),
-    )
-    val_ratio: float = Field(
-        default=0.2,
-        gt=0,
-        lt=1,
-        description="split mode: fraction of videos held out as the validation split.",
-    )
-    split_seed: int = Field(
-        default=42, description="Seed for the train/val video shuffle — keep it fixed to compare runs."
-    )
-    holdout_videos: list[str] = Field(
-        default_factory=list,
-        description=(
-            "holdout mode: the exact videos to hold out as the validation "
-            "set; every other labelled video trains. Entries may be the raw "
-            "stem, <stem>.mp4, or <stem>_actions.jsonl."
-        ),
-    )
-    camera_view: CameraView = Field(
-        default="all",
-        description="Train on all views together or restrict to one camera view.",
-    )
-    include_predictions: bool = Field(
-        default=False,
-        description=(
-            "Also train on videos that only have SPOT pre-annotations (no "
-            "human labels). Pseudo-labeled videos always land on the training "
-            "side, so this needs holdout mode — a random split would leak "
-            "them into validation."
-        ),
-    )
-
-    @model_validator(mode="after")
-    def _predictions_need_holdout(self) -> "AnnotationActionTrainRequest":
-        if self.include_predictions and self.training_mode != "holdout":
-            raise ValueError(
-                "include_predictions requires training_mode='holdout' so "
-                "validation stays human-labeled"
-            )
-        return self
-
-
-ActionTrainRequest = Annotated[
-    VnlActionTrainRequest | AnnotationActionTrainRequest,
-    Field(discriminator="source"),
-]
-
-
-class FusionTrainRequest(StrictModel):
-    recipe: Literal[
-        "association_action",
-        "rally_action",
-        "association_action_rally",
-    ] = Field(
-        default="association_action",
-        description="Which task heads share the one fused checkpoint.",
-    )
-    run_name: str | None = Field(
-        default=None,
-        description="Run name; empty picks {date}_{view}_ass_act_{model}.",
-    )
-    init_checkpoint: str | None = Field(
-        default=None,
-        description="Empty trains from scratch; a package from action-checkpoints/ fine-tunes from it.",
-    )
-    validation_mode: Literal["manual", "ratio"] = Field(
-        default="ratio",
-        description="manual validates on validation_videos; ratio holds out a seeded val_ratio.",
-    )
-    validation_videos: list[str] = Field(
-        default_factory=list,
-        description="manual mode: the exact videos held out as the validation set.",
-    )
-    dataset_scope: Literal["joint_only", "partial_labels"] = Field(
-        default="joint_only",
-        description=(
-            "joint_only trains on videos with both action and association "
-            "labels; partial_labels also uses action-only videos (their "
-            "association head sees no supervision)."
-        ),
-    )
-    camera_view: CameraView = Field(
-        default="all",
-        description="Train on all views together or restrict to one camera view.",
-    )
-    include_predictions: bool = Field(
-        default=False,
-        description=(
-            "Also train on videos that only have SPOT pre-annotations (no "
-            "human labels). Needs partial_labels scope (predictions carry no "
-            "association labels) and manual validation, so pseudo-labeled "
-            "videos never validate."
-        ),
-    )
-    audio_backend: Literal["logmel", "none"] = Field(
-        default="logmel",
-        description=(
-            "logmel adds late-fusion audio (precomputed before training); "
-            "none trains a pure-visual model. Must match at inference."
-        ),
-    )
-    feature_arch: FeatureArch = Field(
-        default="rny008_tv_gsm", description="Visual backbone."
-    )
-    temporal_arch: TemporalArch = Field(
-        default="gru", description="Temporal head over the frame features."
-    )
-    clip_len: int = Field(
-        default=64, ge=8, le=256, description="Frames per training clip."
-    )
-    sample_fps: float = Field(
-        default=30.0,
-        ge=0,
-        le=120,
-        description=(
-            "Per-video frame stride targeting this sampling rate. "
-            "0 = every frame."
-        ),
-    )
-    batch_size: int = Field(default=8, ge=1, le=64)
     acc_grad_iter: int = Field(
         default=1,
         ge=1,
         le=64,
         description=(
-            "Split each optimizer step into N micro-batches (batch_size must "
-            "divide evenly)."
+            "Action recipes: split each optimizer step into N micro-batches "
+            "(batch_size must divide evenly)."
         ),
     )
+    audio_backend: Literal["logmel", "none"] = Field(
+        default="logmel",
+        description=(
+            "Action recipes: logmel adds late-fusion audio (precomputed before "
+            "training); none trains a pure-visual model. Must match at "
+            "inference. Rally recipes are always visual-only."
+        ),
+    )
+    # ── Common ───────────────────────────────────────────────────
+    feature_arch: FeatureArch = Field(
+        default="rny008_tv_gsm", description="Visual backbone."
+    )
+    temporal_arch: TemporalArch = Field(
+        default="gru", description="Temporal head over the frame features."
+    )
+    clip_len: int = Field(
+        default=64, ge=8, le=256, description="Frames per training clip."
+    )
+    batch_size: int = Field(default=8, ge=1, le=64)
     num_epochs: int = Field(default=50, ge=1, le=1000)
     warm_up_epochs: int = Field(
         default=3, ge=0, le=100, description="Linear LR warm-up epochs."
@@ -410,15 +195,6 @@ class FusionTrainRequest(StrictModel):
         ge=1,
         description="Frames sampled per epoch; empty uses the trainer's default budget.",
     )
-    val_ratio: float = Field(
-        default=0.2,
-        gt=0,
-        lt=1,
-        description="ratio mode: fraction of videos held out as the validation split.",
-    )
-    split_seed: int = Field(
-        default=42, description="Seed for the train/val video shuffle — keep it fixed to compare runs."
-    )
     gpu: int = Field(default=0, ge=0, le=7, description="CUDA device index.")
     stop_vllm: bool = Field(
         default=False,
@@ -426,18 +202,25 @@ class FusionTrainRequest(StrictModel):
     )
 
     @model_validator(mode="after")
-    def _predictions_need_manual_partial(self) -> "FusionTrainRequest":
+    def _consistent(self) -> "FusionTrainRequest":
+        if self.validation == "manual" and not self.validation_videos:
+            raise ValueError("manual validation needs at least one validation video")
         if self.include_predictions:
-            if self.dataset_scope != "partial_labels":
+            if self.validation != "manual":
+                raise ValueError(
+                    "include_predictions requires validation='manual' so "
+                    "validation stays human-labeled"
+                )
+            if self.recipe == "association_action" and self.dataset_scope != "partial_labels":
                 raise ValueError(
                     "include_predictions requires dataset_scope='partial_labels'; "
                     "prediction-only videos carry no association labels"
                 )
-            if self.validation_mode != "manual":
-                raise ValueError(
-                    "include_predictions requires validation_mode='manual' so "
-                    "validation stays human-labeled"
-                )
+        if self.batch_size % self.acc_grad_iter:
+            raise ValueError(
+                f"batch_size ({self.batch_size}) must be divisible by "
+                f"acc_grad_iter ({self.acc_grad_iter})"
+            )
         return self
 
 

@@ -1,7 +1,7 @@
 """What a SPOT training run leaves on disk, readable without the web.
 
-Both trainers (action spotting and rally segments) shell out to
-``yp_spot.train`` and write the same run layout under ``yp-spot/exp/`` —
+Every Fusion Train recipe shells out to ``yp_spot.train`` and writes the
+same run layout under ``yp-spot/exp/`` —
 optimizer snapshots, ``metrics.jsonl`` / ``loss.json``, ``checkpoint_best.*``
 — and finished runs are exported as checkpoint packages. This module owns
 that on-disk knowledge once: run discovery, package export, per-epoch metric
@@ -18,7 +18,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 
-from yp_video.contracts.action import ACTION_PACKAGE_TYPE, FUSION_PACKAGE_TYPE
+from yp_video.contracts.action import ACTION_CONTRACT_VERSION, SPOT_PACKAGE_TYPE
 
 log = logging.getLogger(__name__)
 
@@ -31,7 +31,8 @@ def spot_run_name(*, view: str, task: str, feature_arch: str) -> str:
     Mirrors yp-spot's ``RunName`` (its env is separate, so importing it is
     not an option): the model token is the backbone base with any temporal
     suffix stripped, and the "all" view is spelled out as "all_view".
-    Tasks: ``act`` action spotting, ``ass_act`` +actor, ``ral`` rally.
+    Tasks: ``act`` action spotting, ``ass_act`` +actor, ``ral`` rally,
+    ``ral_win`` +winner.
     """
     model = feature_arch
     for suffix in ("_tsm", "_gsm"):
@@ -65,25 +66,23 @@ def load_json_file(path: Path) -> dict | list | None:
 
 # ── Init-checkpoint options ───────────────────────────────────────
 
-#: Package types whose weights are a SPOT model — what the Action and Rally
-#: trainers can warm-start from (Fusion restricts itself to fusion packages,
-#: whose actor head an action-only package lacks). The independent association
-#: package is deliberately absent: its weights are an AssociationModel, and
-#: the SPOT loader's shape-matching init would load zero tensors from it
-#: without a word of complaint.
-SPOT_INIT_PACKAGE_TYPES = (ACTION_PACKAGE_TYPE, FUSION_PACKAGE_TYPE)
-
-
 def checkpoint_package_options(
-    checkpoints_dir: Path, *, package_types: Sequence[str]
+    checkpoints_dir: Path,
+    *,
+    tasks: Sequence[str] | None = None,
+    package_types: Sequence[str] | None = None,
 ) -> list[dict]:
     """Selectable init-checkpoint options: packaged runs under ``checkpoints_dir``.
 
-    ``package_types`` names what the trainer behind the picker can actually
-    load — several families share one checkpoints directory, so every caller
-    must say which it eats. A package with no readable manifest type is
-    excluded too: what it contains cannot be verified.
+    Pick by ``tasks`` for a SPOT recipe — eligible packages carry every head
+    the recipe trains (a superset is fine: unused heads are skipped on load;
+    a missing one would leave that head randomly initialized while looking
+    like a fine-tune) — or by ``package_types`` for a non-SPOT family. A
+    package with no readable manifest is excluded: what it contains cannot
+    be verified.
     """
+    if (tasks is None) == (package_types is None):
+        raise ValueError("pass exactly one of tasks / package_types")
     options: list[dict] = []
     if checkpoints_dir.exists():
         for run_dir in sorted(checkpoints_dir.iterdir(), reverse=True):
@@ -91,10 +90,14 @@ def checkpoint_package_options(
             if not run_dir.is_dir() or not ckpt.is_file():
                 continue
             manifest = load_json_file(run_dir / "manifest.json")
-            declared = (
-                manifest.get("type") if isinstance(manifest, dict) else None
-            )
-            if declared not in package_types:
+            if not isinstance(manifest, dict):
+                continue
+            if tasks is not None:
+                if manifest.get("type") != SPOT_PACKAGE_TYPE or not set(tasks) <= set(
+                    manifest.get("tasks") or ()
+                ):
+                    continue
+            elif manifest.get("type") not in package_types:
                 continue
             options.append(
                 {"label": _package_label(run_dir, manifest), "value": str(ckpt)}
@@ -105,8 +108,10 @@ def checkpoint_package_options(
 #: How a task's primary metric reads in a one-line picker label.
 _METRIC_LABELS = {
     "harmonic_mAP": "mAP",
+    "segment_mAP": "seg mAP",
     "spatial_mAP": "loc mAP",
     "player_top1": "Top-1",
+    "winner_top1": "winner Top-1",
 }
 
 
@@ -220,22 +225,24 @@ def export_checkpoint_package(
     package_dir: Path,
     checkpoints_root: Path,
     package_type: str,
-    label_subdir: str,
-    label_glob: str,
+    label_subdirs: Sequence[str],
     training: dict,
     cmd: list[str],
     serveable_tasks: Sequence[str] = (),
+    tasks: Sequence[str] | None = None,
+    recipe: str | None = None,
 ) -> dict:
     """Copy a finished run's durable artifacts into a checkpoint package.
 
     Heavy per-epoch files (``checkpoint_*.pt``, ``optim_*.pt``, prediction
     dumps) stay in the run dir; the package holds the best checkpoint, config,
-    metrics, terminal log, the ``labels/<label_subdir>`` snapshot, and a
-    ``manifest.json`` describing how it was trained.
+    metrics, terminal log, every ``labels/<subdir>`` snapshot named in
+    ``label_subdirs``, and a ``manifest.json`` describing how it was trained.
 
-    ``serveable_tasks`` names the tasks a predict surface can load on their
-    own — the caller knows what its package serves, the same way it declares
-    ``package_type``. Every declared task's best epoch is recorded in the
+    ``tasks`` / ``recipe`` are what a SPOT package declares so predict
+    surfaces can ask "does it serve X"; the independent association trainer
+    passes neither. ``serveable_tasks`` names the tasks a predict surface can
+    load on their own. Every declared task's best epoch is recorded in the
     manifest, but only a serveable task earns its own weights file: a task
     that can only ever be loaded alongside another (location rides with
     action) would duplicate ~80 MB nobody can use.
@@ -261,14 +268,16 @@ def export_checkpoint_package(
             shutil.copy2(src, package_dir / name)
             copied.append(name)
 
-    src_label_dir = run_dir / "labels" / label_subdir
-    if src_label_dir.exists():
-        dst_label_dir = package_dir / "labels" / label_subdir
+    for subdir in label_subdirs:
+        src_label_dir = run_dir / "labels" / subdir
+        if not src_label_dir.exists():
+            continue
+        dst_label_dir = package_dir / "labels" / subdir
         dst_label_dir.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(src_label_dir, dst_label_dir)
         copied.extend(
             str(path.relative_to(package_dir))
-            for path in sorted(dst_label_dir.glob(label_glob))
+            for path in sorted(dst_label_dir.glob("*.jsonl"))
         )
 
     best = load_json_file(run_dir / "checkpoint_best.json")
@@ -304,6 +313,8 @@ def export_checkpoint_package(
     manifest = {
         "type": package_type,
         "version": 1,
+        "contract_version": ACTION_CONTRACT_VERSION,
+        **({"tasks": list(tasks), "recipe": recipe} if tasks is not None else {}),
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "run_name": package_dir.name,
         "source_run_dir": str(run_dir),

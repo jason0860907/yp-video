@@ -1,6 +1,6 @@
 """The web-facing half of SPOT run plumbing.
 
-Both trainers speak the same stdout protocol; parsing it into live job
+Every SPOT run speaks the same stdout protocol; parsing it into live job
 params (``TrainProgress`` / ``make_train_parsers``) and exporting checkpoint
 packages mid-job (``PackageExporter``) genuinely need the job manager, so
 they live here. Everything a run leaves on disk — discovery, packaging,
@@ -22,7 +22,6 @@ from fastapi import HTTPException
 
 from yp_video.action import spot_runs as _runs
 from yp_video.action.spot_runs import (  # noqa: F401 — re-exported for routers
-    SPOT_INIT_PACKAGE_TYPES,
     actor_task_metrics,
     checkpoint_package_options,
     dedupe_run_name,

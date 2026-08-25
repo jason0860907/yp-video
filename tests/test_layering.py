@@ -101,7 +101,7 @@ class LayeringTests(unittest.TestCase):
 
         fusion-model once imported action-train's underscore-private label
         machinery; shared behaviour belongs in a web/ module (job_helpers,
-        action_training, spot_runs) or below the web layer entirely.
+        spot_training, spot_runs) or below the web layer entirely.
         """
         offenders: list[str] = []
         for path in sorted((SRC / "web" / "routers").glob("*.py")):

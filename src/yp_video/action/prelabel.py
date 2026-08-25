@@ -4,21 +4,19 @@ from __future__ import annotations
 
 import json
 import math
-import re
 from collections.abc import Sequence
 from pathlib import Path
 
 from yp_video.config import (
-    ACTION_CHECKPOINTS_DIR,
+    SPOT_CHECKPOINTS_DIR,
     SPOT_DIR,
     SPOT_INFERENCE_MODULE,
     SPOT_PACKAGE_DIR,
     SPOT_PYTHON,
 )
-from yp_video.contracts.action import ACTION_LABELS
+from yp_video.contracts.action import ACTION_LABELS, SPOT_PACKAGE_TYPE
 from yp_video.core.checkpoints import checkpoint_ref, is_under, resolve_ref
 
-_CHECKPOINT_RE = re.compile(r"checkpoint_(\d+)\.pt$")
 _BEST_CHECKPOINT = "checkpoint_best.pt"
 
 
@@ -30,57 +28,69 @@ def spot_available() -> bool:
     )
 
 
-def list_checkpoints(root: Path = ACTION_CHECKPOINTS_DIR) -> list[dict]:
-    """Packaged SPOT checkpoints under ``root`` (action or rally packages)."""
+def list_checkpoints(
+    root: Path = SPOT_CHECKPOINTS_DIR,
+    *,
+    task: str | None = None,
+    package_type: str = SPOT_PACKAGE_TYPE,
+) -> list[dict]:
+    """Checkpoint packages under ``root``, one row per package.
+
+    ``task`` keeps only packages whose manifest serves it, and points the row
+    at that task's own best-epoch weights (``best_per_task[task].file``) —
+    a fusion run's action-best and actor-best epochs rarely coincide, and
+    serving a task its selection-criterion epoch quietly hands it a
+    compromised head. ``package_type`` selects the family (the independent
+    association trainer has its own).
+    """
     checkpoints = []
-    actor_heads: dict[Path, bool] = {}
-    for path in _iter_checkpoint_paths(root):
+    for run_dir in _iter_package_dirs(root):
+        manifest = _load_json(run_dir / "manifest.json")
+        if manifest.get("type") != package_type:
+            continue
+        tasks = list(manifest.get("tasks") or [])
+        if task is not None and task not in tasks:
+            continue
+        pick = ((manifest.get("best_per_task") or {}).get(task) or {}) if task else {}
+        path = run_dir / (pick.get("file") or _BEST_CHECKPOINT)
         if not path.is_file():
             continue
-        match = _CHECKPOINT_RE.match(path.name)
-        is_best = path.name == _BEST_CHECKPOINT
-        if match is None and not is_best:
-            # A per-task best (checkpoint_best_<task>.pt) — reachable through
-            # its package's manifest, not a standalone picker entry.
-            continue
-        best_metadata = _load_best_metadata(path.parent) if is_best else {}
-        epoch = int(match.group(1)) if match else int(best_metadata.get("epoch", -1))
+        best = manifest.get("best") if isinstance(manifest.get("best"), dict) else {}
         stat = path.stat()
-        rel = checkpoint_ref(path)
-        if path.parent not in actor_heads:
-            actor_heads[path.parent] = _package_predicts_actor(path.parent)
         checkpoints.append({
-            "path": rel,
-            "name": f"{path.parent.name}/{path.name}",
-            "experiment": path.parent.name,
-            "epoch": epoch,
-            "is_best": is_best,
-            "best_metric": best_metadata.get("metric"),
-            "best_value": best_metadata.get("value"),
+            "path": checkpoint_ref(path),
+            "name": f"{run_dir.name}/{path.name}",
+            "experiment": run_dir.name,
+            "epoch": int(pick.get("epoch", best.get("epoch", -1))),
+            "is_best": True,
+            "best_metric": pick.get("metric", best.get("metric")),
+            "best_value": pick.get("value", best.get("value")),
             "mtime": stat.st_mtime,
             "size_mb": stat.st_size / (1024 * 1024),
             "source": root.name,
-            "predicts_actor": actor_heads[path.parent],
+            "tasks": tasks,
+            "recipe": manifest.get("recipe"),
         })
-    checkpoints.sort(key=lambda c: (c["is_best"], c["mtime"], c["epoch"]), reverse=True)
+    checkpoints.sort(key=lambda c: (c["mtime"], c["epoch"]), reverse=True)
     return checkpoints
 
 
-def default_checkpoint(root: Path = ACTION_CHECKPOINTS_DIR) -> Path | None:
-    checkpoints = list_checkpoints(root)
+def default_checkpoint(
+    root: Path = SPOT_CHECKPOINTS_DIR, *, task: str | None = None
+) -> Path | None:
+    checkpoints = list_checkpoints(root, task=task)
     if not checkpoints:
         return None
-    chosen = checkpoints[0]
-    return resolve_checkpoint(chosen["path"], root=root)
+    return resolve_checkpoint(checkpoints[0]["path"], root=root)
 
 
 def resolve_checkpoint(
-    value: str | Path | None, root: Path = ACTION_CHECKPOINTS_DIR
+    value: str | Path | None, root: Path = SPOT_CHECKPOINTS_DIR, *, task: str | None = None
 ) -> Path:
     if value:
         path = resolve_checkpoint_path(value, root=root)
     else:
-        path = default_checkpoint(root)
+        path = default_checkpoint(root, task=task)
         if path is None:
             raise FileNotFoundError(f"No SPOT checkpoint found under {root}")
 
@@ -94,14 +104,23 @@ def resolve_checkpoint(
     return resolved
 
 
-def _iter_checkpoint_paths(root: Path) -> list[Path]:
-    if root.exists():
-        return list(root.glob("*/checkpoint_*.pt"))
-    return []
+def _iter_package_dirs(root: Path) -> list[Path]:
+    if not root.exists():
+        return []
+    return sorted(d for d in root.iterdir() if d.is_dir() and (d / "manifest.json").is_file())
+
+
+def _load_json(path: Path) -> dict:
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def resolve_checkpoint_path(
-    value: str | Path, root: Path = ACTION_CHECKPOINTS_DIR
+    value: str | Path, root: Path = SPOT_CHECKPOINTS_DIR
 ) -> Path:
     """``core.checkpoints.resolve_ref`` with this package's default root."""
     return resolve_ref(value, root)
@@ -280,34 +299,6 @@ def _finite_float(value, *, default: float) -> float:
     except (TypeError, ValueError):
         return default
     return out if math.isfinite(out) else default
-
-
-def _package_predicts_actor(experiment_dir: Path) -> bool:
-    """Whether the packaged run also trained the fusion actor head."""
-    try:
-        with open(experiment_dir / "config.json", encoding="utf-8") as f:
-            config = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return False
-    return isinstance(config, dict) and config.get("predict_actor") is True
-
-
-def _load_best_metadata(experiment_dir: Path) -> dict:
-    path = experiment_dir / "checkpoint_best.json"
-    if not path.exists():
-        path = experiment_dir / "manifest.json"
-    if not path.exists():
-        return {}
-    try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return {}
-    if not isinstance(data, dict):
-        return {}
-    if "best" in data and isinstance(data["best"], dict):
-        return data["best"]
-    return data
 
 
 def _clamp(value: float, low: float, high: float) -> float:

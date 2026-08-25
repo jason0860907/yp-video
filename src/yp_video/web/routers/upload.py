@@ -10,6 +10,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 
 from yp_video.config import R2_CATEGORIES
+from yp_video.contracts.action import TASKS
 from yp_video.web import audit
 from yp_video.web.job_helpers import (
     batch_message,
@@ -57,24 +58,20 @@ CHECKPOINT_PACKAGE_FILES = {
 }
 
 # Nested checkpoint-package categories: {run}/<package file> plus the training
-# label snapshot under {run}/labels/<subdir>/*.jsonl. The subdir names are
-# baked into existing checkpoint packages (local and on R2) — they are package
-# structure, not category names, and deliberately did not follow the category
-# rename to family paths.
-CHECKPOINT_CATEGORIES = {
-    "action/checkpoints": "action-annotations",
-    "rally-spot/checkpoints": "rally-annotations",
-}
+# label snapshots under {run}/labels/<task subdir>/*.jsonl — every subdir the
+# task registry declares, since one package may carry several.
+CHECKPOINT_CATEGORIES = frozenset({"spot/checkpoints"})
+_LABEL_SUBDIRS = frozenset(spec.label_subdir for spec in TASKS.values())
 
 
-def _is_checkpoint_package_file(path: Path, base_dir: Path, labels_subdir: str) -> bool:
+def _is_checkpoint_package_file(path: Path, base_dir: Path) -> bool:
     rel = path.relative_to(base_dir)
     if len(rel.parts) == 2 and rel.name in CHECKPOINT_PACKAGE_FILES:
         return True
     return (
         len(rel.parts) == 4
         and rel.parts[1] == "labels"
-        and rel.parts[2] == labels_subdir
+        and rel.parts[2] in _LABEL_SUBDIRS
         and rel.name.endswith(".jsonl")
     )
 
@@ -119,10 +116,9 @@ def list_local_files(category: str = "cuts-broadcast") -> list[dict]:
 
     files = []
     if category in CHECKPOINT_CATEGORIES:
-        # Nested: {run}/checkpoint_best.pt + metadata/log + label snapshot.
-        labels_subdir = CHECKPOINT_CATEGORIES[category]
+        # Nested: {run}/checkpoint_best.pt + metadata/log + label snapshots.
         for f in sorted(base_dir.rglob("*")):
-            if f.is_file() and _is_checkpoint_package_file(f, base_dir, labels_subdir):
+            if f.is_file() and _is_checkpoint_package_file(f, base_dir):
                 rel = str(f.relative_to(base_dir))
                 r2_key = f"{category}/{rel}"
                 files.append({

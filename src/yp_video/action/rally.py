@@ -26,19 +26,22 @@ from yp_video.action.frames import inspect_action_frame_cache
 from yp_video.action.predict import SpotInferenceError, run_spot_inference
 from yp_video.config import (
     RALLY_ANNOTATIONS_DIR,
-    RALLY_SPOT_CHECKPOINTS_DIR,
     RALLY_SPOT_FRAMES_DIR,
     cut_kind_of,
     find_cut,
 )
-from yp_video.contracts.action import COURT_SIDES, COURT_SIDES_ORDERED, WINNER_TAIL_S
+from yp_video.contracts.action import (
+    COURT_SIDES,
+    COURT_SIDES_ORDERED,
+    RALLY_LABEL_FILE_SUFFIX,
+    WINNER_TAIL_S,
+)
 from yp_video.core.ffmpeg import FFmpegError, probe_video_metadata
 from yp_video.core.jsonl import read_jsonl, write_jsonl
 
 log = logging.getLogger(__name__)
 
 RALLY_LABEL = "rally"
-RALLY_LABEL_FILE_SUFFIX = "_rally.jsonl"
 
 # Deterministic subset selection: the same limit always picks the same videos,
 # so their frame caches are reused across runs.
@@ -47,6 +50,20 @@ _SUBSET_SEED = 42
 
 def frame_cache_root(extract_fps: float) -> Path:
     return RALLY_SPOT_FRAMES_DIR / f"fps{extract_fps:g}"
+
+
+def frame_cache_stats() -> list[dict]:
+    """Cached-video counts per extraction rate (rally-spot/frames/fps*/)."""
+    if not RALLY_SPOT_FRAMES_DIR.exists():
+        return []
+    return [
+        {
+            "fps": d.name.removeprefix("fps"),
+            "videos": sum(1 for c in d.iterdir() if c.is_dir()),
+        }
+        for d in sorted(RALLY_SPOT_FRAMES_DIR.iterdir())
+        if d.is_dir() and d.name.startswith("fps")
+    ]
 
 
 def annotation_files() -> list[Path]:
@@ -305,9 +322,7 @@ def predict_rally_segments(
     if checkpoint.is_dir():
         checkpoint = checkpoint / "checkpoint_best.pt"
     try:
-        checkpoint = prelabel.resolve_checkpoint(
-            checkpoint, root=RALLY_SPOT_CHECKPOINTS_DIR
-        )
+        checkpoint = prelabel.resolve_checkpoint(checkpoint, task="rally")
     except (FileNotFoundError, ValueError) as exc:
         raise SpotInferenceError(f"Rally checkpoint unavailable: {exc}") from exc
 

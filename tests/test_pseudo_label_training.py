@@ -11,10 +11,7 @@ from pydantic import ValidationError
 
 from yp_video.action import training
 from yp_video.core.jsonl import write_jsonl
-from yp_video.web.train_requests import (
-    AnnotationActionTrainRequest,
-    FusionTrainRequest,
-)
+from yp_video.web.train_requests import FusionTrainRequest
 
 
 def _write_label(path: Path, stem: str) -> None:
@@ -66,44 +63,38 @@ class LabelItemsWithPredictionsTests(unittest.TestCase):
 
 
 class RequestValidationTests(unittest.TestCase):
-    def test_action_request_requires_holdout_for_predictions(self) -> None:
+    def test_predictions_require_manual_validation(self) -> None:
         with self.assertRaises(ValidationError):
-            AnnotationActionTrainRequest(
-                source="action_annotations",
-                training_mode="split",
-                include_predictions=True,
+            FusionTrainRequest(
+                recipe="action", validation="ratio", include_predictions=True
             )
-
-        request = AnnotationActionTrainRequest(
-            source="action_annotations",
-            training_mode="holdout",
-            holdout_videos=["match_actions.jsonl"],
+        request = FusionTrainRequest(
+            recipe="action",
+            validation="manual",
+            validation_videos=["match"],
             include_predictions=True,
         )
         self.assertTrue(request.include_predictions)
 
-    def test_fusion_request_requires_manual_partial_for_predictions(self) -> None:
+    def test_fusion_predictions_also_need_partial_scope(self) -> None:
         with self.assertRaises(ValidationError):
             FusionTrainRequest(
                 dataset_scope="joint_only",
-                validation_mode="manual",
-                validation_videos=["match_actions.jsonl"],
+                validation="manual",
+                validation_videos=["match"],
                 include_predictions=True,
             )
-        with self.assertRaises(ValidationError):
-            FusionTrainRequest(
-                dataset_scope="partial_labels",
-                validation_mode="ratio",
-                include_predictions=True,
-            )
-
         request = FusionTrainRequest(
             dataset_scope="partial_labels",
-            validation_mode="manual",
-            validation_videos=["match_actions.jsonl"],
+            validation="manual",
+            validation_videos=["match"],
             include_predictions=True,
         )
         self.assertTrue(request.include_predictions)
+
+    def test_manual_validation_needs_videos(self) -> None:
+        with self.assertRaises(ValidationError):
+            FusionTrainRequest(validation="manual", validation_videos=[])
 
 
 if __name__ == "__main__":

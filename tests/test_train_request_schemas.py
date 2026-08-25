@@ -19,11 +19,12 @@ from pydantic import BaseModel, ValidationError
 
 from yp_video.config import SPOT_DIR
 from yp_video.web.make_train_schemas import _SCHEMAS
+from yp_video.contracts.action import RECIPES
 from yp_video.web.train_requests import (
-    AnnotationActionTrainRequest,
     AssociationTrainRequest,
     FeatureArch,
-    RallyTrainRequest,
+    FusionTrainRequest,
+    RecipeId,
     ReidTrainRequest,
 )
 
@@ -75,29 +76,36 @@ class DefaultsAreValidRequests(unittest.TestCase):
                 payload = build_defaults(model, seed)
                 model.model_validate(payload)
 
-    def test_action_holdout_submission_shape(self) -> None:
-        payload = build_defaults(
-            AnnotationActionTrainRequest,
-            {"training_mode": "holdout"},
-        )
-        payload["holdout_videos"] = ["match_actions.jsonl"]
-        req = AnnotationActionTrainRequest.model_validate(payload)
-        self.assertEqual(req.source, "action_annotations")
-        self.assertEqual(req.dataset, "yp_actions")
+    def test_manual_validation_submission_shape(self) -> None:
+        payload = build_defaults(FusionTrainRequest, {"validation": "manual"})
+        payload["validation_videos"] = ["match"]
+        req = FusionTrainRequest.model_validate(payload)
+        self.assertEqual(req.recipe, "association_action")
+
+    def test_every_recipe_default_set_validates(self) -> None:
+        """The page resets the form to a recipe's defaults on switch; each
+        such reset must be a valid request as-is."""
+        for recipe in RECIPES.values():
+            with self.subTest(recipe=recipe.id):
+                payload = {**build_defaults(FusionTrainRequest), "recipe": recipe.id, **recipe.defaults}
+                FusionTrainRequest.model_validate(payload)
+
+    def test_recipe_literal_mirrors_the_registry(self) -> None:
+        self.assertEqual(set(typing.get_args(RecipeId)), set(RECIPES))
 
     def test_out_of_range_field_is_the_only_error(self) -> None:
-        payload = build_defaults(RallyTrainRequest)
+        payload = build_defaults(FusionTrainRequest)
         payload["gpu"] = -1
         with self.assertRaises(ValidationError) as ctx:
-            RallyTrainRequest.model_validate(payload)
+            FusionTrainRequest.model_validate(payload)
         errors = ctx.exception.errors()
         self.assertEqual([e["loc"] for e in errors], [("gpu",)])
 
     def test_unknown_field_is_rejected(self) -> None:
-        payload = build_defaults(RallyTrainRequest)
+        payload = build_defaults(FusionTrainRequest)
         payload["btach_size"] = 8
         with self.assertRaises(ValidationError):
-            RallyTrainRequest.model_validate(payload)
+            FusionTrainRequest.model_validate(payload)
 
 
 BACKBONES_PY = SPOT_DIR / "yp_spot" / "model" / "backbones.py"

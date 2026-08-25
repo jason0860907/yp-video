@@ -5,6 +5,7 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
+from yp_video.contracts.action import SPOT_PACKAGE_TYPE
 from yp_video.action.spot_runs import (
     best_epochs_per_task,
     checkpoint_package_options,
@@ -203,12 +204,13 @@ class ExportBestPerTaskTest(unittest.TestCase):
             run_dir=run_dir,
             package_dir=package_dir,
             checkpoints_root=root / "checkpoints",
-            package_type="actor-association-spot",
-            label_subdir="action-annotations",
-            label_glob="*_actions.jsonl",
+            package_type=SPOT_PACKAGE_TYPE,
+            label_subdirs=("action-annotations", "actor-candidates"),
             training={},
             cmd=[],
             serveable_tasks=("action", "actor"),
+            tasks=("action", "location", "actor"),
+            recipe="association_action",
         )
         return package_dir, summary
 
@@ -238,8 +240,10 @@ class ExportBestPerTaskTest(unittest.TestCase):
             root = Path(raw_dir)
             self._export(root)
             [option] = checkpoint_package_options(
-                root / "checkpoints",
-                package_types=("actor-association-spot",),
+                root / "checkpoints", tasks=("action", "location")
+            )
+            self.assertEqual(
+                checkpoint_package_options(root / "checkpoints", tasks=("rally",)), []
             )
             self.assertEqual(
                 option["label"], "run (action mAP 0.300 · actor Top-1 0.600)"

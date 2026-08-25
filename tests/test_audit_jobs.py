@@ -44,11 +44,11 @@ class JobAuditTests(unittest.IsolatedAsyncioTestCase):
         return [e.action for e in self.collector.events]
 
     async def test_create_job_captures_the_current_actor(self) -> None:
-        job = self.manager.create_job(JobType.ACTION_TRAIN, name="set1")
+        job = self.manager.create_job(JobType.SPOT_TRAIN, name="set1")
         self.assertEqual(job.actor, "labeler@example.com")
 
     async def test_running_then_completed_is_two_rows(self) -> None:
-        job = self.manager.create_job(JobType.ACTION_TRAIN, name="set1")
+        job = self.manager.create_job(JobType.SPOT_TRAIN, name="set1")
         await self.manager.update_job(job.id, status=JobStatus.RUNNING)
         await self.manager.update_job(job.id, status=JobStatus.COMPLETED)
         self.assertEqual(self.actions, ["job.running", "job.completed"])
@@ -57,20 +57,20 @@ class JobAuditTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_progress_ticks_are_not_recorded(self) -> None:
         """A training run reports progress hundreds of times."""
-        job = self.manager.create_job(JobType.ACTION_TRAIN, name="set1")
+        job = self.manager.create_job(JobType.SPOT_TRAIN, name="set1")
         await self.manager.update_job(job.id, status=JobStatus.RUNNING)
         for pct in range(0, 100, 10):
             await self.manager.update_job(job.id, progress=pct / 100, message=f"{pct}%")
         self.assertEqual(self.actions, ["job.running"])
 
     async def test_repeated_running_records_once(self) -> None:
-        job = self.manager.create_job(JobType.ACTION_TRAIN, name="set1")
+        job = self.manager.create_job(JobType.SPOT_TRAIN, name="set1")
         await self.manager.update_job(job.id, status="running")
         await self.manager.update_job(job.id, status="running", message="still going")
         self.assertEqual(self.actions, ["job.running"])
 
     async def test_cancel_job_records_exactly_one_cancellation(self) -> None:
-        job = self.manager.create_job(JobType.ACTION_TRAIN, name="set1")
+        job = self.manager.create_job(JobType.SPOT_TRAIN, name="set1")
         await self.manager.update_job(job.id, status=JobStatus.RUNNING)
         self.assertTrue(await self.manager.cancel_job(job.id))
         self.assertEqual(self.actions, ["job.running", "job.cancelled"])
@@ -78,7 +78,7 @@ class JobAuditTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_cancel_still_notifies_sse_subscribers(self) -> None:
         """Routing through update_job must not cost the UI its live update."""
-        job = self.manager.create_job(JobType.ACTION_TRAIN, name="set1")
+        job = self.manager.create_job(JobType.SPOT_TRAIN, name="set1")
         await self.manager.update_job(job.id, status=JobStatus.RUNNING)
         queue = self.manager.subscribe(job.id)
         assert queue is not None
@@ -88,13 +88,13 @@ class JobAuditTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(queue.get_nowait()["status"], "cancelled")
 
     async def test_cancelling_a_finished_job_records_nothing(self) -> None:
-        job = self.manager.create_job(JobType.ACTION_TRAIN, name="set1")
+        job = self.manager.create_job(JobType.SPOT_TRAIN, name="set1")
         await self.manager.update_job(job.id, status=JobStatus.COMPLETED)
         self.assertFalse(await self.manager.cancel_job(job.id))
         self.assertEqual(self.actions, ["job.completed"])
 
     async def test_failure_carries_a_bounded_error_and_error_outcome(self) -> None:
-        job = self.manager.create_job(JobType.ACTION_TRAIN, name="set1")
+        job = self.manager.create_job(JobType.SPOT_TRAIN, name="set1")
         await self.manager.update_job(
             job.id, status=JobStatus.FAILED, error="x" * 5000
         )

@@ -352,8 +352,8 @@ def labels() -> dict:
 
 @router.get("/spot")
 def spot_status() -> dict:
-    checkpoints = prelabel.list_checkpoints()
-    default = prelabel.default_checkpoint()
+    checkpoints = prelabel.list_checkpoints(task="action")
+    default = prelabel.default_checkpoint(task="action")
     return {
         "available": prelabel.spot_available(),
         "spot_dir": str(SPOT_DIR),

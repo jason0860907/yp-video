@@ -12,17 +12,14 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Sequence
 from pathlib import Path
 
 from yp_video.action.frames import inspect_action_frame_cache
 from yp_video.action.training import rally_match_span
 from yp_video.actor import candidates
 from yp_video.config import ACTION_ANNOTATIONS_DIR, cut_kind_of
-from yp_video.contracts.action import (
-    ACTOR_FILE_GLOB,
-    ACTOR_FILE_SUFFIX,
-    ACTOR_LABEL_SUBDIR,
-)
+from yp_video.contracts.action import ACTOR_FILE_SUFFIX, TASKS
 from yp_video.core.jsonl import read_jsonl, write_jsonl
 
 log = logging.getLogger(__name__)
@@ -33,6 +30,7 @@ def prepare_action_training_labels(
     items: list[tuple[Path, Path]],
     frame_dir: Path,
     save_dir: Path,
+    tasks: Sequence[str],
     camera_view: str = "all",
     require_actor_targets: bool = False,
 ) -> dict:
@@ -42,17 +40,19 @@ def prepare_action_training_labels(
     — the same list the frame-cache phase ran on, so every video here has a
     cache. When ``camera_view`` restricts to a single view, only matching
     videos are written, so the saved label snapshot equals what training
-    actually used.
+    actually used. The actor-candidate sidecar is written only when
+    ``tasks`` trains the actor head, so the snapshot equals what the run read.
     """
-
-    label_dir = save_dir / "labels" / "action-annotations"
+    action, actor = TASKS["action"], TASKS["actor"]
+    label_dir = save_dir / "labels" / action.label_subdir
     label_dir.mkdir(parents=True, exist_ok=True)
-    for stale in label_dir.glob("*_actions.jsonl"):
+    for stale in label_dir.glob(action.label_glob):
         stale.unlink()
-    actor_dir = save_dir / "labels" / ACTOR_LABEL_SUBDIR
+    actor_dir = save_dir / "labels" / actor.label_subdir
     if actor_dir.exists():
-        for stale in actor_dir.glob(ACTOR_FILE_GLOB):
+        for stale in actor_dir.glob(actor.label_glob):
             stale.unlink()
+    write_actors = actor.name in tasks
 
     videos = 0
     events = 0
@@ -122,7 +122,9 @@ def prepare_action_training_labels(
         # Who acted, where the video can say so. Written to its OWN file: only
         # a handful of videos carry actor work, and the action labels are read
         # by every spotting run over every video.
-        actor_rows, tally = candidates.build(stem, records)
+        actor_rows, tally = (
+            candidates.build(stem, records) if write_actors else ([], dict.fromkeys(actor_targets, 0))
+        )
         if require_actor_targets and not actor_rows:
             raise RuntimeError(
                 f"{stem} was selected for joint Association + Action training "

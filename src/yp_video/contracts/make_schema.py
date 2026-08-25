@@ -11,6 +11,7 @@ Do not edit the JSON by hand.
 """
 
 import json
+from dataclasses import asdict
 from pathlib import Path
 
 from pydantic.json_schema import GenerateJsonSchema, models_json_schema
@@ -22,6 +23,8 @@ from .action import (
     FRAME_HEIGHT,
     FRAME_PY_PATTERN,
     LABEL_FILE_GLOB,
+    RECIPES,
+    TASKS,
     ActionEvent,
     ActionLabelRecord,
     SegmentLabelEvent,
@@ -97,6 +100,13 @@ def build_action_schema() -> dict:
             "zero_based": True,
         },
         "x-label-file-glob": LABEL_FILE_GLOB,
+        # The task registry, so the consumer's mirror and the frontend can be
+        # checked against the producer's table.
+        "x-tasks": {name: asdict(spec) for name, spec in TASKS.items()},
+        "x-recipes": {
+            recipe_id: {**asdict(recipe), "defaults": dict(recipe.defaults)}
+            for recipe_id, recipe in RECIPES.items()
+        },
         "$defs": schema["$defs"],
     }
 

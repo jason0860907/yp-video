@@ -23,8 +23,8 @@ from yp_video.action import rally as rally_spot
 from yp_video.config import (
     RALLY_ANNOTATIONS_DIR,
     RALLY_PRE_ANNOTATIONS_DIR,
-    RALLY_SPOT_CHECKPOINTS_DIR,
     RALLY_SPOT_PRE_ANNOTATIONS_DIR,
+    SPOT_CHECKPOINTS_DIR,
     SPOT_DIR,
     cut_kind_of,
     find_cut,
@@ -105,14 +105,14 @@ def spot_info() -> dict:
     if not available:
         info["error"] = f"yp-spot not found at {SPOT_DIR}"
         return info
-    checkpoints = prelabel.list_checkpoints(RALLY_SPOT_CHECKPOINTS_DIR)
-    default = prelabel.default_checkpoint(RALLY_SPOT_CHECKPOINTS_DIR)
+    checkpoints = prelabel.list_checkpoints(task="rally")
+    default = prelabel.default_checkpoint(task="rally")
     info["checkpoints"] = checkpoints
     info["default_checkpoint"] = prelabel.checkpoint_ref(default) if default else ""
     if not checkpoints:
         info["error"] = (
-            f"No rally checkpoints under {RALLY_SPOT_CHECKPOINTS_DIR}; "
-            "train one on the Rally SPOT Train page first."
+            f"No package under {SPOT_CHECKPOINTS_DIR} serves the rally task; "
+            "train a Rally recipe on Fusion Train first."
         )
     return info
 
@@ -160,9 +160,7 @@ async def start(req: RallyPredictRequest) -> dict:
     if not req.videos:
         raise HTTPException(400, "No videos selected")
     try:
-        checkpoint = prelabel.resolve_checkpoint(
-            req.checkpoint, root=RALLY_SPOT_CHECKPOINTS_DIR
-        )
+        checkpoint = prelabel.resolve_checkpoint(req.checkpoint, task="rally")
     except (FileNotFoundError, ValueError) as exc:
         raise HTTPException(400, str(exc)) from exc
 
