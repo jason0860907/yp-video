@@ -23,7 +23,7 @@ from enum import Enum
 from pydantic import BaseModel, Field
 
 # Bump on ANY breaking change to the label record, frame layout, or label set.
-ACTION_CONTRACT_VERSION = "1.4.0"
+ACTION_CONTRACT_VERSION = "2.0.0"
 
 # Env var carrying ACTION_CONTRACT_VERSION from producer to consumer.
 ACTION_CONTRACT_VERSION_ENV = "YP_ACTION_CONTRACT_VERSION"
@@ -82,13 +82,14 @@ ACTION_LABELS_ORDERED = tuple(label.value for label in ActionLabel)
 ACTION_LABELS = frozenset(ACTION_LABELS_ORDERED)
 
 
-class ActionSide(str, Enum):
-    """Court side that WON a rally, in camera-frame terms.
+class CourtSide(str, Enum):
+    """Where a court side sits in camera-frame terms.
 
-    Sideline footage uses left/right, broadcast/baseline footage near/far —
-    one 4-class vocabulary so a single head serves both camera setups. The
-    winning side, not where the ball landed: an out ball lands on the loser's
-    side.
+    The value space of the ``winner`` task: which side of the frame the team
+    that WON the rally was playing on. Sideline footage uses left/right,
+    broadcast/baseline footage near/far — one 4-class vocabulary so a single
+    head serves both camera setups. The winning side, not where the ball
+    landed: an out ball lands on the loser's side.
     """
 
     left = "left"
@@ -99,13 +100,13 @@ class ActionSide(str, Enum):
 
 # Index order matters to the model: 0/1 are horizontal mirrors of each other
 # (training flips them together with the frames), 2/3 are flip-invariant.
-SCORE_SIDES_ORDERED = tuple(side.value for side in ActionSide)
-SCORE_SIDES = frozenset(SCORE_SIDES_ORDERED)
+COURT_SIDES_ORDERED = tuple(side.value for side in CourtSide)
+COURT_SIDES = frozenset(COURT_SIDES_ORDERED)
 
-#: Seconds at the END of a rally that carry the side supervision, and the
+#: Seconds at the END of a rally that carry the winner supervision, and the
 #: window inference aggregates over. The outcome is only visible around the
 #: final play; frames earlier in the rally cannot know who will win.
-SIDE_TAIL_S = 5.0
+WINNER_TAIL_S = 5.0
 
 
 class ActionEvent(BaseModel):
@@ -136,11 +137,12 @@ class SegmentLabelEvent(BaseModel):
     frame: int = Field(ge=0, description="0-based first frame of the span")
     end_frame: int = Field(ge=0, description="0-based last frame of the span, inclusive")
     label: str = Field(description="Segment class, e.g. 'rally'")
-    side: ActionSide | None = Field(
+    winner: CourtSide | None = Field(
         default=None,
         description=(
-            "Court side that won the rally (camera-frame). None = unannotated; "
-            "the model ignores the span's side supervision."
+            "Court side the rally winner was playing on (camera-frame). "
+            "None = unannotated; the model ignores the span's winner "
+            "supervision."
         ),
     )
 
@@ -272,7 +274,7 @@ SPOT_PROGRESS_PREFIX = "SPOT_PROGRESS "
 # ``predictions.json``. One line per inference batch (native frame numbers):
 #   ``SPOT_PARTIAL {"cumulative":<bool>,"events":[...]}``
 # Dense (rally) runs stream deltas — that batch's newly-settled per-frame
-# events, ``{"frame","score"}`` plus ``side_probs`` on side-head checkpoints —
+# events, ``{"frame","score"}`` plus ``winner_probs`` on winner-head checkpoints —
 # with ``cumulative=false``: the reader accumulates them. Postprocessed
 # (action) runs stream the postprocessed events of the whole settled prefix,
 # ``{"label","frame","score"}`` plus ``xy``/``visible`` when predicted, with

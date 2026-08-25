@@ -52,9 +52,9 @@ class Annotation(StrictModel):
     start: float
     end: float
     label: str
-    #: Court side that won the rally (camera-frame): left/right for sideline
-    #: footage, near/far for broadcast. None = not annotated yet.
-    side: Literal["left", "right", "near", "far"] | None = None
+    #: Court side the rally's winner played on (camera-frame): left/right for
+    #: sideline footage, near/far for broadcast. None = not annotated yet.
+    winner: Literal["left", "right", "near", "far"] | None = None
 
 
 class SaveAnnotationsRequest(StrictModel):
@@ -229,8 +229,8 @@ def _write_annotations_atomic(
             "label": a.label,
             "rally_id": assigned,
         }
-        if a.side is not None:
-            row["side"] = a.side
+        if a.winner is not None:
+            row["winner"] = a.winner
         rows.append(row)
     tmp_path = output_path.with_suffix(output_path.suffix + f".tmp.{os.getpid()}")
     with open(tmp_path, "w", encoding="utf-8") as f:

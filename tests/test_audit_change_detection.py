@@ -59,9 +59,9 @@ class RallySaveTests(unittest.TestCase):
         rows, before = annotate._write_annotations_atomic(out, video, duration, anns)
         return rows, audit.diff(before, rows, key=lambda r: r["rally_id"])
 
-    def _ann(self, start, end, rally_id=None, side=None):
+    def _ann(self, start, end, rally_id=None, winner=None):
         return annotate.Annotation(
-            start=start, end=end, label="rally", rally_id=rally_id, side=side
+            start=start, end=end, label="rally", rally_id=rally_id, winner=winner
         )
 
     def test_the_first_save_counts_every_rally_as_new(self) -> None:
@@ -95,12 +95,12 @@ class RallySaveTests(unittest.TestCase):
             self.assertEqual(delta.counts, {"edited": 1})
 
     def test_setting_the_winning_side_is_an_edit(self) -> None:
-        """`side` is written only when set, so it must not read as unchanged."""
+        """`winner` is written only when set, so it must not read as unchanged."""
         with tempfile.TemporaryDirectory() as raw_dir:
             out = Path(raw_dir) / "m_annotations.jsonl"
             annotate._write_annotations_atomic(out, "m", 60.0, [self._ann(1, 2)])
             _rows, delta = self._delta(
-                out, "m", 60.0, [self._ann(1, 2, rally_id=1, side="left")]
+                out, "m", 60.0, [self._ann(1, 2, rally_id=1, winner="left")]
             )
             self.assertEqual(delta.counts, {"edited": 1})
 
@@ -144,9 +144,9 @@ class ChangeDetailTests(unittest.TestCase):
     def test_a_field_appearing_records_none_as_the_before(self) -> None:
         """Setting the winning side is an edit from nothing to something."""
         before = [{"id": 1, "start": 1.0}]
-        after = [{"id": 1, "start": 1.0, "side": "left"}]
+        after = [{"id": 1, "start": 1.0, "winner": "left"}]
         (change,) = audit.diff(before, after, key=self.key).changes
-        self.assertEqual(change["fields"], {"side": [None, "left"]})
+        self.assertEqual(change["fields"], {"winner": [None, "left"]})
 
     def test_an_unchanged_save_records_no_changes(self) -> None:
         rows = [{"id": 1, "start": 1.0}]

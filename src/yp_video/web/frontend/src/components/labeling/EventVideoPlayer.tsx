@@ -529,7 +529,7 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
   );
 
   const timelineAnnotations = useMemo<EditorAnnotation[]>(
-    () => rallies.map((r) => ({ rally_id: r.rally_id, start: r.start, end: r.end, label: 'rally', side: null })),
+    () => rallies.map((r) => ({ rally_id: r.rally_id, start: r.start, end: r.end, label: 'rally', winner: null })),
     [rallies],
   );
 

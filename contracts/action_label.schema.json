@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "YP Action-Spotting Label Contract",
-  "version": "1.4.0",
+  "version": "2.0.0",
   "description": "Source of truth for the *_actions.jsonl label records and frame cache layout exchanged between yp-video (producer) and yp-spot (consumer). Generated from yp_video/contracts/action.py via make_schema.py \u2014 do not edit by hand. yp-spot mirrors these constants in yp_spot/contract.py under the same version.",
   "x-frame-layout": {
     "height": 224,
@@ -88,15 +88,15 @@
       "title": "ActionLabelRecord",
       "type": "object"
     },
-    "ActionSide": {
-      "description": "Court side that WON a rally, in camera-frame terms.\n\nSideline footage uses left/right, broadcast/baseline footage near/far \u2014\none 4-class vocabulary so a single head serves both camera setups. The\nwinning side, not where the ball landed: an out ball lands on the loser's\nside.",
+    "CourtSide": {
+      "description": "Where a court side sits in camera-frame terms.\n\nThe value space of the ``winner`` task: which side of the frame the team\nthat WON the rally was playing on. Sideline footage uses left/right,\nbroadcast/baseline footage near/far \u2014 one 4-class vocabulary so a single\nhead serves both camera setups. The winning side, not where the ball\nlanded: an out ball lands on the loser's side.",
       "enum": [
         "left",
         "right",
         "near",
         "far"
       ],
-      "title": "ActionSide",
+      "title": "CourtSide",
       "type": "string"
     },
     "SegmentLabelEvent": {
@@ -120,17 +120,17 @@
           "title": "Label",
           "type": "string"
         },
-        "side": {
+        "winner": {
           "anyOf": [
             {
-              "$ref": "#/$defs/ActionSide"
+              "$ref": "#/$defs/CourtSide"
             },
             {
               "type": "null"
             }
           ],
           "default": null,
-          "description": "Court side that won the rally (camera-frame). None = unannotated; the model ignores the span's side supervision."
+          "description": "Court side the rally winner was playing on (camera-frame). None = unannotated; the model ignores the span's winner supervision."
         }
       },
       "required": [

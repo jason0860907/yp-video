@@ -127,7 +127,7 @@ export function SpotTrainPage() {
             </p>
 
             <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-text-secondary">
-              <SchemaCheckboxField name="predict_side" label="Side head（得分側）" />
+              <SchemaCheckboxField name="predict_winner" label="Winner head（得分方）" />
               <SchemaCheckboxField name="stop_vllm" label="Stop vLLM" />
             </div>
           </SchemaForm>

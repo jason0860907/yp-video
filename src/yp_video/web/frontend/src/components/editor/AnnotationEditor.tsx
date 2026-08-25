@@ -59,14 +59,14 @@ function TimeField({ seconds, onCommit }: { seconds: number; onCommit: (value: n
   );
 }
 
-export type RallySide = 'left' | 'right' | 'near' | 'far';
-const RALLY_SIDES: RallySide[] = ['left', 'right', 'near', 'far'];
-const SIDE_DISPLAY: Record<RallySide, string> = { left: '左', right: '右', near: '近', far: '遠' };
+export type CourtSide = 'left' | 'right' | 'near' | 'far';
+const COURT_SIDES: CourtSide[] = ['left', 'right', 'near', 'far'];
+const SIDE_DISPLAY: Record<CourtSide, string> = { left: '左', right: '右', near: '近', far: '遠' };
 
 /** Which pair of sides this video's camera angle offers. One axis per video —
  *  picking it once up top keeps each row to two buttons instead of four. */
 type SideAxis = 'lr' | 'nf';
-const AXIS_SIDES: Record<SideAxis, RallySide[]> = { lr: ['left', 'right'], nf: ['near', 'far'] };
+const AXIS_SIDES: Record<SideAxis, CourtSide[]> = { lr: ['left', 'right'], nf: ['near', 'far'] };
 const AXIS_DISPLAY: Record<SideAxis, string> = { lr: '左/右', nf: '遠/近' };
 
 export interface EditorAnnotation {
@@ -74,8 +74,9 @@ export interface EditorAnnotation {
   start: number;
   end: number;
   label: string;
-  /** Court side that won the rally (camera-frame); null = not annotated. */
-  side: RallySide | null;
+  /** Court side the rally's winner played on (camera-frame); null = not
+   *  annotated. */
+  winner: CourtSide | null;
   score?: number | null;
   /** Client-only, never sent: what "the selected rally" means while editing.
    *  A freshly drawn rally has no rally_id until the server mints one, and the
@@ -128,8 +129,8 @@ const normalizeRallyId = (v: unknown): number | null => {
   const n = Number(v);
   return Number.isInteger(n) && n > 0 ? n : null;
 };
-const normalizeSide = (v: unknown): RallySide | null =>
-  RALLY_SIDES.includes(v as RallySide) ? (v as RallySide) : null;
+const normalizeCourtSide = (v: unknown): CourtSide | null =>
+  COURT_SIDES.includes(v as CourtSide) ? (v as CourtSide) : null;
 const num = (...vals: unknown[]): number => {
   for (const v of vals) if (typeof v === 'number' && Number.isFinite(v)) return v;
   return 0;
@@ -186,14 +187,14 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewB
         start: num(r.start, r.start_time, (r.segment as number[] | undefined)?.[0]),
         end: num(r.end, r.end_time, (r.segment as number[] | undefined)?.[1]),
         label: 'rally',
-        side: normalizeSide(r.side),
+        winner: normalizeCourtSide(r.winner),
         score: (r.confidence ?? r.score ?? null) as number | null,
       }))
       .sort(byStart)
       .map(withKey);
     setAnnotations(fromServer);
-    const firstSide = fromServer.find((a) => a.side)?.side;
-    if (firstSide) setSideAxis(AXIS_SIDES.nf.includes(firstSide) ? 'nf' : 'lr');
+    const firstWinner = fromServer.find((a) => a.winner)?.winner;
+    if (firstWinner) setSideAxis(AXIS_SIDES.nf.includes(firstWinner) ? 'nf' : 'lr');
     setDirty(false);
     setSelectedKey(null);
     setMarkStart(null);
@@ -220,7 +221,7 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewB
         return ms;
       }
       setAnnotations((prev) =>
-        [...prev, withKey({ rally_id: null, start: ms, end, label: 'rally', side: null })].sort(byStart),
+        [...prev, withKey({ rally_id: null, start: ms, end, label: 'rally', winner: null })].sort(byStart),
       );
       setDirty(true);
       return null;
@@ -379,7 +380,7 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewB
         const body = {
           video: videoName,
           duration,
-          annotations: sent.map(({ rally_id, start, end, label, side }) => ({ rally_id, start, end, label, side })),
+          annotations: sent.map(({ rally_id, start, end, label, winner }) => ({ rally_id, start, end, label, winner })),
         };
         const saved = await apiFetch<{ saved: string; count: number; annotations: EditorAnnotation[] }>(
           saveEndpoint,
@@ -390,7 +391,7 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewB
         // Only if nothing changed while the request was in flight; otherwise
         // the newer edit stays and the next save reconciles.
         if (latestAnnotations.current === sent) {
-          // Server rows omit `side` when null — normalize back to the editor
+          // Server rows omit `winner` when null — normalize back to the editor
           // shape. Row keys are ours and never leave the browser, so carry
           // them across by the order the server writes in (byStart, the same
           // comparator): without this the selection would jump to whichever
@@ -400,7 +401,7 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewB
           setAnnotations(
             saved.annotations.map((r, i) => ({
               ...r,
-              side: normalizeSide(r.side),
+              winner: normalizeCourtSide(r.winner),
               key: mine[i]?.key ?? nextRowKey++,
             })),
           );
@@ -441,7 +442,7 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewB
         body: JSON.stringify({
           video: cur.videoName,
           duration: cur.duration,
-          annotations: latestAnnotations.current.map(({ rally_id, start, end, label, side }) => ({ rally_id, start, end, label, side })),
+          annotations: latestAnnotations.current.map(({ rally_id, start, end, label, winner }) => ({ rally_id, start, end, label, winner })),
         }),
       });
     };
@@ -501,8 +502,8 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewB
   };
 
   // Click the active side again to clear it back to unannotated.
-  const updateSide = (idx: number, side: RallySide) => {
-    setAnnotations((prev) => prev.map((a, i) => (i === idx ? { ...a, side: a.side === side ? null : side } : a)));
+  const updateWinner = (idx: number, side: CourtSide) => {
+    setAnnotations((prev) => prev.map((a, i) => (i === idx ? { ...a, winner: a.winner === side ? null : side } : a)));
     setDirty(true);
   };
 
@@ -734,27 +735,27 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewB
                       onClick={(e) => e.stopPropagation()}
                       title="得分側（畫面視角）— 再點一次取消"
                     >
-                      {a.side && !AXIS_SIDES[sideAxis].includes(a.side) ? (
-                        // A stored side from the other axis: show it alone so the
+                      {a.winner && !AXIS_SIDES[sideAxis].includes(a.winner) ? (
+                        // A stored winner from the other axis: show it alone so the
                         // label never disappears silently — click clears it, then
                         // the current axis's pair takes the cell back.
                         <button
                           type="button"
-                          onClick={() => updateSide(i, a.side!)}
+                          onClick={() => updateWinner(i, a.winner!)}
                           title="與目前方向不同的舊標記 — 點一下清除"
                           className="w-5 rounded py-0.5 text-center text-[10px] leading-none bg-accent/30 text-text-primary ring-1 ring-accent/60"
                         >
-                          {SIDE_DISPLAY[a.side]}
+                          {SIDE_DISPLAY[a.winner]}
                         </button>
                       ) : (
                         AXIS_SIDES[sideAxis].map((side) => (
                           <button
                             key={side}
                             type="button"
-                            onClick={() => updateSide(i, side)}
+                            onClick={() => updateWinner(i, side)}
                             className={cn(
                               'w-5 rounded py-0.5 text-center text-[10px] leading-none transition-colors',
-                              a.side === side
+                              a.winner === side
                                 ? 'bg-accent/30 text-text-primary ring-1 ring-accent/60'
                                 : 'text-text-muted/50 hover:bg-surface-200/40 hover:text-text-muted',
                             )}

@@ -197,10 +197,10 @@
       "title": "Split Seed",
       "type": "integer"
     },
-    "predict_side": {
+    "predict_winner": {
       "default": false,
-      "description": "Add the side head: predict which court side won each rally (left/right/near/far) from its final seconds. Needs rally annotations that carry side labels.",
-      "title": "Predict Side",
+      "description": "Add the winner head: predict which court side the winner of each rally played on (left/right/near/far) from its final seconds. Needs rally annotations that carry winner labels.",
+      "title": "Predict Winner",
       "type": "boolean"
     },
     "stop_vllm": {

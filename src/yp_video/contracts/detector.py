@@ -62,12 +62,12 @@ class Rally(BaseModel):
     start: float = Field(ge=0, description="Seconds from video start")
     end: float = Field(ge=0, description="Seconds from video start")
     score: int = Field(ge=0, le=100, description="Highlight score 0-100")
-    side: str | None = Field(
+    winner: str | None = Field(
         default=None,
         description=(
-            "Court side that won the rally, camera-frame: left/right "
-            "(sideline footage) or near/far (broadcast). Null when the "
-            "checkpoint has no side head."
+            "Court side the rally's winner played on, camera-frame: "
+            "left/right (sideline footage) or near/far (broadcast). Null when "
+            "the checkpoint has no winner head."
         ),
     )
 

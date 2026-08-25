@@ -121,12 +121,12 @@ class RallyTrainRequest(StrictModel):
     split_seed: int = Field(
         default=42, description="Seed for the train/val video shuffle — keep it fixed to compare runs."
     )
-    predict_side: bool = Field(
+    predict_winner: bool = Field(
         default=False,
         description=(
-            "Add the side head: predict which court side won each rally "
-            "(left/right/near/far) from its final seconds. Needs rally "
-            "annotations that carry side labels."
+            "Add the winner head: predict which court side the winner of each "
+            "rally played on (left/right/near/far) from its final seconds. "
+            "Needs rally annotations that carry winner labels."
         ),
     )
     stop_vllm: bool = Field(

@@ -31,7 +31,7 @@ from yp_video.config import (
     cut_kind_of,
     find_cut,
 )
-from yp_video.contracts.action import SCORE_SIDES, SCORE_SIDES_ORDERED, SIDE_TAIL_S
+from yp_video.contracts.action import COURT_SIDES, COURT_SIDES_ORDERED, WINNER_TAIL_S
 from yp_video.core.ffmpeg import FFmpegError, probe_video_metadata
 from yp_video.core.jsonl import read_jsonl, write_jsonl
 
@@ -132,7 +132,7 @@ def write_training_labels(
 
     videos = 0
     rallies = 0
-    sided_rallies = 0
+    rallies_with_winner = 0
     total_frames = 0
     rally_frames = 0
     for ann_path, video_path in items:
@@ -160,9 +160,9 @@ def write_training_labels(
                 "end_frame": last,
                 "label": str(row.get("label") or RALLY_LABEL),
             }
-            if row.get("side") in SCORE_SIDES:
-                event["side"] = row["side"]
-                sided_rallies += 1
+            if row.get("winner") in COURT_SIDES:
+                event["winner"] = row["winner"]
+                rallies_with_winner += 1
             events.append(event)
             rally_frames += last - first + 1
 
@@ -192,7 +192,7 @@ def write_training_labels(
         "extract_fps": extract_fps,
         "videos": videos,
         "rallies": rallies,
-        "sided_rallies": sided_rallies,
+        "rallies_with_winner": rallies_with_winner,
         "frames": total_frames,
         "rally_frames": rally_frames,
     }
@@ -215,17 +215,18 @@ def events_to_rally_segments(
     are dropped as noise. ``score`` is the mean per-frame confidence of the
     frames that formed the segment.
 
-    Events from a side-head checkpoint also carry ``side_probs``; each
-    segment's last ``SIDE_TAIL_S`` seconds of them are averaged into
-    ``side`` / ``side_score`` — the winning court side. Events without
-    ``side_probs`` (older checkpoints) simply yield segments without a side.
+    Events from a winner-head checkpoint also carry ``winner_probs``; each
+    segment's last ``WINNER_TAIL_S`` seconds of them are averaged into
+    ``winner`` / ``winner_score`` — the court side that won. Events without
+    ``winner_probs`` (older checkpoints) simply yield segments without a
+    winner.
     """
     if native_fps <= 0:
         raise ValueError(f"native_fps must be positive, got {native_fps}")
 
     ticks = sorted(
         (
-            (event["frame"] / native_fps, float(event.get("score", 1.0)), event.get("side_probs"))
+            (event["frame"] / native_fps, float(event.get("score", 1.0)), event.get("winner_probs"))
             for event in events
             if float(event.get("score", 1.0)) >= min_score
         ),
@@ -233,14 +234,14 @@ def events_to_rally_segments(
     )
 
     segments: list[dict] = []
-    for t, score, side_probs in ticks:
+    for t, score, winner_probs in ticks:
         if segments and t - segments[-1]["end"] <= max_gap_s:
             segments[-1]["end"] = t
             segments[-1]["scores"].append(score)
-            segments[-1]["side_ticks"].append((t, side_probs))
+            segments[-1]["winner_ticks"].append((t, winner_probs))
         else:
             segments.append(
-                {"start": t, "end": t, "scores": [score], "side_ticks": [(t, side_probs)]}
+                {"start": t, "end": t, "scores": [score], "winner_ticks": [(t, winner_probs)]}
             )
 
     merged: list[dict] = []
@@ -255,14 +256,14 @@ def events_to_rally_segments(
         }
         tail = [
             probs
-            for t, probs in s["side_ticks"]
-            if probs is not None and t >= s["end"] - SIDE_TAIL_S
+            for t, probs in s["winner_ticks"]
+            if probs is not None and t >= s["end"] - WINNER_TAIL_S
         ]
         if tail:
             means = [sum(col) / len(tail) for col in zip(*tail)]
             best = max(range(len(means)), key=means.__getitem__)
-            out["side"] = SCORE_SIDES_ORDERED[best]
-            out["side_score"] = round(means[best], 3)
+            out["winner"] = COURT_SIDES_ORDERED[best]
+            out["winner_score"] = round(means[best], 3)
         merged.append(out)
     return merged
 

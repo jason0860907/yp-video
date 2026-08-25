@@ -142,7 +142,7 @@
           "title": "Score",
           "type": "integer"
         },
-        "side": {
+        "winner": {
           "anyOf": [
             {
               "type": "string"
@@ -152,8 +152,8 @@
             }
           ],
           "default": null,
-          "description": "Court side that won the rally, camera-frame: left/right (sideline footage) or near/far (broadcast). Null when the checkpoint has no side head.",
-          "title": "Side"
+          "description": "Court side the rally's winner played on, camera-frame: left/right (sideline footage) or near/far (broadcast). Null when the checkpoint has no winner head.",
+          "title": "Winner"
         }
       },
       "required": [
