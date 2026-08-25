@@ -8,6 +8,11 @@ question of opposite ends, so they are one scan with one set of categories:
                 boundary.
 - ``疑似漏標``   the action is nowhere near the span in either direction. The
                 fix is labelling one.
+- ``導播問題``   ...unless the footage says otherwise. A rally listed in an
+                edge's ``broadcast`` set has been watched: the director was
+                elsewhere, the action is not on tape, and no labelling will
+                produce it. The scan cannot see this, so the verdict is kept
+                in the script and survives every re-run.
 
 Appendices carry the near misses: the action is inside but not at the edge
 (a serve with something before it, a score with something after it), the span
@@ -58,6 +63,12 @@ class Edge:
     boundary: str
     #: What "inside, but not at the edge" is called.
     displaced: str
+    #: Rallies reviewed by eye and answered: the broadcast cut away — replay,
+    #: crowd, bench — so the action never reached the tape. They are not
+    #: labelling work, and the scan cannot tell them from a real omission, so
+    #: the verdict is carried here rather than re-made by hand each re-run.
+    #: (stem, rally_id).
+    broadcast: frozenset[tuple[str, int]] = frozenset()
 
     @property
     def edge_word(self) -> str:
@@ -68,6 +79,20 @@ class Edge:
         return "前" if self.opening else "後"
 
 
+#: Reviewed 2026-08-25, every one a TV feed: the director was on a replay or
+#: the crowd when the serve went up.
+SERVE_BROADCAST = frozenset({
+    ("03⧸14(六) 16_00｜例行賽G104 #獅子王 vs. #屏東台電｜企業21年甲級男女排球聯賽_set2", 27),
+    ("03⧸14(六) 18_00｜例行賽G105 #高雄台電 vs. #新北中纖｜企業21年甲級男女排球聯賽_set1", 1),
+    ("03⧸14(六) 18_00｜例行賽G105 #高雄台電 vs. #新北中纖｜企業21年甲級男女排球聯賽_set1", 36),
+    ("03⧸15(日) 13_00｜例行賽G106 #屏東台電 vs. #雲林美津濃｜企業21年甲級男女排球聯賽_set3", 41),
+    ("03⧸15(日) 17_00｜例行賽G108 #新北中纖 vs. #高雄台電｜企業21年甲級男女排球聯賽_set3", 7),
+    ("03⧸20(五) 14_00｜挑戰賽G110 #高雄台電 vs. #新北中纖｜企業21年甲級男女排球聯賽_set2", 6),
+    ("03⧸21(六) 18_00｜男子組冠軍賽G114 #雲林美津濃 vs. #屏東台電｜企業21年甲級男女排球聯賽_set1", 18),
+    ("03⧸22(日) 17_00｜男子組冠軍賽 G117 #屏東台電 vs. #雲林美津濃｜企業21年甲級男女排球聯賽_set1", 30),
+    ("03⧸22(日) 17_00｜男子組冠軍賽 G117 #屏東台電 vs. #雲林美津濃｜企業21年甲級男女排球聯賽_set2", 2),
+})
+
 SERVE = Edge(
     label="serve",
     opening=True,
@@ -75,6 +100,7 @@ SERVE = Edge(
     title="Rally 開頭沒有 serve 的清單",
     boundary="開頭切太晚",
     displaced="serve 不在最前",
+    broadcast=SERVE_BROADCAST,
 )
 SCORE = Edge(
     label="score",
@@ -110,9 +136,31 @@ class Row:
     match_gap: float | None = None
 
 
-def scan(edge: Edge) -> tuple[list[Row], list[Row], list[Row], list[Row], int, int]:
-    """(unlabelled, boundary, displaced, empty, videos, rallies)."""
+@dataclass(frozen=True)
+class Scan:
+    """One edge's audit, in the buckets the report prints."""
+
+    unlabelled: list[Row]
+    broadcast: list[Row]
+    displaced: list[Row]
+    boundary: list[Row]
+    extra: list[Row]
+    empty: list[Row]
+    videos: int
+    rallies: int
+
+    @property
+    def flagged(self) -> int:
+        """Every rally the rule caught, whatever the report does with it."""
+        return sum(
+            len(rows) for rows in
+            (self.unlabelled, self.broadcast, self.displaced, self.boundary, self.empty)
+        )
+
+
+def scan(edge: Edge) -> Scan:
     unlabelled: list[Row] = []
+    broadcast: list[Row] = []
     boundary: list[Row] = []
     displaced: list[Row] = []
     empty: list[Row] = []
@@ -159,7 +207,14 @@ def scan(edge: Edge) -> tuple[list[Row], list[Row], list[Row], list[Row], int, i
                 before = [start - t for t in hits if t < start]
                 near = [min(x) for x in (after, before) if x]
                 nearest = min(near) if near else None
-                target = boundary if nearest is not None and nearest <= NEAR_S else unlabelled
+                # The eye-checked verdict outranks the distance rule: it was
+                # made on the footage, which is the only place the answer is.
+                if (stem, rid) in edge.broadcast:
+                    target = broadcast
+                elif nearest is not None and nearest <= NEAR_S:
+                    target = boundary
+                else:
+                    target = unlabelled
                 target.append(make(outside=nearest))
                 continue
             if n > 1:
@@ -173,31 +228,32 @@ def scan(edge: Edge) -> tuple[list[Row], list[Row], list[Row], list[Row], int, i
                     if (t < picked if edge.opening else t > picked)
                 )
                 displaced.append(make(inside_gap=round(gap, 1), displaced_by=between))
-    return unlabelled, boundary, displaced, empty, extra, videos, seen
+    return Scan(unlabelled, broadcast, displaced, boundary, extra, empty, videos, seen)
 
 
-def render(edge: Edge, found, videos: int, seen: int) -> str:
-    unlabelled, boundary, displaced, empty, extra = found
-    missing = len(unlabelled) + len(boundary) + len(empty)
+def render(edge: Edge, found: Scan) -> str:
     at = "最前" if edge.opening else "最後"
 
     out = [
         f"# {edge.title}",
         "",
         f"掃描日期：{date.today():%Y-%m-%d} · 資料：`videos/rally-spot/annotations` × "
-        f"`videos/action/annotations`（{videos} 支影片、{seen:,} rallies）",
+        f"`videos/action/annotations`（{found.videos} 支影片、{found.rallies:,} rallies）",
         "",
         "重跑：`uv run python scripts/scan_rally_edges.py`",
         "",
         f"判定：rally span `[start, end]` 內{at}的動作事件不是 `{edge.label}`。"
-        f"共 {missing + len(displaced)} 筆。",
+        f"共 {found.flagged} 筆。",
         "",
         f"分類：`{edge.boundary}` = span 外 {NEAR_S:.0f} 秒內就有 `{edge.label}`，"
         f"標註在、是邊界偏了；`{edge.displaced}` = span 內有 `{edge.label}`，"
         f"但{'前' if edge.opening else '後'}面還有別的動作；"
-        f"`疑似漏標` = 前後都找不到鄰近的 `{edge.label}`。",
+        f"`疑似漏標` = 前後都找不到鄰近的 `{edge.label}`；"
+        f"`導播問題` = 已經看過畫面，導播沒拍到那個 `{edge.label}`，補不了。",
         "",
     ]
+    unlabelled, broadcast, displaced = found.unlabelled, found.broadcast, found.displaced
+    boundary, extra, empty = found.boundary, found.extra, found.empty
 
     def table(rows: list[Row], gap_col: str | None) -> None:
         head = f"| 影片 | Rally | 起 | 訖 | {at}動作 |"
@@ -220,6 +276,15 @@ def render(edge: Edge, found, videos: int, seen: int) -> str:
     if unlabelled:
         out += [f"## 疑似漏標 — {len(unlabelled)} 筆", ""]
         table(sorted(unlabelled, key=key), None)
+    if broadcast:
+        out += [
+            f"## 導播問題 — {len(broadcast)} 筆",
+            "",
+            f"看過畫面了：轉播切走（重播、觀眾、板凳），`{edge.label}` 不在帶子上。"
+            "這批不是漏標，標不出來，留著只是為了下次掃描不用再看一遍。",
+            "",
+        ]
+        table(sorted(broadcast, key=key), None)
     if displaced:
         out += [
             f"## {edge.displaced} — {len(displaced)} 筆",
@@ -274,18 +339,16 @@ def main() -> None:
     docs = PROJECT_ROOT / "docs"
     docs.mkdir(parents=True, exist_ok=True)
     for edge in (SERVE, SCORE):
-        unlabelled, boundary, displaced, empty, extra, videos, seen = scan(edge)
+        found = scan(edge)
         path = docs / edge.filename
-        path.write_text(
-            render(edge, (unlabelled, boundary, displaced, empty, extra), videos, seen),
-            encoding="utf-8",
-        )
-        print(f"{edge.label}: {videos} video(s), {seen:,} rallies")
-        print(f"  疑似漏標            {len(unlabelled)}")
-        print(f"  {edge.displaced:<18s}{len(displaced)}")
-        print(f"  {edge.boundary:<18s}{len(boundary)}")
-        print(f"  span 內無動作        {len(empty)}")
-        print(f"  2 個以上            {len(extra)}")
+        path.write_text(render(edge, found), encoding="utf-8")
+        print(f"{edge.label}: {found.videos} video(s), {found.rallies:,} rallies")
+        print(f"  疑似漏標            {len(found.unlabelled)}")
+        print(f"  導播問題            {len(found.broadcast)}")
+        print(f"  {edge.displaced:<18s}{len(found.displaced)}")
+        print(f"  {edge.boundary:<18s}{len(found.boundary)}")
+        print(f"  span 內無動作        {len(found.empty)}")
+        print(f"  2 個以上            {len(found.extra)}")
         print(f"  → {path.relative_to(PROJECT_ROOT)}\n")
 
 

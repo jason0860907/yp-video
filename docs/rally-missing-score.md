@@ -4,9 +4,9 @@
 
 重跑：`uv run python scripts/scan_rally_edges.py`
 
-判定：rally span `[start, end]` 內最後的動作事件不是 `score`。共 355 筆。
+判定：rally span `[start, end]` 內最後的動作事件不是 `score`。共 354 筆。
 
-分類：`結尾切太早` = span 外 3 秒內就有 `score`，標註在、是邊界偏了；`score 不在最後` = span 內有 `score`，但後面還有別的動作；`疑似漏標` = 前後都找不到鄰近的 `score`。
+分類：`結尾切太早` = span 外 3 秒內就有 `score`，標註在、是邊界偏了；`score 不在最後` = span 內有 `score`，但後面還有別的動作；`疑似漏標` = 前後都找不到鄰近的 `score`；`導播問題` = 已經看過畫面，導播沒拍到那個 `score`，補不了。
 
 ## 疑似漏標 — 205 筆
 
@@ -218,7 +218,7 @@
 | 【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G29 11⧸23 15_00 臺北伊斯特 vs 台中連莊_set1 | 22 | 11:37 | 11:47 | spike | receive → block → set → receive → set → spike |
 | 【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G6 10⧸5 18_30 臺中連莊 vs 台鋼天鷹_set1 | 25 | 12:12 | 12:19 | receive | serve → receive → set → block → spike → receive |
 
-## score 不在最後 — 115 筆
+## score 不在最後 — 114 筆
 
 span 內有 `score`，但它不是最後的事件。
 
@@ -252,7 +252,6 @@ span 內有 `score`，但它不是最後的事件。
 | 20260502-排島本館-01 | 44 | 16:03 | 16:10 | serve | 1.0s | receive → set → spike → block → score → serve |
 | 20260507 工資管友誼賽2 | 33 | 13:55 | 14:04 | set | 1.0s | receive → set → spike → receive → score → set |
 | 20260510邷力豹臨打1 | 12 | 6:53 | 7:15 | receive | 1.0s | receive → receive → set → spike → score → receive |
-| Bulgaria 🇧🇬 vs. Canada 🇨🇦 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 46 | 27:32 | 27:38 | receive | 1.2s | serve → receive → set → spike → score → receive |
 | Bulgaria 🇧🇬 vs. Japan 🇯🇵 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 14 | 6:04 | 6:12 | receive | 2.1s | receive → set → spike → receive → score → receive |
 | Bulgaria 🇧🇬 vs. Japan 🇯🇵 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 37 | 18:52 | 18:58 | set | 3.4s | serve → score → receive → set |
 | Canada 🇨🇦 vs Japan 🇯🇵 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 4 | 1:31 | 1:38 | receive | 1.2s | serve → receive → set → spike → score → receive |
@@ -382,7 +381,7 @@ span 內有 `score`，但它不是最後的事件。
 | 【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G28 11⧸22 18_30 臺北伊斯特 vs 台鋼天鷹_set1 | 29 | 16:18 | 16:22 | spike | 0.5s | serve → receive → spike |
 | 【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G6 10⧸5 18_30 臺中連莊 vs 台鋼天鷹_set1 | 13 | 6:29 | 6:36 | receive | 0.1s | serve → receive → receive → receive |
 
-## 附錄 A：span 內有 2 個以上 `score` — 69 筆
+## 附錄 A：span 內有 2 個以上 `score` — 68 筆
 
 間隔不到 0.5 秒的，是同一個 `score` 被標了兩次，不是兩個。
 
@@ -420,7 +419,6 @@ span 內有 `score`，但它不是最後的事件。
 | 37-39 Thriller! - Japan 🇯🇵 vs. Poland 🇵🇱 ｜ VNL 2025 - Full Match ｜ Week 1_set2 | 47 | 22:05 | 22:25 | 2 | 0.48s |
 | Brazil 🇧🇷 vs. Poland 🇵🇱 ｜ VNL 2025 - Full Match ｜ Week 2_set1 | 35 | 18:16 | 18:23 | 2 | 1.00s |
 | Bulgaria vs. Italy - Ranking 7-8 ｜ Boys' U19 World Champs 2025 - Full Match_set1 | 12 | 5:48 | 5:55 | 2 | 0.08s |
-| Bulgaria 🇧🇬 vs. Canada 🇨🇦 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 17 | 10:30 | 10:33 | 2 | 0.32s |
 | Bulgaria 🇧🇬 vs. Japan 🇯🇵 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 1 | 0:00 | 0:05 | 2 | 0.24s |
 | Canada 🇨🇦 vs Japan 🇯🇵 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 37 | 19:10 | 19:17 | 2 | 0.36s |
 | Canada 🇨🇦 vs Japan 🇯🇵 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 39 | 21:15 | 21:23 | 2 | 0.04s |

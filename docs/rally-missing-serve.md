@@ -4,26 +4,15 @@
 
 重跑：`uv run python scripts/scan_rally_edges.py`
 
-判定：rally span `[start, end]` 內最前的動作事件不是 `serve`。共 69 筆。
+判定：rally span `[start, end]` 內最前的動作事件不是 `serve`。共 56 筆。
 
-分類：`開頭切太晚` = span 外 3 秒內就有 `serve`，標註在、是邊界偏了；`serve 不在最前` = span 內有 `serve`，但前面還有別的動作；`疑似漏標` = 前後都找不到鄰近的 `serve`。
+分類：`開頭切太晚` = span 外 3 秒內就有 `serve`，標註在、是邊界偏了；`serve 不在最前` = span 內有 `serve`，但前面還有別的動作；`疑似漏標` = 前後都找不到鄰近的 `serve`；`導播問題` = 已經看過畫面，導播沒拍到那個 `serve`，補不了。
 
-## 疑似漏標 — 58 筆
+## 疑似漏標 — 47 筆
 
 | 影片 | Rally | 起 | 訖 | 最前動作 | 動作序列（前 6） |
 |---|---:|---:|---:|---|---|
-| 03⧸14(六) 16_00｜例行賽G104 #獅子王 vs. #屏東台電｜企業21年甲級男女排球聯賽_set2 | 27 | 15:37 | 15:42 | receive | receive → set → spike → score |
-| 03⧸14(六) 18_00｜例行賽G105 #高雄台電 vs. #新北中纖｜企業21年甲級男女排球聯賽_set1 | 1 | 0:00 | 0:06 | receive | receive → set → spike |
-| 03⧸14(六) 18_00｜例行賽G105 #高雄台電 vs. #新北中纖｜企業21年甲級男女排球聯賽_set1 | 36 | 22:00 | 22:04 | receive | receive → set → spike → block → score |
-| 03⧸15(日) 13_00｜例行賽G106 #屏東台電 vs. #雲林美津濃｜企業21年甲級男女排球聯賽_set3 | 41 | 24:48 | 24:50 | set | set → spike → block → score |
-| 03⧸15(日) 17_00｜例行賽G108 #新北中纖 vs. #高雄台電｜企業21年甲級男女排球聯賽_set3 | 7 | 3:43 | 3:52 | set | set → spike → receive → set → spike → block |
-| 03⧸20(五) 14_00｜挑戰賽G110 #高雄台電 vs. #新北中纖｜企業21年甲級男女排球聯賽_set2 | 6 | 2:24 | 3:31 | receive | receive → set → spike → receive → set → spike |
-| 03⧸21(六) 18_00｜男子組冠軍賽G114 #雲林美津濃 vs. #屏東台電｜企業21年甲級男女排球聯賽_set1 | 18 | 10:06 | 10:15 | block | block → block → receive → set → receive → receive |
-| 03⧸22(日) 17_00｜男子組冠軍賽 G117 #屏東台電 vs. #雲林美津濃｜企業21年甲級男女排球聯賽_set1 | 30 | 16:33 | 16:38 | set | set → spike → block → score |
-| 03⧸22(日) 17_00｜男子組冠軍賽 G117 #屏東台電 vs. #雲林美津濃｜企業21年甲級男女排球聯賽_set2 | 2 | 0:25 | 0:36 | set | set → spike → receive → set → block → spike |
 | 2025-10-11_G8_臺中連莊_vs_桃園雲豹飛將_set1 | 1 | 0:05 | 0:07 | set | set → spike → score |
-| 2025-11-08_G19_臺北伊斯特_vs_臺中連莊_set1 | 43 | 25:57 | 26:02 | receive | receive → set → spike → score |
-| 2026⧸03⧸25 3 | 40 | 13:54 | 13:58 | receive | receive → score |
 | 37-39 Thriller! - Japan 🇯🇵 vs. Poland 🇵🇱 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 31 | 12:39 | 12:43 | receive | receive → set → spike → receive → score |
 | 37-39 Thriller! - Japan 🇯🇵 vs. Poland 🇵🇱 ｜ VNL 2025 - Full Match ｜ Week 1_set2 | 12 | 5:07 | 5:09 | spike | spike → score |
 | 37-39 Thriller! - Japan 🇯🇵 vs. Poland 🇵🇱 ｜ VNL 2025 - Full Match ｜ Week 1_set2 | 13 | 5:21 | 5:28 | receive | receive → set → spike → receive → set → spike |
@@ -71,25 +60,23 @@
 | ᴴᴰ114UVL預賽：：臺灣師大vs中山大學：：男一級 大專排球聯賽 AI網路直播_set1 | 9 | 3:26 | 3:34 | spike | spike → receive → set → spike → block → score |
 | 【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G25 11⧸16 15_00 桃園雲豹飛將 vs 台鋼天鷹_set1 | 17 | 8:10 | 8:18 | receive | receive → set → spike → block → receive → set |
 
-## serve 不在最前 — 11 筆
+## 導播問題 — 9 筆
 
-span 內有 `serve`，但它不是最前的事件。
+看過畫面了：轉播切走（重播、觀眾、板凳），`serve` 不在帶子上。這批不是漏標，標不出來，留著只是為了下次掃描不用再看一遍。
 
-| 影片 | Rally | 起 | 訖 | 最前動作 | serve 距開頭 | 動作序列（前 6） |
-|---|---:|---:|---:|---|---:|---|
-| 03⧸14(六) 16_00｜例行賽G104 #獅子王 vs. #屏東台電｜企業21年甲級男女排球聯賽_set1 | 7 | 2:41 | 2:49 | spike | 1.5s | spike → serve → receive → set → spike → block |
-| 03⧸15(日) 13_00｜例行賽G106 #屏東台電 vs. #雲林美津濃｜企業21年甲級男女排球聯賽_set1 | 20 | 10:57 | 11:12 | spike | 1.5s | spike → serve → receive → set → spike → block |
-| 03⧸15(日) 17_00｜例行賽G108 #新北中纖 vs. #高雄台電｜企業21年甲級男女排球聯賽_set1 | 13 | 6:35 | 6:44 | set | 1.5s | set → serve → receive → spike → receive → receive |
-| 03⧸15(日) 17_00｜例行賽G108 #新北中纖 vs. #高雄台電｜企業21年甲級男女排球聯賽_set1 | 39 | 22:37 | 22:45 | spike | 1.5s | spike → set → serve → receive → set → spike |
-| 03⧸20(五) 16_00｜挑戰賽G111 #屏東台電 vs. #桃園臺產｜企業21年甲級男女排球聯賽_set1 | 32 | 15:05 | 15:11 | set | 1.5s | set → serve → receive → set → spike → score |
-| 2025-10-11_G7_臺北伊斯特_vs_台鋼天鷹_set1 | 40 | 34:31 | 34:34 | receive | 1.5s | receive → receive → receive → serve → score |
-| 20250628-霖度C-1 | 40 | 13:05 | 13:13 | spike | 1.5s | spike → serve → receive → set → spike → score |
-| Bulgaria 🇧🇬 vs. Argentina 🇦🇷 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 7 | 2:34 | 2:45 | set | 1.5s | set → serve → receive → set → spike → receive |
-| Bulgaria 🇧🇬 vs. Canada 🇨🇦 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 17 | 10:30 | 10:33 | score | 1.5s | score → serve → serve → score |
-| Bulgaria 🇧🇬 vs. Canada 🇨🇦 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 40 | 23:08 | 23:16 | receive | 1.5s | receive → serve → receive → set → spike → block |
-| Bulgaria 🇧🇬 vs. Canada 🇨🇦 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 46 | 27:32 | 27:38 | set | 1.5s | set → serve → receive → set → spike → score |
+| 影片 | Rally | 起 | 訖 | 最前動作 | 動作序列（前 6） |
+|---|---:|---:|---:|---|---|
+| 03⧸14(六) 16_00｜例行賽G104 #獅子王 vs. #屏東台電｜企業21年甲級男女排球聯賽_set2 | 27 | 15:37 | 15:42 | receive | receive → set → spike → score |
+| 03⧸14(六) 18_00｜例行賽G105 #高雄台電 vs. #新北中纖｜企業21年甲級男女排球聯賽_set1 | 1 | 0:00 | 0:06 | receive | receive → set → spike |
+| 03⧸14(六) 18_00｜例行賽G105 #高雄台電 vs. #新北中纖｜企業21年甲級男女排球聯賽_set1 | 36 | 22:00 | 22:04 | receive | receive → set → spike → block → score |
+| 03⧸15(日) 13_00｜例行賽G106 #屏東台電 vs. #雲林美津濃｜企業21年甲級男女排球聯賽_set3 | 41 | 24:48 | 24:50 | set | set → spike → block → score |
+| 03⧸15(日) 17_00｜例行賽G108 #新北中纖 vs. #高雄台電｜企業21年甲級男女排球聯賽_set3 | 7 | 3:43 | 3:52 | set | set → spike → receive → set → spike → block |
+| 03⧸20(五) 14_00｜挑戰賽G110 #高雄台電 vs. #新北中纖｜企業21年甲級男女排球聯賽_set2 | 6 | 2:24 | 3:31 | receive | receive → set → spike → receive → set → spike |
+| 03⧸21(六) 18_00｜男子組冠軍賽G114 #雲林美津濃 vs. #屏東台電｜企業21年甲級男女排球聯賽_set1 | 18 | 10:06 | 10:15 | block | block → block → receive → set → receive → receive |
+| 03⧸22(日) 17_00｜男子組冠軍賽 G117 #屏東台電 vs. #雲林美津濃｜企業21年甲級男女排球聯賽_set1 | 30 | 16:33 | 16:38 | set | set → spike → block → score |
+| 03⧸22(日) 17_00｜男子組冠軍賽 G117 #屏東台電 vs. #雲林美津濃｜企業21年甲級男女排球聯賽_set2 | 2 | 0:25 | 0:36 | set | set → spike → receive → set → block → spike |
 
-## 附錄 A：span 內有 2 個以上 `serve` — 73 筆
+## 附錄 A：span 內有 2 個以上 `serve` — 72 筆
 
 間隔不到 0.5 秒的，是同一個 `serve` 被標了兩次，不是兩個。
 
@@ -117,7 +104,6 @@ span 內有 `serve`，但它不是最前的事件。
 | Brazil 🇧🇷 vs. Poland 🇵🇱 ｜ VNL 2025 - Full Match ｜ Week 2_set1 | 15 | 7:32 | 7:56 | 2 | 0.36s |
 | Bulgaria 🇧🇬 vs. Argentina 🇦🇷 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 6 | 2:16 | 2:20 | 2 | 0.64s |
 | Bulgaria 🇧🇬 vs. Argentina 🇦🇷 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 10 | 4:02 | 4:06 | 4 | 0.00s |
-| Bulgaria 🇧🇬 vs. Canada 🇨🇦 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 17 | 10:30 | 10:33 | 2 | 0.04s |
 | Bulgaria 🇧🇬 vs. Japan 🇯🇵 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 22 | 11:27 | 11:33 | 2 | 0.24s |
 | Canada 🇨🇦 vs Japan 🇯🇵 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 2 | 0:27 | 0:46 | 2 | 0.52s |
 | Canada 🇨🇦 vs Japan 🇯🇵 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 5 | 1:58 | 2:01 | 4 | 0.00s |
