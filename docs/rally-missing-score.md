@@ -1,14 +1,14 @@
 # Rally 結尾沒有 score 的清單
 
-掃描日期：2026-08-25 · 資料：`videos/rally-spot/annotations` × `videos/action/annotations`（197 支影片、8,722 rallies）
+掃描日期：2026-08-25 · 資料：`videos/rally-spot/annotations` × `videos/action/annotations`（197 支影片、8,721 rallies）
 
 重跑：`uv run python scripts/scan_rally_edges.py`
 
-判定：rally span `[start, end]` 內最後的動作事件不是 `score`。共 361 筆。
+判定：rally span `[start, end]` 內最後的動作事件不是 `score`。共 355 筆。
 
 分類：`結尾切太早` = span 外 3 秒內就有 `score`，標註在、是邊界偏了；`score 不在最後` = span 內有 `score`，但後面還有別的動作；`疑似漏標` = 前後都找不到鄰近的 `score`。
 
-## 疑似漏標 — 206 筆
+## 疑似漏標 — 205 筆
 
 | 影片 | Rally | 起 | 訖 | 最後動作 | 動作序列（後 6） |
 |---|---:|---:|---:|---|---|
@@ -61,7 +61,6 @@
 | 10⧸4 2 | 25 | 9:39 | 9:48 | spike | serve → receive → set → spike |
 | 10⧸4 3 | 2 | 0:27 | 0:44 | receive | spike → spike → receive → set → spike → receive |
 | 10⧸4 3 | 8 | 2:10 | 2:27 | receive | receive → set → spike → receive → set → receive |
-| 10⧸4 3 | 14 | 3:52 | 4:00 | receive | receive |
 | 10⧸4 3 | 16 | 4:24 | 4:34 | receive | serve → receive → set → spike → receive |
 | 10⧸4 3 | 18 | 5:06 | 5:20 | spike | receive → set → receive → receive → set → spike |
 | 10⧸4 3 | 23 | 7:00 | 7:12 | receive | serve → receive → receive → set → spike → receive |
@@ -219,7 +218,7 @@
 | 【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G29 11⧸23 15_00 臺北伊斯特 vs 台中連莊_set1 | 22 | 11:37 | 11:47 | spike | receive → block → set → receive → set → spike |
 | 【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G6 10⧸5 18_30 臺中連莊 vs 台鋼天鷹_set1 | 25 | 12:12 | 12:19 | receive | serve → receive → set → block → spike → receive |
 
-## score 不在最後 — 117 筆
+## score 不在最後 — 115 筆
 
 span 內有 `score`，但它不是最後的事件。
 
@@ -228,8 +227,6 @@ span 內有 `score`，但它不是最後的事件。
 | 0104排島臨打 3 | 34 | 12:52 | 13:06 | set | 4.1s | receive → set → score → spike → receive → set |
 | 0323小窩臨打 3 | 19 | 6:27 | 6:38 | set | 1.8s | spike → receive → set → spike → score → set |
 | 03⧸14(六) 14_00｜例行賽G103 #雲林美津濃 vs. #桃園臺灣產險｜企業21年甲級男女排球聯賽_set3 | 29 | 18:54 | 19:10 | receive | 1.0s | block → receive → receive → receive → score → receive |
-| 03⧸14(六) 16_00｜例行賽G104 #獅子王 vs. #屏東台電｜企業21年甲級男女排球聯賽_set1 | 15 | 6:18 | 6:27 | set | 2.4s | receive → set → spike → block → score → set |
-| 03⧸14(六) 18_00｜例行賽G105 #高雄台電 vs. #新北中纖｜企業21年甲級男女排球聯賽_set1 | 11 | 4:46 | 4:53 | receive | 1.2s | receive → set → spike → block → score → receive |
 | 03⧸21(六) 18_00｜男子組冠軍賽G114 #雲林美津濃 vs. #屏東台電｜企業21年甲級男女排球聯賽_set1 | 11 | 6:03 | 6:12 | set | 3.6s | receive → set → spike → score → receive → set |
 | 03⧸21(六) 18_00｜男子組冠軍賽G114 #雲林美津濃 vs. #屏東台電｜企業21年甲級男女排球聯賽_set1 | 34 | 19:35 | 19:42 | receive | 2.5s | serve → receive → score → spike → receive |
 | 03⧸21(六) 18_00｜男子組冠軍賽G114 #雲林美津濃 vs. #屏東台電｜企業21年甲級男女排球聯賽_set1 | 39 | 22:18 | 22:26 | receive | 0.8s | set → spike → block → receive → score → receive |
@@ -343,7 +340,7 @@ span 內有 `score`，但它不是最後的事件。
 | 【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G24 11⧸15 18_30 桃園雲豹飛將 vs 臺北伊斯特_set1 | 45 | 24:13 | 24:31 | receive | 2.0s | block → receive → set → spike → score → receive |
 | 【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G26 11⧸16 18_30 臺中連莊 vs 臺北伊斯特_set1 | 17 | 9:20 | 9:29 | receive | 2.7s | set → spike → block → score → receive → receive |
 
-## 結尾切太早 — 38 筆
+## 結尾切太早 — 35 筆
 
 `score` 就在 span 外不到 3 秒 —— 標註本身在，要動的是 `end`。
 
@@ -354,7 +351,6 @@ span 內有 `score`，但它不是最後的事件。
 | 0323小窩臨打 3 | 43 | 14:29 | 14:41 | receive | 0.5s | serve → receive → set → set → spike → receive |
 | 03⧸14(六) 18_00｜例行賽G105 #高雄台電 vs. #新北中纖｜企業21年甲級男女排球聯賽_set1 | 31 | 17:52 | 18:05 | receive | 0.0s | set → spike → receive → set → spike → receive |
 | 2025-10-05_G5_臺北伊斯特_vs_桃園雲豹飛將_set1 | 44 | 33:11 | 33:18 | receive | 0.0s | serve → receive → set → spike → block → receive |
-| 2025-10-11_G8_臺中連莊_vs_桃園雲豹飛將_set1 | 43 | 28:18 | 28:25 | receive | 0.5s | serve → receive → set → spike → receive |
 | 20250424 排島惡館-8 | 30 | 11:20 | 11:26 | receive | 3.0s | serve → receive → receive |
 | 20250504 大統OB-成功大學vs台北大學B-第二局 | 4 | 1:29 | 1:44 | set | 1.2s | receive → receive → set → spike → receive → set |
 | 20260403-霖度C-02 | 7 | 1:50 | 2:00 | receive | 0.7s | receive → set → spike → receive → receive → receive |
@@ -362,10 +358,8 @@ span 內有 `score`，但它不是最後的事件。
 | 20260403-霖度C-02 | 23 | 7:11 | 7:26 | spike | 0.4s | receive → set → spike → receive → set → spike |
 | 20260403-霖度C-02 | 31 | 9:45 | 9:50 | receive | 0.1s | serve → receive → receive |
 | 20260426-小窩-01 | 10 | 3:54 | 4:10 | spike | 0.3s | receive → set → spike → receive → set → spike |
-| 20260426-小窩-01 | 15 | 5:52 | 6:26 | receive | 0.5s | receive → set → spike → receive → receive → receive |
 | 20260426-小窩-01 | 16 | 6:42 | 6:52 | spike | 0.2s | receive → set → spike → receive → set → spike |
 | 20260426-小窩-01 | 18 | 7:32 | 7:44 | receive | 1.3s | set → spike → receive → set → spike → receive |
-| 20260426-小窩-01 | 34 | 14:14 | 14:32 | spike | 2.7s | receive → set → spike → receive → set → spike |
 | 20260502-排島本館-02 | 2 | 1:52 | 2:06 | receive | 0.5s | receive → receive → set → spike → block → receive |
 | 20260502-排島本館-02 | 4 | 3:10 | 3:18 | receive | 0.5s | serve → receive → spike → receive → receive |
 | 20260502-排島本館-02 | 8 | 4:21 | 4:32 | spike | 0.9s | receive → set → spike → receive → set → spike |
@@ -388,7 +382,7 @@ span 內有 `score`，但它不是最後的事件。
 | 【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G28 11⧸22 18_30 臺北伊斯特 vs 台鋼天鷹_set1 | 29 | 16:18 | 16:22 | spike | 0.5s | serve → receive → spike |
 | 【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G6 10⧸5 18_30 臺中連莊 vs 台鋼天鷹_set1 | 13 | 6:29 | 6:36 | receive | 0.1s | serve → receive → receive → receive |
 
-## 附錄 A：span 內有 2 個以上 `score` — 70 筆
+## 附錄 A：span 內有 2 個以上 `score` — 69 筆
 
 間隔不到 0.5 秒的，是同一個 `score` 被標了兩次，不是兩個。
 
@@ -414,7 +408,6 @@ span 內有 `score`，但它不是最後的事件。
 | 2025-11-01_G16_桃園雲豹飛將_vs_台鋼天鷹_set1 | 13 | 6:35 | 6:44 | 2 | 0.10s |
 | 20250424 排島惡館-6 | 37 | 11:44 | 11:53 | 2 | 0.30s |
 | 20250424 排島惡館-7 | 7 | 3:43 | 4:06 | 2 | 1.10s |
-| 20250424 排島惡館-7 | 28 | 10:20 | 10:27 | 2 | 0.27s |
 | 20250621 排島本館-2 | 35 | 10:22 | 10:31 | 2 | 0.97s |
 | 20251227-排島本館-3 | 1 | 0:17 | 0:25 | 2 | 0.17s |
 | 20251227-排島本館-3 | 3 | 0:54 | 1:03 | 2 | 0.17s |
