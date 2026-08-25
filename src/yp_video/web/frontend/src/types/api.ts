@@ -135,61 +135,57 @@ export interface JobLogs {
   count: number;
 }
 
-export interface ActionTrainStatus {
-  active_job?: Job;
-  spot_available?: boolean;
-  init_checkpoints?: SelectOption[];
-  action_annotations?: {
-    videos?: number;
-    events?: number;
-    frames?: number;
-    label_dir?: string;
-    frame_dir?: string;
-    checkpoint_dir?: string;
-    by_view?: Record<'broadcast' | 'sideline', { videos?: number; events?: number; frames?: number }>;
-    per_video?: Array<{
-      video: string;
-      events: number;
-      frames: number;
-      view: string;
-      is_val?: boolean;
-      has_association_label?: boolean;
-    }>;
-  };
-  vnl_1_5?: {
-    ready?: boolean;
-    train_videos?: number;
-    train_events?: number;
-    val_videos?: number;
-    val_events?: number;
-    frame_dir?: string;
-    frame_dir_exists?: boolean;
-  };
+export interface ActionAnnotationStats {
+  videos?: number;
+  events?: number;
+  frames?: number;
+  label_dir?: string;
+  frame_dir?: string;
+  checkpoint_dir?: string;
+  by_view?: Record<'broadcast' | 'sideline', { videos?: number; events?: number; frames?: number }>;
+  per_video?: Array<{
+    video: string;
+    events: number;
+    frames: number;
+    view: string;
+    is_val?: boolean;
+    has_association_label?: boolean;
+  }>;
 }
 
-export type FusionRecipeId =
-  | 'association_action'
-  | 'rally_action'
-  | 'association_action_rally';
+export type FusionRecipeId = 'rally' | 'rally_winner' | 'action' | 'association_action';
+export type SpotTask = 'rally' | 'winner' | 'action' | 'location' | 'actor';
 
+/** One entry of the contract's task-set registry (yp_video.contracts.action.RECIPES). */
 export interface FusionRecipe {
   id: FusionRecipeId;
   name: string;
-  tasks: Array<'association' | 'action' | 'rally'>;
-  available: boolean;
-  trainable: boolean;
-  predict_outputs: Array<'association' | 'action' | 'rally'>;
-  checkpoint_family: 'fusion-actor-head' | null;
+  tasks: SpotTask[];
   description: string;
-  blocked_on: string | null;
+  /** Request fields the form shows for this recipe, on top of the common ones. */
+  fields: string[];
+  /** Request values the form resets to when this recipe is picked. */
+  defaults: Record<string, unknown>;
+  serveable_tasks: SpotTask[];
 }
 
 export interface FusionModelStatus {
   recipes: FusionRecipe[];
-  checkpoints: AssociationCheckpoint[];
+  task_labels: Record<string, string>;
   spot_available: boolean;
-  init_checkpoints: SelectOption[];
-  action_annotations?: ActionTrainStatus['action_annotations'];
+  /** Per recipe: packages carrying every head the recipe trains. */
+  init_checkpoints: Record<string, SelectOption[]>;
+  action_annotations?: ActionAnnotationStats;
+  rally_annotations?: {
+    videos?: number;
+    rallies?: number;
+    rally_hours?: number;
+    total_hours?: number;
+    with_local_video?: number;
+    missing_videos?: number;
+    frame_caches?: Array<{ fps: string; videos: number }>;
+    per_video?: Array<{ video: string; view: string }>;
+  };
   supervision: {
     action_videos: number;
     joint_videos: number;
@@ -279,24 +275,6 @@ export interface TrainProgress {
   best_epoch?: number;
   best_breakdown?: MapBreakdown;
   best_task_metrics?: TaskMetrics;
-}
-
-/** SPOT rally (segment) training — /spot-train/status. */
-export interface RallyTrainStatus {
-  active_job?: Job;
-  spot_available?: boolean;
-  init_checkpoints?: SelectOption[];
-  rally_annotations?: {
-    videos?: number;
-    rallies?: number;
-    rally_hours?: number;
-    total_hours?: number;
-    with_local_video?: number;
-    missing_videos?: number;
-    label_dir?: string;
-  };
-  frame_caches?: Array<{ fps: string; videos: number }>;
-  rally_checkpoints?: { dir?: string; runs?: number; exists?: boolean };
 }
 
 /** Segment-mAP breakdown (per class per tIoU); no spatial component. */
@@ -406,8 +384,9 @@ export interface SpotCheckpoint {
   best_metric?: string | null;
   best_value?: number | null;
   size_mb?: number;
-  /** The packaged run also trained the fusion actor head. */
-  predicts_actor?: boolean;
+  /** Heads the package carries (manifest.tasks). */
+  tasks?: SpotTask[];
+  recipe?: FusionRecipeId | null;
 }
 
 export interface SpotInfo {

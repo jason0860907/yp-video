@@ -160,20 +160,10 @@ export const API = {
     video: (name: string) => `/action-annotate/video/${encodeURIComponent(name)}`,
     done: (name: string) => `/action-annotate/done/${encodeURIComponent(name)}`,
   },
-  actionTrain: {
-    status: '/action-train/status',
-    start: '/action-train/start',
-    performance: '/action-train/performance',
-  },
   fusionModel: {
     status: '/fusion-model/status',
     train: '/fusion-model/train',
     performance: '/fusion-model/performance',
-  },
-  spotTrain: {
-    status: '/spot-train/status',
-    start: '/spot-train/start',
-    performance: '/spot-train/performance',
   },
   spotPredict: {
     videos: '/spot-predict/videos',

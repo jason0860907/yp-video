@@ -69,7 +69,7 @@ export function PredictConfigCard<S extends BaseSettings>({
         {checkpoints.map((c) => (
           <option key={c.path} value={c.path}>
             {c.name} · {c.is_best ? 'best' : `epoch ${c.epoch}`}
-            {c.predicts_actor ? ' · fusion' : ''}
+            {c.recipe ? ` · ${c.recipe}` : ''}
           </option>
         ))}
       </select>

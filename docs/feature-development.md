@@ -1,6 +1,6 @@
 # 新增功能準則
 
-這份文件定義 yp-video 新功能的產品、UI、資料與模型整合規則。新增頁面前，先找最接近的既有流程作為模板；目前 Train 以 Action Train / Rally SPOT Train 為準，Predict 以 Action Predict / Rally SPOT Predict 為準。
+這份文件定義 yp-video 新功能的產品、UI、資料與模型整合規則。新增頁面前，先找最接近的既有流程作為模板；目前 Train 以 Fusion Train（所有 SPOT recipe 的單一入口）為準，Predict 以 Action Predict / Rally SPOT Predict 為準。
 
 ## 1. 先定義功能邊界
 

@@ -58,7 +58,6 @@ export const NAV: NavSection[] = [
     title: 'Rally',
     collapsible: true,
     items: [
-      { path: '/spot-train', label: 'Rally SPOT Train', icon: ICON.train },
       { path: '/spot-predict', label: 'Rally SPOT Predict', icon: ICON.predict },
     ],
   },
@@ -67,7 +66,6 @@ export const NAV: NavSection[] = [
     collapsible: true,
     items: [
       { path: '/action-predict', label: 'Action Predict', icon: ICON.predict },
-      { path: '/action-train', label: 'Action Train', icon: ICON.train },
     ],
   },
   {

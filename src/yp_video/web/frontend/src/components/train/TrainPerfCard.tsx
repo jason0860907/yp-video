@@ -3,6 +3,7 @@ import { cn } from '@/lib/cn';
 import { Card } from '@/components/ui/Card';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { METRIC_LABELS } from '@/components/train/metricLabels';
+import { TASK_LABELS } from '@/components/train/TaskMetricsTable';
 import { TaskMetricsTable } from '@/components/train/TaskMetricsTable';
 import type { ActionPerfData, ActionPerfEntry, ActionVideoMap } from '@/types/api';
 
@@ -82,13 +83,12 @@ function buildSeries(entries: ActionPerfEntry[]): Series[] {
   return series;
 }
 
-/** Per-epoch series for the actor head: every numeric validation metric it
- *  reports (player_top1, overall_top1, recalls…), primary metric first so it
- *  takes the headline color. */
-function buildActorSeries(entries: ActionPerfEntry[]): Series[] {
+/** Per-epoch series for one auxiliary head: every numeric validation metric
+ *  it reports, primary metric first so it takes the headline color. */
+function buildTaskSeries(entries: ActionPerfEntry[], task: string): Series[] {
   const snapshot = [...entries]
     .reverse()
-    .map((e) => e.tasks?.actor)
+    .map((e) => e.tasks?.[task])
     .find(Boolean);
   if (!snapshot) return [];
 
@@ -110,12 +110,16 @@ function buildActorSeries(entries: ActionPerfEntry[]): Series[] {
           colorClass: SERIES_COLORS[index % SERIES_COLORS.length]!,
         },
         entries
-          .map((e) => ({ ep: e.epoch, v: e.tasks?.actor?.validation.metrics[metric] }))
+          .map((e) => ({ ep: e.epoch, v: e.tasks?.[task]?.validation.metrics[metric] }))
           .filter((p): p is Point => typeof p.v === 'number' && Number.isFinite(p.v)),
       ),
     )
     .filter((s) => s.pts.length > 0);
 }
+
+/** Auxiliary heads worth their own per-epoch panel. The spotting head IS the
+ *  mAP chart, and location has no per-epoch story worth a panel. */
+const UNPLOTTED_TASKS = new Set(['rally', 'action', 'location']);
 
 /** Shorten a long broadcast filename to something a bar row can show.
  *  Prefer the segment naming the teams ("A vs. B") over the date/time head. */
@@ -136,7 +140,12 @@ export function TrainPerfCard({
 }) {
   const entries = useMemo(() => (data.entries ?? []).filter((e) => typeof e.val_mAP === 'number'), [data.entries]);
   const series = useMemo(() => buildSeries(entries), [entries]);
-  const actorSeries = useMemo(() => buildActorSeries(entries), [entries]);
+  const taskCharts = useMemo(() => {
+    const names = Object.keys(entries[entries.length - 1]?.tasks ?? {}).filter((t) => !UNPLOTTED_TASKS.has(t));
+    return names
+      .map((task) => ({ task, series: buildTaskSeries(entries, task) }))
+      .filter((c) => c.series.length > 0);
+  }, [entries]);
   // Association runs report no mAP (val_mAP is pinned to 0) but do carry task
   // metrics — for them the actor chart IS the chart, and the mAP curve plus
   // its legend would just draw a flat zero.
@@ -168,19 +177,22 @@ export function TrainPerfCard({
       .sort((a, b) => b.mAP - a.mAP);
   }, [entries, data.best?.epoch]);
 
+  const lastTasks = entries[entries.length - 1]?.tasks ?? {};
+  const spottingLabel = 'rally' in lastTasks ? 'Rally' : 'Action';
+
   if (!entries.length || (!series.length && !mapless)) return null;
 
-  // Action left, actor right; a lone chart spans the full width. Location has
-  // no per-epoch story worth a panel, so it stays unplotted.
+  // Spotting head left, one panel per auxiliary head after it; a lone chart
+  // spans the full width.
   const charts: Array<{ title: string; series: Series[]; bestEpoch?: number }> = [];
   if (series.length) {
-    charts.push({ title: 'Action · val mAP', series, bestEpoch: data.best?.epoch });
+    charts.push({ title: `${spottingLabel} · val mAP`, series, bestEpoch: data.best?.epoch });
   }
-  if (actorSeries.length) {
+  for (const { task, series: taskSeries } of taskCharts) {
     charts.push({
-      title: 'Actor · validation',
-      series: actorSeries,
-      bestEpoch: actorSeries[0]!.best.ep,
+      title: `${TASK_LABELS[task] ?? task} · validation`,
+      series: taskSeries,
+      bestEpoch: taskSeries[0]!.best.ep,
     });
   }
 

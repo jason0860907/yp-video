@@ -20,7 +20,6 @@ import { VideoMultiSelectList } from '@/components/video/VideoMultiSelectList';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
-import { CheckpointsCard } from '@/components/train/CheckpointsCard';
 import { Collapsible } from '@/components/ui/Collapsible';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SectionLabel } from '@/components/ui/SectionLabel';
@@ -32,11 +31,14 @@ import type { FusionTrainRequest } from '@/types/contracts/fusion_train_request.
 
 type FusionForm = Required<FusionTrainRequest>;
 
-const warningCls =
-  'rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-400';
+/** Mirrors spot_training.recipe_token — the run-name token per task set. */
+function recipeToken(tasks: string[]): string {
+  if (tasks.includes('action')) return tasks.includes('actor') ? 'ass_act' : 'act';
+  return tasks.includes('winner') ? 'ral_win' : 'ral';
+}
 
 export function FusionTrainPage() {
-  const form = useSchemaForm<FusionForm>(fusionTrainSchema, { validation_mode: 'manual' });
+  const form = useSchemaForm<FusionForm>(fusionTrainSchema);
   const { values, set } = form;
   const [validationVideos, setValidationVideos] = useState<Set<string>>(new Set());
 
@@ -62,79 +64,98 @@ export function FusionTrainPage() {
     trainingRunning,
   );
 
-  // Mirrors the server's spot_run_name default ({date}_{view}_ass_act_{model},
-  // fusion_model.py) so the empty field previews the actual run name.
+  const recipe = status?.recipes.find((item) => item.id === values.recipe);
+  const tasks = recipe?.tasks ?? [];
+  const visible = new Set(recipe?.fields ?? []);
+  const isRally = tasks.includes('rally');
+  const isManual = values.validation === 'manual';
+
+  // Switching recipe resets the trainer knobs to that recipe's defaults —
+  // rally and action runs want very different batch/epoch/LR values.
+  const pickRecipe = (id: FusionRecipeId) => {
+    set('recipe', id);
+    const next = status?.recipes.find((item) => item.id === id);
+    for (const [key, value] of Object.entries(next?.defaults ?? {})) {
+      set(key as keyof FusionForm, value as FusionForm[keyof FusionForm]);
+    }
+    if (!next?.fields.includes('include_predictions')) set('include_predictions', false);
+    setValidationVideos(new Set());
+  };
+
+  // Mirrors the server's spot_run_name default so the empty field previews
+  // the actual run name.
   const now = new Date();
   const autoRunName = [
     `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`,
     values.camera_view === 'all' ? 'all_view' : values.camera_view,
-    'ass_act',
+    recipeToken(tasks),
     values.feature_arch.replace(/_(tsm|gsm)$/, ''),
   ].join('_');
 
-  const chosenRecipe = status?.recipes.find((item) => item.id === values.recipe);
-  const recipeBlocked = Boolean(chosenRecipe && !chosenRecipe.available);
-  const annotations = status?.action_annotations;
+  const actionAnnotations = status?.action_annotations;
+  const rallyAnnotations = status?.rally_annotations;
   const validationSeeded = useRef(false);
-  const validationChoices = (annotations?.per_video ?? [])
-    .filter(
-      (video) =>
-        (values.camera_view === 'all' || video.view === values.camera_view) &&
-        (values.dataset_scope === 'partial_labels' || video.has_association_label),
-    )
-    .map((video) => ({ ...video, name: video.video, kind: video.view as CutKind }));
+  type ValidationChoice = {
+    name: string;
+    kind: CutKind;
+    events: number;
+    is_val?: boolean;
+    has_association_label?: boolean;
+  };
+  const validationChoices: ValidationChoice[] = isRally
+    ? (rallyAnnotations?.per_video ?? [])
+        .filter((video) => values.camera_view === 'all' || video.view === values.camera_view)
+        .map((video) => ({ name: video.video, kind: video.view as CutKind, events: 0 }))
+    : (actionAnnotations?.per_video ?? [])
+        .filter(
+          (video) =>
+            (values.camera_view === 'all' || video.view === values.camera_view) &&
+            (!tasks.includes('actor') || values.dataset_scope === 'partial_labels' || video.has_association_label),
+        )
+        .map((video) => ({ ...video, name: video.video, kind: video.view as CutKind }));
   const eligibleVideos = validationChoices.length;
-  const eligibleEvents = validationChoices.reduce(
-    (total, video) => total + video.events,
-    0,
-  );
-  const selectedValidation = validationChoices.filter((video) =>
-    validationVideos.has(video.name),
-  );
-  const selectedValidationEvents = selectedValidation.reduce(
-    (total, video) => total + video.events,
-    0,
-  );
+  const eligibleEvents = validationChoices.reduce((total, video) => total + video.events, 0);
+  const selectedValidation = validationChoices.filter((video) => validationVideos.has(video.name));
   const canTrain =
     Boolean(status?.spot_available) &&
-    !recipeBlocked &&
+    Boolean(recipe) &&
     !trainingRunning &&
-    selectedValidation.length > 0;
+    (!isManual || selectedValidation.length > 0);
+
+  // Rally: rough JPEG footprint of the frame cache this run needs (~15 KB/frame).
+  const usableRally = Math.max(0, Number(rallyAnnotations?.with_local_video) || 0);
+  const rallyTrainingVideos = values.video_limit > 0 ? Math.min(values.video_limit, usableRally) : usableRally;
+  const estCacheGb =
+    ((Number(rallyAnnotations?.total_hours) || 0) * (rallyTrainingVideos / Math.max(1, usableRally)) * 3600 * values.extract_fps * 15) / 1e6;
 
   useEffect(() => {
-    if (validationSeeded.current || !annotations?.per_video?.length) return;
+    if (validationSeeded.current || !actionAnnotations?.per_video?.length) return;
     setValidationVideos(
-      new Set(
-        annotations.per_video
-          .filter((video) => video.is_val)
-          .map((video) => video.video),
-      ),
+      new Set(actionAnnotations.per_video.filter((video) => video.is_val).map((video) => video.video)),
     );
     validationSeeded.current = true;
-  }, [annotations?.per_video]);
+  }, [actionAnnotations?.per_video]);
 
   const startTrain = async () => {
-    if (selectedValidation.length === 0) {
-      toast.warning(
-        'Select at least one validation video for this camera view',
-      );
+    if (isManual && selectedValidation.length === 0) {
+      toast.warning('Select at least one validation video');
       return;
     }
-    if (values.batch_size % values.acc_grad_iter !== 0) {
+    if (visible.has('acc_grad_iter') && values.batch_size % values.acc_grad_iter !== 0) {
       toast.warning('Batch must be divisible by grad accumulation steps');
       return;
     }
     try {
       const body: FusionForm = {
         ...values,
-        validation_videos: selectedValidation.map((video) => `${video.name}_actions.jsonl`),
+        validation_videos: isManual ? selectedValidation.map((video) => video.name) : [],
       };
       const job = await apiFetch<Job>(API.fusionModel.train, { method: 'POST', body });
       setPerfRun(undefined);
       setTrainJob(job);
-      toast.success('Fusion training started');
+      toast.success(`${recipe?.name ?? 'Fusion'} training started`);
     } catch (error) {
-      toast.error(`Fusion training failed to start: ${errMsg(error)}`);
+      toast.error(`Training failed to start: ${errMsg(error)}`);
     }
   };
 
@@ -146,35 +167,24 @@ export function FusionTrainPage() {
         <Card>
           <SectionLabel>Training config</SectionLabel>
           <p className="mb-4 text-xs leading-relaxed text-text-muted">
-            Trains action classification, contact location and actor selection
-            in one SPOT checkpoint. Actor supervision comes from reviewed
-            Association Label records. The default joint-only scope requires
-            every included video to supervise both tasks; partial-label union
-            is available as an explicit experiment.
+            {recipe?.description ?? 'One SPOT checkpoint per recipe; pick which heads it learns.'}
           </p>
           <SchemaForm form={form}>
             <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3">
-              {/* Recipe availability (name, blocked_on) is runtime status the
-                  contract's id enum can't carry — a page-composed select. */}
+              {/* Recipe names and per-recipe defaults are served by /status
+                  (the contract registry) — a page-composed select. */}
               <FieldShell label="Recipe" className="col-span-3">
                 <select
                   value={values.recipe}
-                  onChange={(event) => set('recipe', event.target.value as FusionRecipeId)}
+                  onChange={(event) => pickRecipe(event.target.value as FusionRecipeId)}
                   className={cn(fieldCls, 'cursor-pointer appearance-none')}
                 >
                   {(status?.recipes ?? []).map((item) => (
                     <option key={item.id} value={item.id}>
                       {item.name}
-                      {item.available ? '' : ' — planned'}
                     </option>
                   ))}
                 </select>
-                {recipeBlocked && chosenRecipe ? (
-                  <span className={cn(warningCls, 'mt-1 block')}>
-                    {chosenRecipe.name} is planned but not trainable yet:{' '}
-                    {chosenRecipe.blocked_on}
-                  </span>
-                ) : null}
               </FieldShell>
               <SchemaTextField
                 name="run_name"
@@ -187,47 +197,58 @@ export function FusionTrainPage() {
                 label="Camera view"
                 optionLabels={{ all: 'All Views', broadcast: 'Broadcast', sideline: 'Sideline' }}
               />
-              <FieldShell label="Dataset scope" className="col-span-3">
-                <select
-                  value={values.dataset_scope}
-                  onChange={(event) => {
-                    const scope = event.target.value as FusionForm['dataset_scope'];
-                    set('dataset_scope', scope);
-                    // Predictions carry no association labels — the joint-only
-                    // scope can never include them.
-                    if (scope === 'joint_only') set('include_predictions', false);
-                  }}
-                  className={cn(fieldCls, 'cursor-pointer appearance-none')}
-                >
-                  <option value="joint_only">
-                    Joint supervision only — Action ∩ Association (
-                    {status?.supervision.joint_videos ?? 0} videos)
-                  </option>
-                  <option value="partial_labels">
-                    Partial-label union — all Action videos (
-                    {status?.supervision.action_videos ?? 0} videos)
-                  </option>
-                </select>
-                <span className="block text-[10px] leading-relaxed text-text-muted">
-                  {values.dataset_scope === 'joint_only'
-                    ? 'Every training video must produce actor targets; missing Association supervision fails the run.'
-                    : `${status?.supervision.action_only_videos ?? 0} Action-only videos update the shared backbone and Action head, while their actor loss is masked.`}
-                </span>
-              </FieldShell>
+              {visible.has('dataset_scope') && (
+                <FieldShell label="Dataset scope" className="col-span-3">
+                  <select
+                    value={values.dataset_scope}
+                    onChange={(event) => {
+                      const scope = event.target.value as FusionForm['dataset_scope'];
+                      set('dataset_scope', scope);
+                      // Predictions carry no association labels — the joint-only
+                      // scope can never include them.
+                      if (scope === 'joint_only') set('include_predictions', false);
+                    }}
+                    className={cn(fieldCls, 'cursor-pointer appearance-none')}
+                  >
+                    <option value="joint_only">
+                      Joint supervision only — Action ∩ Association ({status?.supervision.joint_videos ?? 0} videos)
+                    </option>
+                    <option value="partial_labels">
+                      Partial-label union — all Action videos ({status?.supervision.action_videos ?? 0} videos)
+                    </option>
+                  </select>
+                  <span className="block text-[10px] leading-relaxed text-text-muted">
+                    {values.dataset_scope === 'joint_only'
+                      ? 'Every training video must produce actor targets; missing Association supervision fails the run.'
+                      : `${status?.supervision.action_only_videos ?? 0} Action-only videos update the shared backbone and Action head, while their actor loss is masked.`}
+                  </span>
+                </FieldShell>
+              )}
               <SchemaSearchSelectField
                 name="init_checkpoint"
                 label="Init checkpoint"
-                options={status?.init_checkpoints ?? []}
+                options={status?.init_checkpoints[values.recipe] ?? []}
                 placeholder="— From scratch —"
                 className="col-span-2"
               />
-              <SchemaSelectField
-                name="audio_backend"
-                label="Audio"
-                optionLabels={{ logmel: 'Log-mel fusion', none: 'Visual only' }}
-              />
+              {visible.has('extract_fps') && (
+                <SchemaSelectField
+                  name="extract_fps"
+                  label="Extract fps"
+                  options={[1, 2, 5]}
+                  optionLabels={{ 1: '1 fps', 2: '2 fps', 5: '5 fps' }}
+                />
+              )}
+              {visible.has('audio_backend') && (
+                <SchemaSelectField
+                  name="audio_backend"
+                  label="Audio"
+                  optionLabels={{ logmel: 'Log-mel fusion', none: 'Visual only' }}
+                />
+              )}
               <SchemaSelectField name="feature_arch" label="Feature" />
               <SchemaSelectField name="temporal_arch" label="Temporal" />
+              {visible.has('video_limit') && <SchemaNumberField name="video_limit" label="Video limit" />}
               <SchemaNumberField name="num_epochs" label="Epochs" />
               <SchemaNumberField name="batch_size" label="Batch" />
               <SchemaNumberField name="learning_rate" label="Learning rate" />
@@ -236,8 +257,8 @@ export function FusionTrainPage() {
             <Collapsible label="Advanced" className="mt-4">
               <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3">
                 <SchemaNumberField name="clip_len" label="Clip len" />
-                <SchemaNumberField name="sample_fps" label="Sample fps" />
-                <SchemaNumberField name="acc_grad_iter" label="Grad accum" />
+                {visible.has('sample_fps') && <SchemaNumberField name="sample_fps" label="Sample fps" />}
+                {visible.has('acc_grad_iter') && <SchemaNumberField name="acc_grad_iter" label="Grad accum" />}
                 <SchemaNumberField name="warm_up_epochs" label="Warmup" />
                 <SchemaNumberField name="num_workers" label="Workers" />
                 <SchemaNumberField name="gpu" label="GPU" />
@@ -248,134 +269,130 @@ export function FusionTrainPage() {
             </Collapsible>
 
             <div className="mt-5 border-t border-border pt-4">
-              <VideoMultiSelectList
-                videos={validationChoices}
-                selected={validationVideos}
-                onSelectedChange={setValidationVideos}
-                title="Validation split"
-                quickSelects={[
-                  { label: 'Load saved val set', predicate: (v) => Boolean(v.is_val) },
-                  { label: 'Clear', predicate: () => false },
-                ]}
-                renderMeta={(video) => (
+              <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3">
+                <SchemaSelectField
+                  name="validation"
+                  label="Validation"
+                  optionLabels={{ ratio: 'Seeded ratio', manual: 'Pick videos', none: 'None (final fit)' }}
+                />
+                {values.validation === 'ratio' && (
                   <>
-                    {video.has_association_label ? (
-                      <Badge tone="success">association</Badge>
-                    ) : (
-                      <Badge tone="warning">action only</Badge>
-                    )}
-                    <span className="font-mono text-[10px] tabular-nums text-text-muted">
-                      {video.events}
-                    </span>
+                    <SchemaNumberField name="val_ratio" label="Val ratio" step={0.01} />
+                    <SchemaNumberField name="split_seed" label="Split seed" />
                   </>
                 )}
-                maxHeightClass="max-h-64"
-                emptyTitle="No eligible videos in this scope"
-                query={statusQuery}
-              />
-              <p className="mt-2 text-[10px] leading-relaxed text-text-muted">
-                Selected videos are validation only; every other matching
-                action annotation trains.
-              </p>
+              </div>
+              {isManual && (
+                <div className="mt-3">
+                  <VideoMultiSelectList
+                    videos={validationChoices}
+                    selected={validationVideos}
+                    onSelectedChange={setValidationVideos}
+                    title="Validation split"
+                    quickSelects={[
+                      { label: 'Load saved val set', predicate: (v) => Boolean(v.is_val) },
+                      { label: 'Clear', predicate: () => false },
+                    ]}
+                    renderMeta={(video) =>
+                      isRally ? null : (
+                        <>
+                          {video.has_association_label ? (
+                            <Badge tone="success">association</Badge>
+                          ) : (
+                            <Badge tone="warning">action only</Badge>
+                          )}
+                          <span className="font-mono text-[10px] tabular-nums text-text-muted">{video.events}</span>
+                        </>
+                      )
+                    }
+                    maxHeightClass="max-h-64"
+                    emptyTitle="No eligible videos in this scope"
+                    query={statusQuery}
+                  />
+                  <p className="mt-2 text-[10px] leading-relaxed text-text-muted">
+                    Selected videos are validation only; every other matching annotation trains.
+                  </p>
+                </div>
+              )}
             </div>
 
+            {isRally && (
+              <p className="mt-3 text-xs text-text-secondary">
+                Trains on {rallyTrainingVideos} video(s); frames are extracted once at {values.extract_fps} fps (~
+                {estCacheGb.toFixed(0)} GB cache) and reused. Video limit 0 = all annotated videos.
+              </p>
+            )}
+
             <div className="mt-4 flex flex-wrap items-center gap-3">
-              {values.dataset_scope === 'partial_labels' && (
-                <SchemaCheckboxField
-                  name="include_predictions"
-                  label="Include predictions"
-                />
-              )}
+              {visible.has('include_predictions') &&
+                (!visible.has('dataset_scope') || values.dataset_scope === 'partial_labels') && (
+                  <SchemaCheckboxField name="include_predictions" label="Include predictions" />
+                )}
               <SchemaCheckboxField name="stop_vllm" label="Stop vLLM first" />
             </div>
           </SchemaForm>
           <div className="mt-4 flex items-center gap-2">
-            <Button
-              intent="primary"
-              onClick={() => void startTrain()}
-              disabled={!canTrain}
-              className="flex-1"
-            >
-              {trainingRunning ? 'Training…' : 'Train fusion checkpoint'}
+            <Button intent="primary" onClick={() => void startTrain()} disabled={!canTrain} className="flex-1">
+              {trainingRunning ? 'Training…' : `Train ${recipe?.name ?? ''}`}
             </Button>
-            {trainingRunning && (
-              <Button onClick={() => void cancelTrain()}>Cancel</Button>
-            )}
+            {trainingRunning && <Button onClick={() => void cancelTrain()}>Cancel</Button>}
           </div>
         </Card>
 
         <Card>
           <SectionLabel>Training dataset</SectionLabel>
           <div className="space-y-1.5 text-[11.5px]">
-            {[
-              [
-                'Scope',
-                values.dataset_scope === 'joint_only'
-                  ? 'Action ∩ Association'
-                  : 'Action union',
-              ],
-              [
-                'View',
-                values.camera_view === 'all' ? 'all views' : values.camera_view,
-              ],
-              [
-                'Eligible',
-                `${eligibleVideos} vid / ${eligibleEvents.toLocaleString()} events`,
-              ],
-              [
-                'Validation',
-                `${selectedValidation.length} vid / ${selectedValidationEvents.toLocaleString()} events`,
-              ],
-              [
-                'Action only',
-                `${status?.supervision.action_only_videos ?? 0} videos in corpus`,
-              ],
-            ].map(([label, value]) => (
+            {(isRally
+              ? [
+                  ['Source', 'Rally annotations'],
+                  ['View', values.camera_view === 'all' ? 'all views' : values.camera_view],
+                  ['Annotated', `${rallyAnnotations?.videos ?? 0} vid / ${(rallyAnnotations?.rallies ?? 0).toLocaleString()} rallies`],
+                  ['Local cuts', `${usableRally} vid (${rallyAnnotations?.missing_videos ?? 0} missing)`],
+                  ['Frame caches', (rallyAnnotations?.frame_caches ?? []).map((c) => `${c.fps} fps: ${c.videos}`).join(' · ') || 'none'],
+                ]
+              : [
+                  ['Scope', tasks.includes('actor') && values.dataset_scope === 'joint_only' ? 'Action ∩ Association' : 'Action union'],
+                  ['View', values.camera_view === 'all' ? 'all views' : values.camera_view],
+                  ['Eligible', `${eligibleVideos} vid / ${eligibleEvents.toLocaleString()} events`],
+                  ['Validation', isManual ? `${selectedValidation.length} vid` : values.validation],
+                  ['Action only', `${status?.supervision.action_only_videos ?? 0} videos in corpus`],
+                ]
+            ).map(([label, value]) => (
               <div key={label} className="flex items-center gap-3">
-                <span className="w-20 flex-shrink-0 text-text-muted">
-                  {label}
-                </span>
-                <span
-                  className="min-w-0 flex-1 truncate font-mono tabular-nums text-text-secondary"
-                  title={String(value)}
-                >
+                <span className="w-20 flex-shrink-0 text-text-muted">{label}</span>
+                <span className="min-w-0 flex-1 truncate font-mono tabular-nums text-text-secondary" title={String(value)}>
                   {value}
                 </span>
               </div>
             ))}
           </div>
           <div className="mt-4 border-t border-border pt-3">
-            <div className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-text-muted">
-              Checkpoint heads
-            </div>
+            <div className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-text-muted">Checkpoint heads</div>
             <div className="flex flex-wrap gap-1.5">
-              <Badge tone="brand">Action</Badge>
-              <Badge tone="brand">Location</Badge>
-              <Badge tone="brand">Association</Badge>
+              {tasks.map((task) => (
+                <Badge key={task} tone="brand">
+                  {status?.task_labels[task] ?? task}
+                </Badge>
+              ))}
             </div>
           </div>
           <p className="mt-3 text-[10px] leading-relaxed text-text-muted">
-            The package keeps a best epoch per task: Action Predict loads the
-            Action-mAP best, Association Predict loads the actor head at its
-            own Player Top-1 best. Trained checkpoints appear on both pages,
-            marked as fusion checkpoints.
+            The package keeps a best epoch per task; each predict surface loads the head it needs at that
+            head's own best. Serveable on their own:{' '}
+            {(recipe?.serveable_tasks ?? []).map((task) => status?.task_labels[task] ?? task).join(', ') || '—'}.
           </p>
         </Card>
       </div>
 
       <TrainJobCard
         job={trainJob}
-        progressKey="fusion_model_train_progress"
+        progressKey="spot_train_progress"
         epochsFallback={values.num_epochs}
         onCancel={() => void cancelTrain()}
+        mapLabel={isRally ? 'Seg mAP' : 'Last mAP'}
+        eventNoun={isRally ? 'rallies' : 'events'}
       />
-      {perf && perf.entries.length > 0 ? (
-        <TrainPerfCard data={perf} onSelectRun={setPerfRun} />
-      ) : null}
-      <CheckpointsCard
-        title="Fusion checkpoints"
-        checkpoints={status?.checkpoints ?? []}
-      />
+      {perf && perf.entries.length > 0 ? <TrainPerfCard data={perf} onSelectRun={setPerfRun} /> : null}
     </div>
   );
 }

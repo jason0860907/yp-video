@@ -7,8 +7,6 @@ import { JobsPage } from '@/pages/JobsPage';
 import { DownloadPage } from '@/pages/DownloadPage';
 import { DetectPage } from '@/pages/DetectPage';
 import { ActionPredictPage } from '@/pages/ActionPredictPage';
-import { ActionTrainPage } from '@/pages/ActionTrainPage';
-import { SpotTrainPage } from '@/pages/SpotTrainPage';
 import { SpotPredictPage } from '@/pages/SpotPredictPage';
 import { UploadPage } from '@/pages/UploadPage';
 import { CutPage } from '@/pages/CutPage';
@@ -28,10 +26,8 @@ const PAGES: Record<string, ReactElement> = {
   '/cut': <CutPage />,
   '/label': <LabelPage />,
   '/rally-vlm-predict': <DetectPage />,
-  '/spot-train': <SpotTrainPage />,
   '/spot-predict': <SpotPredictPage />,
   '/action-predict': <ActionPredictPage />,
-  '/action-train': <ActionTrainPage />,
   '/tracking': <TrackingPage />,
   '/player-detection': <PlayerDetectionPage />,
   '/reid-predict': <ReidPredictPage />,
@@ -51,6 +47,8 @@ const REDIRECTS: Record<string, string> = {
   '/action-annotate': '/label?mode=action',
   '/association-label': '/label?mode=association',
   '/reid-label': '/label?mode=reid',
+  '/spot-train': '/fusion-train',
+  '/action-train': '/fusion-train',
 };
 
 /**
