@@ -8,12 +8,10 @@
 
 分類：`開頭切太晚` = span 外 3 秒內就有 `serve`，標註在、是邊界偏了；`serve 不在最前` = span 內有 `serve`，但前面還有別的動作；`疑似漏標` = 前後都找不到鄰近的 `serve`；`導播問題` = 已經看過畫面，導播沒拍到那個 `serve`，補不了。
 
-## 疑似漏標 — 47 筆
+## 疑似漏標 — 45 筆
 
 | 影片 | Rally | 起 | 訖 | 最前動作 | 動作序列（前 6） |
 |---|---:|---:|---:|---|---|
-| 2025-10-11_G8_臺中連莊_vs_桃園雲豹飛將_set1 | 1 | 0:05 | 0:07 | set | set → spike → score |
-| 37-39 Thriller! - Japan 🇯🇵 vs. Poland 🇵🇱 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 31 | 12:39 | 12:43 | receive | receive → set → spike → receive → score |
 | 37-39 Thriller! - Japan 🇯🇵 vs. Poland 🇵🇱 ｜ VNL 2025 - Full Match ｜ Week 1_set2 | 12 | 5:07 | 5:09 | spike | spike → score |
 | 37-39 Thriller! - Japan 🇯🇵 vs. Poland 🇵🇱 ｜ VNL 2025 - Full Match ｜ Week 1_set2 | 13 | 5:21 | 5:28 | receive | receive → set → spike → receive → set → spike |
 | 37-39 Thriller! - Japan 🇯🇵 vs. Poland 🇵🇱 ｜ VNL 2025 - Full Match ｜ Week 1_set2 | 20 | 8:52 | 8:55 | receive | receive → set → spike → score |
@@ -60,7 +58,7 @@
 | ᴴᴰ114UVL預賽：：臺灣師大vs中山大學：：男一級 大專排球聯賽 AI網路直播_set1 | 9 | 3:26 | 3:34 | spike | spike → receive → set → spike → block → score |
 | 【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G25 11⧸16 15_00 桃園雲豹飛將 vs 台鋼天鷹_set1 | 17 | 8:10 | 8:18 | receive | receive → set → spike → block → receive → set |
 
-## 導播問題 — 9 筆
+## 導播問題 — 11 筆
 
 看過畫面了：轉播切走（重播、觀眾、板凳），`serve` 不在帶子上。這批不是漏標，標不出來，留著只是為了下次掃描不用再看一遍。
 
@@ -75,6 +73,8 @@
 | 03⧸21(六) 18_00｜男子組冠軍賽G114 #雲林美津濃 vs. #屏東台電｜企業21年甲級男女排球聯賽_set1 | 18 | 10:06 | 10:15 | block | block → block → receive → set → receive → receive |
 | 03⧸22(日) 17_00｜男子組冠軍賽 G117 #屏東台電 vs. #雲林美津濃｜企業21年甲級男女排球聯賽_set1 | 30 | 16:33 | 16:38 | set | set → spike → block → score |
 | 03⧸22(日) 17_00｜男子組冠軍賽 G117 #屏東台電 vs. #雲林美津濃｜企業21年甲級男女排球聯賽_set2 | 2 | 0:25 | 0:36 | set | set → spike → receive → set → block → spike |
+| 2025-10-11_G8_臺中連莊_vs_桃園雲豹飛將_set1 | 1 | 0:05 | 0:07 | set | set → spike → score |
+| 37-39 Thriller! - Japan 🇯🇵 vs. Poland 🇵🇱 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 31 | 12:39 | 12:43 | receive | receive → set → spike → receive → score |
 
 ## 附錄 A：span 內有 2 個以上 `serve` — 72 筆
 
