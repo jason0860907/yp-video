@@ -160,10 +160,12 @@ function SavesDetail({ event }: { event: AuditEvent }) {
  *  How the numbers are built, since the card deliberately does not say so on
  *  screen — the reader wants the figure, not a lecture under every table:
  *
- *  - A row of the trail is one work session, spanning its first save to its
- *    last. `工時` sums those spans.
- *  - Five minutes without a save ends a session, so breaks are not counted;
- *    the next save opens a new row (see _SESSION_IDLE_GAP in web/audit.py).
+ *  - A session is a run of one person's saves — any video, any editor — in
+ *    which no two consecutive saves are more than ten minutes apart
+ *    (SESSION_IDLE_GAP in web/audit.py). `工時` sums first-to-last save of
+ *    each session, so the quiet between two videos counts as work while a
+ *    lunch break does not. Sessions are NOT the rows of the trail above:
+ *    those fold per video.
  *  - Only labeling actions count (audit.LABELING_ACTIONS). A publish, a
  *    delete or a training start is instantaneous and contributes nothing.
  *  - A session's clock starts at its first SAVE, not its first edit, so each

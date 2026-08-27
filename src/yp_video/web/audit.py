@@ -73,7 +73,11 @@ LABELING_ACTIONS = tuple(sorted(_COALESCING))
 #: starts a new row, so a lunch break splits the day instead of being billed.
 #: Measured from the last save in the row, not from its start — an afternoon of
 #: continuous work stays one session.
-_SESSION_IDLE_GAP = "5 minutes"
+#:
+#: Row folding only shapes the trail listing (one row per video per editor).
+#: Worked hours are recomputed at read time from every save's timestamp with
+#: this same threshold, across videos and editors — see routers/audit_log.
+SESSION_IDLE_GAP = "10 minutes"
 
 _QUEUE_MAX = 2000
 
@@ -97,7 +101,7 @@ UPDATE audit_events
         WHERE actor = %s AND action = %s
           AND target IS NOT DISTINCT FROM %s
           AND outcome = 'ok'
-          AND at > %s - interval '{_SESSION_IDLE_GAP}'
+          AND at > %s - interval '{SESSION_IDLE_GAP}'
         ORDER BY id DESC LIMIT 1)
 """
 

@@ -174,7 +174,7 @@ class AuditDatabaseTests(unittest.IsolatedAsyncioTestCase):
             actor="a@example.com", action="POST /api/annotate/annotations",
             target="set1", summary={"edited": 1}, at=first,
         ))
-        after_break = first + timedelta(minutes=6)
+        after_break = first + timedelta(minutes=12)
         await audit._write(audit.AuditEvent(
             actor="a@example.com", action="POST /api/annotate/annotations",
             target="set1", summary={"edited": 1}, at=after_break,
@@ -194,7 +194,7 @@ class AuditDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 actor="a@example.com", action="POST /api/annotate/annotations",
                 target="set1", summary={"edited": 1}, at=t,
             ))
-            t += timedelta(minutes=4)   # under the 5-minute gap
+            t += timedelta(minutes=4)   # under the 10-minute gap
         async with db.pool().connection() as conn:
             rows = await (await conn.execute(
                 "SELECT first_at, at, repeats FROM audit_events")).fetchall()
@@ -261,7 +261,7 @@ class AuditDatabaseTests(unittest.IsolatedAsyncioTestCase):
         ))
         await audit._write(audit.AuditEvent(
             actor="a@example.com", action="POST /api/annotate/annotations",
-            target="set1", summary={"edited": 1}, at=first + timedelta(minutes=9),
+            target="set1", summary={"edited": 1}, at=first + timedelta(minutes=15),
             changes=[{"op": "removed", "id": 1, "item": {"start": 1.0}}],
         ))
         async with db.pool().connection() as conn:
@@ -309,6 +309,32 @@ class AuditDatabaseTests(unittest.IsolatedAsyncioTestCase):
         # Longest first, so the settlement reads top-down.
         self.assertEqual([p["actor"] for p in log["people"]],
                          ["ann@example.com", "bob@example.com"])
+
+    async def test_worklog_bridges_videos_and_editors(self) -> None:
+        """Switching videos or editors mid-stream is still one session: the
+        quiet in between is spent watching the next video."""
+        base = datetime.now(UTC) - timedelta(hours=3)
+        stops = (
+            ("POST /api/annotate/annotations", "set1"),
+            ("POST /api/action-annotate/annotations", "set1"),
+            ("POST /api/annotate/annotations", "set2"),
+            ("POST /api/action-annotate/annotations", "set2"),
+            ("POST /api/annotate/annotations", "set1"),
+        )
+        for i, (action, target) in enumerate(stops):
+            await audit._write(audit.AuditEvent(
+                actor="ann@example.com", action=action, target=target,
+                summary={"edited": 1}, at=base + timedelta(minutes=3 * i),
+            ))
+        async with db.pool().connection() as conn:
+            n_rows = (await (await conn.execute(
+                "SELECT count(*) FROM audit_events")).fetchone())[0]
+        self.assertEqual(n_rows, 5)  # every hop opened its own trail row...
+        log = await self._worklog(base - timedelta(hours=1), datetime.now(UTC))
+        person = log["people"][0]
+        self.assertEqual(person["sessions"], 1)  # ...but the week sees one run
+        self.assertEqual(person["seconds"], 12 * 60)
+        self.assertEqual(person["saves"], 5)
 
     async def test_worklog_ignores_instantaneous_actions(self) -> None:
         """A publish or a delete spans nothing and must not inflate a total."""

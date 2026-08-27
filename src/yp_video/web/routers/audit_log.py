@@ -32,7 +32,7 @@ SELECT id, first_at, at, actor, action, target, summary, outcome, status,
  LIMIT %(limit)s
 """
 
-#: first_at → at is the work session's span; see _SESSION_IDLE_GAP in web/audit.py.
+#: first_at → at is the row's span; see SESSION_IDLE_GAP in web/audit.py.
 _COLUMNS = (
     "id", "first_at", "at", "actor", "action", "target",
     "summary", "outcome", "status", "duration_ms", "repeats",
@@ -91,16 +91,38 @@ async def event_saves(event_id: int) -> dict:
     return {"saves": row[0]}
 
 
-_WORKLOG = """
+#: Gaps-and-islands over every save a person made, regardless of which video
+#: or editor it went to: a new island starts wherever two consecutive saves are
+#: more than SESSION_IDLE_GAP apart. Trail rows are folded per video, so
+#: summing their spans would drop the minutes between videos — which is
+#: exactly when someone is watching the next one.
+_WORKLOG = f"""
+WITH ticks AS (
+  SELECT actor, (s->>'at')::timestamptz AS t
+    FROM audit_events, jsonb_array_elements(saves) AS s
+   WHERE action = ANY(%(actions)s)
+     AND outcome = 'ok'
+     AND at      >= %(since)s
+     AND first_at <= %(until)s
+), marked AS (
+  SELECT actor, t,
+         CASE WHEN t - lag(t) OVER w > interval '{audit.SESSION_IDLE_GAP}'
+              THEN 1 ELSE 0 END AS starts
+    FROM ticks
+  WINDOW w AS (PARTITION BY actor ORDER BY t)
+), islands AS (
+  SELECT actor, t, sum(starts) OVER (PARTITION BY actor ORDER BY t) AS island
+    FROM marked
+), spans AS (
+  SELECT actor, island, min(t) AS first_t, max(t) AS last_t, count(*) AS saves
+    FROM islands
+   GROUP BY actor, island
+)
 SELECT actor,
-       count(*)                                        AS sessions,
-       sum(repeats)                                    AS saves,
-       COALESCE(sum(EXTRACT(EPOCH FROM (at - first_at))), 0)::bigint AS seconds
-  FROM audit_events
- WHERE action = ANY(%(actions)s)
-   AND outcome = 'ok'
-   AND at      >= %(since)s
-   AND first_at <= %(until)s
+       count(*)   AS sessions,
+       sum(saves) AS saves,
+       COALESCE(sum(EXTRACT(EPOCH FROM (last_t - first_t))), 0)::bigint AS seconds
+  FROM spans
  GROUP BY actor
  ORDER BY seconds DESC
 """
@@ -110,8 +132,11 @@ SELECT actor,
 async def worklog(since: datetime, until: datetime) -> dict:
     """Labeling time per person over a date range.
 
-    A row of the trail spans first_at → at, so summing those spans is the time
-    worked. Only the labeling actions count (see audit.LABELING_ACTIONS) —
+    A session is a run of one person's saves in which no two consecutive
+    saves are more than SESSION_IDLE_GAP apart — across videos and across
+    editors, since the quiet between two videos is usually spent watching the
+    next one. The time worked is the sum of each session's first-to-last
+    save. Only the labeling actions count (see audit.LABELING_ACTIONS) —
     everything else is instantaneous and would add zero while implying it was
     measured.
 
@@ -120,7 +145,7 @@ async def worklog(since: datetime, until: datetime) -> dict:
     - A session's clock starts at its FIRST save, not the first edit, so the
       couple of seconds before that autosave are not counted.
     - A session with a single save spans zero. Real work that produced exactly
-      one save inside five minutes therefore reads as 0, not as its true
+      one save inside the idle gap therefore reads as 0, not as its true
       length; `saves` and `sessions` are there to make that visible.
     """
     params = {
