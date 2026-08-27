@@ -24,11 +24,11 @@ from pathlib import Path
 from yp_video.action import prelabel
 from yp_video.action.frames import inspect_action_frame_cache
 from yp_video.action.predict import SpotInferenceError, run_spot_inference
+from yp_video.action.training import CutResolver
 from yp_video.config import (
     RALLY_ANNOTATIONS_DIR,
     RALLY_SPOT_FRAMES_DIR,
     cut_kind_of,
-    find_cut,
 )
 from yp_video.contracts.action import (
     COURT_SIDES,
@@ -100,19 +100,21 @@ def rally_stats() -> dict:
     }
 
 
-def select_training_items(limit: int = 0) -> tuple[list[tuple[Path, Path]], list[str]]:
+def select_training_items(
+    resolve: CutResolver, limit: int = 0
+) -> tuple[list[tuple[Path, Path]], list[str]]:
     """Pick ``(annotation_file, video_path)`` pairs for a training run.
 
     ``limit`` = 0 uses every annotated video with a resolvable cut; a positive
     limit takes a seeded-shuffle subset, so growing the limit only *adds*
-    freshly extracted caches. Annotations whose cut is missing locally are
-    skipped and reported, not fatal — the library syncs incrementally.
+    freshly extracted caches. Annotations whose cut ``resolve`` cannot place
+    are skipped and reported, not fatal — the library syncs incrementally.
     """
     items: list[tuple[Path, Path]] = []
     missing: list[str] = []
     for path in annotation_files():
         stem = path.name.removesuffix("_annotations.jsonl")
-        video_path = find_cut(f"{stem}.mp4")
+        video_path = resolve(f"{stem}.mp4")
         if video_path is None:
             missing.append(f"{stem}.mp4")
             continue
@@ -120,7 +122,7 @@ def select_training_items(limit: int = 0) -> tuple[list[tuple[Path, Path]], list
 
     if missing:
         log.warning(
-            "rally-spot: %d annotation(s) without a local cut (e.g. %s)",
+            "rally-spot: %d annotation(s) without a resolvable cut (e.g. %s)",
             len(missing), ", ".join(missing[:3]),
         )
     if limit and limit < len(items):

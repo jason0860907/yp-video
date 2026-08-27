@@ -29,7 +29,7 @@ from yp_video.contracts.action import (
     label_subdirs,
     spotting_task,
 )
-from yp_video.web.r2_client import remote_cut_path
+from yp_video.web.r2_client import resolve_cut
 from yp_video.web.train_requests import FusionTrainRequest
 
 Progress = Callable[[int, int, str], None]
@@ -66,9 +66,9 @@ class RallySource:
     def prepare(
         self, req: FusionTrainRequest, recipe: Recipe, *, save_dir: Path, progress: Progress
     ) -> PreparedLabels:
-        items, missing = rally_spot.select_training_items(req.video_limit)
+        items, missing = rally_spot.select_training_items(resolve_cut, req.video_limit)
         if not items:
-            raise RuntimeError("No rally annotations with a local cut video")
+            raise RuntimeError("No rally annotations with a cut video (local or R2)")
         frame_dir = rally_spot.frame_cache_root(req.extract_fps)
         ensure_action_frame_caches(
             [(video_path, None) for _ann, video_path in items],
@@ -96,9 +96,7 @@ class ActionSource:
     def prepare(
         self, req: FusionTrainRequest, recipe: Recipe, *, save_dir: Path, progress: Progress
     ) -> PreparedLabels:
-        items = training.label_items(
-            remote_cut_path, include_predictions=req.include_predictions
-        )
+        items = training.label_items(resolve_cut, include_predictions=req.include_predictions)
         all_stems = {label.stem.removesuffix("_actions") for label, _video in items}
         joint_only = "actor" in recipe.tasks and req.dataset_scope == "joint_only"
         if joint_only:

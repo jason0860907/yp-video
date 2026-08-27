@@ -123,7 +123,7 @@ export function FusionTrainPage() {
     (!isManual || selectedValidation.length > 0);
 
   // Rally: rough JPEG footprint of the frame cache this run needs (~15 KB/frame).
-  const usableRally = Math.max(0, Number(rallyAnnotations?.with_local_video) || 0);
+  const usableRally = Math.max(0, Number(rallyAnnotations?.with_video) || 0);
   const rallyTrainingVideos = values.video_limit > 0 ? Math.min(values.video_limit, usableRally) : usableRally;
   const estCacheGb =
     ((Number(rallyAnnotations?.total_hours) || 0) * (rallyTrainingVideos / Math.max(1, usableRally)) * 3600 * values.extract_fps * 15) / 1e6;
@@ -347,7 +347,7 @@ export function FusionTrainPage() {
                   ['Source', 'Rally annotations'],
                   ['View', values.camera_view === 'all' ? 'all views' : values.camera_view],
                   ['Annotated', `${rallyAnnotations?.videos ?? 0} vid / ${(rallyAnnotations?.rallies ?? 0).toLocaleString()} rallies`],
-                  ['Local cuts', `${usableRally} vid (${rallyAnnotations?.missing_videos ?? 0} missing)`],
+                  ['Cuts', `${usableRally} vid (${rallyAnnotations?.missing_videos ?? 0} missing)`],
                   ['Frame caches', (rallyAnnotations?.frame_caches ?? []).map((c) => `${c.fps} fps: ${c.videos}`).join(' · ') || 'none'],
                 ]
               : [

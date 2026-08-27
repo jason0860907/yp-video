@@ -40,10 +40,9 @@ class LabelItemsWithPredictionsTests(unittest.TestCase):
             with (
                 patch.object(training, "ACTION_ANNOTATIONS_DIR", annotations),
                 patch.object(training, "ACTION_PRE_ANNOTATIONS_DIR", pre_annotations),
-                patch.object(training, "find_cut", cuts.get),
             ):
-                default_items = training.label_items()
-                items = training.label_items(include_predictions=True)
+                default_items = training.label_items(cuts.get)
+                items = training.label_items(cuts.get, include_predictions=True)
                 pseudo_stems = training.prediction_label_stems(items)
                 default_stems = training.prediction_label_stems(default_items)
 

@@ -15,7 +15,7 @@ from yp_video.actor import labels as association_labels
 from yp_video.config import SPOT_CHECKPOINTS_DIR, SPOT_DIR, SPOT_PYTHON, cut_kind_of
 from yp_video.contracts.action import RECIPES, TASKS
 from yp_video.web.jobs import JobSummary, JobType, job_manager
-from yp_video.web.r2_client import remote_cut_path
+from yp_video.web.r2_client import resolve_cut
 from yp_video.web.spot_runs import checkpoint_package_options, performance_payload
 from yp_video.web.spot_training import start_training_job
 from yp_video.web.train_requests import FusionTrainRequest
@@ -25,14 +25,14 @@ router = APIRouter()
 
 @router.get("/status")
 def status() -> dict:
-    annotation_stats = training.annotation_stats(remote_cut_path)
+    annotation_stats = training.annotation_stats(resolve_cut)
     reviewed = set(association_labels.labeled_stems())
     per_video = [
         {**row, "has_association_label": row["video"] in reviewed}
         for row in annotation_stats["per_video"]
     ]
     joint_videos = sum(1 for row in per_video if row["has_association_label"])
-    rally_items, rally_missing = rally_spot.select_training_items(0)
+    rally_items, rally_missing = rally_spot.select_training_items(resolve_cut, 0)
     return {
         "recipes": [
             {
@@ -59,7 +59,7 @@ def status() -> dict:
         "action_annotations": {**annotation_stats, "per_video": per_video},
         "rally_annotations": {
             **rally_spot.rally_stats(),
-            "with_local_video": len(rally_items),
+            "with_video": len(rally_items),
             "missing_videos": len(rally_missing),
             "frame_caches": rally_spot.frame_cache_stats(),
             "per_video": [

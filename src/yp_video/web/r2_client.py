@@ -264,22 +264,20 @@ def _remote_cut_entry(name: str) -> tuple[CutKind, dict] | None:
     return None
 
 
-def remote_cut_path(name: str) -> Path | None:
-    """Canonical local path of a cut whose bytes live only in R2.
-
-    The parent directory encodes the camera view, so ``cut_kind_of`` works on
-    the returned path even though the file is absent. Used as the
-    ``resolve_missing`` hook of ``action.training`` — training reads the
-    video's frame cache, not the file itself.
-    """
+def _remote_cut_path(name: str) -> Path | None:
+    """Canonical local path of a cut whose bytes live only in R2. The parent
+    directory encodes the camera view, so ``cut_kind_of`` works on the
+    returned path even though the file is absent."""
     entry = _remote_cut_entry(name)
     return entry[0].local_dir / name if entry else None
 
 
 def resolve_cut(name: str) -> Path | None:
-    """The web layer's ``find_cut``: canonical path of a cut whose bytes are
-    local or in R2. The returned path may not exist on disk."""
-    return find_cut(name) or remote_cut_path(name)
+    """The web layer's ``CutResolver``: canonical path of a cut whose bytes
+    are local or in R2. The returned path may not exist on disk — every SPOT
+    training source (rally and action alike) reads frame caches, never the
+    mp4, so this is what they are handed."""
+    return find_cut(name) or _remote_cut_path(name)
 
 
 def all_cut_paths() -> list[Path]:
@@ -287,7 +285,7 @@ def all_cut_paths() -> list[Path]:
 
     The video universe the work lists iterate — labeling must not depend on
     which machine holds the bytes. Local files win on name collisions; an
-    R2-only cut resolves under its kind's local dir (see ``remote_cut_path``).
+    R2-only cut resolves under its kind's local dir (see ``_remote_cut_path``).
     An R2 outage degrades to the local list rather than taking the page down.
     """
     cuts = list(iter_all_cuts())

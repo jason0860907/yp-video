@@ -181,7 +181,7 @@ export interface FusionModelStatus {
     rallies?: number;
     rally_hours?: number;
     total_hours?: number;
-    with_local_video?: number;
+    with_video?: number;
     missing_videos?: number;
     frame_caches?: Array<{ fps: string; videos: number }>;
     per_video?: Array<{ video: string; view: string }>;

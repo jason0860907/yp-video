@@ -122,5 +122,24 @@ class TrainingLabelsCarrySideTest(unittest.TestCase):
         self.assertNotIn("winner", events[1])
 
 
+class SelectTrainingItemsTest(unittest.TestCase):
+    """The resolver decides which cuts train; the mp4 never has to exist."""
+
+    def test_r2_only_cut_trains_and_unresolved_is_reported(self):
+        from yp_video.action import rally as rally_mod
+        from yp_video.config import CUTS_BROADCAST_DIR, cut_kind_of
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ann_dir = Path(tmp)
+            for stem in ("remote", "nowhere"):
+                (ann_dir / f"{stem}_annotations.jsonl").write_text("{}\n")
+            resolve = {"remote.mp4": CUTS_BROADCAST_DIR / "remote.mp4"}.get
+            with patch.object(rally_mod, "RALLY_ANNOTATIONS_DIR", ann_dir):
+                items, missing = rally_mod.select_training_items(resolve)
+        self.assertEqual([v.stem for _a, v in items], ["remote"])
+        self.assertEqual(cut_kind_of(items[0][1]), "broadcast")
+        self.assertEqual(missing, ["nowhere.mp4"])
+
+
 if __name__ == "__main__":
     unittest.main()
