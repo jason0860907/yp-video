@@ -41,6 +41,13 @@ _URL = _scratch_url()
 
 
 @unittest.skipUnless(_URL, "set YP_AUDIT_TEST_DB_URL to a scratch database")
+
+def _totals(person: dict) -> tuple[int, int, int]:
+    """(seconds, sessions, saves) — what the page derives from the sessions."""
+    sessions = person["sessions"]
+    seconds = sum(int((s["end"] - s["start"]).total_seconds()) for s in sessions)
+    return seconds, len(sessions), sum(s["saves"] for s in sessions)
+
 class AuditDatabaseTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         # Never a bare open_pool(): that reads .env and opens the live one.
@@ -300,12 +307,9 @@ class AuditDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 t += timedelta(minutes=4)
 
         log = await self._worklog(base - timedelta(hours=1), datetime.now(UTC))
-        by_actor = {p["actor"]: p for p in log["people"]}
-        self.assertEqual(by_actor["ann@example.com"]["seconds"], 20 * 60)
-        self.assertEqual(by_actor["ann@example.com"]["sessions"], 1)
-        self.assertEqual(by_actor["ann@example.com"]["saves"], 6)
-        self.assertEqual(by_actor["bob@example.com"]["seconds"], 16 * 60)
-        self.assertEqual(by_actor["bob@example.com"]["sessions"], 2)
+        by_actor = {p["actor"]: _totals(p) for p in log["people"]}
+        self.assertEqual(by_actor["ann@example.com"], (20 * 60, 1, 6))
+        self.assertEqual(by_actor["bob@example.com"], (16 * 60, 2, 6))
         # Longest first, so the settlement reads top-down.
         self.assertEqual([p["actor"] for p in log["people"]],
                          ["ann@example.com", "bob@example.com"])
@@ -331,10 +335,8 @@ class AuditDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 "SELECT count(*) FROM audit_events")).fetchone())[0]
         self.assertEqual(n_rows, 5)  # every hop opened its own trail row...
         log = await self._worklog(base - timedelta(hours=1), datetime.now(UTC))
-        person = log["people"][0]
-        self.assertEqual(person["sessions"], 1)  # ...but the week sees one run
-        self.assertEqual(person["seconds"], 12 * 60)
-        self.assertEqual(person["saves"], 5)
+        # ...but the week sees one run
+        self.assertEqual(_totals(log["people"][0]), (12 * 60, 1, 5))
 
     async def test_worklog_ignores_instantaneous_actions(self) -> None:
         """A publish or a delete spans nothing and must not inflate a total."""
@@ -360,7 +362,7 @@ class AuditDatabaseTests(unittest.IsolatedAsyncioTestCase):
             target="set1", summary={"edited": 1}, at=this_week,
         ))
         log = await self._worklog(this_week - timedelta(hours=2), datetime.now(UTC))
-        self.assertEqual(log["people"][0]["sessions"], 1)
+        self.assertEqual(len(log["people"][0]["sessions"]), 1)
 
     async def test_a_write_survives_the_database_going_away(self) -> None:
         """The labeling path must not learn about audit failures."""

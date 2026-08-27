@@ -78,14 +78,17 @@ export interface AuditPage {
 }
 
 /** GET /audit/worklog — labeling time per person over a range. */
+export interface WorklogSession {
+  /** First and last save of an unbroken run of work (ISO timestamps). */
+  start: string;
+  end: string;
+  saves: number;
+}
+
 export interface WorklogPerson {
   actor: string;
-  /** Rows in the range — one per work session. */
-  sessions: number;
-  /** Saves folded into those sessions. */
-  saves: number;
-  /** Summed first_at → at across the sessions. */
-  seconds: number;
+  /** Longest-first across people; chronological within a person. */
+  sessions: WorklogSession[];
 }
 
 export interface Worklog {

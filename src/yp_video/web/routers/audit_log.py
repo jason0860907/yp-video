@@ -5,6 +5,7 @@ machinery) and this module can both be imported into app.py without one name
 shadowing the other.
 """
 
+from collections import defaultdict
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Query
@@ -113,18 +114,11 @@ WITH ticks AS (
 ), islands AS (
   SELECT actor, t, sum(starts) OVER (PARTITION BY actor ORDER BY t) AS island
     FROM marked
-), spans AS (
-  SELECT actor, island, min(t) AS first_t, max(t) AS last_t, count(*) AS saves
-    FROM islands
-   GROUP BY actor, island
 )
-SELECT actor,
-       count(*)   AS sessions,
-       sum(saves) AS saves,
-       COALESCE(sum(EXTRACT(EPOCH FROM (last_t - first_t))), 0)::bigint AS seconds
-  FROM spans
- GROUP BY actor
- ORDER BY seconds DESC
+SELECT actor, island, min(t) AS start, max(t) AS "end", count(*) AS saves
+  FROM islands
+ GROUP BY actor, island
+ ORDER BY actor, start
 """
 
 
@@ -139,6 +133,9 @@ async def worklog(since: datetime, until: datetime) -> dict:
     save. Only the labeling actions count (see audit.LABELING_ACTIONS) —
     everything else is instantaneous and would add zero while implying it was
     measured.
+
+    The sessions themselves are returned, not just totals: the page buckets
+    them by the viewer's local day, which the server does not know.
 
     Two caveats worth knowing before this settles anybody's week:
 
@@ -155,12 +152,16 @@ async def worklog(since: datetime, until: datetime) -> dict:
     }
     async with db.pool().connection() as conn:
         rows = await (await conn.execute(_WORKLOG, params)).fetchall()
+    people: dict[str, list[dict]] = defaultdict(list)
+    for actor, _island, start, end, saves in rows:
+        people[actor].append({"start": start, "end": end, "saves": saves})
+    worked = lambda sessions: sum((s["end"] - s["start"]).total_seconds() for s in sessions)
     return {
         "since": since,
         "until": until,
         "people": [
-            {"actor": a, "sessions": s, "saves": sv, "seconds": sec}
-            for a, s, sv, sec in rows
+            {"actor": actor, "sessions": sessions}
+            for actor, sessions in sorted(people.items(), key=lambda kv: -worked(kv[1]))
         ],
     }
 

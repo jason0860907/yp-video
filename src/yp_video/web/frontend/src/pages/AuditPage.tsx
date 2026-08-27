@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { API, apiFetch, errMsg } from '@/lib/api';
 import { actionLabel, isJobAction, summaryText } from '@/lib/auditLabels';
@@ -18,6 +18,7 @@ import type {
   AuditChange,
   AuditSaves,
   Worklog,
+  WorklogSession,
 } from '@/types/api';
 
 const PAGE_SIZE = 100;
@@ -155,7 +156,7 @@ function SavesDetail({ event }: { event: AuditEvent }) {
   );
 }
 
-/** Labeling time per person for one week.
+/** Labeling time per person for one week, broken down by day.
  *
  *  How the numbers are built, since the card deliberately does not say so on
  *  screen — the reader wants the figure, not a lecture under every table:
@@ -171,7 +172,38 @@ function SavesDetail({ event }: { event: AuditEvent }) {
  *  - A session's clock starts at its first SAVE, not its first edit, so each
  *    session loses the ~2 s autosave debounce. A session with a single save
  *    spans zero — which is why `段數` and `存檔次數` sit beside `工時`.
+ *  - Days are the viewer's local days, bucketed by a session's first save;
+ *    the API hands over sessions, not totals, for exactly this reason.
  */
+interface DayRow {
+  day: string;
+  seconds: number;
+  sessions: number;
+  saves: number;
+  first: Date;
+  last: Date;
+}
+
+const sessionSeconds = (s: WorklogSession) => (new Date(s.end).getTime() - new Date(s.start).getTime()) / 1000;
+
+function byDay(sessions: WorklogSession[]): DayRow[] {
+  const days = new Map<string, DayRow>();
+  for (const s of sessions) {
+    const first = new Date(s.start);
+    const last = new Date(s.end);
+    const day = formatDay(first);
+    const row = days.get(day) ?? { day, seconds: 0, sessions: 0, saves: 0, first, last };
+    row.seconds += sessionSeconds(s);
+    row.sessions += 1;
+    row.saves += s.saves;
+    if (last > row.last) row.last = last;
+    days.set(day, row);
+  }
+  return [...days.values()];
+}
+
+const formatClock = (d: Date) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+
 function WorklogCard() {
   const [weeksAgo, setWeeksAgo] = useState(0);
   const since = useMemo(() => weekStart(weeksAgo), [weeksAgo]);
@@ -185,6 +217,7 @@ function WorklogCard() {
       ),
   });
 
+  const num = 'py-1.5 pr-3 text-right font-mono tabular-nums';
   return (
     <Card
       label={`工時 · ${formatDay(since)}–${formatDay(new Date(until.getTime() - 1))}`}
@@ -211,34 +244,45 @@ function WorklogCard() {
           {log.isLoading ? '載入中…' : '這週還沒有標註紀錄'}
         </p>
       ) : (
-        <>
-          <table className="w-full text-left text-[12.5px]">
-            <thead>
-              <tr className="border-b border-border text-[11px] uppercase tracking-[0.06em] text-text-muted">
-                <th className="pb-2 pr-3 font-normal">執行者</th>
-                <th className="pb-2 pr-3 text-right font-normal">工時</th>
-                <th className="pb-2 pr-3 text-right font-normal">段數</th>
-                <th className="pb-2 text-right font-normal">存檔次數</th>
-              </tr>
-            </thead>
-            <tbody>
-              {log.data.people.map((p) => (
-                <tr key={p.actor} className="border-b border-border-light/60 last:border-0">
-                  <td className="py-2 pr-3 text-text-secondary">{p.actor}</td>
-                  <td className="py-2 pr-3 text-right font-mono tabular-nums text-text-primary">
-                    {formatHours(p.seconds)}
+        <table className="w-full text-left text-[12.5px]">
+          <thead>
+            <tr className="border-b border-border text-[11px] uppercase tracking-[0.06em] text-text-muted">
+              <th className="pb-2 pr-3 font-normal">執行者</th>
+              <th className="pb-2 pr-3 text-right font-normal">工時</th>
+              <th className="pb-2 pr-3 text-right font-normal">段數</th>
+              <th className="pb-2 pr-3 text-right font-normal">存檔次數</th>
+              <th className="pb-2 font-normal">時段</th>
+            </tr>
+          </thead>
+          <tbody>
+            {log.data.people.map((p) => (
+              <Fragment key={p.actor}>
+                <tr className="border-t border-border-light/60 first:border-0">
+                  <td className="pt-2.5 pb-1 pr-3 text-text-secondary">{p.actor}</td>
+                  <td className={cn(num, 'pt-2.5 pb-1 text-text-primary')}>
+                    {formatHours(p.sessions.reduce((a, s) => a + sessionSeconds(s), 0))}
                   </td>
-                  <td className="py-2 pr-3 text-right font-mono tabular-nums text-text-muted">
-                    {p.sessions}
+                  <td className={cn(num, 'pt-2.5 pb-1 text-text-muted')}>{p.sessions.length}</td>
+                  <td className={cn(num, 'pt-2.5 pb-1 text-text-muted')}>
+                    {p.sessions.reduce((a, s) => a + s.saves, 0)}
                   </td>
-                  <td className="py-2 text-right font-mono tabular-nums text-text-muted">
-                    {p.saves}
-                  </td>
+                  <td />
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </>
+                {byDay(p.sessions).map((d) => (
+                  <tr key={d.day} className="text-text-muted">
+                    <td className="py-1 pl-4 pr-3 font-mono text-[11.5px] tabular-nums">{d.day}</td>
+                    <td className={cn(num, 'text-text-secondary')}>{formatHours(d.seconds)}</td>
+                    <td className={num}>{d.sessions}</td>
+                    <td className={num}>{d.saves}</td>
+                    <td className="py-1 font-mono text-[11.5px] tabular-nums">
+                      {formatClock(d.first)}–{formatClock(d.last)}
+                    </td>
+                  </tr>
+                ))}
+              </Fragment>
+            ))}
+          </tbody>
+        </table>
       )}
     </Card>
   );
