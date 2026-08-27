@@ -206,6 +206,7 @@ const formatClock = (d: Date) => `${String(d.getHours()).padStart(2, '0')}:${Str
 
 function WorklogCard() {
   const [weeksAgo, setWeeksAgo] = useState(0);
+  const [open, setOpen] = useState<Set<string>>(() => new Set());
   const since = useMemo(() => weekStart(weeksAgo), [weeksAgo]);
   const until = useMemo(() => weekStart(weeksAgo - 1), [weeksAgo]);
 
@@ -217,7 +218,13 @@ function WorklogCard() {
       ),
   });
 
-  const num = 'py-1.5 pr-3 text-right font-mono tabular-nums';
+  const toggle = (actor: string) =>
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(actor)) next.add(actor);
+      return next;
+    });
+
   return (
     <Card
       label={`工時 · ${formatDay(since)}–${formatDay(new Date(until.getTime() - 1))}`}
@@ -250,37 +257,46 @@ function WorklogCard() {
               <th className="pb-2 pr-3 font-normal">執行者</th>
               <th className="pb-2 pr-3 text-right font-normal">工時</th>
               <th className="pb-2 pr-3 text-right font-normal">段數</th>
-              <th className="pb-2 pr-3 text-right font-normal">存檔次數</th>
-              <th className="pb-2 font-normal">時段</th>
+              <th className="pb-2 text-right font-normal">存檔次數</th>
             </tr>
           </thead>
           <tbody>
-            {log.data.people.map((p) => (
-              <Fragment key={p.actor}>
-                <tr className="border-t border-border-light/60 first:border-0">
-                  <td className="pt-2.5 pb-1 pr-3 text-text-secondary">{p.actor}</td>
-                  <td className={cn(num, 'pt-2.5 pb-1 text-text-primary')}>
-                    {formatHours(p.sessions.reduce((a, s) => a + sessionSeconds(s), 0))}
-                  </td>
-                  <td className={cn(num, 'pt-2.5 pb-1 text-text-muted')}>{p.sessions.length}</td>
-                  <td className={cn(num, 'pt-2.5 pb-1 text-text-muted')}>
-                    {p.sessions.reduce((a, s) => a + s.saves, 0)}
-                  </td>
-                  <td />
-                </tr>
-                {byDay(p.sessions).map((d) => (
-                  <tr key={d.day} className="text-text-muted">
-                    <td className="py-1 pl-4 pr-3 font-mono text-[11.5px] tabular-nums">{d.day}</td>
-                    <td className={cn(num, 'text-text-secondary')}>{formatHours(d.seconds)}</td>
-                    <td className={num}>{d.sessions}</td>
-                    <td className={num}>{d.saves}</td>
-                    <td className="py-1 font-mono text-[11.5px] tabular-nums">
-                      {formatClock(d.first)}–{formatClock(d.last)}
+            {log.data.people.map((p) => {
+              const isOpen = open.has(p.actor);
+              return (
+                <Fragment key={p.actor}>
+                  <tr
+                    onClick={() => toggle(p.actor)}
+                    className="cursor-pointer border-b border-border-light/60 last:border-0 hover:bg-surface-100/60"
+                  >
+                    <td className="py-2 pr-3 text-text-secondary">
+                      <span className={cn('mr-1.5 inline-block text-text-muted transition-transform', isOpen && 'rotate-90')}>▸</span>
+                      {p.actor}
+                    </td>
+                    <td className="py-2 pr-3 text-right font-mono tabular-nums text-text-primary">
+                      {formatHours(p.sessions.reduce((a, s) => a + sessionSeconds(s), 0))}
+                    </td>
+                    <td className="py-2 pr-3 text-right font-mono tabular-nums text-text-muted">
+                      {p.sessions.length}
+                    </td>
+                    <td className="py-2 text-right font-mono tabular-nums text-text-muted">
+                      {p.sessions.reduce((a, s) => a + s.saves, 0)}
                     </td>
                   </tr>
-                ))}
-              </Fragment>
-            ))}
+                  {isOpen &&
+                    byDay(p.sessions).map((d) => (
+                      <tr key={d.day} className="border-b border-border-light/40 text-text-muted">
+                        <td className="py-1.5 pl-6 pr-3 font-mono text-[11.5px] tabular-nums">
+                          {d.day} <span className="opacity-60">· {formatClock(d.first)}–{formatClock(d.last)}</span>
+                        </td>
+                        <td className="py-1.5 pr-3 text-right font-mono tabular-nums text-text-secondary">{formatHours(d.seconds)}</td>
+                        <td className="py-1.5 pr-3 text-right font-mono tabular-nums">{d.sessions}</td>
+                        <td className="py-1.5 text-right font-mono tabular-nums">{d.saves}</td>
+                      </tr>
+                    ))}
+                </Fragment>
+              );
+            })}
           </tbody>
         </table>
       )}
