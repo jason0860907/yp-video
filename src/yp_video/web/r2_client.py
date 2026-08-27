@@ -331,8 +331,9 @@ def serve_video_or_r2_redirect(
     A presigned R2 redirect streams straight from the edge instead of riding
     the tunnel out and back; local disk answers whatever R2 does not hold —
     raw videos are ``local_only``, so the Cut page always lands there.
-    FileResponse handles Range either way. Returns None if the video exists
-    nowhere.
+    FileResponse handles Range; the explicit identity encoding keeps
+    GZipMiddleware off those 206s (it would gzip the chunks and drop
+    Content-Length). Returns None if the video exists nowhere.
 
     This used to branch on the Host header, serving local disk to LAN clients.
     Direct access to this machine is closed now — everything arrives through
@@ -346,7 +347,9 @@ def serve_video_or_r2_redirect(
 
     def from_disk():
         if local_path.exists() and local_path.is_file():
-            return FileResponse(local_path, media_type="video/mp4")
+            return FileResponse(
+                local_path, media_type="video/mp4", headers={"Content-Encoding": "identity"}
+            )
         return None
 
     def from_r2():

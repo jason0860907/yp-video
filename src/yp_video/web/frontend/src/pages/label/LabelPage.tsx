@@ -61,9 +61,6 @@ export function LabelPage() {
   // What the panel's last load actually resolved to — 'none' means the
   // selected store has no file for this video yet (an empty editor).
   const [loadedSource, setLoadedSource] = useState<LoadedSource | null>(null);
-  // Saving always writes the human store; if the user was viewing the
-  // machine store, follow the save there so the screen shows what's saved.
-  const onPanelSaved = () => setSource((s) => (s === 'pre-annotation' ? 'annotation' : s));
   // Rally's Download-Clips modal: the button sits in the picker row (next to
   // Done) but the rally list it needs lives in the editor, so the page only
   // holds the open bit and hands it down.
@@ -342,7 +339,6 @@ export function LabelPage() {
           source={source}
           vlm={vlm}
           onLoaded={setLoadedSource}
-          onSaved={onPanelSaved}
           clock={clock}
           clipsOpen={clipsOpen}
           onClipsClose={() => setClipsOpen(false)}
@@ -352,7 +348,6 @@ export function LabelPage() {
           video={video}
           source={source}
           onLoaded={setLoadedSource}
-          onSaved={onPanelSaved}
           registerGuard={registerGuard}
           clock={clock}
         />

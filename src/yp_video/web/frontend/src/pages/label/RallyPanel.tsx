@@ -55,7 +55,7 @@ const loadRally = (name: string, source: LabelSource, vlm: boolean): Promise<Edi
 const loadedFromTag = (tag: unknown): LoadedSource =>
   tag === 'annotation' ? 'annotation' : tag === 'spot-pre-annotation' ? 'pre-annotation' : tag === 'pre-annotation' ? 'vlm' : 'none';
 
-export function RallyPanel({ video, source, vlm, onLoaded, onSaved, clock, clipsOpen, onClipsClose }: { video: string; source: LabelSource; vlm: boolean; onLoaded?: (s: LoadedSource) => void; onSaved?: () => void; clock?: PlaybackClock; clipsOpen: boolean; onClipsClose: () => void }) {
+export function RallyPanel({ video, source, vlm, onLoaded, clock, clipsOpen, onClipsClose }: { video: string; source: LabelSource; vlm: boolean; onLoaded?: (s: LoadedSource) => void; clock?: PlaybackClock; clipsOpen: boolean; onClipsClose: () => void }) {
   const [data, setData] = useState<EditorData | null>(null);
 
   // Load on video pick and on Source change — the picked file is already
@@ -92,11 +92,8 @@ export function RallyPanel({ video, source, vlm, onLoaded, onSaved, clock, clips
   }, [video, source, vlm]);
 
   // The save just wrote the annotation store — whatever was loaded before,
-  // that is what the editor is showing now.
-  const afterSave = () => {
-    onLoaded?.('annotation');
-    onSaved?.();
-  };
+  // that is what the editor is showing now. Only the badge moves.
+  const afterSave = () => onLoaded?.('annotation');
 
   return (
     <div className="space-y-5">

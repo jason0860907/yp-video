@@ -149,7 +149,9 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="YP Video Analysis", lifespan=lifespan, default_response_class=ORJSONResponse)
 
 # Numeric JSON payloads (reid tracks ships ~100k boxes) compress 4-5x;
-# small responses and streams (SSE, video ranges) pass through untouched.
+# small responses and SSE pass through untouched. Video ranges do NOT on
+# their own — Starlette only exempts text/event-stream — so the video routes
+# stamp Content-Encoding: identity (see r2_client.serve_video_or_r2_redirect).
 # Level 4, not the default 9: on the 3.6 MB tracks payload that's 27 ms vs
 # 197 ms for a 10% larger body — the right trade for a LAN tool.
 app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=4)

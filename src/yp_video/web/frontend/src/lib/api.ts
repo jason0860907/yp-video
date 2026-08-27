@@ -46,20 +46,26 @@ export const errMsg = (e: unknown): string =>
  *
  *  Access sessions expire while a labeling tab sits open all afternoon. When
  *  that happens the edge answers an XHR with a redirect to the login page on
- *  another origin, which fetch reports as an opaque TypeError — every page
- *  would show a bogus "network error" and no amount of retrying would fix it.
- *  Only a top-level navigation can complete the login flow, so reload and let
- *  Access take over. A 403 from our own origin means the same thing.
+ *  another origin. With `redirect: 'manual'` that surfaces as an
+ *  `opaqueredirect` response instead of being followed (and failing) — the
+ *  one signal that only a top-level navigation can fix, so reload and let
+ *  Access take over. A 403 from our own origin means the same thing. No API
+ *  route of ours redirects, so nothing else is affected.
+ *
+ *  Anything else that makes fetch throw — an aborted request, a backend
+ *  restart, a tunnel blip, a laptop waking up — is NOT a session problem and
+ *  must not reload the page: the 30 s polls (presence, jobs, progress) would
+ *  otherwise turn every transient failure into a lost editor.
  */
 async function fetchOrReauth(path: string, init: RequestInit): Promise<Response> {
   let res: Response;
   try {
-    res = await fetch(apiUrl(path), { credentials: 'same-origin', ...init });
-  } catch {
-    window.location.reload();
-    throw new ApiError(0, 'Session expired — reloading');
+    res = await fetch(apiUrl(path), { credentials: 'same-origin', redirect: 'manual', ...init });
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') throw e;
+    throw new ApiError(0, `Network error: ${e instanceof Error ? e.message : String(e)}`);
   }
-  if (res.status === 403) {
+  if (res.type === 'opaqueredirect' || res.status === 403) {
     window.location.reload();
     throw new ApiError(403, 'Session expired — reloading');
   }

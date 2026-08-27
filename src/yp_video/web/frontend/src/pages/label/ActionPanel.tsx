@@ -65,7 +65,7 @@ export const ACTION_MODE: ModeDescriptor = {
   hasSources: true,
 };
 
-export function ActionPanel({ video, source = 'annotation', onLoaded, onSaved, registerGuard, clock }: { video: string; source?: LabelSource; onLoaded?: (s: LoadedSource) => void; onSaved?: () => void; registerGuard?: RegisterGuard; clock?: PlaybackClock }) {
+export function ActionPanel({ video, source = 'annotation', onLoaded, registerGuard, clock }: { video: string; source?: LabelSource; onLoaded?: (s: LoadedSource) => void; registerGuard?: RegisterGuard; clock?: PlaybackClock }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   // The rally list's scroll box — the panel pins rows to its top through it.
@@ -461,8 +461,10 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, onSaved, r
         setEd(next);
       }
       // The save wrote the annotation store — that is what's on screen now.
+      // Only the badge moves: the editor already holds exactly what was
+      // written, so nothing is reloaded (a reload would reset the video and
+      // the selection under the user's hands).
       onLoaded?.('annotation');
-      onSaved?.();
       if (!silent) {
         void videosQuery.refetch();
         toast.success('Action annotations saved');

@@ -96,10 +96,14 @@ export function useVideoRecovery(videoRef: RefObject<HTMLVideoElement>, opts: Vi
         recover(`media error (${el.error.code} ${el.error.message})`);
         return;
       }
-      // A seek whose range request died never clears `seeking`; a starved
-      // stream keeps "playing" with a stopped clock and nothing buffered ahead.
-      const starved = !el.paused && !el.ended && el.currentTime === lastTime && el.readyState < el.HAVE_FUTURE_DATA;
-      stuckTicks = el.seeking || starved ? stuckTicks + 1 : 0;
+      // Stuck means the clock stopped: a seek whose range request died never
+      // clears `seeking`; a starved stream keeps "playing" with nothing
+      // buffered ahead. `seeking` alone is not enough — holding a frame-step
+      // key seeks continuously, and every 1 s sample would land mid-seek.
+      const stalled =
+        el.currentTime === lastTime &&
+        (el.seeking || (!el.paused && !el.ended && el.readyState < el.HAVE_FUTURE_DATA));
+      stuckTicks = stalled ? stuckTicks + 1 : 0;
       lastTime = el.currentTime;
       if (stuckTicks >= STUCK_TICKS) {
         stuckTicks = 0;
