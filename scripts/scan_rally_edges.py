@@ -79,8 +79,9 @@ class Edge:
         return "前" if self.opening else "後"
 
 
-#: Reviewed 2026-08-25, every one a TV feed: the director was on a replay or
-#: the crowd when the serve went up.
+#: Every one a TV feed: the director was on a replay or the crowd when the
+#: serve went up. First batch reviewed 2026-08-25 in-house; second batch
+#: 2026-08-26 from the labeller's pass (docs/任務隱藏.docx).
 SERVE_BROADCAST = frozenset({
     ("03⧸14(六) 16_00｜例行賽G104 #獅子王 vs. #屏東台電｜企業21年甲級男女排球聯賽_set2", 27),
     ("03⧸14(六) 18_00｜例行賽G105 #高雄台電 vs. #新北中纖｜企業21年甲級男女排球聯賽_set1", 1),
@@ -93,6 +94,24 @@ SERVE_BROADCAST = frozenset({
     ("03⧸22(日) 17_00｜男子組冠軍賽 G117 #屏東台電 vs. #雲林美津濃｜企業21年甲級男女排球聯賽_set2", 2),
     ("2025-10-11_G8_臺中連莊_vs_桃園雲豹飛將_set1", 1),
     ("37-39 Thriller! - Japan 🇯🇵 vs. Poland 🇵🇱 ｜ VNL 2025 - Full Match ｜ Week 1_set1", 31),
+    ('37-39 Thriller! - Japan 🇯🇵 vs. Poland 🇵🇱 ｜ VNL 2025 - Full Match ｜ Week 1_set2', 12),
+    ('37-39 Thriller! - Japan 🇯🇵 vs. Poland 🇵🇱 ｜ VNL 2025 - Full Match ｜ Week 1_set2', 13),
+    ('37-39 Thriller! - Japan 🇯🇵 vs. Poland 🇵🇱 ｜ VNL 2025 - Full Match ｜ Week 1_set2', 20),
+    ('Brazil 🇧🇷 vs. Italy 🇮🇹  ｜ VNL 2025 - Full Match ｜ Week 1_set1', 9),
+    ('Canada 🇨🇦 vs Japan 🇯🇵 ｜ VNL 2025 - Full Match ｜ Week 1_set1', 33),
+    ("France vs. Iran - Semi Final 2 ｜ Boys' U19 World Champs 2025 - Full Match_set1", 24),
+    ('Full Match ｜ Poland vs. Slovakia ｜ CEV U22 Volleyball European Championship 2026 Women ｜ Pool C_set1', 21),
+    ('Japan 🇯🇵 vs. Czechia 🇨🇿 ｜ VNL 2025 - Full Match ｜ Week 2_set1', 42),
+    ('Japan 🇯🇵 vs. France 🇫🇷 ｜ VNL 2025 - Full Match ｜ Week 3_set1', 42),
+    ("Korea vs. Bulgaria - Classification 5-8 ｜ Boys' U19 World Champs 2025 - Full Match_set1", 42),
+    ('Osaka Bluteon vs Diamond Food Fine Chef - Full Match ｜ SV. League World Tour 2025 ｜ Volleyball_set1', 24),
+    ('Osaka Bluteon vs Diamond Food Fine Chef - Full Match ｜ SV. League World Tour 2025 ｜ Volleyball_set1', 27),
+    ('Osaka Bluteon vs Diamond Food Fine Chef - Full Match ｜ SV. League World Tour 2025 ｜ Volleyball_set1', 44),
+    ("Spain vs. Iran - Ranking 3-4 ｜ Boys' U19 World Champs 2025 - Full Match_set1", 31),
+    ("Spain vs. Iran - Ranking 3-4 ｜ Boys' U19 World Champs 2025 - Full Match_set1", 46),
+    ('Suntory Sunbirds vs. Osaka Bluteon ｜ SV.LEAGUE 2025⧸26 ｜ Full Match - Volleyball_set1', 5),
+    ("Uzbekistan vs. Pakistan - Ranking 5-6 ｜ Boys' U19 World Champs 2025 - Full Match_set1", 16),
+    ('【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G25 11⧸16 15_00 桃園雲豹飛將 vs 台鋼天鷹_set1', 17),
 })
 
 SERVE = Edge(
