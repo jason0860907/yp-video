@@ -7,7 +7,7 @@
  *  dirty guard, so the parent asks BEFORE changing the video or mode.
  */
 
-import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type SyntheticEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type SyntheticEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { API, apiFetch, apiUrl, errMsg } from '@/lib/api';
 import { fieldCls } from '@/components/form/Field';
@@ -39,7 +39,7 @@ import {
   type ActionEditor,
 } from '@/lib/actionEditorModel';
 import { useActionWaveform } from '@/lib/useActionWaveform';
-import { scrollRallyTop } from '@/lib/sidebarScroll';
+import { scrollActionIntoView, scrollRallyTop } from '@/lib/sidebarScroll';
 import { ACTION_COLORS, actionColor } from '@/lib/actionColors';
 import type { ActionAnnotationData, ActionEvent, ActionVideo } from '@/types/api';
 import { actionStatus } from '@/lib/labelStatus';
@@ -512,6 +512,35 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, onSaved, r
     const t = setTimeout(() => void save(true), ACTION_AUTOSAVE_MS);
     return () => clearTimeout(t);
   }, [ed, save]);
+  // ── Playback follows along in the sidebar ──
+  // The rally under the playhead, and the nearest action inside it. Both are
+  // ids, so the effects below fire on CHANGE, not on every frame tick.
+  const currentRallyId = useMemo(() => {
+    const t = frame / (ed.fps || 30);
+    return ed.rallies.find((r) => t >= r.start && t < r.end)?.rally_id ?? null;
+  }, [ed.rallies, ed.fps, frame]);
+  const currentActionId = useMemo(() => {
+    if (currentRallyId == null) return null;
+    let best: ActionEvent | null = null;
+    for (const e of ed.events) {
+      if (e.rally_id !== currentRallyId) continue;
+      if (!best || Math.abs(e.frame - frame) < Math.abs(best.frame - frame)) best = e;
+    }
+    return best?.id ?? null;
+  }, [ed.events, currentRallyId, frame]);
+  // Entering a rally opens its group. Only on rally change while playing, so
+  // a manual collapse mid-rally sticks. Selection is left alone: the
+  // selected rally is what auto-pauses playback at its end.
+  useEffect(() => {
+    if (!playing || currentRallyId == null) return;
+    setExpanded(String(currentRallyId));
+  }, [playing, currentRallyId]);
+  // Keep the action being played on screen; paused, the list is the user's.
+  useEffect(() => {
+    if (!playing || !currentActionId) return;
+    scrollActionIntoView(listRef.current, currentActionId);
+  }, [playing, currentActionId]);
+
   // Point the sidebar at the rally holding this event and open that group.
   // A frame edit re-derives rally_id, so anything that moves an event has to
   // re-point the sidebar too — otherwise the row it just touched is left
@@ -530,7 +559,7 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, onSaved, r
     if (!evt) return;
     setSelectedId(id);
     revealEvent(evt);
-    scrollRallyTop(listRef.current, evt.rally_id ?? OUTSIDE_RALLY_KEY);
+    scrollActionIntoView(listRef.current, id);
     videoRef.current?.pause();
     seekFrame(evt.frame);
   };

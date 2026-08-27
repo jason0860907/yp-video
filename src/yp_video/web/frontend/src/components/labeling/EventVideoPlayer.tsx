@@ -15,7 +15,7 @@ import { API, apiFetch } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { actionColor } from '@/lib/actionColors';
 import { hasRealTime, seekWhenSeekable, usePlayheadHandover } from '@/lib/playheadHandover';
-import { scrollRallyTop } from '@/lib/sidebarScroll';
+import { scrollActionIntoView, scrollRallyTop } from '@/lib/sidebarScroll';
 import type { PlaybackClock } from '@/pages/label/mode';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -460,7 +460,7 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
   // clicks aren't yanked around.
   useEffect(() => {
     if (!playing || !currentActionId) return;
-    scrollActionIntoView(currentActionId);
+    scrollActionIntoView(listRef.current, currentActionId);
   }, [playing, currentActionId]);
 
   // Actions grouped per rally, plus the ones outside any rally — mirrors the
@@ -490,25 +490,6 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
   const selectAllRallies = useCallback(() => onSelectRally('all'), [onSelectRally]);
 
   const listRef = useRef<HTMLDivElement>(null);
-  /** Scroll an action row into the list's view, centering it, but only when
-   *  it's actually off-screen — avoids constant re-centering jitter as the
-   *  playhead crosses each action during playback. */
-  const scrollActionIntoView = (id: string) => {
-    requestAnimationFrame(() => {
-      const list = listRef.current;
-      const row = list?.querySelector<HTMLElement>(`[data-action-id="${CSS.escape(id)}"]`);
-      if (!list || !row) return;
-      const lr = list.getBoundingClientRect();
-      const rr = row.getBoundingClientRect();
-      if (rr.top < lr.top || rr.bottom > lr.bottom) {
-        list.scrollTo({
-          top: rr.top - lr.top + list.scrollTop - lr.height / 2 + rr.height / 2,
-          behavior: 'smooth',
-        });
-      }
-    });
-  };
-
   const seekEvent = useCallback(
     (a: { id: string; frame: number; time: number | null }) => {
       setSelectedEventId(a.id);

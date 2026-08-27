@@ -21,3 +21,22 @@ export function scrollRallyTop(list: HTMLElement | null, key: number | string): 
     });
   });
 }
+
+/** Scroll an action row into the list's view, centering it, but only when
+ *  it's actually off-screen — avoids constant re-centering jitter as the
+ *  playhead crosses each action during playback. Rows are found by their
+ *  `data-action-id` attribute. */
+export function scrollActionIntoView(list: HTMLElement | null, id: string): void {
+  requestAnimationFrame(() => {
+    const row = list?.querySelector<HTMLElement>(`[data-action-id="${CSS.escape(id)}"]`);
+    if (!list || !row) return;
+    const lr = list.getBoundingClientRect();
+    const rr = row.getBoundingClientRect();
+    if (rr.top < lr.top || rr.bottom > lr.bottom) {
+      list.scrollTo({
+        top: rr.top - lr.top + list.scrollTop - lr.height / 2 + rr.height / 2,
+        behavior: 'smooth',
+      });
+    }
+  });
+}

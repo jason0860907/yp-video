@@ -80,6 +80,7 @@ export function ActionEventPanel({
         return (
           <div
             key={e.id}
+            data-action-id={e.id}
             onClick={() => onJump(e.id)}
             className={cn(
               'grid cursor-pointer grid-cols-[1rem_minmax(5rem,1fr)_3.6rem_2.6rem_2.4rem] items-center gap-1.5 rounded-lg border px-2 py-1.5 transition-colors',
