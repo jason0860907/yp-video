@@ -132,7 +132,7 @@ export function ActionPredictPage() {
         subtitle={
           <Prereqs
             stages={['rallies']}
-            extras={[{ label: 'Action Checkpoint', hint: 'Train an Action recipe on Fusion Train' }]}
+            extras={[{ label: 'Action Checkpoint', hint: 'Train an Action recipe on the Train page' }]}
           />
         }
         actions={

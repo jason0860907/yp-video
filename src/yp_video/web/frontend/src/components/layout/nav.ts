@@ -41,23 +41,23 @@ const ICON = {
 
 export const NAV: NavSection[] = [
   {
-    // The VLM rally pass is video preparation, not a trainable stage: it has
-    // no labels and no checkpoint of its own, so it belongs beside the cut it
-    // reads rather than above the SPOT model it feeds.
     title: 'Video',
     items: [
       { path: '/download', label: 'Download', icon: ICON.download },
       { path: '/cut', label: 'Cut', icon: ICON.cut },
-      { path: '/rally-vlm-predict', label: 'Rally VLM Predict', icon: ICON.detect },
       // Every human labeling surface behind one door: /label picks the video
       // once and tabs across Rally / Action / Association / ReID.
       { path: '/label', label: 'Label', icon: ICON.annotate },
+      // The one SPOT trainer for every recipe (rally / rally+winner / action /
+      // association+action) sits right after the labels it consumes.
+      { path: '/fusion-train', label: 'Train', icon: ICON.train },
     ],
   },
   {
     title: 'Rally',
     collapsible: true,
     items: [
+      { path: '/rally-vlm-predict', label: 'Rally VLM Predict', icon: ICON.detect },
       { path: '/spot-predict', label: 'Rally SPOT Predict', icon: ICON.predict },
     ],
   },
@@ -84,13 +84,6 @@ export const NAV: NavSection[] = [
     items: [
       { path: '/association-predict', label: 'Association Predict', icon: ICON.predict },
       { path: '/association-train', label: 'Association Train', icon: ICON.train },
-    ],
-  },
-  {
-    title: 'Fusion',
-    collapsible: true,
-    items: [
-      { path: '/fusion-train', label: 'Fusion Train', icon: ICON.train },
     ],
   },
   {

@@ -118,7 +118,7 @@ export function SpotPredictPage() {
   return (
     <div className="mx-auto max-w-screen-2xl space-y-5">
       <PageHeader
-        subtitle={<Prereqs extras={[{ label: 'Rally Checkpoint', hint: 'Train a Rally recipe on Fusion Train' }]} />}
+        subtitle={<Prereqs extras={[{ label: 'Rally Checkpoint', hint: 'Train a Rally recipe on the Train page' }]} />}
         actions={
           <>
             <Button size="sm" onClick={() => navigate('/label?mode=rally')}>
