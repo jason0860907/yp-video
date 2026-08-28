@@ -120,6 +120,31 @@ SERVE_VERDICTS: dict[tuple[str, int], str] = {
     ('【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G25 11⧸16 15_00 桃園雲豹飛將 vs 台鋼天鷹_set1', 17): '導播問題',
 }
 
+#: What each verdict means, rendered as a glossary above the verdict table.
+#: The labeller's own words are the keys; a verdict without a note still
+#: renders, it just gets no explanation.
+VERDICT_NOTES: dict[str, str] = {
+    "導播問題": "轉播切到重播、觀眾或板凳，那個動作不在畫面上，看不到就標不到。",
+    "觸網": "球員觸網犯規，裁判哨音結束這球；沒有得分的觸球。",
+    "落地後": "球已經落地得分，之後球員又碰到球；最後那個觸球是落地後的多餘動作，不是 score。",
+    "打到標竿": "球打到標竿出界，犯規結束。",
+    "標竿外": "球從標竿外側過網，視同出界。",
+    "越界": "球出界或球員越過中線，裁判判定結束。",
+    "越界救球": "救球時越過中線或從界外把球救回，判犯規。",
+    "持球": "持球（catch / hold）犯規。",
+    "二擊": "連擊（double contact）犯規。",
+    "四次": "一方觸球超過三次（標註員原文「4次」）。",
+    "4次": "一方觸球超過三次。",
+    "後排踩線": "後排球員踩線起跳攻擊或攔網，位置違例。",
+    "舉球後排越界": "後排球員在前區把球舉過網，位置違例。",
+    "越網擊球": "越過球網擊球（reaching over）犯規。",
+    "阻擋舉球": "攔網時觸碰到對方正在舉球的球，犯規。",
+    "發球踩線": "發球踩線，發球方直接失分；rally 沒有正常展開。",
+    "no in": "球沒進——未過網或落在界外（標註員原文 no in）。",
+    "公正": "裁判／挑戰判決結束這球（標註員原文「公正」）。",
+    "輪轉錯誤": "輪轉順序錯誤，裁判判失分。",
+}
+
 #: Rallies whose last action is not a ``score`` because the point ended on a
 #: fault — net touch, ball out, held ball, foot fault... — which is a referee
 #: call, not a touch, so there is nothing to label. Verdicts from the
@@ -475,6 +500,13 @@ def render(edge: Edge, found: Scan) -> str:
             "留著是為了下次掃描不用再看一遍。",
             "",
             f"判定分布：{summary}。",
+            "",
+            "| 判定 | 筆數 | 意思 |",
+            "|---|---:|---|",
+            *(
+                f"| {reason} | {n} | {VERDICT_NOTES.get(reason, '—')} |"
+                for reason, n in reasons.most_common()
+            ),
             "",
         ]
         by_row = {key(r): reason for r, reason in verdicts}
