@@ -8,16 +8,16 @@
 
 分類：`開頭切太晚` = span 外 3 秒內就有 `serve`，標註在、是邊界偏了；`serve 不在最前` = span 內有 `serve`，但前面還有別的動作；`疑似漏標` = 前後都找不到鄰近的 `serve`；`看過畫面的判定` = 導播沒拍到那個 `serve`，或這球是犯規結束、本來就沒有 `serve` 可標。
 
-## 看過畫面的判定 — 30 筆
+## 看過畫面的判定 — 32 筆
 
 看過畫面了，這批不是漏標：`導播問題` = 轉播切走（重播、觀眾、板凳），`serve` 不在帶子上；其他判定是犯規結束的球——觸網、越界、持球…是裁判的哨音不是觸球，所以沒有 `serve` 可標。留著是為了下次掃描不用再看一遍。
 
-判定分布：導播問題 29、發球踩線 1。
+判定分布：導播問題 29、發球踩線 3。
 
 | 判定 | 筆數 | 意思 |
 |---|---:|---|
 | 導播問題 | 29 | 轉播切到重播、觀眾或板凳，那個動作不在畫面上，看不到就標不到。 |
-| 發球踩線 | 1 | 發球踩線，發球方直接失分；rally 沒有正常展開。 |
+| 發球踩線 | 3 | 發球踩線，發球方直接失分；rally 沒有正常展開。 |
 
 | 影片 | Rally | 起 | 訖 | 最前動作 | 判定 |
 |---|---:|---:|---:|---|---|
@@ -51,12 +51,5 @@
 | Uzbekistan vs. Pakistan - Ranking 5-6 ｜ Boys' U19 World Champs 2025 - Full Match_set1 | 16 | 6:35 | 6:44 | receive | 導播問題 |
 | 【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G25 11⧸16 15_00 桃園雲豹飛將 vs 台鋼天鷹_set1 | 17 | 8:09 | 8:18 | receive | 導播問題 |
 | Bulgaria 🇧🇬 vs. Argentina 🇦🇷 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 23 | 11:12 | 11:14 | score | 發球踩線 |
-
-## serve 不在最前 — 2 筆
-
-span 內有 `serve`，但它不是最前的事件。
-
-| 影片 | Rally | 起 | 訖 | 最前動作 | serve 距開頭 |
-|---|---:|---:|---:|---|---:|
-| Bulgaria 🇧🇬 vs. Japan 🇯🇵 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 37 | 18:51 | 18:58 | score | 2.2s |
-| Canada 🇨🇦 vs Japan 🇯🇵 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 10 | 4:03 | 4:08 | score | 1.5s |
+| Bulgaria 🇧🇬 vs. Japan 🇯🇵 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 37 | 18:51 | 18:58 | score | 發球踩線 |
+| Canada 🇨🇦 vs Japan 🇯🇵 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 10 | 4:03 | 4:08 | score | 發球踩線 |
