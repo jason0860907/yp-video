@@ -471,7 +471,7 @@ def render(edge: Edge, found: Scan) -> str:
         if gap_col:
             head += f" {gap_col} |"
             sep += "---:|"
-        out.extend([head + f" 動作序列（{edge.seq_word} {WINDOW}） |", sep + "---|"])
+        out.extend([head, sep])
         for r in rows:
             edge_action = (r.seq[0] if edge.opening else r.seq[-1]) if r.seq else "—"
             cells = [r.stem, str(r.rally_id), ts(r.start), ts(r.end), edge_action]
@@ -481,7 +481,6 @@ def render(edge: Edge, found: Scan) -> str:
             if gap_col:
                 value = r.outside if r.inside_gap is None else r.inside_gap
                 cells.append(f"{value:.1f}s" if value is not None else "—")
-            cells.append(" → ".join(r.seq) if r.seq else "—")
             out.append("| " + " | ".join(cells) + " |")
         out.append("")
 
