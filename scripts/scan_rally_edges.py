@@ -466,8 +466,8 @@ def render(edge: Edge, found: Scan) -> str:
         head = f"| 影片 | Rally | 起 | 訖 | {at}動作 |"
         sep = "|---|---:|---:|---:|---|"
         if verdict_of:
-            head += " 判定 |"
-            sep += "---|"
+            head += f" 判定 | 為什麼{at}不是 {edge.label} |"
+            sep += "---|---|"
         if gap_col:
             head += f" {gap_col} |"
             sep += "---:|"
@@ -476,7 +476,8 @@ def render(edge: Edge, found: Scan) -> str:
             edge_action = (r.seq[0] if edge.opening else r.seq[-1]) if r.seq else "—"
             cells = [r.stem, str(r.rally_id), ts(r.start), ts(r.end), edge_action]
             if verdict_of:
-                cells.append(verdict_of(r))
+                verdict = verdict_of(r)
+                cells += [verdict, VERDICT_NOTES.get(verdict, "—")]
             if gap_col:
                 value = r.outside if r.inside_gap is None else r.inside_gap
                 cells.append(f"{value:.1f}s" if value is not None else "—")
