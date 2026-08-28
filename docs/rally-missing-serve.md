@@ -1,23 +1,12 @@
 # Rally 開頭沒有 serve 的清單
 
-掃描日期：2026-08-27 · 資料：`videos/rally-spot/annotations` × `videos/action/annotations`（200 支影片、8,858 rallies）
+掃描日期：2026-08-28 · 資料：`videos/rally-spot/annotations` × `videos/action/annotations`（200 支影片、8,860 rallies）
 
 重跑：`uv run python scripts/scan_rally_edges.py`
 
-判定：rally span `[start, end]` 內最前的動作事件不是 `serve`。共 38 筆。
+判定：rally span `[start, end]` 內最前的動作事件不是 `serve`。共 32 筆。
 
 分類：`開頭切太晚` = span 外 3 秒內就有 `serve`，標註在、是邊界偏了；`serve 不在最前` = span 內有 `serve`，但前面還有別的動作；`疑似漏標` = 前後都找不到鄰近的 `serve`；`導播問題` = 已經看過畫面，導播沒拍到那個 `serve`，補不了。
-
-## 疑似漏標 — 6 筆
-
-| 影片 | Rally | 起 | 訖 | 最前動作 | 動作序列（前 6） |
-|---|---:|---:|---:|---|---|
-| 0518小窩季打 2 | 13 | 4:06 | 4:19 | receive | receive → receive → receive → set → spike → receive |
-| 0518小窩季打 2 | 48 | 18:19 | 18:27 | receive | receive → receive → receive → score |
-| 0518小窩季打 3 | 4 | 0:49 | 1:12 | receive | receive → set → spike → receive → set → receive |
-| 0518小窩季打 3 | 5 | 1:16 | 1:34 | receive | receive → set → spike → receive → set → receive |
-| 0518小窩季打 3 | 22 | 6:53 | 7:18 | receive | receive → set → receive → receive → set → spike |
-| 0518小窩季打 3 | 37 | 13:43 | 13:52 | receive | receive → set → spike → score |
 
 ## 導播問題 — 29 筆
 
@@ -55,36 +44,12 @@
 | Uzbekistan vs. Pakistan - Ranking 5-6 ｜ Boys' U19 World Champs 2025 - Full Match_set1 | 16 | 6:35 | 6:44 | receive | receive → set → spike → receive → set → spike |
 | 【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G25 11⧸16 15_00 桃園雲豹飛將 vs 台鋼天鷹_set1 | 17 | 8:09 | 8:18 | receive | receive → set → spike → block → receive → set |
 
-## serve 不在最前 — 1 筆
+## serve 不在最前 — 3 筆
 
 span 內有 `serve`，但它不是最前的事件。
 
 | 影片 | Rally | 起 | 訖 | 最前動作 | serve 距開頭 | 動作序列（前 6） |
 |---|---:|---:|---:|---|---:|---|
 | Bulgaria 🇧🇬 vs. Argentina 🇦🇷 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 23 | 11:12 | 11:14 | score | 0.9s | score → serve |
-
-## 開頭切太晚 — 1 筆
-
-`serve` 就在 span 外不到 3 秒 —— 標註本身在，要動的是 `start`。
-
-| 影片 | Rally | 起 | 訖 | 最前動作 | serve 距開頭 | 動作序列（前 6） |
-|---|---:|---:|---:|---|---:|---|
-| 0518小窩季打 1 | 31 | 11:31 | 11:45 | receive | 0.4s | receive → set → spike → receive → set → spike |
-
-## 附錄 A：span 內有 2 個以上 `serve` — 3 筆
-
-間隔不到 0.5 秒的，是同一個 `serve` 被標了兩次，不是兩個。
-
-| 影片 | Rally | 起 | 訖 | serve 數 | 最小間隔 |
-|---|---:|---:|---:|---:|---:|
-| 0518小窩季打 1 | 24 | 9:00 | 9:20 | 2 | 11.97s |
-| 0518小窩季打 2 | 5 | 1:11 | 1:33 | 2 | 0.40s |
-| 0518小窩季打 3 | 25 | 8:09 | 8:33 | 2 | 10.93s |
-
-## 附錄 B：span 內完全沒有動作 — 1 筆
-
-沒有事件可以判定，兩份清單裡的是同一批。
-
-| 影片 | Rally | 起 | 訖 |
-|---|---:|---:|---:|
-| 0518小窩季打 2 | 8 | 2:29 | 2:33 |
+| Bulgaria 🇧🇬 vs. Japan 🇯🇵 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 37 | 18:51 | 18:58 | score | 2.2s | score → serve → receive → set |
+| Canada 🇨🇦 vs Japan 🇯🇵 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 10 | 4:03 | 4:08 | score | 1.5s | score → serve → receive |
