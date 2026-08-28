@@ -8,11 +8,12 @@ question of opposite ends, so they are one scan with one set of categories:
                 boundary.
 - ``疑似漏標``   the action is nowhere near the span in either direction. The
                 fix is labelling one.
-- ``導播問題``   ...unless the footage says otherwise. A rally listed in an
-                edge's ``broadcast`` set has been watched: the director was
-                elsewhere, the action is not on tape, and no labelling will
-                produce it. The scan cannot see this, so the verdict is kept
-                in the script and survives every re-run.
+- ``看過畫面的判定`` ...unless the footage says otherwise. A rally in an
+                edge's ``verdicts`` table has been watched: the director was
+                elsewhere and the action is not on tape, or the point ended
+                on a fault (net touch, ball out, held ball...) and there was
+                never a touch to label. The scan cannot see either, so the
+                verdict is kept in the script and survives every re-run.
 
 Appendices carry the near misses: the action is inside but not at the edge
 (a serve with something before it, a score with something after it), the span
@@ -31,7 +32,9 @@ not, having been a throwaway script that never reached the repo.
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+from collections import Counter
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from datetime import date
 
 from yp_video.config import (
@@ -63,12 +66,12 @@ class Edge:
     boundary: str
     #: What "inside, but not at the edge" is called.
     displaced: str
-    #: Rallies reviewed by eye and answered: the broadcast cut away — replay,
-    #: crowd, bench — so the action never reached the tape. They are not
-    #: labelling work, and the scan cannot tell them from a real omission, so
-    #: the verdict is carried here rather than re-made by hand each re-run.
-    #: (stem, rally_id).
-    broadcast: frozenset[tuple[str, int]] = frozenset()
+    #: Rallies reviewed by eye and answered, (stem, rally_id) → verdict: the
+    #: broadcast cut away so the action never reached the tape, or the point
+    #: ended on a fault so there is no action to label. Neither is labelling
+    #: work, and the scan cannot tell them from a real omission, so the
+    #: verdict is carried here rather than re-made by hand each re-run.
+    verdicts: Mapping[tuple[str, int], str] = field(default_factory=dict)
 
     @property
     def edge_word(self) -> str:
@@ -79,40 +82,192 @@ class Edge:
         return "前" if self.opening else "後"
 
 
-#: Every one a TV feed: the director was on a replay or the crowd when the
-#: serve went up. First batch reviewed 2026-08-25 in-house; second batch
-#: 2026-08-26 from the labeller's pass (docs/任務隱藏.docx).
-SERVE_BROADCAST = frozenset({
-    ("03⧸14(六) 16_00｜例行賽G104 #獅子王 vs. #屏東台電｜企業21年甲級男女排球聯賽_set2", 27),
-    ("03⧸14(六) 18_00｜例行賽G105 #高雄台電 vs. #新北中纖｜企業21年甲級男女排球聯賽_set1", 1),
-    ("03⧸14(六) 18_00｜例行賽G105 #高雄台電 vs. #新北中纖｜企業21年甲級男女排球聯賽_set1", 36),
-    ("03⧸15(日) 13_00｜例行賽G106 #屏東台電 vs. #雲林美津濃｜企業21年甲級男女排球聯賽_set3", 41),
-    ("03⧸15(日) 17_00｜例行賽G108 #新北中纖 vs. #高雄台電｜企業21年甲級男女排球聯賽_set3", 7),
-    ("03⧸20(五) 14_00｜挑戰賽G110 #高雄台電 vs. #新北中纖｜企業21年甲級男女排球聯賽_set2", 6),
-    ("03⧸21(六) 18_00｜男子組冠軍賽G114 #雲林美津濃 vs. #屏東台電｜企業21年甲級男女排球聯賽_set1", 18),
-    ("03⧸22(日) 17_00｜男子組冠軍賽 G117 #屏東台電 vs. #雲林美津濃｜企業21年甲級男女排球聯賽_set1", 30),
-    ("03⧸22(日) 17_00｜男子組冠軍賽 G117 #屏東台電 vs. #雲林美津濃｜企業21年甲級男女排球聯賽_set2", 2),
-    ("2025-10-11_G8_臺中連莊_vs_桃園雲豹飛將_set1", 1),
-    ("37-39 Thriller! - Japan 🇯🇵 vs. Poland 🇵🇱 ｜ VNL 2025 - Full Match ｜ Week 1_set1", 31),
-    ('37-39 Thriller! - Japan 🇯🇵 vs. Poland 🇵🇱 ｜ VNL 2025 - Full Match ｜ Week 1_set2', 12),
-    ('37-39 Thriller! - Japan 🇯🇵 vs. Poland 🇵🇱 ｜ VNL 2025 - Full Match ｜ Week 1_set2', 13),
-    ('37-39 Thriller! - Japan 🇯🇵 vs. Poland 🇵🇱 ｜ VNL 2025 - Full Match ｜ Week 1_set2', 20),
-    ('Brazil 🇧🇷 vs. Italy 🇮🇹  ｜ VNL 2025 - Full Match ｜ Week 1_set1', 9),
-    ('Canada 🇨🇦 vs Japan 🇯🇵 ｜ VNL 2025 - Full Match ｜ Week 1_set1', 33),
-    ("France vs. Iran - Semi Final 2 ｜ Boys' U19 World Champs 2025 - Full Match_set1", 24),
-    ('Full Match ｜ Poland vs. Slovakia ｜ CEV U22 Volleyball European Championship 2026 Women ｜ Pool C_set1', 21),
-    ('Japan 🇯🇵 vs. Czechia 🇨🇿 ｜ VNL 2025 - Full Match ｜ Week 2_set1', 42),
-    ('Japan 🇯🇵 vs. France 🇫🇷 ｜ VNL 2025 - Full Match ｜ Week 3_set1', 42),
-    ("Korea vs. Bulgaria - Classification 5-8 ｜ Boys' U19 World Champs 2025 - Full Match_set1", 42),
-    ('Osaka Bluteon vs Diamond Food Fine Chef - Full Match ｜ SV. League World Tour 2025 ｜ Volleyball_set1', 24),
-    ('Osaka Bluteon vs Diamond Food Fine Chef - Full Match ｜ SV. League World Tour 2025 ｜ Volleyball_set1', 27),
-    ('Osaka Bluteon vs Diamond Food Fine Chef - Full Match ｜ SV. League World Tour 2025 ｜ Volleyball_set1', 44),
-    ("Spain vs. Iran - Ranking 3-4 ｜ Boys' U19 World Champs 2025 - Full Match_set1", 31),
-    ("Spain vs. Iran - Ranking 3-4 ｜ Boys' U19 World Champs 2025 - Full Match_set1", 46),
-    ('Suntory Sunbirds vs. Osaka Bluteon ｜ SV.LEAGUE 2025⧸26 ｜ Full Match - Volleyball_set1', 5),
-    ("Uzbekistan vs. Pakistan - Ranking 5-6 ｜ Boys' U19 World Champs 2025 - Full Match_set1", 16),
-    ('【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G25 11⧸16 15_00 桃園雲豹飛將 vs 台鋼天鷹_set1', 17),
-})
+#: Rallies reviewed by eye and answered. ``導播問題``: the director was on a
+#: replay or the crowd when the serve went up, so it never reached the tape.
+#: Anything else names the fault that ended the point at the serve. First
+#: batch reviewed 2026-08-25 in-house; later batches from the labeller's
+#: passes (隱藏任務0826 notion1.docx, 隱藏任務0827 notion2.docx).
+SERVE_VERDICTS: dict[tuple[str, int], str] = {
+    ('03⧸14(六) 16_00｜例行賽G104 #獅子王 vs. #屏東台電｜企業21年甲級男女排球聯賽_set2', 27): '導播問題',
+    ('03⧸14(六) 18_00｜例行賽G105 #高雄台電 vs. #新北中纖｜企業21年甲級男女排球聯賽_set1', 1): '導播問題',
+    ('03⧸14(六) 18_00｜例行賽G105 #高雄台電 vs. #新北中纖｜企業21年甲級男女排球聯賽_set1', 36): '導播問題',
+    ('03⧸15(日) 13_00｜例行賽G106 #屏東台電 vs. #雲林美津濃｜企業21年甲級男女排球聯賽_set3', 41): '導播問題',
+    ('03⧸15(日) 17_00｜例行賽G108 #新北中纖 vs. #高雄台電｜企業21年甲級男女排球聯賽_set3', 7): '導播問題',
+    ('03⧸20(五) 14_00｜挑戰賽G110 #高雄台電 vs. #新北中纖｜企業21年甲級男女排球聯賽_set2', 6): '導播問題',
+    ('03⧸21(六) 18_00｜男子組冠軍賽G114 #雲林美津濃 vs. #屏東台電｜企業21年甲級男女排球聯賽_set1', 18): '導播問題',
+    ('03⧸22(日) 17_00｜男子組冠軍賽 G117 #屏東台電 vs. #雲林美津濃｜企業21年甲級男女排球聯賽_set1', 30): '導播問題',
+    ('03⧸22(日) 17_00｜男子組冠軍賽 G117 #屏東台電 vs. #雲林美津濃｜企業21年甲級男女排球聯賽_set2', 2): '導播問題',
+    ('2025-10-11_G8_臺中連莊_vs_桃園雲豹飛將_set1', 1): '導播問題',
+    ('37-39 Thriller! - Japan 🇯🇵 vs. Poland 🇵🇱 ｜ VNL 2025 - Full Match ｜ Week 1_set1', 31): '導播問題',
+    ('37-39 Thriller! - Japan 🇯🇵 vs. Poland 🇵🇱 ｜ VNL 2025 - Full Match ｜ Week 1_set2', 12): '導播問題',
+    ('37-39 Thriller! - Japan 🇯🇵 vs. Poland 🇵🇱 ｜ VNL 2025 - Full Match ｜ Week 1_set2', 13): '導播問題',
+    ('37-39 Thriller! - Japan 🇯🇵 vs. Poland 🇵🇱 ｜ VNL 2025 - Full Match ｜ Week 1_set2', 20): '導播問題',
+    ('Brazil 🇧🇷 vs. Italy 🇮🇹  ｜ VNL 2025 - Full Match ｜ Week 1_set1', 9): '導播問題',
+    ('Bulgaria 🇧🇬 vs. Argentina 🇦🇷 ｜ VNL 2025 - Full Match ｜ Week 1_set1', 23): '發球踩線',
+    ('Canada 🇨🇦 vs Japan 🇯🇵 ｜ VNL 2025 - Full Match ｜ Week 1_set1', 33): '導播問題',
+    ("France vs. Iran - Semi Final 2 ｜ Boys' U19 World Champs 2025 - Full Match_set1", 24): '導播問題',
+    ('Full Match ｜ Poland vs. Slovakia ｜ CEV U22 Volleyball European Championship 2026 Women ｜ Pool C_set1', 21): '導播問題',
+    ('Japan 🇯🇵 vs. Czechia 🇨🇿 ｜ VNL 2025 - Full Match ｜ Week 2_set1', 42): '導播問題',
+    ('Japan 🇯🇵 vs. France 🇫🇷 ｜ VNL 2025 - Full Match ｜ Week 3_set1', 42): '導播問題',
+    ("Korea vs. Bulgaria - Classification 5-8 ｜ Boys' U19 World Champs 2025 - Full Match_set1", 42): '導播問題',
+    ('Osaka Bluteon vs Diamond Food Fine Chef - Full Match ｜ SV. League World Tour 2025 ｜ Volleyball_set1', 24): '導播問題',
+    ('Osaka Bluteon vs Diamond Food Fine Chef - Full Match ｜ SV. League World Tour 2025 ｜ Volleyball_set1', 27): '導播問題',
+    ('Osaka Bluteon vs Diamond Food Fine Chef - Full Match ｜ SV. League World Tour 2025 ｜ Volleyball_set1', 44): '導播問題',
+    ("Spain vs. Iran - Ranking 3-4 ｜ Boys' U19 World Champs 2025 - Full Match_set1", 31): '導播問題',
+    ("Spain vs. Iran - Ranking 3-4 ｜ Boys' U19 World Champs 2025 - Full Match_set1", 46): '導播問題',
+    ('Suntory Sunbirds vs. Osaka Bluteon ｜ SV.LEAGUE 2025⧸26 ｜ Full Match - Volleyball_set1', 5): '導播問題',
+    ("Uzbekistan vs. Pakistan - Ranking 5-6 ｜ Boys' U19 World Champs 2025 - Full Match_set1", 16): '導播問題',
+    ('【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G25 11⧸16 15_00 桃園雲豹飛將 vs 台鋼天鷹_set1', 17): '導播問題',
+}
+
+#: Rallies whose last action is not a ``score`` because the point ended on a
+#: fault — net touch, ball out, held ball, foot fault... — which is a referee
+#: call, not a touch, so there is nothing to label. Verdicts from the
+#: labeller's passes (隱藏任務0826 notion1.docx, 隱藏任務0827 notion2.docx).
+SCORE_VERDICTS: dict[tuple[str, int], str] = {
+    ('0104排島臨打 3', 34): '後排踩線',
+    ('0323小窩臨打 3', 19): '落地後',
+    ('03⧸14(六) 14_00｜例行賽G103 #雲林美津濃 vs. #桃園臺灣產險｜企業21年甲級男女排球聯賽_set3', 29): '標竿外',
+    ('03⧸14(六) 18_00｜例行賽G105 #高雄台電 vs. #新北中纖｜企業21年甲級男女排球聯賽_set1', 1): '觸網',
+    ('03⧸14(六) 18_00｜例行賽G105 #高雄台電 vs. #新北中纖｜企業21年甲級男女排球聯賽_set1', 31): '觸網',
+    ('03⧸20(五) 14_00｜挑戰賽G110 #高雄台電 vs. #新北中纖｜企業21年甲級男女排球聯賽_set1', 10): '觸網',
+    ('03⧸20(五) 14_00｜挑戰賽G110 #高雄台電 vs. #新北中纖｜企業21年甲級男女排球聯賽_set1', 29): '觸網',
+    ('03⧸20(五) 14_00｜挑戰賽G110 #高雄台電 vs. #新北中纖｜企業21年甲級男女排球聯賽_set1', 42): '持球',
+    ('03⧸20(五) 16_00｜挑戰賽G111 #屏東台電 vs. #桃園臺產｜企業21年甲級男女排球聯賽_set1', 24): '觸網',
+    ('03⧸20(五) 18_00｜挑戰賽G112 #臺北國北獅 vs. #雲林美津濃｜企業21年甲級男女排球聯賽_set1', 20): '打到標竿',
+    ('03⧸21(六) 18_00｜男子組冠軍賽G114 #雲林美津濃 vs. #屏東台電｜企業21年甲級男女排球聯賽_set1', 11): '觸網',
+    ('03⧸21(六) 18_00｜男子組冠軍賽G114 #雲林美津濃 vs. #屏東台電｜企業21年甲級男女排球聯賽_set1', 34): '舉球後排越界',
+    ('03⧸21(六) 18_00｜男子組冠軍賽G114 #雲林美津濃 vs. #屏東台電｜企業21年甲級男女排球聯賽_set1', 39): '落地後',
+    ('03⧸21(六) 18_00｜男子組冠軍賽G114 #雲林美津濃 vs. #屏東台電｜企業21年甲級男女排球聯賽_set1', 40): '落地後',
+    ('03⧸22(日) 17_00｜男子組冠軍賽 G117 #屏東台電 vs. #雲林美津濃｜企業21年甲級男女排球聯賽_set1', 2): '觸網',
+    ('03⧸22(日) 17_00｜男子組冠軍賽 G117 #屏東台電 vs. #雲林美津濃｜企業21年甲級男女排球聯賽_set2', 30): '觸網',
+    ('03⧸22(日) 17_00｜男子組冠軍賽 G117 #屏東台電 vs. #雲林美津濃｜企業21年甲級男女排球聯賽_set3', 4): '觸網',
+    ('0419小窩臨打 2', 37): '觸網',
+    ('0420小窩季打 1', 43): '公正',
+    ('0420小窩季打 2', 11): '後排踩線',
+    ('0420小窩季打 3', 15): '後排踩線',
+    ('2025-10-04_G3_臺中連莊_vs_桃園雲豹飛將_set1', 13): '越界',
+    ('2025-10-05_G5_臺北伊斯特_vs_桃園雲豹飛將_set1', 16): '持球',
+    ('2025-10-25_G11_臺北伊斯特_vs_桃園雲豹飛將_set1', 26): '打到標竿',
+    ('2025-10-26_G14_臺北伊斯特_vs_臺中連莊_set1', 37): '觸網',
+    ('2025-11-01_G15_臺中連莊_vs_臺北伊斯特_set1', 32): '觸網',
+    ('2025-11-01_G15_臺中連莊_vs_臺北伊斯特_set1', 36): '越界',
+    ('2025-11-01_G16_桃園雲豹飛將_vs_台鋼天鷹_set1', 13): '觸網',
+    ('2025-11-02_G17_桃園雲豹飛將_vs_臺北伊斯特_set1', 4): '越網擊球',
+    ('2025-11-02_G18_臺中連莊_vs_台鋼天鷹_set1', 29): '導播問題',
+    ('2025-11-08_G19_臺北伊斯特_vs_臺中連莊_set1', 47): '打到標竿',
+    ('2025-11-08_G20_桃園雲豹飛將_vs_台鋼天鷹_set1', 29): '觸網',
+    ('20250504 大統OB-成功大學vs台北大學B-第二局', 4): '觸網',
+    ('20260426-小窩-01', 31): '觸網',
+    ('20260502-排島本館-02', 7): '觸網',
+    ('20260502-排島本館-02', 40): '公正',
+    ('20260507 工資管友誼賽2', 10): '公正',
+    ('Bulgaria 🇧🇬 vs. Argentina 🇦🇷 ｜ VNL 2025 - Full Match ｜ Week 1_set1', 23): '發球踩線',
+    ('Bulgaria 🇧🇬 vs. Japan 🇯🇵 ｜ VNL 2025 - Full Match ｜ Week 1_set1', 14): '後排踩線',
+    ('Bulgaria 🇧🇬 vs. Japan 🇯🇵 ｜ VNL 2025 - Full Match ｜ Week 1_set1', 37): '發球踩線',
+    ('Canada 🇨🇦 vs Japan 🇯🇵 ｜ VNL 2025 - Full Match ｜ Week 1_set1', 4): '落地後',
+    ('Canada 🇨🇦 vs Japan 🇯🇵 ｜ VNL 2025 - Full Match ｜ Week 1_set1', 10): '發球踩線',
+    ('Canada 🇨🇦 vs Japan 🇯🇵 ｜ VNL 2025 - Full Match ｜ Week 1_set1', 31): '觸網',
+    ('Canada 🇨🇦 vs Japan 🇯🇵 ｜ VNL 2025 - Full Match ｜ Week 1_set1', 50): '落地後',
+    ('Champions crowned in Final 24⧸25 (2⧸2) ｜ Suntory Sunbirds Osaka - Stings Aichi ｜ SV League 24⧸25_set1', 18): '二擊',
+    ("China vs. Argentina - Classification 13-16 ｜ Boys' U19 World Champs 2025 - Full Match_set1", 2): '觸網',
+    ("China vs. Brazil - Ranking 13-14 ｜ Boys' U19 World Champs 2025 - Full Match_set1", 6): '觸網',
+    ("China vs. Brazil - Ranking 13-14 ｜ Boys' U19 World Champs 2025 - Full Match_set1", 19): '打到標竿',
+    ('China 🇨🇳 vs. Japan 🇯🇵 ｜ VNL 2025 - Full Match ｜ Week 1_set1', 3): '觸網',
+    ("Cuba vs. Puerto Rico - Ranking 17-18 ｜ Boys' U19 World Champs 2025 - Full Match_set1", 22): '觸網',
+    ('Final - Stings vs. Sunbirds ｜ SVL League 2024⧸25 - Full Match ｜ Volleyball_set1', 29): '後排踩線',
+    ("France vs. Iran - Semi Final 2 ｜ Boys' U19 World Champs 2025 - Full Match_set1", 3): '觸網',
+    ("France vs. Iran - Semi Final 2 ｜ Boys' U19 World Champs 2025 - Full Match_set1", 5): '觸網',
+    ("France vs. Iran - Semi Final 2 ｜ Boys' U19 World Champs 2025 - Full Match_set1", 18): '觸網',
+    ('France 🇫🇷 vs. Japan 🇯🇵 ｜ VNL 2025 - Full Match ｜ Week 2_set1', 19): '落地後',
+    ('France 🇫🇷 vs. Japan 🇯🇵 ｜ VNL 2025 - Full Match ｜ Week 2_set1', 41): '觸網',
+    ('Full Match ｜ Bulgaria vs Luxembourg ｜ CEV U22 Volleyball European Championship 2026 Women ｜ Pool E_set3', 37): '觸網',
+    ('Full Match ｜ Croatia vs. Bulgaria ｜ CEV U22 Volleyball European Championship 2026 Women ｜ Pool E_set1', 24): '二擊',
+    ('Full Match ｜ Croatia vs. Bulgaria ｜ CEV U22 Volleyball European Championship 2026 Women ｜ Pool E_set1', 28): '落地後',
+    ('Full Match ｜ Croatia vs. Serbia ｜ CEV U22 Volleyball European Championship 2026 Women ｜ Pool E_set1', 21): '觸網',
+    ('Full Match ｜ Denmark vs. England ｜ CEV U22 Volleyball European Championship 2026 Men ｜ Pool A_set1', 11): '落地後',
+    ('Full Match ｜ Denmark vs. England ｜ CEV U22 Volleyball European Championship 2026 Men ｜ Pool A_set1', 18): '越界',
+    ('Full Match ｜ Ireland vs. Spain ｜ CEV U22 Volleyball European Championship 2026 Women ｜ Pool D_set1', 9): '落地後',
+    ('Full Match ｜ Ireland vs. Spain ｜ CEV U22 Volleyball European Championship 2026 Women ｜ Pool D_set1', 11): '觸網',
+    ('Full Match ｜ Ireland vs. Türkiye ｜ CEV U22 Volleyball European Championship 2026 Women ｜ Pool D_set1', 13): '打到標竿',
+    ('Full Match ｜ Ireland vs. Türkiye ｜ CEV U22 Volleyball European Championship 2026 Women ｜ Pool D_set1', 14): '落地後',
+    ('Full Match ｜ Italy vs. England ｜ CEV U22 Volleyball European Championship 2026 Men ｜ Pool A_set1', 30): '落地後',
+    ('Full Match ｜ Luxembourg vs. Croatia - CEV U22 Volleyball European Championship 2026 ｜ Women ｜ Pool E_set1', 1): '持球',
+    ('Full Match ｜ Norway vs. Bulgaria ｜ CEV U22 Volleyball European Championship 2026 Men ｜ Pool C_set1', 21): '觸網',
+    ('Full Match ｜ Norway vs. Ireland ｜ CEV U22 Volleyball European Championship 2026 Women ｜ Pool D_set1', 37): '二擊',
+    ('Full Match ｜ Poland vs. England ｜ CEV U22 Volleyball European Championship 2026 Women ｜ Pool C_set1', 4): '打到標竿',
+    ('Full Match ｜ Poland vs. Slovakia ｜ CEV U22 Volleyball European Championship 2026 Women ｜ Pool C_set1', 26): '持球',
+    ('Full Match ｜ Serbia vs. Luxembourg ｜ CEV U22 Volleyball European Championship 2026 Women ｜ Pool E_set1', 34): '觸網',
+    ('Full Match ｜ Slovakia vs. England ｜ CEV U22 Volleyball European Championship 2026 Women ｜ Pool C_set1', 25): '輪轉錯誤',
+    ('Full Match ｜ Slovakia vs. England ｜ CEV U22 Volleyball European Championship 2026 Women ｜ Pool C_set1', 31): '觸網',
+    ('Full Match ｜ Spain vs The Netherlands ｜ CEV U22 Volleyball European Championship 2026 Men ｜ Pool C_set1', 13): '觸網',
+    ('Full Match ｜ Türkiye vs. Spain ｜ CEV U22 Volleyball European Championship 2026 Women ｜ Pool D_set1', 40): 'no in',
+    ("Japan vs. USA - Ranking 15-16 ｜ Boys' U19 World Champs 2025 - Full Match_set1", 26): '舉球後排越界',
+    ("Japan vs. USA - Ranking 15-16 ｜ Boys' U19 World Champs 2025 - Full Match_set1", 31): 'no in',
+    ("Japan vs. USA - Ranking 15-16 ｜ Boys' U19 World Champs 2025 - Full Match_set1", 45): '觸網',
+    ('Japan 🇯🇵 vs. Dominican Republic 🇩🇴 ｜ VNL 2025 - Full Match ｜ Week 1_set1', 24): '觸網',
+    ('Japan 🇯🇵 vs. Dominican Republic 🇩🇴 ｜ VNL 2025 - Full Match ｜ Week 1_set1', 25): '4次',
+    ('Japan 🇯🇵 vs. Dominican Republic 🇩🇴 ｜ VNL 2025 - Full Match ｜ Week 1_set1', 29): '觸網',
+    ('Japan 🇯🇵 vs. France 🇫🇷 ｜ VNL 2025 - Full Match ｜ Week 3_set1', 36): '打到標竿',
+    ('Japan 🇯🇵 vs. Netherlands 🇳🇱 ｜ VNL 2025 - Full Match ｜ Week 1_set1', 2): '觸網',
+    ('Japan 🇯🇵 vs. Netherlands 🇳🇱 ｜ VNL 2025 - Full Match ｜ Week 1_set1', 23): '落地後',
+    ('Japan 🇯🇵 vs. Netherlands 🇳🇱 ｜ VNL 2025 - Full Match ｜ Week 1_set1', 31): '觸網',
+    ('Japan 🇯🇵 vs. Netherlands 🇳🇱 ｜ VNL 2025 - Full Match ｜ Week 1_set1', 43): '觸網',
+    ('Jtekt Stings 🇯🇵 - Suntory Sunbirds Osaka 🇯🇵 ｜ SV League 2026 ｜ Full Match - Volleyball_set1', 31): '觸網',
+    ("Korea vs. Finland - Ranking 11-12 ｜ Boys' U19 World Champs 2025 - Full Match_set1", 21): '觸網',
+    ("Korea vs. Finland - Ranking 11-12 ｜ Boys' U19 World Champs 2025 - Full Match_set1", 44): 'no in',
+    ('Osaka Bluteon vs Diamond Food Fine Chef - Full Match ｜ SV. League World Tour 2025 ｜ Volleyball_set1', 11): '觸網',
+    ('Osaka Bluteon vs Diamond Food Fine Chef - Full Match ｜ SV. League World Tour 2025 ｜ Volleyball_set1', 26): '觸網',
+    ('Osaka Bluteon 🇯🇵 vs. JTEKT Stings 🇯🇵 ｜ SV League 2026 ｜ Full Match - Volleyball_set1', 23): '觸網',
+    ('Osaka Bluteon 🇯🇵 vs. JTEKT Stings 🇯🇵 ｜ SV League 2026 ｜ Full Match - Volleyball_set1', 42): '落地後',
+    ("Pakistan vs. USA - Classification 13-16 ｜ Boys' U19 World Champs 2025 - Full Match_set1", 1): '阻擋舉球',
+    ("Pakistan vs. USA - Classification 13-16 ｜ Boys' U19 World Champs 2025 - Full Match_set1", 6): '觸網',
+    ("Pakistan vs. USA - Classification 13-16 ｜ Boys' U19 World Champs 2025 - Full Match_set1", 16): '觸網',
+    ("Poland vs. Spain - Semi Final 1 ｜ Boys' U19 World Champs 2025 - Full Match_set1", 35): 'no in',
+    ('Semi Final 1 - Osaka Bluteon vs. Stings Aichi ｜ SV League - Full Match ｜ Volleyball_set1', 8): '觸網',
+    ('Semi Final 1 - Osaka Bluteon vs. Stings Aichi ｜ SV League - Full Match ｜ Volleyball_set1', 18): '後排踩線',
+    ('Semi Final 1 - Osaka Bluteon vs. Stings Aichi ｜ SV League - Full Match ｜ Volleyball_set1', 42): '觸網',
+    ('Semi Final 2 - Osaka Bluteon vs. Stings Aichi ｜ SV League - Full Match ｜ Volleyball_set1', 30): '落地後',
+    ('Semi Final 2 - Osaka Bluteon vs. Stings Aichi ｜ SV League - Full Match ｜ Volleyball_set1', 39): '舉球後排越界',
+    ('Semi Final 3 - Suntory Sunbirds vs. Wolfdogs Nagoya ｜ SVL Playoff - Full Match ｜ Volleyball_set1', 46): '越界救球',
+    ("Spain vs. Iran - Ranking 3-4 ｜ Boys' U19 World Champs 2025 - Full Match_set1", 14): '越網擊球',
+    ("Spain vs. Iran - Ranking 3-4 ｜ Boys' U19 World Champs 2025 - Full Match_set1", 16): '越界',
+    ('Suntory Sunbirds vs. Osaka Bluteon ｜ SV.LEAGUE 2025⧸26 ｜ Full Match - Volleyball_set1', 23): '落地後',
+    ('Suntory Sunbirds 🇯🇵 vs. Stings AICHI 🇯🇵 ｜ SV League 2026 ｜ Full Match - Japan Volleyball_set1', 6): '觸網',
+    ('Suntory Sunbirds 🇯🇵 vs. Stings AICHI 🇯🇵 ｜ SV League 2026 ｜ Full Match - Japan Volleyball_set1', 30): '打到標竿',
+    ("Taipei vs. Argentina - Playoffs ｜ Girls' U19 World Champs 2025 - Full Match_set1", 7): '觸網',
+    ("Taipei vs. Argentina - Playoffs ｜ Girls' U19 World Champs 2025 - Full Match_set1", 22): '觸網',
+    ("Türkiye vs. Colombia - Classification 13-16 ｜ Boys' U19 World Champs 2025 - Full Match_set1", 9): '二擊',
+    ("Türkiye vs. Colombia - Classification 13-16 ｜ Boys' U19 World Champs 2025 - Full Match_set1", 27): '觸網',
+    ("Türkiye vs. Colombia - Classification 13-16 ｜ Boys' U19 World Champs 2025 - Full Match_set1", 29): '持球',
+    ("Türkiye vs. Colombia - Classification 13-16 ｜ Boys' U19 World Champs 2025 - Full Match_set1", 31): '落地後',
+    ("Uzbekistan vs. Japan - Ranking 19-20 ｜ Boys' U19 World Champs 2025 - Full Match_set1", 16): '輪轉錯誤',
+    ("Uzbekistan vs. Pakistan - Ranking 5-6 ｜ Boys' U19 World Champs 2025 - Full Match_set1", 15): '觸網',
+    ('ᴴᴰ114UVL預賽：：中原大學vs實踐大學：：男一級 大專排球聯賽 AI網路直播_set1', 10): '輪轉錯誤',
+    ('ᴴᴰ114UVL預賽：：中原大學vs陽明交大：：男一級 大專排球聯賽 AI網路直播_set1', 17): '越界',
+    ('ᴴᴰ114UVL預賽：：中原大學vs陽明交大：：男一級 大專排球聯賽 AI網路直播_set1', 23): '持球',
+    ('ᴴᴰ114UVL預賽：：中原大學vs陽明交大：：男一級 大專排球聯賽 AI網路直播_set1', 24): '打到標竿',
+    ('ᴴᴰ114UVL預賽：：中原大學vs陽明交大：：男一級 大專排球聯賽 AI網路直播_set1', 38): '越界',
+    ('ᴴᴰ114UVL預賽：：中原大學vs陽明交大：：男一級 大專排球聯賽 AI網路直播_set1', 39): '觸網',
+    ('ᴴᴰ114UVL預賽：：中山大學vs國北教大：：男一級 大專排球聯賽 AI網路直播_set1', 15): '越網擊球',
+    ('ᴴᴰ114UVL預賽：：中山大學vs國北教大：：男一級 大專排球聯賽 AI網路直播_set1', 19): '觸網',
+    ('ᴴᴰ114UVL預賽：：中山大學vs國北教大：：男一級 大專排球聯賽 AI網路直播_set1', 35): '打到標竿',
+    ('ᴴᴰ114UVL預賽：：中山大學vs清華大學：：男一級 大專排球聯賽 AI網路直播_set1', 16): '觸網',
+    ('ᴴᴰ114UVL預賽：：中山大學vs清華大學：：男一級 大專排球聯賽 AI網路直播_set1', 39): '觸網',
+    ('ᴴᴰ114UVL預賽：：中山大學vs清華大學：：男一級 大專排球聯賽 AI網路直播_set1', 41): '觸網',
+    ('ᴴᴰ114UVL預賽：：國北教大vs嘉義大學：：男一級 大專排球聯賽 AI網路直播_set1', 1): '落地後',
+    ('ᴴᴰ114UVL預賽：：臺灣師大vs中山大學：：男一級 大專排球聯賽 AI網路直播_set1', 3): '觸網',
+    ('ᴴᴰ114UVL預賽：：臺灣師大vs中山大學：：男一級 大專排球聯賽 AI網路直播_set1', 23): '觸網',
+    ('【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL 2025-26 例行賽 G21 11⧸9 15_00 桃園雲豹飛將 vs 臺中連莊_set1', 39): '觸網',
+    ('【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL 2025-26 例行賽 G23 11⧸15 15_00 臺中連莊 vs 台鋼天鷹_set1', 24): '越界',
+    ('【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL 2025-26 例行賽 G24 11⧸15 18_30 桃園雲豹飛將 vs 臺北伊斯特_set1', 9): '越界',
+    ('【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL 2025-26 例行賽 G24 11⧸15 18_30 桃園雲豹飛將 vs 臺北伊斯特_set1', 25): '越網擊球',
+    ('【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL 2025-26 例行賽 G24 11⧸15 18_30 桃園雲豹飛將 vs 臺北伊斯特_set1', 45): '觸網',
+    ('【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL 2025-26 例行賽 G26 11⧸16 18_30 臺中連莊 vs 臺北伊斯特_set1', 17): '觸網',
+    ('【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL 2025-26 例行賽 G27 11⧸22 15_00 桃園雲豹飛將 vs 台中連莊_set1', 7): '打到標竿',
+    ('【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL 2025-26 例行賽 G6 10⧸5 18_30 臺中連莊 vs 台鋼天鷹_set1', 13): '4次',
+    ('【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL 2025-26 例行賽 G6 10⧸5 18_30 臺中連莊 vs 台鋼天鷹_set1', 25): '阻擋舉球',
+}
 
 SERVE = Edge(
     label="serve",
@@ -121,7 +276,7 @@ SERVE = Edge(
     title="Rally 開頭沒有 serve 的清單",
     boundary="開頭切太晚",
     displaced="serve 不在最前",
-    broadcast=SERVE_BROADCAST,
+    verdicts=SERVE_VERDICTS,
 )
 SCORE = Edge(
     label="score",
@@ -130,6 +285,7 @@ SCORE = Edge(
     title="Rally 結尾沒有 score 的清單",
     boundary="結尾切太早",
     displaced="score 不在最後",
+    verdicts=SCORE_VERDICTS,
 )
 
 
@@ -162,7 +318,8 @@ class Scan:
     """One edge's audit, in the buckets the report prints."""
 
     unlabelled: list[Row]
-    broadcast: list[Row]
+    #: Eye-checked rallies with their verdict, whatever bucket the rule chose.
+    verdicts: list[tuple[Row, str]]
     displaced: list[Row]
     boundary: list[Row]
     extra: list[Row]
@@ -175,13 +332,13 @@ class Scan:
         """Every rally the rule caught, whatever the report does with it."""
         return sum(
             len(rows) for rows in
-            (self.unlabelled, self.broadcast, self.displaced, self.boundary, self.empty)
+            (self.unlabelled, self.verdicts, self.displaced, self.boundary, self.empty)
         )
 
 
 def scan(edge: Edge) -> Scan:
     unlabelled: list[Row] = []
-    broadcast: list[Row] = []
+    verdicts: list[tuple[Row, str]] = []
     boundary: list[Row] = []
     displaced: list[Row] = []
     empty: list[Row] = []
@@ -230,13 +387,12 @@ def scan(edge: Edge) -> Scan:
                 nearest = min(near) if near else None
                 # The eye-checked verdict outranks the distance rule: it was
                 # made on the footage, which is the only place the answer is.
-                if (stem, rid) in edge.broadcast:
-                    target = broadcast
+                if (stem, rid) in edge.verdicts:
+                    verdicts.append((make(outside=nearest), edge.verdicts[(stem, rid)]))
                 elif nearest is not None and nearest <= NEAR_S:
-                    target = boundary
+                    boundary.append(make(outside=nearest))
                 else:
-                    target = unlabelled
-                target.append(make(outside=nearest))
+                    unlabelled.append(make(outside=nearest))
                 continue
             if n > 1:
                 extra.append(make())
@@ -248,8 +404,12 @@ def scan(edge: Edge) -> Scan:
                     1 for t, _ in inside
                     if (t < picked if edge.opening else t > picked)
                 )
-                displaced.append(make(inside_gap=round(gap, 1), displaced_by=between))
-    return Scan(unlabelled, broadcast, displaced, boundary, extra, empty, videos, seen)
+                row = make(inside_gap=round(gap, 1), displaced_by=between)
+                if (stem, rid) in edge.verdicts:
+                    verdicts.append((row, edge.verdicts[(stem, rid)]))
+                else:
+                    displaced.append(row)
+    return Scan(unlabelled, verdicts, displaced, boundary, extra, empty, videos, seen)
 
 
 def render(edge: Edge, found: Scan) -> str:
@@ -270,15 +430,19 @@ def render(edge: Edge, found: Scan) -> str:
         f"標註在、是邊界偏了；`{edge.displaced}` = span 內有 `{edge.label}`，"
         f"但{'前' if edge.opening else '後'}面還有別的動作；"
         f"`疑似漏標` = 前後都找不到鄰近的 `{edge.label}`；"
-        f"`導播問題` = 已經看過畫面，導播沒拍到那個 `{edge.label}`，補不了。",
+        f"`看過畫面的判定` = 導播沒拍到那個 `{edge.label}`，或這球是犯規結束、"
+        f"本來就沒有 `{edge.label}` 可標。",
         "",
     ]
-    unlabelled, broadcast, displaced = found.unlabelled, found.broadcast, found.displaced
+    unlabelled, verdicts, displaced = found.unlabelled, found.verdicts, found.displaced
     boundary, extra, empty = found.boundary, found.extra, found.empty
 
-    def table(rows: list[Row], gap_col: str | None) -> None:
+    def table(rows: list[Row], gap_col: str | None, verdict_of=None) -> None:
         head = f"| 影片 | Rally | 起 | 訖 | {at}動作 |"
         sep = "|---|---:|---:|---:|---|"
+        if verdict_of:
+            head += " 判定 |"
+            sep += "---|"
         if gap_col:
             head += f" {gap_col} |"
             sep += "---:|"
@@ -286,6 +450,8 @@ def render(edge: Edge, found: Scan) -> str:
         for r in rows:
             edge_action = (r.seq[0] if edge.opening else r.seq[-1]) if r.seq else "—"
             cells = [r.stem, str(r.rally_id), ts(r.start), ts(r.end), edge_action]
+            if verdict_of:
+                cells.append(verdict_of(r))
             if gap_col:
                 value = r.outside if r.inside_gap is None else r.inside_gap
                 cells.append(f"{value:.1f}s" if value is not None else "—")
@@ -297,15 +463,23 @@ def render(edge: Edge, found: Scan) -> str:
     if unlabelled:
         out += [f"## 疑似漏標 — {len(unlabelled)} 筆", ""]
         table(sorted(unlabelled, key=key), None)
-    if broadcast:
+    if verdicts:
+        reasons = Counter(reason for _, reason in verdicts)
+        summary = "、".join(f"{reason} {n}" for reason, n in reasons.most_common())
         out += [
-            f"## 導播問題 — {len(broadcast)} 筆",
+            f"## 看過畫面的判定 — {len(verdicts)} 筆",
             "",
-            f"看過畫面了：轉播切走（重播、觀眾、板凳），`{edge.label}` 不在帶子上。"
-            "這批不是漏標，標不出來，留著只是為了下次掃描不用再看一遍。",
+            f"看過畫面了，這批不是漏標：`導播問題` = 轉播切走（重播、觀眾、板凳），"
+            f"`{edge.label}` 不在帶子上；其他判定是犯規結束的球——觸網、越界、持球…"
+            f"是裁判的哨音不是觸球，所以沒有 `{edge.label}` 可標。"
+            "留著是為了下次掃描不用再看一遍。",
+            "",
+            f"判定分布：{summary}。",
             "",
         ]
-        table(sorted(broadcast, key=key), None)
+        by_row = {key(r): reason for r, reason in verdicts}
+        table(sorted((r for r, _ in verdicts), key=lambda r: (by_row[key(r)], key(r))),
+              None, verdict_of=lambda r: by_row[key(r)])
     if displaced:
         out += [
             f"## {edge.displaced} — {len(displaced)} 筆",
@@ -365,7 +539,7 @@ def main() -> None:
         path.write_text(render(edge, found), encoding="utf-8")
         print(f"{edge.label}: {found.videos} video(s), {found.rallies:,} rallies")
         print(f"  疑似漏標            {len(found.unlabelled)}")
-        print(f"  導播問題            {len(found.broadcast)}")
+        print(f"  看過畫面的判定       {len(found.verdicts)}")
         print(f"  {edge.displaced:<18s}{len(found.displaced)}")
         print(f"  {edge.boundary:<18s}{len(found.boundary)}")
         print(f"  span 內無動作        {len(found.empty)}")
