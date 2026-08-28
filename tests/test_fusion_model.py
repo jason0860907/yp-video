@@ -38,14 +38,13 @@ class FusionModelStatusTests(unittest.TestCase):
             patch.object(fusion_model.association_labels, "labeled_stems", return_value=["joint"]),
             patch.object(fusion_model.rally_spot, "select_training_items", return_value=([], [])),
             patch.object(fusion_model.rally_spot, "rally_stats", return_value={"videos": 0}),
-            patch.object(fusion_model.rally_spot, "frame_cache_stats", return_value=[]),
         ):
             payload = fusion_model.status()
 
         recipes = {row["id"]: row for row in payload["recipes"]}
         self.assertEqual(set(recipes), set(RECIPES))
         self.assertEqual(recipes["rally_winner"]["tasks"], ["rally", "winner"])
-        self.assertEqual(recipes["rally_winner"]["fields"], ["extract_fps", "video_limit"])
+        self.assertEqual(recipes["rally_winner"]["fields"], ["sample_fps", "video_limit"])
         self.assertEqual(recipes["association_action"]["serveable_tasks"], ["action", "actor"])
         self.assertEqual(payload["init_checkpoints"]["rally"], [{"label": "rally", "value": "x"}])
         self.assertEqual(payload["task_labels"]["winner"], "Winner")
@@ -66,7 +65,7 @@ class BuildCommandTests(unittest.TestCase):
         )
 
     def test_rally_winner_command(self) -> None:
-        req = FusionTrainRequest(recipe="rally_winner", extract_fps=5, audio_backend="logmel", acc_grad_iter=4, batch_size=8)
+        req = FusionTrainRequest(recipe="rally_winner", sample_fps=5, audio_backend="logmel", acc_grad_iter=4, batch_size=8)
         cmd = spot_training.build_command(
             req, RECIPES["rally_winner"], self._prepared("yp_rally"),
             save_dir=Path("/run"), init_checkpoint=None, audio_dir=None,

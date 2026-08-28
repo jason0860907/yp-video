@@ -61,7 +61,6 @@ def status() -> dict:
             **rally_spot.rally_stats(),
             "with_video": len(rally_items),
             "missing_videos": len(rally_missing),
-            "frame_caches": rally_spot.frame_cache_stats(),
             "per_video": [
                 {"video": video.stem, "view": cut_kind_of(video)} for _ann, video in rally_items
             ],

@@ -111,10 +111,7 @@ class TrainingLabelsCarrySideTest(unittest.TestCase):
                 return_value={"ready": True, "frame_count": 200},
             ), patch.object(rally_mod, "cut_kind_of", return_value="sideline"):
                 summary = rally_mod.write_training_labels(
-                    [(ann, video)],
-                    cache_root=tmp_path,
-                    extract_fps=2.0,
-                    label_dir=label_dir,
+                    [(ann, video)], cache_root=tmp_path, label_dir=label_dir
                 )
             _meta, events = read_jsonl(label_dir / "vid_rally.jsonl")
         self.assertEqual(summary["rallies_with_winner"], 1)

@@ -159,11 +159,8 @@ def build_command(
         ",".join(recipe.tasks),
         "--clip_len",
         str(req.clip_len),
-        # Rally frames are extracted at extract_fps, so training strides by 1;
-        # recording it as sample_fps makes inference re-sample native video
-        # to the same temporal density.
         "--sample_fps",
-        str(req.extract_fps if rally else req.sample_fps),
+        str(req.sample_fps),
         "--batch_size",
         str(req.batch_size),
         "--acc_grad_iter",

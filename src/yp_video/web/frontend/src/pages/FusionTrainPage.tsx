@@ -122,11 +122,8 @@ export function FusionTrainPage() {
     !trainingRunning &&
     (!isManual || selectedValidation.length > 0);
 
-  // Rally: rough JPEG footprint of the frame cache this run needs (~15 KB/frame).
   const usableRally = Math.max(0, Number(rallyAnnotations?.with_video) || 0);
   const rallyTrainingVideos = values.video_limit > 0 ? Math.min(values.video_limit, usableRally) : usableRally;
-  const estCacheGb =
-    ((Number(rallyAnnotations?.total_hours) || 0) * (rallyTrainingVideos / Math.max(1, usableRally)) * 3600 * values.extract_fps * 15) / 1e6;
 
   useEffect(() => {
     if (validationSeeded.current || !actionAnnotations?.per_video?.length) return;
@@ -231,14 +228,6 @@ export function FusionTrainPage() {
                 placeholder="— From scratch —"
                 className="col-span-2"
               />
-              {visible.has('extract_fps') && (
-                <SchemaSelectField
-                  name="extract_fps"
-                  label="Extract fps"
-                  options={[1, 2, 5]}
-                  optionLabels={{ 1: '1 fps', 2: '2 fps', 5: '5 fps' }}
-                />
-              )}
               {visible.has('audio_backend') && (
                 <SchemaSelectField
                   name="audio_backend"
@@ -318,8 +307,7 @@ export function FusionTrainPage() {
 
             {isRally && (
               <p className="mt-3 text-xs text-text-secondary">
-                Trains on {rallyTrainingVideos} video(s); frames are extracted once at {values.extract_fps} fps (~
-                {estCacheGb.toFixed(0)} GB cache) and reused. Video limit 0 = all annotated videos.
+                Trains on {rallyTrainingVideos} video(s) from the shared frame cache. Video limit 0 = all annotated videos.
               </p>
             )}
 
@@ -348,7 +336,6 @@ export function FusionTrainPage() {
                   ['View', values.camera_view === 'all' ? 'all views' : values.camera_view],
                   ['Annotated', `${rallyAnnotations?.videos ?? 0} vid / ${(rallyAnnotations?.rallies ?? 0).toLocaleString()} rallies`],
                   ['Cuts', `${usableRally} vid (${rallyAnnotations?.missing_videos ?? 0} missing)`],
-                  ['Frame caches', (rallyAnnotations?.frame_caches ?? []).map((c) => `${c.fps} fps: ${c.videos}`).join(' · ') || 'none'],
                 ]
               : [
                   ['Scope', tasks.includes('actor') && values.dataset_scope === 'joint_only' ? 'Action ∩ Association' : 'Action union'],

@@ -61,7 +61,7 @@ class LabelSource(Protocol):
 
 
 class RallySource:
-    """Rally spans (and their winners) in the reduced-fps frame space."""
+    """Rally spans (and their winners) in the shared native frame cache."""
 
     def prepare(
         self, req: FusionTrainRequest, recipe: Recipe, *, save_dir: Path, progress: Progress
@@ -69,21 +69,17 @@ class RallySource:
         items, missing = rally_spot.select_training_items(resolve_cut, req.video_limit)
         if not items:
             raise RuntimeError("No rally annotations with a cut video (local or R2)")
-        frame_dir = rally_spot.frame_cache_root(req.extract_fps)
         ensure_action_frame_caches(
             [(video_path, None) for _ann, video_path in items],
-            cache_root=frame_dir,
-            fps=req.extract_fps,
+            cache_root=ACTION_FRAMES_DIR,
             progress=progress,
         )
         label_dir = save_dir / "labels" / TASKS["rally"].label_subdir
-        summary = rally_spot.write_training_labels(
-            items, cache_root=frame_dir, extract_fps=req.extract_fps, label_dir=label_dir
-        )
+        summary = rally_spot.write_training_labels(items, label_dir=label_dir)
         return PreparedLabels(
             label_dir=label_dir,
             label_subdirs=label_subdirs(recipe.tasks),
-            frame_dir=frame_dir,
+            frame_dir=ACTION_FRAMES_DIR,
             dataset="yp_rally",
             summary={**summary, "missing_videos": missing},
             all_stems={video_path.stem for _ann, video_path in items},

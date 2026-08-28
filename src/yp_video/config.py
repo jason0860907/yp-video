@@ -100,10 +100,6 @@ SPOT_CHECKPOINTS_DIR = VIDEOS_DIR / "spot" / "checkpoints"
 # blank lines and lines starting with "#" are ignored).
 ACTION_VAL_SET_FILE = VIDEOS_DIR / "action-val-set.txt"
 # SPOT rally (segment) training. Frame caches are extracted at a reduced fps —
-# native-fps caches for 800+ full matches would need ~1 TB — and keyed per rate:
-# rally-spot/frames/fps2/<stem>/000000.jpg. Labels are written in the same
-# reduced-fps frame space, so yp-spot trains on them unchanged.
-RALLY_SPOT_FRAMES_DIR = VIDEOS_DIR / "rally-spot" / "frames"
 # SPOT rally predictions live apart from the VLM pre-annotations so the two
 # model families never overwrite each other; Rally Label can load either.
 RALLY_SPOT_PRE_ANNOTATIONS_DIR = VIDEOS_DIR / "rally-spot" / "pre-annotations"

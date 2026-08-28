@@ -177,7 +177,7 @@ class Recipe:
     defaults: Mapping[str, object]
 
 
-_RALLY_FIELDS = ("extract_fps", "video_limit")
+_RALLY_FIELDS = ("sample_fps", "video_limit")
 _RALLY_DEFAULTS = {
     "batch_size": 8, "acc_grad_iter": 1, "num_epochs": 30,
     "warm_up_epochs": 2, "learning_rate": 3e-4, "audio_backend": "none",

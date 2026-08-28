@@ -4,13 +4,11 @@ Rally annotations (start/end seconds per rally, ``rally-annotations/``) train
 the same yp-spot model the action workflow uses, but as *dense segments*: every
 frame between start and end is the "rally" class.
 
-Native-fps frame caches are far too large for full matches (~1 TB for the
-current library), so rally training extracts frames at a reduced rate and
-writes the labels in that reduced-fps frame space — frame ``i`` of the cache is
-the video at ``i / extract_fps`` seconds, and the label records carry
-``fps = extract_fps``. yp-spot trains on them unchanged; at inference its
-``sample_fps`` handling re-samples the native video to the same temporal
-density and reports native frame numbers back.
+Labels are written in the native frame space of the one frame cache action
+training also reads (``action/frames/<stem>/``): frame ``i`` is the video at
+``i / fps`` seconds. The cache stores no rate, so ``fps`` is recovered as
+``frame_count / duration`` from the annotation's probed duration. yp-spot
+strides the cache to the run's ``sample_fps`` exactly as it does for actions.
 """
 
 from __future__ import annotations
@@ -25,11 +23,7 @@ from yp_video.action import prelabel
 from yp_video.action.frames import inspect_action_frame_cache
 from yp_video.action.predict import SpotInferenceError, run_spot_inference
 from yp_video.action.training import CutResolver
-from yp_video.config import (
-    RALLY_ANNOTATIONS_DIR,
-    RALLY_SPOT_FRAMES_DIR,
-    cut_kind_of,
-)
+from yp_video.config import ACTION_FRAMES_DIR, RALLY_ANNOTATIONS_DIR, cut_kind_of
 from yp_video.contracts.action import (
     COURT_SIDES,
     COURT_SIDES_ORDERED,
@@ -46,24 +40,6 @@ RALLY_LABEL = "rally"
 # Deterministic subset selection: the same limit always picks the same videos,
 # so their frame caches are reused across runs.
 _SUBSET_SEED = 42
-
-
-def frame_cache_root(extract_fps: float) -> Path:
-    return RALLY_SPOT_FRAMES_DIR / f"fps{extract_fps:g}"
-
-
-def frame_cache_stats() -> list[dict]:
-    """Cached-video counts per extraction rate (rally-spot/frames/fps*/)."""
-    if not RALLY_SPOT_FRAMES_DIR.exists():
-        return []
-    return [
-        {
-            "fps": d.name.removeprefix("fps"),
-            "videos": sum(1 for c in d.iterdir() if c.is_dir()),
-        }
-        for d in sorted(RALLY_SPOT_FRAMES_DIR.iterdir())
-        if d.is_dir() and d.name.startswith("fps")
-    ]
 
 
 def annotation_files() -> list[Path]:
@@ -134,16 +110,15 @@ def select_training_items(
 def write_training_labels(
     items: list[tuple[Path, Path]],
     *,
-    cache_root: Path,
-    extract_fps: float,
     label_dir: Path,
+    cache_root: Path = ACTION_FRAMES_DIR,
 ) -> dict:
-    """Write per-video SPOT segment labels in the reduced-fps frame space.
+    """Write per-video SPOT segment labels in the cache's native frame space.
 
     Each rally ``[start, end]`` in seconds becomes one event
-    ``{"frame", "end_frame", "label": "rally"}`` clamped to the extracted frame
+    ``{"frame", "end_frame", "label": "rally"}`` clamped to the cached frame
     count. The frame caches must already exist (``ensure_action_frame_caches``
-    with the same root/fps runs first).
+    runs first).
     """
     label_dir.mkdir(parents=True, exist_ok=True)
     for stale in label_dir.glob(f"*{RALLY_LABEL_FILE_SUFFIX}"):
@@ -156,12 +131,14 @@ def write_training_labels(
     rally_frames = 0
     for ann_path, video_path in items:
         meta, rows = read_jsonl(ann_path)
-        cache = inspect_action_frame_cache(
-            video_path, cache_root=cache_root, fps=extract_fps
-        )
+        cache = inspect_action_frame_cache(video_path, cache_root=cache_root)
         num_frames = int(cache.get("frame_count") or 0)
         if not cache.get("ready") or num_frames <= 0:
-            raise RuntimeError(f"Missing rally frame cache for {video_path.stem}")
+            raise RuntimeError(f"Missing frame cache for {video_path.stem}")
+        duration = float(meta.get("duration") or 0)
+        if duration <= 0:
+            raise RuntimeError(f"{ann_path.name} carries no video duration")
+        fps = num_frames / duration
 
         events = []
         for row in rows:
@@ -172,8 +149,8 @@ def write_training_labels(
                 continue
             if end <= start:
                 continue
-            first = max(0, min(int(round(start * extract_fps)), num_frames - 1))
-            last = max(first, min(int(round(end * extract_fps)), num_frames - 1))
+            first = max(0, min(int(round(start * fps)), num_frames - 1))
+            last = max(first, min(int(round(end * fps)), num_frames - 1))
             event = {
                 "frame": first,
                 "end_frame": last,
@@ -190,7 +167,7 @@ def write_training_labels(
             label_dir / f"{stem}{RALLY_LABEL_FILE_SUFFIX}",
             {
                 "video": stem,
-                "fps": extract_fps,
+                "fps": fps,
                 "num_frames": num_frames,
                 "camera_view": cut_kind_of(video_path),
                 "source_annotation": ann_path.name,
@@ -208,7 +185,6 @@ def write_training_labels(
     return {
         "label_dir": str(label_dir),
         "source_label_dir": str(RALLY_ANNOTATIONS_DIR),
-        "extract_fps": extract_fps,
         "videos": videos,
         "rallies": rallies,
         "rallies_with_winner": rallies_with_winner,

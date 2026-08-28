@@ -54,8 +54,8 @@ class FusionTrainRequest(StrictModel):
 
     Fields outside the chosen recipe's ``fields`` (contract ``RECIPES``) are
     accepted and ignored — the form sends every field with its default — so
-    a rally run carries ``sample_fps`` harmlessly and an action run
-    ``extract_fps``.
+    a rally run carries ``audio_backend`` harmlessly and an action run
+    ``video_limit``.
     """
 
     recipe: RecipeId = Field(
@@ -116,17 +116,6 @@ class FusionTrainRequest(StrictModel):
         ),
     )
     # ── Rally recipes ────────────────────────────────────────────
-    extract_fps: float = Field(
-        default=2.0,
-        ge=0.5,
-        le=10,
-        description=(
-            "Rally recipes: frame-extraction rate, also the model's "
-            "sample_fps. Rally on/off is a slow signal — 2 fps gives "
-            "clip_len=64 a 32 s window and keeps the whole library's frame "
-            "cache around 30 GB."
-        ),
-    )
     video_limit: int = Field(
         default=100,
         ge=0,
@@ -136,16 +125,13 @@ class FusionTrainRequest(StrictModel):
             "experiment doesn't extract hundreds of hours of frames first."
         ),
     )
-    # ── Action recipes ───────────────────────────────────────────
     sample_fps: float = Field(
         default=30.0,
         ge=0,
         le=120,
-        description=(
-            "Action recipes: per-video frame stride targeting this sampling "
-            "rate. 0 = every frame."
-        ),
+        description="Per-video frame stride targeting this sampling rate. 0 = every frame.",
     )
+    # ── Action recipes ───────────────────────────────────────────
     acc_grad_iter: int = Field(
         default=1,
         ge=1,

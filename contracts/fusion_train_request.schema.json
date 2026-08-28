@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$comment": "Generated from yp_video/web/train_requests.py via make_train_schemas.py \u2014 do not edit by hand.",
   "additionalProperties": false,
-  "description": "One SPOT training run: a recipe (which heads) plus how to train it.\n\nFields outside the chosen recipe's ``fields`` (contract ``RECIPES``) are\naccepted and ignored \u2014 the form sends every field with its default \u2014 so\na rally run carries ``sample_fps`` harmlessly and an action run\n``extract_fps``.",
+  "description": "One SPOT training run: a recipe (which heads) plus how to train it.\n\nFields outside the chosen recipe's ``fields`` (contract ``RECIPES``) are\naccepted and ignored \u2014 the form sends every field with its default \u2014 so\na rally run carries ``audio_backend`` harmlessly and an action run\n``video_limit``.",
   "properties": {
     "recipe": {
       "default": "association_action",
@@ -102,14 +102,6 @@
       "title": "Include Predictions",
       "type": "boolean"
     },
-    "extract_fps": {
-      "default": 2.0,
-      "description": "Rally recipes: frame-extraction rate, also the model's sample_fps. Rally on/off is a slow signal \u2014 2 fps gives clip_len=64 a 32 s window and keeps the whole library's frame cache around 30 GB.",
-      "maximum": 10,
-      "minimum": 0.5,
-      "title": "Extract Fps",
-      "type": "number"
-    },
     "video_limit": {
       "default": 100,
       "description": "Rally recipes: 0 = every annotated video. A positive limit takes a seeded-shuffle subset (stable across runs) so a quick experiment doesn't extract hundreds of hours of frames first.",
@@ -119,7 +111,7 @@
     },
     "sample_fps": {
       "default": 30.0,
-      "description": "Action recipes: per-video frame stride targeting this sampling rate. 0 = every frame.",
+      "description": "Per-video frame stride targeting this sampling rate. 0 = every frame.",
       "maximum": 120,
       "minimum": 0,
       "title": "Sample Fps",

@@ -99,7 +99,7 @@
       ],
       "description": "Rally on/off segments from the rally annotations.",
       "fields": [
-        "extract_fps",
+        "sample_fps",
         "video_limit"
       ],
       "defaults": {
@@ -120,7 +120,7 @@
       ],
       "description": "Rally segments plus which court side won each rally.",
       "fields": [
-        "extract_fps",
+        "sample_fps",
         "video_limit"
       ],
       "defaults": {
