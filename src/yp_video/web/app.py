@@ -13,9 +13,10 @@ from fastapi.staticfiles import StaticFiles
 from starlette.datastructures import MutableHeaders
 
 from yp_video.config import APP_LOG_PATH, FRONTEND_DIST_DIR, LOGS_DIR
+from yp_video.core import label_done
 from yp_video.web import audit, db, worklists
 from yp_video.web.access import AccessAuth, verifier
-from yp_video.web.r2_client import r2_client
+from yp_video.web.r2_client import mirror_file, r2_client
 from yp_video.web.routers import (
     action_annotate,
     actor_association,
@@ -130,6 +131,8 @@ async def lifespan(app: FastAPI):
     # rather than on the first upload deep inside a job handler.
     r2_client.reload()
     print(f"R2: {'configured' if r2_client.configured else 'not configured (uploads will be skipped)'}")
+    # Every Done click lands in R2 too; the ledger is human work no rerun rebuilds.
+    label_done.ledger.on_write = lambda path: mirror_file(path, f"label-done/{path.name}")
 
     # Detect existing vLLM server
     await vllm_manager.initial_check()

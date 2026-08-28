@@ -19,7 +19,6 @@ from yp_video.actor.spot_predictions import SpotAnswer
 from yp_video.core import label_done
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import read_jsonl, write_jsonl
-from yp_video.core.sidecar import JsonSidecar
 from yp_video.extraction import done, reassociate
 from yp_video.tracklets.geometry import TrackRef
 
@@ -94,9 +93,7 @@ class ReassociationTests(unittest.TestCase):
             patch.object(actor_labels, "actors_path", return_value=self.labels),
             patch.object(actor_labels._store, "_cache", StatCache()),
             patch.object(done, "records_path", return_value=self.records),
-            patch.object(
-                label_done, "_sidecar", JsonSidecar(lambda stem: root / f"{stem}_done.json")
-            ),
+            patch.object(label_done, "ledger", label_done.Ledger(root / "label-done.jsonl")),
         ]
         for item in self._patches:
             item.start()

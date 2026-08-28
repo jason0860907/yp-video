@@ -125,9 +125,8 @@ ASSOCIATION_DIR = VIDEOS_DIR / "association"
 ASSOCIATION_ANNOTATIONS_DIR = ASSOCIATION_DIR / "annotations"
 
 # Per-video "this mode's labeling is finished" flags, set by the Label page's
-# Done buttons (<stem>_done.json). ReID's Done predates this and lives in its
-# players file instead (reid/store.py).
-LABEL_DONE_DIR = VIDEOS_DIR / "label-done"
+# Done buttons: one ledger line per video, every mode's flag (core/label_done.py).
+LABEL_DONE_FILE = VIDEOS_DIR / "label-done.jsonl"
 
 # ReID: which player each crop depicts. annotations/ holds the human verdict
 # (<stem>_players.json); everything else under reid/ is derived data.
@@ -171,6 +170,8 @@ R2_CATEGORIES: dict[str, R2Category] = {
     "association/annotations": R2Category(ASSOCIATION_ANNOTATIONS_DIR, "*.json", "Association Annotations"),
     "reid/annotations": R2Category(REID_ANNOTATIONS_DIR, "*.json", "ReID Annotations"),
     "reid/checkpoints": R2Category(REID_CHECKPOINTS_DIR, "**/*", "ReID Checkpoints"),
+    # The Done verdicts are human work no count can rebuild; one file, one object.
+    "label-done": R2Category(VIDEOS_DIR, LABEL_DONE_FILE.name, "Label Done"),
 }
 
 # Registry: kind → (local cuts dir, R2 category name). Single source of truth
