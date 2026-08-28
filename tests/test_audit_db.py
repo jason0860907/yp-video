@@ -1,15 +1,16 @@
 """The parts of the audit trail that need a real Postgres.
 
-These tests TRUNCATE audit_events, so they refuse to touch the database the
-app actually uses. They read their own variable, YP_AUDIT_TEST_DB_URL, and
-abort if it names the same database as YP_DB_URL in the workspace .env:
+These tests TRUNCATE audit_events, so they only ever run against a database
+whose name ends in ``_test``. They read their own variable:
 
     YP_AUDIT_TEST_DB_URL=postgresql://ypvideo:...@127.0.0.1:5433/ypvideo_test \
         uv run pytest tests/test_audit_db.py
 
-Reusing YP_DB_URL here once wiped a real trail. A comment saying "point this
-at a scratch database" was not enough, because the variable it read was the
-one already set for the real one.
+The rule is on the database *name*, checked twice — once from the URL before
+anything connects, and again from ``current_database()`` on the open
+connection before the TRUNCATE. Comparing the URL against YP_DB_URL was the
+previous guard; it let ``localhost`` vs ``127.0.0.1`` spellings of the live
+database straight through and wiped a real trail.
 """
 
 from __future__ import annotations
@@ -18,7 +19,8 @@ import os
 import unittest
 from datetime import UTC, datetime, timedelta
 
-from yp_video.config import load_env
+from psycopg.conninfo import conninfo_to_dict
+
 from yp_video.web import audit, db
 
 
@@ -27,20 +29,21 @@ def _scratch_url() -> str | None:
     url = (os.environ.get("YP_AUDIT_TEST_DB_URL") or "").strip()
     if not url:
         return None
-    live = load_env().get("YP_DB_URL", "").strip()
-    if live and url == live:
-        raise RuntimeError(
-            "YP_AUDIT_TEST_DB_URL points at the live audit database (the "
-            "YP_DB_URL in .env). These tests TRUNCATE audit_events — create a "
-            "separate scratch database and point them at that."
-        )
+    _require_scratch_name(conninfo_to_dict(url).get("dbname") or "")
     return url
+
+
+def _require_scratch_name(dbname: str) -> None:
+    if not dbname.endswith("_test"):
+        raise RuntimeError(
+            f"refusing to run against database {dbname!r}: these tests TRUNCATE "
+            "audit_events, so YP_AUDIT_TEST_DB_URL must name a scratch database "
+            "whose name ends in '_test' (e.g. ypvideo_test)."
+        )
 
 
 _URL = _scratch_url()
 
-
-@unittest.skipUnless(_URL, "set YP_AUDIT_TEST_DB_URL to a scratch database")
 
 def _totals(person: dict) -> tuple[int, int, int]:
     """(seconds, sessions, saves) — what the page derives from the sessions."""
@@ -48,11 +51,14 @@ def _totals(person: dict) -> tuple[int, int, int]:
     seconds = sum(int((s["end"] - s["start"]).total_seconds()) for s in sessions)
     return seconds, len(sessions), sum(s["saves"] for s in sessions)
 
+@unittest.skipUnless(_URL, "set YP_AUDIT_TEST_DB_URL to a scratch database")
 class AuditDatabaseTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         # Never a bare open_pool(): that reads .env and opens the live one.
         await db.open_pool(conninfo=_URL)
         async with db.pool().connection() as conn:
+            row = await (await conn.execute("SELECT current_database()")).fetchone()
+            _require_scratch_name(row[0])
             await conn.execute("TRUNCATE audit_events RESTART IDENTITY")
             await conn.commit()
 
