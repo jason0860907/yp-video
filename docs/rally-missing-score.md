@@ -4,7 +4,7 @@
 
 重跑：`uv run python scripts/scan_rally_edges.py`
 
-判定：rally span `[start, end]` 內最後的動作事件不是 `score`。共 136 筆。
+判定：rally span `[start, end]` 內最後的動作事件不是 `score`。共 150 筆。
 
 分類：`結尾切太早` = span 外 3 秒內就有 `score`，標註在、是邊界偏了；`score 不在最後` = span 內有 `score`，但後面還有別的動作；`疑似漏標` = 前後都找不到鄰近的 `score`；`看過畫面的判定` = 導播沒拍到那個 `score`，或這球是犯規結束、本來就沒有 `score` 可標。
 
@@ -157,15 +157,26 @@
 | ᴴᴰ114UVL預賽：：中山大學vs國北教大：：男一級 大專排球聯賽 AI網路直播_set1 | 15 | 6:35 | 6:42 | set | 越網擊球 |
 | Pakistan vs. USA - Classification 13-16 ｜ Boys' U19 World Champs 2025 - Full Match_set1 | 1 | 0:07 | 0:14 | receive | 阻擋舉球 |
 
-## score 不在最後 — 14 筆
+## score 不在最後 — 28 筆
 
 span 內有 `score`，但它不是最後的事件。
 
 | 影片 | Rally | 起 | 訖 | 最後動作 | score 距結尾 |
 |---|---:|---:|---:|---|---:|
+| 0104排島臨打 2 | 35 | 13:12 | 13:25 | set | 1.5s |
+| 0112小窩季打 11 | 6 | 1:17 | 1:26 | receive | 1.5s |
+| 03⧸15(日) 15_00｜例行賽G107 #桃園臺灣產險 vs. #獅子王｜企業21年甲級男女排球聯賽_set1 | 13 | 4:55 | 5:02 | receive | 1.5s |
+| 0419小窩臨打 1 | 27 | 10:45 | 11:05 | serve | 1.5s |
+| 0427小窩季打 11 | 18 | 7:41 | 8:01 | receive | 1.5s |
+| 0914小窩季打 2 | 22 | 7:40 | 7:48 | receive | 1.5s |
+| 2025-10-04_G4_臺北伊斯特_vs_台鋼天鷹_set1 | 30 | 15:50 | 15:54 | receive | 1.5s |
+| Brazil 🇧🇷 vs. Poland 🇵🇱 ｜ VNL 2025 - Full Match ｜ Week 2_set1 | 39 | 22:24 | 22:32 | set | 1.5s |
+| Bulgaria 🇧🇬 vs. Canada 🇨🇦 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 44 | 25:52 | 26:00 | set | 1.5s |
+| Final - Stings vs. Sunbirds ｜ SVL League 2024⧸25 - Full Match ｜ Volleyball_set1 | 1 | 0:09 | 0:13 | serve | 1.5s |
 | Full Match ｜ Bulgaria vs Luxembourg ｜ CEV U22 Volleyball European Championship 2026 Women ｜ Pool E_set1 | 31 | 14:42 | 14:58 | receive | 2.2s |
 | Full Match ｜ Ireland vs. Türkiye ｜ CEV U22 Volleyball European Championship 2026 Women ｜ Pool D_set1 | 19 | 8:48 | 9:02 | set | 3.1s |
 | Full Match ｜ Serbia vs. Bulgaria ｜ CEV U22 Volleyball European Championship 2026 Women ｜ Pool E_set1 | 20 | 8:10 | 8:20 | receive | 1.6s |
+| Japan 🇯🇵 vs. China 🇨🇳 ｜ VNL 2025 - Full Match ｜ Week 2_set1 | 18 | 8:50 | 8:59 | set | 1.5s |
 | Japan 🇯🇵 vs. Czechia 🇨🇿 ｜ VNL 2025 - Full Match ｜ Week 2_set1 | 22 | 9:48 | 9:56 | receive | 2.2s |
 | Japan 🇯🇵 vs. Serbia 🇷🇸 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 38 | 16:51 | 16:59 | spike | 1.4s |
 | Osaka Bluteon vs. Toray Arrows Shizuoka - Full Match ｜ SV. League World Tour 2025 ｜ Volleyball_set1 | 31 | 17:20 | 17:33 | receive | 8.6s |
@@ -175,5 +186,45 @@ span 內有 `score`，但它不是最後的事件。
 | 【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G24 11⧸15 18_30 桃園雲豹飛將 vs 臺北伊斯特_set1 | 25 | 11:40 | 11:51 | block | 3.1s |
 | 【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G24 11⧸15 18_30 桃園雲豹飛將 vs 臺北伊斯特_set1 | 45 | 24:13 | 24:31 | receive | 2.0s |
 | 【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G26 11⧸16 18_30 臺中連莊 vs 臺北伊斯特_set1 | 17 | 9:20 | 9:29 | receive | 2.7s |
+| 【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G26 11⧸16 18_30 臺中連莊 vs 臺北伊斯特_set1 | 35 | 20:34 | 20:42 | receive | 1.5s |
+| 【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G27 11⧸22 15_00 桃園雲豹飛將 vs 台中連莊_set1 | 35 | 18:06 | 18:11 | set | 1.5s |
 | 【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G29 11⧸23 15_00 臺北伊斯特 vs 台中連莊_set1 | 18 | 9:51 | 9:59 | receive | 2.3s |
+| 【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G30 11⧸23 18_30 桃園雲豹飛將 vs 台鋼天鷹_set1 | 36 | 24:48 | 24:56 | receive | 1.5s |
 | 【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G6 10⧸5 18_30 臺中連莊 vs 台鋼天鷹_set1 | 25 | 12:12 | 12:19 | receive | 2.4s |
+
+## 附錄 A：span 內有 2 個以上 `score` — 30 筆
+
+間隔不到 0.5 秒的，是同一個 `score` 被標了兩次，不是兩個。
+
+| 影片 | Rally | 起 | 訖 | score 數 | 最小間隔 |
+|---|---:|---:|---:|---:|---:|
+| 0323小窩臨打 2 | 3 | 2:28 | 2:36 | 2 | 1.23s |
+| 0323小窩臨打 3 | 33 | 10:22 | 10:30 | 2 | 0.83s |
+| 03⧸14(六) 16_00｜例行賽G104 #獅子王 vs. #屏東台電｜企業21年甲級男女排球聯賽_set1 | 20 | 8:32 | 8:39 | 2 | 1.17s |
+| 03⧸15(日) 15_00｜例行賽G107 #桃園臺灣產險 vs. #獅子王｜企業21年甲級男女排球聯賽_set1 | 36 | 18:35 | 18:55 | 2 | 1.45s |
+| 03⧸20(五) 14_00｜挑戰賽G110 #高雄台電 vs. #新北中纖｜企業21年甲級男女排球聯賽_set1 | 33 | 19:11 | 19:18 | 2 | 1.40s |
+| 0420小窩季打 2 | 47 | 15:30 | 15:45 | 2 | 1.50s |
+| 0427小窩季打 12 | 17 | 6:10 | 6:33 | 2 | 1.50s |
+| 0427小窩季打 12 | 53 | 19:50 | 20:03 | 2 | 1.33s |
+| 20251227-排島本館-6 | 19 | 7:44 | 7:52 | 2 | 1.43s |
+| 20260108-排排棧-01 | 31 | 11:50 | 12:06 | 2 | 1.27s |
+| 20260426-小窩-01 | 7 | 2:56 | 3:08 | 2 | 1.23s |
+| 20260502-排島本館-01 | 2 | 2:13 | 2:21 | 2 | 1.07s |
+| 20260502-排島本館-01 | 20 | 7:44 | 7:53 | 2 | 1.00s |
+| 20260502-排島本館-02 | 8 | 4:21 | 4:34 | 2 | 0.93s |
+| 20260502-排島本館-02 | 29 | 11:45 | 12:01 | 2 | 1.00s |
+| 20260502-排島本館-02 | 34 | 13:48 | 13:56 | 2 | 1.00s |
+| Bulgaria 🇧🇬 vs. Japan 🇯🇵 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 26 | 13:12 | 13:19 | 2 | 1.08s |
+| China 🇨🇳 vs. Japan 🇯🇵 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 7 | 3:44 | 3:53 | 2 | 1.32s |
+| Full Match ｜ Slovakia vs. England ｜ CEV U22 Volleyball European Championship 2026 Women ｜ Pool C_set1 | 10 | 4:40 | 4:44 | 2 | 1.20s |
+| Japan 🇯🇵 vs. Serbia 🇷🇸 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 26 | 10:51 | 10:58 | 2 | 1.16s |
+| Japan 🇯🇵 vs. Serbia 🇷🇸 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 32 | 13:19 | 13:25 | 2 | 1.20s |
+| Japan 🇯🇵 vs. Serbia 🇷🇸 ｜ VNL 2025 - Full Match ｜ Week 1_set1 | 43 | 20:04 | 20:11 | 2 | 1.16s |
+| Semi Final 1 - Osaka Bluteon vs. Stings Aichi ｜ SV League - Full Match ｜ Volleyball_set1 | 34 | 18:00 | 18:15 | 2 | 1.07s |
+| Suntory Sunbirds vs. Osaka Bluteon ｜ SV.LEAGUE 2025⧸26 ｜ Full Match - Volleyball_set1 | 33 | 15:55 | 16:11 | 2 | 1.05s |
+| Uzbekistan vs. Japan - Ranking 19-20 ｜ Boys' U19 World Champs 2025 - Full Match_set1 | 31 | 14:29 | 14:35 | 2 | 1.25s |
+| ᴴᴰ114UVL預賽：：中原大學vs實踐大學：：男一級 大專排球聯賽 AI網路直播_set1 | 2 | 0:36 | 0:40 | 2 | 1.07s |
+| 【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G24 11⧸15 18_30 桃園雲豹飛將 vs 臺北伊斯特_set1 | 24 | 11:01 | 11:08 | 2 | 1.43s |
+| 【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G26 11⧸16 18_30 臺中連莊 vs 臺北伊斯特_set1 | 58 | 36:11 | 36:18 | 2 | 1.15s |
+| 【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G29 11⧸23 15_00 臺北伊斯特 vs 台中連莊_set1 | 31 | 16:03 | 16:09 | 2 | 1.28s |
+| 【LIVE】𝗙𝗨𝗟𝗟 𝗠𝗔𝗧𝗖𝗛｜TPVL  2025-26 例行賽 G30 11⧸23 18_30 桃園雲豹飛將 vs 台鋼天鷹_set1 | 44 | 30:57 | 31:02 | 2 | 1.10s |
