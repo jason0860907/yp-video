@@ -25,6 +25,7 @@ from yp_video.config import find_cut
 from yp_video.extraction import done, links, pipeline
 from yp_video.extraction import store as extraction_store
 from yp_video.reid import checkpoints, identity, store
+from yp_video.web.r2_client import sync_to_r2
 from yp_video.reid.embedder import (
     DEFAULT_EMBEDDER,
     EMBEDDER_NAMES,
@@ -267,6 +268,7 @@ def put_players(name: str, req: SavePlayersRequest) -> dict:
         raise HTTPException(404, f"No extraction records for {stem}")
     before = _naming_rows(store.load_players(stem))
     store.save_players(stem, tracks=req.tracks, assignments=req.assignments)
+    sync_to_r2(store.players_path(stem), "reid/annotations")
     # Read back rather than trusting the request: save_players cleans empty
     # names out, so the request is not what landed.
     audit.record_diff(

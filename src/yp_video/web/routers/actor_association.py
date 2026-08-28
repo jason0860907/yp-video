@@ -54,6 +54,7 @@ from yp_video.extraction import actor_fix, links, reassociate
 from yp_video.extraction import done as extraction_done
 from yp_video.extraction import store as extraction_store
 from yp_video.reid import store as reid_store
+from yp_video.web.r2_client import sync_to_r2
 from yp_video.reid.embedder import DEFAULT_EMBEDDER, base_embedder_name
 from yp_video.tracklets import store as tracks_store
 from yp_video.tracklets.geometry import TrackRef
@@ -819,6 +820,7 @@ def fix(
         raise HTTPException(404, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+    sync_to_r2(actor_labels.actors_path(stem), "association/annotations")
 
     current = extraction_store.with_current_actions([result.record], stem)
     record = current[0] if current else result.record

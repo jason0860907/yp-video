@@ -252,6 +252,30 @@ r2_client = R2Client()
 _sync_tasks: set[asyncio.Task] = set()
 
 
+_MIRROR_LOCK = threading.Lock()
+
+
+def mirror_file(path: Path, key: str) -> None:
+    """Push ``path`` to R2 as ``key`` on a background thread.
+
+    For files a human just edited (the label-done ledger): the request must
+    not wait on the network, and a failed upload must not undo the save —
+    it is logged, and the next write tries again with the whole file.
+    Uploads are serialized so the last write on disk is the last one in R2.
+    """
+    if not r2_client.configured:
+        return
+
+    def run() -> None:
+        with _MIRROR_LOCK:
+            try:
+                r2_client.upload_file(path, key)
+            except Exception:  # noqa: BLE001
+                log.warning("R2 mirror of %s failed", key, exc_info=True)
+
+    threading.Thread(target=run, name=f"r2-mirror:{path.name}", daemon=True).start()
+
+
 def _remote_cut_entry(name: str) -> tuple[CutKind, dict] | None:
     """The R2 listing entry of a cut — its kind plus the object row — or None."""
     if not r2_client.configured:
@@ -390,15 +414,21 @@ def sync_to_r2(local_path: Path, category: str, *, base_dir: Path | None = None)
 
     rel = local_path.relative_to(base_dir) if base_dir is not None else Path(local_path.name)
     r2_key = f"{category}/{rel}"
+    # A save that empties a sidecar removes the file (JsonSidecar.write(None));
+    # the mirror must follow, or a restore would resurrect cleared labels.
+    exists = local_path.exists()
 
     async def _upload():
         loop = asyncio.get_running_loop()
         try:
-            await loop.run_in_executor(
-                None,
-                lambda: r2_client.upload_file(local_path, r2_key),
-            )
-            log.info("R2 sync: %s -> %s", rel, r2_key)
+            if exists:
+                await loop.run_in_executor(
+                    None, lambda: r2_client.upload_file(local_path, r2_key)
+                )
+                log.info("R2 sync: %s -> %s", rel, r2_key)
+            else:
+                await loop.run_in_executor(None, lambda: r2_client.delete_object(r2_key))
+                log.info("R2 sync: removed %s", r2_key)
         except Exception as e:
             log.warning("R2 sync failed for %s: %s", rel, e)
 
