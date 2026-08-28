@@ -30,7 +30,6 @@ interface PredSettings {
   clip_len: number;
   decoder: 'opencv' | 'nvdec';
   decode_producers: number;
-  decoder_threads: number;
   prefetch_factor: number;
   decode_chunk_frames: number;
   overwrite: boolean;
@@ -41,9 +40,8 @@ const DEFAULTS: PredSettings = {
   min_score: 0.15,
   batch_size: 16,
   clip_len: 64,
-  decoder: 'nvdec',
+  decoder: 'opencv',
   decode_producers: 2,
-  decoder_threads: 1,
   prefetch_factor: 2,
   decode_chunk_frames: 256,
   overwrite: false,
@@ -55,7 +53,6 @@ const NUM_FIELDS: Array<NumField<PredSettings>> = [
   { key: 'batch_size', label: 'Batch', min: 1, max: 128, step: 1 },
   { key: 'clip_len', label: 'Clip len', min: 8, max: 256, step: 8 },
   { key: 'decode_producers', label: 'Producers', min: 1, max: 8, step: 1 },
-  { key: 'decoder_threads', label: 'Threads', min: 1, max: 8, step: 1 },
   { key: 'prefetch_factor', label: 'Prefetch', min: 1, max: 8, step: 1 },
   { key: 'decode_chunk_frames', label: 'Chunk', min: 1, max: 512, step: 16 },
 ];
@@ -115,7 +112,6 @@ export function ActionPredictPage() {
           num_workers: settings.decode_producers,
           decoder: settings.decoder,
           decode_producers: settings.decode_producers,
-          decoder_threads: settings.decoder_threads,
           prefetch_factor: settings.prefetch_factor,
           decode_chunk_frames: settings.decode_chunk_frames,
           use_amp: true,
@@ -178,8 +174,8 @@ export function ActionPredictPage() {
               onChange={(e) => setSettings((s) => ({ ...s, decoder: e.target.value as PredSettings['decoder'] }))}
               className={cn(fieldCls, 'cursor-pointer appearance-none')}
             >
+              <option value="opencv">OpenCV (CPU)</option>
               <option value="nvdec">NVDEC (GPU)</option>
-              <option value="opencv">OpenCV</option>
             </select>
           </div>
         </PredictConfigCard>

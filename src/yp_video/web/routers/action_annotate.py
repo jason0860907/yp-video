@@ -62,9 +62,8 @@ log = logging.getLogger(__name__)
 router = APIRouter()
 
 ACTION_LABELS = ACTION_LABELS_ORDERED
-SPOT_DEFAULT_DECODER: Literal["opencv", "nvdec"] = "nvdec"
+SPOT_DEFAULT_DECODER: Literal["opencv", "nvdec"] = "opencv"
 SPOT_DEFAULT_DECODE_PRODUCERS = 2
-SPOT_DEFAULT_DECODER_THREADS = 1
 SPOT_DEFAULT_PREFETCH_FACTOR = 2
 SPOT_DEFAULT_DECODE_CHUNK_FRAMES = 256
 SPOT_DEFAULT_NVIDIA_VIDEO_LIB_DIR = Path.home() / ".local/lib/nvidia-video"
@@ -110,7 +109,6 @@ class SpotPrelabelOptions(StrictModel):
     clip_len: int = Field(default=64, ge=8, le=256)
     decoder: Literal["opencv", "nvdec"] = SPOT_DEFAULT_DECODER
     decode_producers: int = Field(default=SPOT_DEFAULT_DECODE_PRODUCERS, ge=1, le=8)
-    decoder_threads: int = Field(default=SPOT_DEFAULT_DECODER_THREADS, ge=1, le=8)
     prefetch_factor: int = Field(default=SPOT_DEFAULT_PREFETCH_FACTOR, ge=1, le=8)
     decode_chunk_frames: int = Field(default=SPOT_DEFAULT_DECODE_CHUNK_FRAMES, ge=1, le=512)
     min_score: float = Field(default=0.15, ge=0, le=1)
@@ -316,7 +314,6 @@ def _spot_subprocess_env(req: SpotPrelabelOptions) -> dict[str, str]:
         "PYTHONUNBUFFERED": "1",
         "SPOT_DECODER": req.decoder,
         "SPOT_NUM_PRODUCERS": str(req.decode_producers),
-        "SPOT_DECODER_THREADS": str(req.decoder_threads),
         "SPOT_DECODE_CHUNK_FRAMES": str(req.decode_chunk_frames),
         ACTION_CONTRACT_VERSION_ENV: ACTION_CONTRACT_VERSION,
     }
@@ -340,7 +337,6 @@ def _spot_decode_settings_text(req: SpotPrelabelOptions) -> str:
         f"decoder={req.decoder} "
         f"prefetch={req.prefetch_factor} "
         f"producers={req.decode_producers} "
-        f"threads={req.decoder_threads} "
         f"chunk={req.decode_chunk_frames}"
     )
 
