@@ -51,6 +51,7 @@ from yp_video.web.job_helpers import (
     init_batch_items,
     stop_vllm_for_job,
     stream_subprocess,
+    subprocess_failure,
     terminal_prefix,
     update_batch_item,
 )
@@ -634,12 +635,12 @@ async def _run_prelabel_batch_subprocess(
                 )
                 return False
 
-        def missing_output_error(rc: int, last_line: str, failure_lines: list[str]) -> str:
+        def process_error(rc: int, last_line: str, failure_lines: list[str]) -> str:
             detail = failure_lines[-1] if failure_lines else last_line
-            if detail:
-                return f"SPOT failed before creating prediction output: {detail}"
             if rc != 0:
-                return f"SPOT exited with code {rc} before creating prediction output"
+                return subprocess_failure("SPOT inference", rc, detail)
+            if detail:
+                return f"SPOT did not create prediction output; last output: {detail}"
             return "SPOT did not create prediction output"
 
         failed = 0
@@ -762,9 +763,9 @@ async def _run_prelabel_batch_subprocess(
                     update_job=False,
                 )
 
-                if not pred_file.exists():
+                if rc != 0 or not pred_file.exists():
                     failed += 1
-                    error = missing_output_error(rc, last_line, failure_lines)
+                    error = process_error(rc, last_line, failure_lines)
                     job_obj = job_manager.get_job(job_id)
                     if job_obj:
                         job_obj.logs.append(f"[{video.name}] RuntimeError: {error}")

@@ -13,7 +13,6 @@ import json
 import logging
 import os
 import re
-import shutil
 import time
 from pathlib import Path
 from typing import Annotated, Literal
@@ -43,9 +42,9 @@ from yp_video.config import (
 from yp_video.contracts.action import (
     ACTION_CONTRACT_VERSION,
     ACTION_CONTRACT_VERSION_ENV,
-    ACTOR_FILE_GLOB,
     ACTOR_LABEL_SUBDIR,
     ASSOCIATION_PACKAGE_TYPE,
+    TASKS,
 )
 from yp_video.core import label_done
 from yp_video.core.cache import StatCache
@@ -54,7 +53,6 @@ from yp_video.extraction import actor_fix, links, reassociate
 from yp_video.extraction import done as extraction_done
 from yp_video.extraction import store as extraction_store
 from yp_video.reid import store as reid_store
-from yp_video.web.r2_client import sync_to_r2
 from yp_video.reid.embedder import DEFAULT_EMBEDDER, base_embedder_name
 from yp_video.tracklets import store as tracks_store
 from yp_video.tracklets.geometry import TrackRef
@@ -66,9 +64,11 @@ from yp_video.web.job_helpers import (
     spawn_batch_video_job,
     stop_vllm_for_job,
     stream_subprocess,
+    subprocess_failure,
     terminal_prefix,
 )
 from yp_video.web.jobs import JobSummary, JobType, job_manager
+from yp_video.web.r2_client import sync_to_r2
 from yp_video.web.schemas import StrictModel
 from yp_video.web.spot_runs import (
     PackageExporter,
@@ -512,9 +512,7 @@ async def _start_association_training(
                         log_path=save_dir / "terminal.log",
                     )
             if rc != 0:
-                raise RuntimeError(
-                    last_line or f"Association training exited with code {rc}"
-                )
+                raise RuntimeError(subprocess_failure("Association training", rc, last_line))
             checkpoint_summary = await exporter.export_once(
                 expected_epoch=None, reason="completed", update_job=False
             )

@@ -49,6 +49,7 @@ from yp_video.web.job_helpers import (
     mark_batch_item,
     stop_vllm_for_job,
     stream_subprocess,
+    subprocess_failure,
     update_batch_item,
 )
 from yp_video.web.jobs import JobSummary, JobType, job_manager
@@ -352,9 +353,7 @@ async def start(req: RallyPredictRequest) -> dict:
                     raise
 
                 if rc != 0 and failed == 0:
-                    raise RuntimeError(
-                        last_line or f"SPOT inference exited with code {rc}"
-                    )
+                    raise RuntimeError(subprocess_failure("SPOT inference", rc, last_line))
                 await job_manager.update_job(
                     job.id, params={**job.params, "results": converted}
                 )

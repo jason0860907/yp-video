@@ -48,6 +48,7 @@ from yp_video.web.job_helpers import (
     ProgressParser,
     fail_job_from_exc,
     stream_subprocess,
+    subprocess_failure,
 )
 from yp_video.web.jobs import JobStatus, JobSummary, JobType, job_manager
 from yp_video.web.train_requests import ReidExportRequest, ReidTrainRequest
@@ -348,7 +349,7 @@ async def train(req: ReidTrainRequest) -> dict:
                     log_path=REID_PKG_DIR / "exp" / run_name / "terminal.log",
                 )
             if rc != 0:
-                raise RuntimeError(last_line or f"yp-reid train exited with code {rc}")
+                raise RuntimeError(subprocess_failure("yp-reid training", rc, last_line))
             manifest = checkpoints.read_manifest(export_dir)  # proves the package landed
             await job_manager.update_job(
                 job.id,

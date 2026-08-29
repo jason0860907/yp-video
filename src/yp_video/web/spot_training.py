@@ -41,6 +41,7 @@ from yp_video.web.job_helpers import (
     fail_job_from_exc,
     stop_vllm_for_job,
     stream_subprocess,
+    subprocess_failure,
     terminal_prefix,
 )
 from yp_video.web.jobs import JobType, job_manager
@@ -337,7 +338,7 @@ async def start_training_job(req: FusionTrainRequest) -> dict:
                     cwd=SPOT_DIR,
                 )
                 if rc != 0:
-                    raise RuntimeError(f"Audio precompute failed (rc={rc}): {last_line}")
+                    raise RuntimeError(subprocess_failure("Audio precompute", rc, last_line))
 
             cmd = build_command(
                 req, recipe, prepared,
@@ -395,7 +396,7 @@ async def start_training_job(req: FusionTrainRequest) -> dict:
                         log_path=save_dir / "terminal.log",
                     )
             if rc != 0:
-                raise RuntimeError(last_line or f"SPOT training exited with code {rc}")
+                raise RuntimeError(subprocess_failure("SPOT training", rc, last_line))
             checkpoint_summary = await exporter.export_once(
                 expected_epoch=None, reason="completed", update_job=False
             )

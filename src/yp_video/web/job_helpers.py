@@ -38,6 +38,7 @@ import codecs
 import logging
 import re
 import shlex
+import signal
 import time
 import traceback
 from collections.abc import Callable
@@ -50,6 +51,29 @@ log = logging.getLogger(__name__)
 
 
 # ── Message formatting ────────────────────────────────────────────────
+
+
+def subprocess_exit_status(returncode: int) -> str:
+    """Human-readable subprocess status; a signal is not an error message."""
+    if returncode >= 0:
+        return (
+            "exited successfully (code 0)"
+            if returncode == 0
+            else f"exited with code {returncode}"
+        )
+    signum = -returncode
+    try:
+        name = signal.Signals(signum).name
+    except ValueError:
+        name = f"signal {signum}"
+    note = "; possible host OOM, verify kernel/cgroup logs" if signum == signal.SIGKILL else ""
+    return f"killed by {name} ({signum}){note}"
+
+
+def subprocess_failure(label: str, returncode: int, last_line: str = "") -> str:
+    """A truthful failure with the final output retained only as context."""
+    message = f"{label} {subprocess_exit_status(returncode)}"
+    return f"{message}; last output: {last_line}" if last_line else message
 
 
 def batch_message(index: int, total: int, item: str, detail: str = "") -> str:
@@ -341,6 +365,9 @@ async def stream_subprocess(
         raise
     finally:
         if log_fp is not None:
+            if process.returncode is not None:
+                log_fp.write(f"# Process {subprocess_exit_status(process.returncode)}\n")
+                log_fp.flush()
             log_fp.close()
 
 
