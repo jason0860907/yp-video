@@ -45,6 +45,8 @@ class FusionModelStatusTests(unittest.TestCase):
         self.assertEqual(set(recipes), set(RECIPES))
         self.assertEqual(recipes["rally_winner"]["tasks"], ["rally", "winner"])
         self.assertEqual(recipes["rally_winner"]["fields"], ["sample_fps", "video_limit"])
+        self.assertEqual(recipes["rally"]["defaults"]["sample_fps"], 5.0)
+        self.assertEqual(recipes["rally_winner"]["defaults"]["sample_fps"], 5.0)
         self.assertEqual(recipes["association_action"]["serveable_tasks"], ["action", "actor"])
         self.assertEqual(payload["init_checkpoints"]["rally"], [{"label": "rally", "value": "x"}])
         self.assertEqual(payload["task_labels"]["winner"], "Winner")

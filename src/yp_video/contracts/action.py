@@ -181,6 +181,7 @@ _RALLY_FIELDS = ("sample_fps", "video_limit")
 _RALLY_DEFAULTS = {
     "batch_size": 8, "acc_grad_iter": 1, "num_epochs": 30,
     "warm_up_epochs": 2, "learning_rate": 3e-4, "audio_backend": "none",
+    "sample_fps": 5.0,
 }
 _ACTION_FIELDS = ("sample_fps", "acc_grad_iter", "audio_backend", "include_predictions")
 _ACTION_DEFAULTS = {

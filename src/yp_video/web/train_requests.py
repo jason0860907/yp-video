@@ -166,7 +166,10 @@ class FusionTrainRequest(StrictModel):
     )
     learning_rate: float = Field(default=0.00003, gt=0)
     num_workers: int = Field(
-        default=4, ge=0, le=32, description="DataLoader worker processes."
+        default=8,
+        ge=0,
+        le=32,
+        description="Actual training DataLoader worker processes; validation uses at most 4.",
     )
     criterion: Criterion = Field(
         default="map", description="Which epoch counts as best: top validation mAP or lowest loss."

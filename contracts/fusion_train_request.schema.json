@@ -217,8 +217,8 @@
       "type": "number"
     },
     "num_workers": {
-      "default": 4,
-      "description": "DataLoader worker processes.",
+      "default": 8,
+      "description": "Actual training DataLoader worker processes; validation uses at most 4.",
       "maximum": 32,
       "minimum": 0,
       "title": "Num Workers",
