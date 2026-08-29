@@ -21,8 +21,6 @@ from fastapi import APIRouter, HTTPException
 from pydantic import Field
 
 from yp_video.config import find_cut
-from yp_video.core.cache import StatCache
-from yp_video.core.jsonl import read_jsonl_cached
 from yp_video.core.rallies import rally_sources
 from yp_video.extraction import links
 from yp_video.extraction import store as extraction_store
@@ -35,10 +33,6 @@ from yp_video.web.schemas import StrictModel
 
 log = logging.getLogger(__name__)
 router = APIRouter()
-
-# Slimmed UI payload, rebuilt only when the tracks jsonl changes. Values are
-# shared across requests — read-only, like everything cached.
-_slim_tracks_cache: StatCache = StatCache()
 
 
 class TrackRequest(StrictModel):
@@ -115,7 +109,7 @@ def masks(name: str, rally: int) -> dict:
     masks_path = tracks_store.tracks_masks_path(stem)
     if not masks_path.exists():
         raise HTTPException(404, f"No track masks for {stem} — re-run tracking")
-    _meta, records = read_jsonl_cached(tracks_store.tracks_path(stem))  # read-only
+    records = tracks_store.tracklet_data(stem).records
     tracks: dict[str, str] = {}
     with np.load(masks_path) as z:
         h, w = (int(v) for v in z["_shape"])
@@ -138,11 +132,13 @@ def tracklets(name: str) -> dict:
     if not extraction_store.records_path(stem).exists():
         raise HTTPException(404, f"No extraction records for {stem}")
 
-    def slim() -> list[dict]:
-        _meta, records = read_jsonl_cached(tracks_store.tracks_path(stem))  # read-only — copy, never mutate
-        return [{k: t[k] for k in ("rally_id", "track_id", "frames", "boxes")} for t in records]
-
+    records = tracks_store.tracklet_data(stem).records
     return {
-        "tracklets": _slim_tracks_cache.get(stem, [tracks_store.tracks_path(stem)], slim),
+        # Cheap wrapper dicts per response; their large arrays stay owned by
+        # the one bounded tracks cache rather than a second unbounded cache.
+        "tracklets": [
+            {k: tracklet[k] for k in ("rally_id", "track_id", "frames", "boxes")}
+            for tracklet in records
+        ],
         "links": links.link_payload(stem),
     }

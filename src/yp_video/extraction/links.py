@@ -58,6 +58,7 @@ from yp_video.tracklets.geometry import (
 from yp_video.tracklets.store import (
     TrackMasks,
     load_track_masks,
+    load_tracklets,
     tracklet_index,
     tracks_masks_path,
     tracks_path,
@@ -158,7 +159,7 @@ def _honoured(
 
 
 def _event_tracks(stem: str) -> dict[str, TrackRef]:
-    tmeta, _tracklets = read_jsonl_cached(tracks_path(stem))  # read-only
+    tmeta = load_tracklets(tracks_path(stem)).meta
     rmeta, records = read_jsonl_cached(records_path(stem))  # read-only
     records = labelable(records, stem, float(rmeta.get("fps") or 0))
     index = tracklet_index(stem)

@@ -16,13 +16,14 @@ A leaf: paths and IO only, nothing here imports a domain package.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
 from yp_video.config import TRACKS_DIR
 from yp_video.core.cache import StatCache
-from yp_video.core.jsonl import atomic_binary, read_jsonl_cached, read_jsonl_header
+from yp_video.core.jsonl import atomic_binary, read_jsonl, read_jsonl_header
 from yp_video.tracklets.geometry import TrackletIndex
 
 
@@ -52,9 +53,36 @@ def tracks_masks_path(stem: str) -> Path:
     return TRACKS_DIR / f"{stem}_masks.npz"
 
 
-# One index per video, rebuilt when the jsonl changes. Shared — read-only,
-# like everything StatCache hands out.
-_index_cache: StatCache = StatCache()
+@dataclass(frozen=True)
+class TrackletData:
+    """One immutable parse of a tracks file and every index derived from it."""
+
+    meta: dict
+    records: list[dict]
+    index: TrackletIndex
+
+
+# Tracks are the exceptional JSONLs: their parsed records and frame index are
+# hundreds of MB across a worklist. They therefore have one dedicated owner
+# instead of also entering core.jsonl's general parsed-file cache. The source
+# budget is calibrated against the repository's real worklist RSS; a single
+# larger video remains usable and displaces every other entry.
+_TRACKS_CACHE_SOURCE_BYTES = 8 * 1024 * 1024
+_tracks_cache: StatCache = StatCache(max_source_bytes=_TRACKS_CACHE_SOURCE_BYTES)
+
+
+def load_tracklets(path: Path) -> TrackletData:
+    """Read-only tracks data keyed and invalidated by ``path`` stat."""
+    return _tracks_cache.get(path, [path], lambda: _read_tracklets(path))
+
+
+def _read_tracklets(path: Path) -> TrackletData:
+    meta, records = read_jsonl(path)
+    return TrackletData(meta, records, TrackletIndex(records))
+
+
+def tracklet_data(stem: str) -> TrackletData:
+    return load_tracklets(tracks_path(stem))
 
 
 def tracklet_index(stem: str) -> TrackletIndex:
@@ -64,10 +92,7 @@ def tracklet_index(stem: str) -> TrackletIndex:
     the index is paid once per video instead of once per event — and so the
     four modules that each used to scan the raw list ask one object instead.
     """
-    path = tracks_path(stem)
-    return _index_cache.get(
-        stem, [path], lambda: TrackletIndex(read_jsonl_cached(path)[1])
-    )
+    return tracklet_data(stem).index
 
 
 def span_detections_path(stem: str) -> Path:

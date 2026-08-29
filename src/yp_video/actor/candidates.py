@@ -25,8 +25,7 @@ from yp_video.actor.labels import ActorVerdict
 from yp_video.contracts.action import ACTOR_WINDOW_OFFSETS, ActorTargetKind, event_id
 from yp_video.core.jsonl import read_jsonl_cached
 from yp_video.extraction.store import records_path
-from yp_video.tracklets.geometry import TrackletIndex
-from yp_video.tracklets.store import tracks_path, tracks_stride
+from yp_video.tracklets.store import load_tracklets, tracks_path, tracks_stride
 
 
 def _frame_size(stem: str) -> tuple[int, int] | None:
@@ -62,7 +61,7 @@ def track_paths(stem: str) -> dict[str, dict[int, Sequence[float]]]:
     path = tracks_path(stem)
     if not path.exists():
         return {}
-    _meta, tracklets = read_jsonl_cached(path)
+    tracklets = load_tracklets(path).records
     return {
         f"{tracklet['rally_id']}:{tracklet['track_id']}": {
             int(frame): box
@@ -145,9 +144,7 @@ def build(stem: str, events: Iterable[dict]) -> tuple[list[dict], dict[str, int]
     # Built from the same file track_paths reads, so a test (or caller)
     # redirecting tracks_path redirects both views of the tracklets.
     tracks = tracks_path(stem)
-    index = (
-        TrackletIndex(read_jsonl_cached(tracks)[1]) if tracks.exists() else None
-    )
+    index = load_tracklets(tracks).index if tracks.exists() else None
     rows: list[dict] = []
 
     for event in events:
