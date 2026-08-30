@@ -47,6 +47,18 @@ class FusionModelStatusTests(unittest.TestCase):
         self.assertEqual(recipes["rally_winner"]["fields"], ["sample_fps", "video_limit"])
         self.assertEqual(recipes["rally"]["defaults"]["sample_fps"], 5.0)
         self.assertEqual(recipes["rally_winner"]["defaults"]["sample_fps"], 5.0)
+        self.assertEqual(
+            recipes["action_rally_winner"]["tasks"],
+            ["action", "rally", "winner"],
+        )
+        self.assertEqual(
+            recipes["action_rally_winner"]["defaults"]["action_sample_fps"],
+            30.0,
+        )
+        self.assertEqual(
+            recipes["action_rally_winner"]["defaults"]["rally_sample_fps"],
+            5.0,
+        )
         self.assertEqual(recipes["association_action"]["serveable_tasks"], ["action", "actor"])
         self.assertEqual(payload["init_checkpoints"]["rally"], [{"label": "rally", "value": "x"}])
         self.assertEqual(payload["task_labels"]["winner"], "Winner")
@@ -58,8 +70,9 @@ class FusionModelStatusTests(unittest.TestCase):
 
 class BuildCommandTests(unittest.TestCase):
     def _prepared(self, dataset: str, extra=()) -> PreparedLabels:
+        task = "rally" if dataset == "yp_rally" else "action"
         return PreparedLabels(
-            label_dir=Path("/run/labels/x"),
+            label_dirs={task: Path("/run/labels/x")},
             label_subdirs=("x",),
             frame_dir=Path("/frames"),
             dataset=dataset,
@@ -97,12 +110,53 @@ class BuildCommandTests(unittest.TestCase):
         self.assertIn("--actor_dir /run/labels/actor-candidates", joined)
         self.assertIn("--audio_backend logmel --actor_dir", joined)
         self.assertIn("--audio_dir /audio", joined)
-        self.assertIn("--train_labels /run/labels/train --val_labels /run/labels/val", joined)
+        self.assertIn(
+            "--train_labels /run/label-splits/action/train "
+            "--val_labels /run/label-splits/action/val",
+            joined,
+        )
+
+    def test_multi_fps_command_has_independent_streams(self) -> None:
+        req = FusionTrainRequest(recipe="action_rally_winner")
+        prepared = PreparedLabels(
+            label_dirs={
+                "action": Path("/run/labels/action-annotations"),
+                "rally": Path("/run/labels/rally-annotations"),
+            },
+            label_subdirs=("action-annotations", "rally-annotations"),
+            frame_dir=Path("/frames"),
+            dataset="yp_action_rally",
+        )
+        cmd = spot_training.build_command(
+            req,
+            RECIPES["action_rally_winner"],
+            prepared,
+            save_dir=Path("/run"),
+            init_checkpoint=None,
+            audio_dir=None,
+        )
+        joined = " ".join(cmd)
+        self.assertIn("--tasks action,rally,winner", joined)
+        self.assertIn("--task_sample_fps action=30.0", joined)
+        self.assertIn("--task_sample_fps rally=5.0", joined)
+        self.assertIn("--task_sample_fps winner=5.0", joined)
+        self.assertIn(
+            "--task_label_dir action=/run/labels/action-annotations", joined
+        )
+        self.assertIn(
+            "--task_label_dir rally=/run/labels/rally-annotations", joined
+        )
+        self.assertNotIn("--sample_fps ", joined)
+        self.assertIn("--audio_backend none", joined)
 
     def test_run_name_token_per_recipe(self) -> None:
         self.assertEqual(spot_training.recipe_token(RECIPES["rally_winner"]), "ral_win")
         self.assertEqual(spot_training.recipe_token(RECIPES["association_action"]), "ass_act")
         self.assertEqual(spot_training.recipe_token(RECIPES["action"]), "act")
+        self.assertEqual(
+            spot_training.recipe_token(RECIPES["action_rally_winner"]),
+            "act_ral_win",
+        )
 
     def test_bad_run_name_is_refused(self) -> None:
         with self.assertRaises(HTTPException) as caught:
@@ -114,7 +168,13 @@ class BuildCommandTests(unittest.TestCase):
 
 class SupervisionGateTests(unittest.TestCase):
     def _prepared(self, summary: dict) -> PreparedLabels:
-        return PreparedLabels(Path("/x"), ("x",), Path("/f"), "yp_rally", summary=summary)
+        return PreparedLabels(
+            {"rally": Path("/x")},
+            ("x",),
+            Path("/f"),
+            "yp_rally",
+            summary=summary,
+        )
 
     def test_winner_head_needs_winner_labels(self) -> None:
         with self.assertRaises(RuntimeError) as caught:

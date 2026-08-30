@@ -33,6 +33,9 @@ type FusionForm = Required<FusionTrainRequest>;
 
 /** Mirrors spot_training.recipe_token — the run-name token per task set. */
 function recipeToken(tasks: string[]): string {
+  if (tasks.includes('action') && tasks.includes('rally')) {
+    return tasks.includes('winner') ? 'act_ral_win' : 'act_ral';
+  }
   if (tasks.includes('action')) return tasks.includes('actor') ? 'ass_act' : 'act';
   return tasks.includes('winner') ? 'ral_win' : 'ral';
 }
@@ -247,6 +250,15 @@ export function FusionTrainPage() {
               <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3">
                 <SchemaNumberField name="clip_len" label="Clip len" />
                 {visible.has('sample_fps') && <SchemaNumberField name="sample_fps" label="Sample fps" />}
+                {visible.has('action_sample_fps') && (
+                  <SchemaNumberField name="action_sample_fps" label="Action fps" />
+                )}
+                {visible.has('rally_sample_fps') && (
+                  <SchemaNumberField name="rally_sample_fps" label="Rally fps" />
+                )}
+                {visible.has('winner_sample_fps') && (
+                  <SchemaNumberField name="winner_sample_fps" label="Winner fps" />
+                )}
                 {visible.has('acc_grad_iter') && <SchemaNumberField name="acc_grad_iter" label="Grad accum" />}
                 <SchemaNumberField name="warm_up_epochs" label="Warmup" />
                 <SchemaNumberField name="num_workers" label="Workers" />

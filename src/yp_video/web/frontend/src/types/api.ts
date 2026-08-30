@@ -156,7 +156,12 @@ export interface ActionAnnotationStats {
   }>;
 }
 
-export type FusionRecipeId = 'rally' | 'rally_winner' | 'action' | 'association_action';
+export type FusionRecipeId =
+  | 'rally'
+  | 'rally_winner'
+  | 'action'
+  | 'association_action'
+  | 'action_rally_winner';
 export type SpotTask = 'rally' | 'winner' | 'action' | 'location' | 'actor';
 
 /** One entry of the contract's task-set registry (yp_video.contracts.action.RECIPES). */

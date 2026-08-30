@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "YP Action-Spotting Label Contract",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "description": "Source of truth for the *_actions.jsonl label records and frame cache layout exchanged between yp-video (producer) and yp-spot (consumer). Generated from yp_video/contracts/action.py via make_schema.py \u2014 do not edit by hand. yp-spot mirrors these constants in yp_spot/contract.py under the same version.",
   "x-frame-layout": {
     "height": 224,
@@ -108,7 +108,8 @@
         "num_epochs": 30,
         "warm_up_epochs": 2,
         "learning_rate": 0.0003,
-        "audio_backend": "none"
+        "audio_backend": "none",
+        "sample_fps": 5.0
       }
     },
     "rally_winner": {
@@ -129,7 +130,8 @@
         "num_epochs": 30,
         "warm_up_epochs": 2,
         "learning_rate": 0.0003,
-        "audio_backend": "none"
+        "audio_backend": "none",
+        "sample_fps": 5.0
       }
     },
     "action": {
@@ -178,6 +180,34 @@
         "warm_up_epochs": 3,
         "learning_rate": 3e-05,
         "audio_backend": "logmel"
+      }
+    },
+    "action_rally_winner": {
+      "id": "action_rally_winner",
+      "name": "Action + Rally + Winner",
+      "tasks": [
+        "action",
+        "rally",
+        "winner"
+      ],
+      "description": "One shared visual backbone with task-specific 30/5/5 fps batches.",
+      "fields": [
+        "action_sample_fps",
+        "rally_sample_fps",
+        "winner_sample_fps",
+        "video_limit"
+      ],
+      "defaults": {
+        "batch_size": 8,
+        "acc_grad_iter": 1,
+        "num_epochs": 50,
+        "warm_up_epochs": 3,
+        "learning_rate": 3e-05,
+        "audio_backend": "none",
+        "action_sample_fps": 30.0,
+        "rally_sample_fps": 5.0,
+        "winner_sample_fps": 5.0,
+        "video_limit": 0
       }
     }
   },

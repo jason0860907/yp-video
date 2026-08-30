@@ -25,7 +25,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 # Bump on ANY breaking change to the label record, frame layout, or label set.
-ACTION_CONTRACT_VERSION = "2.0.0"
+ACTION_CONTRACT_VERSION = "3.0.0"
 
 # Env var carrying ACTION_CONTRACT_VERSION from producer to consumer.
 ACTION_CONTRACT_VERSION_ENV = "YP_ACTION_CONTRACT_VERSION"
@@ -81,8 +81,8 @@ class TaskSpec:
     name: str
     #: UI label.
     label: str
-    #: ``segment``/``point`` is THE classification head of a run (rally spans
-    #: vs. action frames — exactly one per run); ``aux`` heads ride on it.
+    #: ``segment``/``point`` is a classification head (rally spans vs. action
+    #: frames); mixed-FPS runs may carry both. ``aux`` heads ride on one.
     kind: Literal["segment", "point", "aux"]
     #: ``labels/<subdir>`` in a run and its package; the file glob inside it.
     label_subdir: str
@@ -129,9 +129,17 @@ TASKS: dict[str, TaskSpec] = {
 SPOTTING_KINDS = ("segment", "point")
 
 
+def spotting_tasks(tasks: Sequence[str]) -> tuple[str, ...]:
+    """Classification tasks carried by a run, in task order."""
+    return tuple(t for t in tasks if TASKS[t].kind in SPOTTING_KINDS)
+
+
 def spotting_task(tasks: Sequence[str]) -> str:
-    """The one classification task of a run."""
-    (name,) = [t for t in tasks if TASKS[t].kind in SPOTTING_KINDS]
+    """The classification task of a single-stream recipe."""
+    spotting = spotting_tasks(tasks)
+    if len(spotting) != 1:
+        raise ValueError(f"Expected one spotting task, got {list(spotting)}")
+    (name,) = spotting
     return name
 
 
@@ -141,12 +149,7 @@ def label_subdirs(tasks: Sequence[str]) -> tuple[str, ...]:
 
 
 def validate_tasks(tasks: Sequence[str]) -> tuple[str, ...]:
-    """Fail loud on an unknown name, a missing dependency, or 0/2+ spotting tasks.
-
-    The single-spotting-task rule is what keeps rally and action out of one
-    run until the trainer has a second classification head and a second
-    frame source; the registry itself can already express that recipe.
-    """
+    """Fail loud on an unknown name, a missing dependency, or no spotting task."""
     names = tuple(tasks)
     unknown = [t for t in names if t not in TASKS]
     if unknown:
@@ -155,11 +158,8 @@ def validate_tasks(tasks: Sequence[str]) -> tuple[str, ...]:
         missing = [r for r in TASKS[t].requires if r not in names]
         if missing:
             raise ValueError(f"Task {t!r} requires {missing}")
-    spotting = [t for t in names if TASKS[t].kind in SPOTTING_KINDS]
-    if len(spotting) != 1:
-        raise ValueError(
-            f"A run needs exactly one segment/point task, got {spotting or 'none'}"
-        )
+    if not spotting_tasks(names):
+        raise ValueError("A run needs at least one segment/point task")
     return names
 
 
@@ -192,6 +192,24 @@ _FUSION_DEFAULTS = {
     "batch_size": 8, "acc_grad_iter": 1, "num_epochs": 50,
     "warm_up_epochs": 3, "learning_rate": 3e-5, "audio_backend": "logmel",
 }
+_MULTI_FPS_FIELDS = (
+    "action_sample_fps",
+    "rally_sample_fps",
+    "winner_sample_fps",
+    "video_limit",
+)
+_MULTI_FPS_DEFAULTS = {
+    "batch_size": 8,
+    "acc_grad_iter": 1,
+    "num_epochs": 50,
+    "warm_up_epochs": 3,
+    "learning_rate": 3e-5,
+    "audio_backend": "none",
+    "action_sample_fps": 30.0,
+    "rally_sample_fps": 5.0,
+    "winner_sample_fps": 5.0,
+    "video_limit": 0,
+}
 
 RECIPES: dict[str, Recipe] = {
     recipe.id: recipe
@@ -216,6 +234,14 @@ RECIPES: dict[str, Recipe] = {
             ("action", "location", "actor"),
             "Touch spotting plus which player acted, from the actor-candidate sidecar.",
             _ACTION_FIELDS + ("dataset_scope",), _FUSION_DEFAULTS,
+        ),
+        Recipe(
+            "action_rally_winner",
+            "Action + Rally + Winner",
+            ("action", "rally", "winner"),
+            "One shared visual backbone with task-specific 30/5/5 fps batches.",
+            _MULTI_FPS_FIELDS,
+            _MULTI_FPS_DEFAULTS,
         ),
     )
 }

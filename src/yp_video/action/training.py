@@ -200,9 +200,13 @@ def rally_match_span(stem: str, *, fps: float, num_frames: int) -> tuple[int, in
 
 
 def materialize_holdout_split(
-    label_dir: Path, holdout_stems: set[str], *, known_stems: set[str]
+    label_dir: Path,
+    holdout_stems: set[str],
+    *,
+    split_dir: Path,
+    known_stems: set[str],
 ) -> dict:
-    """Split the flat label snapshot into ``train/`` and ``val/`` by video stem.
+    """Link a flat snapshot into explicit ``split_dir/{train,val}`` sets.
 
     The chosen videos become validation; every other labelled video trains.
     Works for action (``*_actions.jsonl``) and rally (``*_rally.jsonl``)
@@ -240,8 +244,8 @@ def materialize_holdout_split(
             "(camera view / scope filtered them all out)"
         )
 
-    train_dir = label_dir.parent / "train"
-    val_dir = label_dir.parent / "val"
+    train_dir = split_dir / "train"
+    val_dir = split_dir / "val"
     for target in (train_dir, val_dir):
         if target.exists():
             shutil.rmtree(target)

@@ -725,6 +725,7 @@ async def _run_prelabel_batch_subprocess(
                 cmd = prelabel.build_command(
                     video_path=video,
                     checkpoint_path=checkpoint,
+                    task="action",
                     save_dir=pred_file.parent,
                     batch_size=req.batch_size,
                     num_workers=req.num_workers,

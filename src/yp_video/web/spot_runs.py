@@ -235,6 +235,7 @@ def make_train_parsers(
             or "New best epoch" in line
             or "Harmonic mean" in line
             or "Segment mAP" in line
+            or "Mean spotting mAP" in line
             or "SPOT_METRICS" in line
             or "SPOT_TASK_METRICS" in line
             or "Train loss" in line

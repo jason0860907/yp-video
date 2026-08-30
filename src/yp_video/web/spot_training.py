@@ -36,6 +36,7 @@ from yp_video.contracts.action import (
     TASKS,
     Recipe,
     spotting_task,
+    spotting_tasks,
 )
 from yp_video.web.job_helpers import (
     fail_job_from_exc,
@@ -76,8 +77,10 @@ _RUN_NAME_RE = re.compile(r"[A-Za-z0-9_.-]+")
 
 
 def recipe_token(recipe: Recipe) -> str:
-    """Run-name token: ``ral`` / ``ral_win`` / ``act`` / ``ass_act``."""
+    """Compact task token used in immutable run names."""
     tasks = recipe.tasks
+    if "action" in tasks and "rally" in tasks:
+        return "act_ral_win" if "winner" in tasks else "act_ral"
     if "action" in tasks:
         return "ass_act" if "actor" in tasks else "act"
     return "ral_win" if "winner" in tasks else "ral"
@@ -109,7 +112,7 @@ def _resolve_init_checkpoint(req: FusionTrainRequest) -> Path | None:
 def _audio_backend(req: FusionTrainRequest, recipe: Recipe) -> str:
     """Rally recipes are visual-only: rally spans have no audio cue worth a
     late-fusion branch, and the reduced-fps cache has no audio features."""
-    return req.audio_backend if spotting_task(recipe.tasks) == "action" else "none"
+    return req.audio_backend if spotting_tasks(recipe.tasks) == ("action",) else "none"
 
 
 def _audio_precompute_command(
@@ -144,7 +147,9 @@ def build_command(
     init_checkpoint: Path | None,
     audio_dir: Path | None,
 ) -> list[str]:
-    rally = spotting_task(recipe.tasks) == "rally"
+    spotting = spotting_tasks(recipe.tasks)
+    mixed = len(spotting) > 1
+    rally = spotting == ("rally",)
     cmd = [
         str(SPOT_PYTHON),
         "-m",
@@ -160,8 +165,6 @@ def build_command(
         ",".join(recipe.tasks),
         "--clip_len",
         str(req.clip_len),
-        "--sample_fps",
-        str(req.sample_fps),
         "--batch_size",
         str(req.batch_size),
         "--acc_grad_iter",
@@ -184,6 +187,16 @@ def build_command(
         _audio_backend(req, recipe),
         *prepared.extra_args,
     ]
+    if mixed:
+        for task, fps in (
+            ("action", req.action_sample_fps),
+            ("rally", req.rally_sample_fps),
+            ("winner", req.winner_sample_fps),
+        ):
+            if task in recipe.tasks:
+                cmd.extend(["--task_sample_fps", f"{task}={fps}"])
+    else:
+        cmd.extend(["--sample_fps", str(req.sample_fps)])
     if audio_dir is not None:
         cmd.extend(["--audio_dir", str(audio_dir)])
     if req.camera_view != "all":
@@ -193,22 +206,36 @@ def build_command(
     if req.epoch_num_frames is not None:
         cmd.extend(["--epoch_num_frames", str(req.epoch_num_frames)])
 
-    label_dir = prepared.label_dir
     if req.validation == "ratio":
-        cmd.extend([
-            "--label_dir", str(label_dir),
-            "--val_ratio", str(req.val_ratio),
-            "--split_seed", str(req.split_seed),
-        ])
+        if mixed:
+            for task in spotting:
+                cmd.extend(
+                    ["--task_label_dir", f"{task}={prepared.label_dirs[task]}"]
+                )
+        else:
+            cmd.extend(["--label_dir", str(prepared.label_dirs[spotting[0]])])
+        cmd.extend(["--val_ratio", str(req.val_ratio), "--split_seed", str(req.split_seed)])
     elif req.validation == "manual":
-        # train/ and val/ are symlink dirs materialized next to the flat
-        # snapshot by materialize_holdout_split before training starts.
-        cmd.extend([
-            "--train_labels", str(label_dir.parent / "train"),
-            "--val_labels", str(label_dir.parent / "val"),
-        ])
+        if mixed:
+            for task in spotting:
+                split_dir = save_dir / "label-splits" / task
+                cmd.extend(["--task_train_labels", f"{task}={split_dir / 'train'}"])
+                cmd.extend(["--task_val_labels", f"{task}={split_dir / 'val'}"])
+        else:
+            split_dir = save_dir / "label-splits" / spotting[0]
+            cmd.extend(
+                ["--train_labels", str(split_dir / "train"),
+                 "--val_labels", str(split_dir / "val")]
+            )
     else:
-        cmd.extend(["--train_labels", str(label_dir), "--val_labels", str(label_dir)])
+        if mixed:
+            for task in spotting:
+                label_dir = prepared.label_dirs[task]
+                cmd.extend(["--task_train_labels", f"{task}={label_dir}"])
+                cmd.extend(["--task_val_labels", f"{task}={label_dir}"])
+        else:
+            label_dir = prepared.label_dirs[spotting[0]]
+            cmd.extend(["--train_labels", str(label_dir), "--val_labels", str(label_dir)])
     return cmd
 
 
@@ -239,7 +266,14 @@ def _export_package(
             "label_summary": prepared.summary,
         },
         cmd=cmd,
-        serveable_tasks=[t for t in recipe.tasks if TASKS[t].serveable],
+        # Mixed-FPS training selects one macro-best epoch for the shared
+        # backbone. Every predict surface therefore loads the same weights;
+        # per-task metrics remain descriptive, not alternate checkpoints.
+        serveable_tasks=(
+            []
+            if len(spotting_tasks(recipe.tasks)) > 1
+            else [t for t in recipe.tasks if TASKS[t].serveable]
+        ),
     )
 
 
@@ -307,13 +341,16 @@ async def start_training_job(req: FusionTrainRequest) -> dict:
                         "Validation video(s) carry prediction labels only — "
                         "they cannot validate: " + ", ".join(sorted(leaked))
                     )
-                split = await asyncio.to_thread(
-                    training.materialize_holdout_split,
-                    prepared.label_dir,
-                    wanted,
-                    known_stems=prepared.all_stems,
-                )
-                label_summary.update(split)
+                splits = {}
+                for task_name, label_dir in prepared.label_dirs.items():
+                    splits[task_name] = await asyncio.to_thread(
+                        training.materialize_holdout_split,
+                        label_dir,
+                        wanted,
+                        split_dir=save_dir / "label-splits" / task_name,
+                        known_stems=prepared.all_stems,
+                    )
+                label_summary["splits"] = splits
             prepared.summary = label_summary
             await job_manager.update_job(
                 job.id,
@@ -333,7 +370,9 @@ async def start_training_job(req: FusionTrainRequest) -> dict:
                 rc, last_line = await stream_subprocess(
                     job.id,
                     _audio_precompute_command(
-                        backend, label_dir=prepared.label_dir, audio_dir=audio_dir
+                        backend,
+                        label_dir=prepared.label_dirs["action"],
+                        audio_dir=audio_dir,
                     ),
                     cwd=SPOT_DIR,
                 )
@@ -371,7 +410,11 @@ async def start_training_job(req: FusionTrainRequest) -> dict:
                         ctx,
                         params_key=PROGRESS_KEY,
                         criterion=req.criterion,
-                        headline_pattern=HEADLINE_PATTERNS[spotting_task(recipe.tasks)],
+                        headline_pattern=(
+                            r"Mean spotting mAP:\s*([0-9.]+)%"
+                            if len(spotting_tasks(recipe.tasks)) > 1
+                            else HEADLINE_PATTERNS[spotting_task(recipe.tasks)]
+                        ),
                         on_new_best=lambda: exporter.schedule(ctx.best_epoch, "new_best"),
                     )
                     env = {

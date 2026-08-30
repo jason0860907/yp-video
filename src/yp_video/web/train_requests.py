@@ -42,7 +42,13 @@ CameraView = Literal["all", "broadcast", "sideline"]
 Criterion = Literal["map", "loss"]
 
 
-RecipeId = Literal["rally", "rally_winner", "action", "association_action"]
+RecipeId = Literal[
+    "rally",
+    "rally_winner",
+    "action",
+    "association_action",
+    "action_rally_winner",
+]
 
 #: One of the two label families a recipe draws from; which request fields
 #: apply follows from it (see ``Recipe.fields`` in the contract).
@@ -130,6 +136,24 @@ class FusionTrainRequest(StrictModel):
         ge=0,
         le=120,
         description="Per-video frame stride targeting this sampling rate. 0 = every frame.",
+    )
+    action_sample_fps: float = Field(
+        default=30.0,
+        gt=0,
+        le=120,
+        description="Mixed recipe: action batch sampling rate.",
+    )
+    rally_sample_fps: float = Field(
+        default=5.0,
+        gt=0,
+        le=120,
+        description="Mixed recipe: rally batch sampling rate.",
+    )
+    winner_sample_fps: float = Field(
+        default=5.0,
+        gt=0,
+        le=120,
+        description="Mixed recipe: winner batch sampling rate.",
     )
     # ── Action recipes ───────────────────────────────────────────
     acc_grad_iter: int = Field(

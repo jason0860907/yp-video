@@ -86,6 +86,7 @@ def run_spot_inference(
     video_path: Path,
     *,
     checkpoint: Path,
+    task: str,
     batch_size: int = 8,
     num_workers: int = 4,
     clip_len: int = 64,
@@ -117,6 +118,7 @@ def run_spot_inference(
         cmd = prelabel.build_command(
             video_path=video_path,
             checkpoint_path=checkpoint,
+            task=task,
             save_dir=pred_file.parent,
             batch_size=batch_size,
             num_workers=num_workers,
@@ -262,6 +264,7 @@ def predict_actions_to_jsonl(
     predictions = run_spot_inference(
         video_path,
         checkpoint=checkpoint,
+        task="action",
         batch_size=batch_size,
         num_workers=num_workers,
         clip_len=clip_len,

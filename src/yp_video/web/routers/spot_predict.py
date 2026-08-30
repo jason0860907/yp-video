@@ -208,6 +208,7 @@ async def start(req: RallyPredictRequest) -> dict:
                 cmd = prelabel.build_command(
                     video_path=video_paths,
                     checkpoint_path=checkpoint,
+                    task="rally",
                     save_dir=[tmp_dir / p.stem for p in video_paths],
                     batch_size=req.batch_size,
                     num_workers=req.num_workers,

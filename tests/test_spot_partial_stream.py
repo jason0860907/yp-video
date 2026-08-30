@@ -63,6 +63,7 @@ class SpotPartialReaderTests(unittest.TestCase):
             predict.run_spot_inference(
                 Path("video.mp4"),
                 checkpoint=Path("ckpt.pt"),
+                task="action",
                 on_events=lambda events: seen.append(list(events)),
             )
         return seen

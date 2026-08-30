@@ -373,6 +373,7 @@ async def _start_association_training(
                 materialize_holdout_split,
                 Path(label_summary["label_dir"]),
                 val_stems,
+                split_dir=save_dir / "label-splits" / "action",
                 known_stems=val_stems,
             )
             label_summary = {**label_summary, **split}
@@ -381,9 +382,9 @@ async def _start_association_training(
                 "-m",
                 "yp_spot.association.train",
                 "--train-labels",
-                str(save_dir / "labels" / "train"),
+                str(save_dir / "label-splits" / "action" / "train"),
                 "--val-labels",
-                str(save_dir / "labels" / "val"),
+                str(save_dir / "label-splits" / "action" / "val"),
                 "--actor-dir",
                 str(save_dir / "labels" / ACTOR_LABEL_SUBDIR),
                 "--frame-dir",

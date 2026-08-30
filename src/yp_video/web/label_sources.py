@@ -1,11 +1,9 @@
 """How each recipe family turns its annotation corpus into a run's label snapshot.
 
-A SPOT run reads one label directory (``--label_dir`` / ``--train_labels``)
-plus optional task sidecars (``--actor_dir``). Rally recipes draw from the
+A SPOT stream reads one label directory plus optional task sidecars. Rally recipes draw from the
 rally annotations at a reduced extraction fps; action recipes from the action
 annotations at native fps, plus the actor-candidate sidecar when the actor
-head is trained. Both end in the same ``PreparedLabels`` so the launcher
-(``spot_training``) does not branch on recipe.
+head is trained. A mixed recipe carries both directories explicitly.
 """
 
 from __future__ import annotations
@@ -28,6 +26,7 @@ from yp_video.contracts.action import (
     Recipe,
     label_subdirs,
     spotting_task,
+    spotting_tasks,
 )
 from yp_video.web.r2_client import resolve_cut
 from yp_video.web.train_requests import FusionTrainRequest
@@ -37,8 +36,8 @@ Progress = Callable[[int, int, str], None]
 
 @dataclass
 class PreparedLabels:
-    #: The directory the spotting task reads; holdout splits are built next to it.
-    label_dir: Path
+    #: One label snapshot directory per spotting stream.
+    label_dirs: dict[str, Path]
     #: Every ``labels/<subdir>`` written — what the package snapshots.
     label_subdirs: tuple[str, ...]
     frame_dir: Path
@@ -77,7 +76,7 @@ class RallySource:
         label_dir = save_dir / "labels" / TASKS["rally"].label_subdir
         summary = rally_spot.write_training_labels(items, label_dir=label_dir)
         return PreparedLabels(
-            label_dir=label_dir,
+            label_dirs={"rally": label_dir},
             label_subdirs=label_subdirs(recipe.tasks),
             frame_dir=ACTION_FRAMES_DIR,
             dataset="yp_rally",
@@ -126,7 +125,7 @@ class ActionSource:
         if "actor" in recipe.tasks:
             extra_args = ["--actor_dir", summary["actor_dir"]]
         return PreparedLabels(
-            label_dir=Path(summary["label_dir"]),
+            label_dirs={"action": Path(summary["label_dir"])},
             label_subdirs=label_subdirs(recipe.tasks),
             frame_dir=ACTION_FRAMES_DIR,
             dataset="yp_actions",
@@ -137,7 +136,43 @@ class ActionSource:
         )
 
 
+class MultiSource:
+    """Prepare action and rally snapshots for the mixed-FPS recipe."""
+
+    def prepare(
+        self, req: FusionTrainRequest, recipe: Recipe, *, save_dir: Path, progress: Progress
+    ) -> PreparedLabels:
+        action = ActionSource().prepare(
+            req, recipe, save_dir=save_dir, progress=progress
+        )
+        rally = RallySource().prepare(
+            req, recipe, save_dir=save_dir, progress=progress
+        )
+        common_stems = action.all_stems & rally.all_stems
+        if not common_stems:
+            raise RuntimeError(
+                "Mixed training found no video shared by action and rally labels"
+            )
+        return PreparedLabels(
+            label_dirs={**action.label_dirs, **rally.label_dirs},
+            label_subdirs=label_subdirs(recipe.tasks),
+            frame_dir=action.frame_dir,
+            dataset="yp_action_rally",
+            summary={
+                "action": action.summary,
+                "rally": rally.summary,
+                "rallies_with_winner": rally.summary.get("rallies_with_winner", 0),
+                "shared_videos": len(common_stems),
+            },
+            prediction_stems=action.prediction_stems,
+            all_stems=common_stems,
+        )
+
+
 def source_for(recipe: Recipe) -> LabelSource:
+    spotting = spotting_tasks(recipe.tasks)
+    if len(spotting) > 1:
+        return MultiSource()
     return RallySource() if spotting_task(recipe.tasks) == "rally" else ActionSource()
 
 

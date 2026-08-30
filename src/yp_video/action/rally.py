@@ -339,6 +339,7 @@ def predict_rally_segments(
     predictions = run_spot_inference(
         video_path,
         checkpoint=checkpoint,
+        task="rally",
         batch_size=batch_size,
         num_workers=num_workers,
         clip_len=clip_len,

@@ -11,7 +11,8 @@
         "rally",
         "rally_winner",
         "action",
-        "association_action"
+        "association_action",
+        "action_rally_winner"
       ],
       "title": "Recipe",
       "type": "string"
@@ -115,6 +116,30 @@
       "maximum": 120,
       "minimum": 0,
       "title": "Sample Fps",
+      "type": "number"
+    },
+    "action_sample_fps": {
+      "default": 30.0,
+      "description": "Mixed recipe: action batch sampling rate.",
+      "exclusiveMinimum": 0,
+      "maximum": 120,
+      "title": "Action Sample Fps",
+      "type": "number"
+    },
+    "rally_sample_fps": {
+      "default": 5.0,
+      "description": "Mixed recipe: rally batch sampling rate.",
+      "exclusiveMinimum": 0,
+      "maximum": 120,
+      "title": "Rally Sample Fps",
+      "type": "number"
+    },
+    "winner_sample_fps": {
+      "default": 5.0,
+      "description": "Mixed recipe: winner batch sampling rate.",
+      "exclusiveMinimum": 0,
+      "maximum": 120,
+      "title": "Winner Sample Fps",
       "type": "number"
     },
     "acc_grad_iter": {
