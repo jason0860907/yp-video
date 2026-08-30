@@ -296,6 +296,24 @@
   temporal mAP `0.5833`、rally segment mAP `0.3333`，macro selection 正確為
   `0.4583`；嚴格載入同一 checkpoint 後，action 推論只回 action scores，rally
   推論同時回 rally 與 winner scores。
+- 第一個正式 run `20260830_all_view_act_ral_win_rny008_tv` 在 epoch 0 的完整
+  action evaluate 暴露另一個 evaluator RAM 問題：即使不儲存 prediction JSON，
+  evaluator 仍對約 1,200 萬 frames 的所有 class scores 呼叫 `tolist()`，並替沒有
+  location head 的 action 建立無用的 zero location channel。process-tree PSS 因此
+  升到 **10,265,182 KiB（9.79 GiB）**，父程序 anonymous memory 升到
+  **9,100,444 KiB**。該 run 在產生錯誤 metric/checkpoint 前安全停止，不列入正式
+  結果。
+- evaluator 現在於 metric-only 模式只保留通過既有候選 threshold 的 compact
+  events；不建立 dense score JSON、argmax records 或 action location accumulator，
+  temporal-only action 也不再製造假 spatial channel。候選 threshold 與後續 metric
+  原有的 cutoff 相同；tiny regression 的 action `0.5833`、rally `0.3333` 完全不變。
+- 修正版正式 run `20260830_all_view_act_ral_win_rny008_tv-2` 的 epoch 0 已完整跑過
+  train → val-loss → action full evaluate → rally/winner full evaluate；每秒遞迴量測
+  的 process-tree peak PSS 為 **6,236,470 KiB（5.95 GiB）**，低於 8 GiB gate，
+  完成 metric 聚合時亦未跳升。GPU peak 為 **19,192 MiB**。共享 500,000-frame
+  budget 實際分配為 action `166,912`、rally `166,400`、winner `166,400` frames；
+  winner stream 含 `52,729` 個 supervised events。`checkpoint_000.pt`、
+  `optim_000.pt`、`checkpoint_best.pt` 與 epoch metric 均已落盤，epoch 1 已開始。
 - 正式 run 使用 recipe 的既定 50 epochs、3 warm-up epochs、`3e-5` LR、clip 64、
   batch 8、8 workers、500,000 total frames/epoch、全資料與 seed 42。驗收要求程序
   正常完成、50 筆 metrics/checkpoint 連續、每輪三個 stream 都有 supervision、
