@@ -266,6 +266,43 @@
 - 從最小端到端版本開始：先支援 action/rally 交替 batch，再疊加 winner；不先建
   通用 scheduler、任意 task graph 或其他尚未需要的抽象。
 
+#### 2026-08-30 multi-FPS 實作與前置驗收
+
+- 原先的 A3 gate 因 8-epoch `rally+winner` 未達 `0.85` 而關閉；使用者已明確決定
+  不再等待該 gate，直接進行多 FPS 聯合訓練。這不改寫前述受控實驗結果，也不把
+  未通過記成通過。
+- contract 已直接升為 3.0.0，不保留舊 checkpoint/config fallback。一個 checkpoint
+  內有獨立的 action／rally temporal heads、winner head、共同 visual backbone 與
+  optimizer；推論多 spotting checkpoint 時必須明確指定 action 或 rally。
+- trainer 只建立一個 train `DataLoader` 與一組 worker pool；action、rally、winner
+  各自有 dataset/sampler，batch 以固定 round-robin 順序交替，每個 batch 只啟用該
+  task 的 head。整體 `epoch_num_frames` 是共享 budget，不會因三個 task 乘三倍。
+- action 使用 30 fps，rally 與 winner 各使用 5 fps；三者都從同一份 native-fps
+  frame cache 依 stride 讀取。winner stream 會直接以有 winner 標籤的 rally tail
+  為 anchor，避免隨機 clip 沒有 winner supervision。
+- train/validation split 先以所有 task 的影片 stem 做全域分割，再建立各 task
+  dataset，禁止同一影片從一個 task 的 train 洩漏到另一個 task 的 validation。
+  validation 逐 task 執行；沒有 location head 的 action 以 temporal mAP 作 primary
+  metric，rally 以 segment mAP，checkpoint 以兩個 spotting metric 的平均選擇。
+- 真實資料 smoke（`rny008_tv_gsm`、clip 64、batch 8、8 train workers）完整跑過
+  action → rally → winner train batch 與三組 validation batch，exit code 0；每個
+  stream 都有獨立 loss/count，winner batch 170 個 supervised events。
+- 同設定的保守 process-tree peak PSS 為 **6.535 GiB**，低於 8 GiB gate；父程序
+  `RssShmem` 約 **149 MiB**，沒有恢復舊 pinned-memory 膨脹。full-model compile 的
+  GPU peak 為 **19,034 MiB（18.588 GiB）**，在 24 GiB GPU 內。改成 multi eager
+  反而升到 **20,194 MiB**；只 compile backbone 為 **19,030 MiB**，沒有節省且會
+  增加額外 compile latency，因此保留最簡單且較快的 full-model compile。
+- 完整 map/checkpoint smoke 以真實 cache 跑完 action、rally、winner：action
+  temporal mAP `0.5833`、rally segment mAP `0.3333`，macro selection 正確為
+  `0.4583`；嚴格載入同一 checkpoint 後，action 推論只回 action scores，rally
+  推論同時回 rally 與 winner scores。
+- 正式 run 使用 recipe 的既定 50 epochs、3 warm-up epochs、`3e-5` LR、clip 64、
+  batch 8、8 workers、500,000 total frames/epoch、全資料與 seed 42。驗收要求程序
+  正常完成、50 筆 metrics/checkpoint 連續、每輪三個 stream 都有 supervision、
+  macro-best checkpoint 可同時嚴格載入 action/rally/winner；最終另外對照 action
+  temporal mAP、rally segment mAP、winner top-1／majority baseline 與四類 recall，
+  不以其中一個 task 的改善掩蓋另一個 task 的退化。
+
 ### B. web 記憶體：tracks 只有一個有界 cache owner
 
 #### 實作
