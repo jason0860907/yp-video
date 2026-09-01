@@ -21,7 +21,7 @@ from pathlib import Path
 from yp_video.config import RALLY_PRE_ANNOTATIONS_DIR, SEG_ANNOTATIONS_DIR
 from yp_video.core.jsonl import read_jsonl, write_jsonl
 from yp_video.core.rallies import number_rallies
-from yp_video.core.sampling import get_video_duration_cv2 as get_video_duration
+from yp_video.core.sampling import get_video_duration_cv2
 
 
 def detect_rallies(
@@ -146,7 +146,7 @@ def convert_vlm_to_rally(
     # Get video path and duration
     video_path = Path(meta.get("video", ""))
     if video_path.exists():
-        duration = get_video_duration(video_path)
+        duration = get_video_duration_cv2(video_path)
     else:
         # Estimate from clips
         duration = max(c.get("end_time", 0) for c in clips)

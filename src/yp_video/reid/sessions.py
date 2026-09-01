@@ -158,6 +158,3 @@ def build_sessions(
     ]
 
 
-def group_of(stem: str, groups: Sequence[SessionGroup]) -> SessionGroup | None:
-    """The group a stem belongs to, or None when it carries no assignments."""
-    return next((g for g in groups if stem in g.stems), None)

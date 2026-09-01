@@ -278,12 +278,3 @@ def _label_stem(filename: str) -> str:
     return filename
 
 
-def checkpoint_stats() -> dict:
-    count = 0
-    if SPOT_CHECKPOINTS_DIR.exists():
-        count = sum(1 for path in SPOT_CHECKPOINTS_DIR.glob("*/checkpoint_best.pt") if path.is_file())
-    return {
-        "dir": str(SPOT_CHECKPOINTS_DIR),
-        "runs": count,
-        "exists": SPOT_CHECKPOINTS_DIR.exists(),
-    }

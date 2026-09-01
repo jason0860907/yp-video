@@ -440,15 +440,6 @@ class ActorCandidateEvent(BaseModel):
     )
 
 
-class ActorCandidateRecord(BaseModel):
-    """One video's worth of actor supervision — a ``*_actor_candidates.jsonl``."""
-
-    model_config = {"extra": "allow"}
-
-    video: str = Field(description="Video stem; matches the action label record")
-    events: list[ActorCandidateEvent] = Field(default_factory=list)
-
-
 class ActionLabelRecord(BaseModel):
     """One video's worth of action labels — the unit of a ``*_actions.jsonl`` row."""
 

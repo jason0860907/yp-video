@@ -121,27 +121,6 @@ def download_video(
         return None
 
 
-def download_youtube_video(url: str, output_dir: str | Path | None = None, quality: str = "best") -> str | None:
-    """Convenience function for pipeline use.
-
-    Args:
-        url: YouTube URL
-        output_dir: Output directory (default: ~/videos)
-        quality: Video quality (best, 1080, 720, 480, 360)
-
-    Returns:
-        Path to output directory, or None if failed
-    """
-    # Ensure yt-dlp is available
-    if not check_ytdlp():
-        install_ytdlp()
-        if not check_ytdlp():
-            print("Error: Failed to install yt-dlp")
-            return None
-
-    return download_video(url=url, output_dir=output_dir, quality=quality)
-
-
 def list_formats(url: str):
     """List available formats for a video."""
     subprocess.run(["yt-dlp", "-F", url])

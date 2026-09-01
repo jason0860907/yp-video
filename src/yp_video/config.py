@@ -255,8 +255,3 @@ def load_prompt(filename: str) -> str:
         return f.read()
 
 
-def count_files(directory: Path, pattern: str = "*") -> int:
-    """Count files matching *pattern* in *directory* without building a list."""
-    if not directory.exists():
-        return 0
-    return sum(1 for _ in directory.glob(pattern))

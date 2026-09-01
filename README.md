@@ -83,9 +83,6 @@ uv run yp-download "https://youtube.com/watch?v=xxx" -q 720
 ./start_vllm_server.sh
 uv run yp-vlm-segment --video ~/videos/cuts-broadcast/set1.mp4
 
-# 批次偵測多場比賽
-./rally.sh G1 G2 G3
-
 # 3. VLM 片段偵測 → Rally 標註合併
 uv run yp-vlm-to-rally
 # 讀取 ~/videos/seg-annotations/ → 輸出至 ~/videos/rally-pre-annotations/
@@ -156,7 +153,6 @@ yp-video/
 ├── migrations/                 # 稽核資料庫 schema（NNNN_*.sql）
 ├── docker-compose.yml          # 本機 Postgres
 ├── prompts/                    # VLM Prompt 模板
-├── rally.sh                    # 批次偵測腳本
 ├── start_vllm_server.sh        # vLLM 啟動腳本
 └── pyproject.toml
 ```

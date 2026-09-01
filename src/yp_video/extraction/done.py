@@ -82,13 +82,3 @@ def confirm_reviewed(stem: str) -> int:
     )
 
 
-def backfill_confirmed_done(stems: Sequence[str]) -> dict[str, int]:
-    """Explicit migration for videos marked Done before confirmation existed."""
-    counts: dict[str, int] = {}
-    for stem in stems:
-        if not label_done.is_done(stem, "reid"):
-            raise ValueError(f"{stem} is not marked Done")
-        if not records_path(stem).exists():
-            raise FileNotFoundError(f"No extraction records for {stem}")
-        counts[stem] = mark_done(stem, True, confirm_auto=True)
-    return counts
