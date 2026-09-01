@@ -11,8 +11,8 @@ descriptions straight from the schema. Do not edit the JSON by hand.
 """
 
 import json
-from pathlib import Path
 
+from yp_video.config import PROJECT_ROOT
 from yp_video.web.train_requests import (
     AssociationTrainRequest,
     FusionTrainRequest,
@@ -29,7 +29,7 @@ _SCHEMAS = {
 
 
 def main() -> None:
-    contracts_dir = Path(__file__).resolve().parents[3] / "contracts"
+    contracts_dir = PROJECT_ROOT / "contracts"
     contracts_dir.mkdir(parents=True, exist_ok=True)
     for name, model in _SCHEMAS.items():
         payload = {

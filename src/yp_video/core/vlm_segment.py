@@ -390,8 +390,8 @@ async def _run_pipeline_async(
 
 def process_video(
     video_path: str,
-    server_url: str = "http://localhost:8000",
-    model: str = "Qwen/Qwen3-VL-8B-Instruct",
+    server_url: str | None = None,
+    model: str | None = None,
     clip_duration: float = 6.0,
     slide_interval: float = 2.0,
     output_file: str | None = None,
@@ -405,8 +405,8 @@ def process_video(
 
     Args:
         video_path: Path to the video file
-        server_url: vLLM server URL
-        model: Model name
+        server_url: vLLM server URL (default: localhost + VLLM_PORT from .env)
+        model: Model name (default: VLLM_MODEL from .env)
         clip_duration: Duration of each clip in seconds
         slide_interval: Sliding window interval in seconds
         output_file: Output JSON file path (optional)
@@ -421,6 +421,13 @@ def process_video(
         List of ClipResult objects (ordered by clip index)
     """
     video_path = os.path.abspath(video_path)
+
+    # Same source of truth as the CLI's defaults: the workspace .env. A
+    # hardcoded port here once disagreed with VLLM_PORT (8000 vs 8001).
+    if server_url is None:
+        server_url = f"http://localhost:{_VLLM_CONFIG['VLLM_PORT']}"
+    if model is None:
+        model = _VLLM_CONFIG["VLLM_MODEL"]
 
     if total_duration is None:
         total_duration = get_video_duration(video_path)

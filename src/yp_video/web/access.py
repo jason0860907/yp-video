@@ -123,7 +123,7 @@ class AccessAuth:
     """Pure ASGI: no request is served without a verified identity.
 
     Not BaseHTTPMiddleware — the job SSE streams must pass through untouched,
-    the same reason _ApiNoStore is written this way.
+    the same reason _CachePolicy is written this way.
     """
 
     def __init__(self, app):

@@ -7,7 +7,7 @@
 - **Download** - 批次下載 YouTube 播放清單影片
 - **Cut** - 將完整比賽影片切分為個別 set
 - **Detect** - 使用 Qwen3-VL 模型偵測 rally 片段（VLM + 投票平滑）
-- **Annotate** - 檢視偵測結果並人工校正 rally 標註，存檔後自動發佈到 iOS app library
+- **Annotate** - 檢視偵測結果並人工校正 rally 標註
 - **Action Annotate** - 逐 frame 動作事件標註（serve / receive / set / spike / block / score）
 - **Train** - 用校正後的標註訓練 SPOT 模型（rally 分段與 action 事件各一套流程）
 - **Predict** - 用訓練好的 SPOT checkpoint 對影片做推論
@@ -60,7 +60,7 @@ cloudflared access login https://label.volley-iq.com
 export YP_ACCESS_TOKEN=$(cloudflared access token -app=https://label.volley-iq.com)
 ```
 
-ReID 的可選外部模型:SAM 3D Body 住在 repo 外的 `../third_party/`,CLIP-ReIdent 系譜的訓練/推論住在 sibling package `../yp-reid/`(獨立 venv,subprocess 邊界,比照 yp-spot)。重建步驟見 [docs/third_party.md](docs/third_party.md) —— 缺權重時對應功能自動退場,不影響其他部分。
+ReID 的 appearance embedder（CLIP-ReIdent 系譜）訓練/推論住在 sibling package `../yp-reid/`（獨立 venv，subprocess 邊界 + contract 握手，比照 yp-spot）。細節見 [docs/third_party.md](docs/third_party.md)。
 
 ## 使用方式
 
@@ -81,11 +81,11 @@ uv run yp-download "https://youtube.com/watch?v=xxx" -q 720
 
 # 2. VLM 偵測（需先啟動 vLLM 伺服器）
 ./start_vllm_server.sh
-uv run yp-vlm-segment --video ~/videos/cuts-broadcast/set1.mp4
+uv run yp-vlm-segment --video ../videos/cuts-broadcast/set1.mp4
 
 # 3. VLM 片段偵測 → Rally 標註合併
 uv run yp-vlm-to-rally
-# 讀取 ~/videos/seg-annotations/ → 輸出至 ~/videos/rally-pre-annotations/
+# 讀取 videos/rally/seg-annotations/ → 輸出至 videos/rally/pre-annotations/
 
 # 4. 人工校正標註、SPOT 訓練與推論 → 使用 Web Dashboard
 ```
@@ -113,7 +113,7 @@ Download → Cut → Detect → VLM→Rally → Annotate → Train → Predict
    │        │       │         │          │          │        │
    │        │       │         │          │          │        └─ SPOT 推論（rally / action）
    │        │       │         │          │          └─ 訓練 SPOT 模型（yp-spot）
-   │        │       │         │          └─ 人工校正 → ground truth + 發佈 app library
+   │        │       │         │          └─ 人工校正 → ground truth
    │        │       │         └─ 片段偵測合併為 rally 標註
    │        │       └─ VLM 偵測（Qwen3-VL）
    │        └─ 切分為個別 set
@@ -134,9 +134,13 @@ yp-video/
 │   │   ├── vlm_to_rally.py     # VLM 片段 → rally 標註合併
 │   │   ├── jsonl.py            # JSONL 讀寫
 │   │   └── sampling.py         # 影片取樣工具
-│   ├── action/                 # Action (SPOT) 流程編排：frame 快取、預標、推論輸出轉換
-│   ├── rally_spot.py           # Rally 分段的 SPOT 訓練/推論編排
-│   ├── contracts/              # 跨進程資料格式（yp-video ↔ yp-spot）
+│   ├── action/                 # SPOT 流程編排：frame 快取、預標、推論輸出轉換
+│   ├── contracts/              # 跨 repo 資料格式（yp-video ↔ yp-spot / yp-reid / selfhost-worker）
+│   ├── person/                 # 感知基元：人物偵測與 instance mask
+│   ├── tracklets/              # 追蹤：誰在場上、何時（rally 內 track）
+│   ├── extraction/             # 屋頂層：偵測 → 選 actor → 裁切 → embedding 的編排
+│   ├── actor/                  # 誰做了這個動作（association 規則與學習策略）
+│   ├── reid/                   # 這個人是誰（embedding、聚類、身分標註）
 │   ├── youtube/                # CLI 工具
 │   │   ├── download.py         # YouTube 下載
 │   │   └── rename_tpvl.py      # TPVL 重命名
@@ -157,25 +161,46 @@ yp-video/
 └── pyproject.toml
 ```
 
+> **`contracts/` 是跨 repo 公開 API**：`yp_video/contracts/__init__.py` 的
+> re-export 除了 yp-spot / yp-reid 之外，也被 `volleyiq-backend/selfhost-worker`
+> 以 `from yp_video.contracts import ...` 直接使用。就算在 yp-video 內部
+> 看起來沒有人引用，也不可當 dead code 清除；`contracts/*.schema.json`
+> 由 `make contract` 產生，是 iOS app 與 yp-spot 消費的 source of truth。
+
 ## 資料目錄
 
+以 `src/yp_video/config.py` 為準（`YP_VIDEOS_DIR` 可覆寫，預設 workspace 的 `../videos/`）。
+規則：屬於某個模型家族的東西——人工標註與機器產物——都住在該家族的目錄下；
+各家族的 `annotations/` 子目錄是手工、不可重建的部分，其餘皆為衍生資料。
+
 ```
-~/videos/
-├── raw-videos/                  # 下載的完整比賽影片
-├── cuts-broadcast/              # 剪輯後的 set 影片（轉播視角）
-├── cuts-sideline/               # 剪輯後的 set 影片（場邊視角）
-├── seg-annotations/             # VLM 逐片段偵測結果（自動）
-├── rally-pre-annotations/       # 投票平滑後的 rally 預標註（自動）
-├── rally-annotations/           # 人工校正後的 rally ground truth
-├── rally-spot-frames/           # rally SPOT 訓練用 frame 快取
-├── rally-spot-checkpoints/      # rally SPOT 模型權重
-├── rally-spot-pre-annotations/  # rally SPOT 推論結果
-├── action-annotations/          # 人工校正後的 action ground truth
-├── action-pre-annotations/      # action SPOT 推論/預標結果
-├── action-frames/               # action SPOT 訓練用 frame 快取
-├── action-audio/                # 標註輔助音訊
-├── action-waveforms/            # 標註輔助波形
-└── action-checkpoints/          # action SPOT 模型權重
+videos/
+├── raw-videos/              # 下載的完整比賽影片
+├── cuts-broadcast/          # 剪輯後的 set 影片（轉播視角）
+├── cuts-sideline/           # 剪輯後的 set 影片（場邊視角）
+├── rally/
+│   ├── seg-annotations/     # VLM 逐片段偵測結果（自動）
+│   └── pre-annotations/     # VLM 合併後的 rally 預標註（自動）
+├── rally-spot/
+│   ├── annotations/         # 人工校正後的 rally ground truth（含 winner）
+│   └── pre-annotations/     # rally SPOT 推論結果
+├── action/
+│   ├── annotations/         # 人工校正後的 action ground truth
+│   ├── pre-annotations/     # action SPOT 推論/預標結果
+│   ├── frames/              # SPOT 訓練用 frame 快取
+│   ├── audio/               # SPOT late-fusion 音訊特徵
+│   └── waveforms/           # 標註輔助波形
+├── spot/checkpoints/        # 所有 SPOT/association checkpoint package（依 manifest 分辨）
+├── tracks/                  # 追蹤輸出：誰在場上（衍生）
+├── extraction/              # 偵測記錄與 actor crop（records/、crops/、crops-masked/；衍生）
+├── association/annotations/ # 人工 actor verdict（<stem>_actors.json）
+├── reid/
+│   ├── annotations/         # 人工球員身分（<stem>_players.json）
+│   ├── checkpoints/         # yp-reid checkpoint package
+│   ├── datasets/            # 匯出的 ReID 訓練資料集（衍生）
+│   └── embeddings/          # crop embedding（衍生）
+├── action-val-set.txt       # action recipe 的人工驗證集清單
+└── label-done.jsonl         # 每支影片各標註模式的 Done 旗標
 ```
 
 ## CLI 指令一覽

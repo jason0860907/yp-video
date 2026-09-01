@@ -12,9 +12,10 @@ Do not edit the JSON by hand.
 
 import json
 from dataclasses import asdict
-from pathlib import Path
 
 from pydantic.json_schema import GenerateJsonSchema, models_json_schema
+
+from yp_video.config import PROJECT_ROOT
 
 from .action import (
     ACTION_CONTRACT_VERSION,
@@ -111,13 +112,8 @@ def build_action_schema() -> dict:
     }
 
 
-def _repo_root() -> Path:
-    # src/yp_video/contracts/make_schema.py -> repo root is parents[3]
-    return Path(__file__).resolve().parents[3]
-
-
 def main() -> None:
-    contracts_dir = _repo_root() / "contracts"
+    contracts_dir = PROJECT_ROOT / "contracts"
     contracts_dir.mkdir(parents=True, exist_ok=True)
     for name, payload in (
         ("detector.schema.json", build_schema()),
