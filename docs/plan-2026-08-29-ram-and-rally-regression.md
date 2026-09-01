@@ -321,6 +321,51 @@
   temporal mAP、rally segment mAP、winner top-1／majority baseline 與四類 recall，
   不以其中一個 task 的改善掩蓋另一個 task 的退化。
 
+#### 2026-08-31 五任務 recipe 修訂與驗收
+
+- `action_rally_winner` 直接取代為
+  `action,location,actor,rally,winner`，不保留舊三輸出 recipe。資料仍只有三條
+  round-robin stream：Action batch 同時啟用 Action／location／actor；Rally 與
+  Winner 各自獨立，location／actor 不會被錯當成額外資料流。
+- Action stream 使用 30 fps 與 log-mel；Rally／Winner 使用 5 fps 且純視覺。
+  checkpoint 以 `sample_fps_by_stream`、`audio_backend_by_stream` 記錄架構，推論依
+  stream 重建，不接受舊的全域 audio 或 task-FPS config。
+- 正式預設為 ConvNeXt-T DV3 GSM、batch 4、500,000 frames/epoch、50 epochs、
+  4 train workers、warm-up 3、10% validation、epoch 10 起 full evaluation。
+  backbone 與 audio encoder LR 為 `3e-5`，Action head 為 `3e-4`；Rally／Winner
+  heads 為 `3e-5`；location／actor geometry heads 為 `6e-6`；Action foreground
+  sampling 為 `0.5`。
+- Actor 採 partial supervision：保留全部 200 支 Action 影片，只有已 review 的
+  event 計 actor loss。這次 snapshot 有 16,058 個 tracked、4,158 個 occluded、
+  287 個 untracked actor targets；200 支 Action 影片的 log-mel cache 均存在且
+  feature dimension 為 40。
+- 真實 cache smoke 已跑完三條 train/validation stream。Action batch 同時產生有限的
+  classification、location、visibility 與 actor loss；Rally、Winner 亦各有有限 loss
+  與 supervision count。debug full evaluation 已跑完 Action temporal+spatial 與 Rally
+  segment evaluator，checkpoint 可按五任務與 Action-only audio 設定嚴格重建。
+- 第一個正式啟動以 8 workers 量到 process-tree peak PSS 8.15 GiB，超過 `<8 GiB`
+  gate，已在第一個 epoch checkpoint 前停止；正式預設因此固定為 4 workers，不把
+  超標 run 當成可接受結果。
+- 4-worker run 在 epoch 10 的 Action temporal mAP 達 9.88%，但 backbone 接近
+  `3e-4` 後全模型 loss 變為 NaN，Rally mAP 亦為 0。該 run 由 gate 停止；後續
+  將共享 backbone/base LR 改回 `3e-5`，只保留 Action head `3e-4`，從零重跑。
+- Epoch 10 gate：Action temporal mAP 必須 `>= 1%`，且至少兩個非 serve class 的 AP
+  非零；location／actor metrics 必須有效，Rally mAP 非零，Winner top-1 必須高於
+  當輪 majority baseline。未通過即停止，不用後續 epoch 掩蓋失敗。
+- 共享 backbone/base LR `3e-5` 的正式 run
+  `20260831_joint5_convnextt_bb3e5` 已正常完成 50 epochs（metrics `epoch=0--49`），
+  exit code 0，沒有 NaN 或 non-finite validation batch。epoch 49 是 macro spotting
+  selection 的最佳 checkpoint，Action temporal mAP `0.45672`、Action harmonic mAP
+  `0.22550`、location spatial mAP `0.14970`、actor player top-1 `0.76923`、Rally
+  segment mAP `0.87120`、Winner top-1 `0.93354`（majority baseline `0.39435`）；
+  Winner left/right/near/far recall 為 `0.98164/0.95828/0.81935/0.84447`。
+- 各 task 在正式 run 的單項最高值為：Action temporal mAP `0.45778`（epoch 43）、
+  location spatial mAP `0.15006`（epoch 47）、actor player top-1 `0.86076`
+  （epoch 43）、Rally segment mAP `0.87660`（epoch 40）、Winner top-1 `0.93354`
+  （epoch 49）。最終 `checkpoint_best.pt` 已依 contract 3.0.0 嚴格重建並載入
+  Action/location/actor/Rally/Winner 五個 heads；config 保留 Action 30 fps + log-mel、
+  Rally/Winner 5 fps + pure visual 的 stream contract。多 FPS 五任務端到端驗收完成。
+
 ### B. web 記憶體：tracks 只有一個有界 cache owner
 
 #### 實作

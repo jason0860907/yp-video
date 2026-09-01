@@ -96,7 +96,7 @@ class FusionTrainRequest(StrictModel):
         description="manual: the videos (stems) held out as the validation set.",
     )
     val_ratio: float = Field(
-        default=0.2,
+        default=0.1,
         gt=0,
         lt=1,
         description="ratio: fraction of videos held out as the validation split.",
@@ -189,6 +189,31 @@ class FusionTrainRequest(StrictModel):
         default=3, ge=0, le=100, description="Linear LR warm-up epochs."
     )
     learning_rate: float = Field(default=0.00003, gt=0)
+    action_learning_rate: float | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Optional Action head learning rate override for mixed training. "
+            "The shared backbone and other heads keep learning_rate."
+        ),
+    )
+    rally_learning_rate: float | None = Field(
+        default=None, gt=0,
+        description="Optional Rally head learning rate override for mixed training.",
+    )
+    winner_learning_rate: float | None = Field(
+        default=None, gt=0,
+        description="Optional Winner head learning rate override for mixed training.",
+    )
+    action_fg_upsample: float | None = Field(
+        default=None,
+        gt=0,
+        lt=1,
+        description=(
+            "Optional Action foreground sampling threshold for mixed training. "
+            "At 0.5, half of Action clips are anchored on an annotated event."
+        ),
+    )
     num_workers: int = Field(
         default=8,
         ge=0,
@@ -199,9 +224,12 @@ class FusionTrainRequest(StrictModel):
         default="map", description="Which epoch counts as best: top validation mAP or lowest loss."
     )
     start_val_epoch: int = Field(
-        default=0,
+        default=10,
         ge=0,
-        description="Skip validation before this epoch to save time early in a long run.",
+        description=(
+            "Skip full metric evaluation before this zero-based epoch; "
+            "validation loss is still computed every epoch."
+        ),
     )
     epoch_num_frames: int | None = Field(
         default=None,

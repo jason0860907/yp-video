@@ -158,6 +158,7 @@ class MultiSource:
             label_subdirs=label_subdirs(recipe.tasks),
             frame_dir=action.frame_dir,
             dataset="yp_action_rally",
+            extra_args=action.extra_args,
             summary={
                 "action": action.summary,
                 "rally": rally.summary,
@@ -184,9 +185,10 @@ def check_task_supervision(recipe: Recipe, prepared: PreparedLabels) -> None:
     the loaded labels; this one names the corpus fix instead.
     """
     summary = prepared.summary
+    action_summary = summary.get("action", summary)
     present = {
         "winner": bool(summary.get("rallies_with_winner")),
-        "actor": bool((summary.get("actor_targets") or {}).get("track")),
+        "actor": bool((action_summary.get("actor_targets") or {}).get("track")),
     }
     hints = {
         "winner": "annotate the winning side in the rally editor first",

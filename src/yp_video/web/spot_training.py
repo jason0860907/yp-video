@@ -110,9 +110,8 @@ def _resolve_init_checkpoint(req: FusionTrainRequest) -> Path | None:
 
 
 def _audio_backend(req: FusionTrainRequest, recipe: Recipe) -> str:
-    """Rally recipes are visual-only: rally spans have no audio cue worth a
-    late-fusion branch, and the reduced-fps cache has no audio features."""
-    return req.audio_backend if spotting_tasks(recipe.tasks) == ("action",) else "none"
+    """Audio belongs to the Action stream; Rally-only products stay visual."""
+    return req.audio_backend if "action" in recipe.tasks else "none"
 
 
 def _audio_precompute_command(
@@ -195,6 +194,22 @@ def build_command(
         ):
             if task in recipe.tasks:
                 cmd.extend(["--task_sample_fps", f"{task}={fps}"])
+        for task, backend in (
+            ("action", req.audio_backend), ("rally", "none"), ("winner", "none")
+        ):
+            if task in recipe.tasks:
+                cmd.extend(["--task_audio_backend", f"{task}={backend}"])
+        for task, learning_rate in (
+            ("action", req.action_learning_rate),
+            ("rally", req.rally_learning_rate),
+            ("winner", req.winner_learning_rate),
+        ):
+            if task in recipe.tasks and learning_rate is not None:
+                cmd.extend(["--task_learning_rate", f"{task}={learning_rate}"])
+        if "action" in recipe.tasks and req.action_fg_upsample is not None:
+            cmd.extend(
+                ["--task_fg_upsample", f"action={req.action_fg_upsample}"]
+            )
     else:
         cmd.extend(["--sample_fps", str(req.sample_fps)])
     if audio_dir is not None:

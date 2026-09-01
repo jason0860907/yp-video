@@ -49,7 +49,7 @@ class FusionModelStatusTests(unittest.TestCase):
         self.assertEqual(recipes["rally_winner"]["defaults"]["sample_fps"], 5.0)
         self.assertEqual(
             recipes["action_rally_winner"]["tasks"],
-            ["action", "rally", "winner"],
+            ["action", "location", "actor", "rally", "winner"],
         )
         self.assertEqual(
             recipes["action_rally_winner"]["defaults"]["action_sample_fps"],
@@ -92,7 +92,7 @@ class BuildCommandTests(unittest.TestCase):
         # Rally is visual-only and never accumulates, whatever the form sent.
         self.assertIn("--audio_backend none", joined)
         self.assertIn("--acc_grad_iter 1", joined)
-        self.assertIn("--label_dir /run/labels/x --val_ratio 0.2 --split_seed 42", joined)
+        self.assertIn("--label_dir /run/labels/x --val_ratio 0.1 --split_seed 42", joined)
         self.assertNotIn("--predict", joined)
 
     def test_association_action_manual_validation_command(self) -> None:
@@ -117,7 +117,15 @@ class BuildCommandTests(unittest.TestCase):
         )
 
     def test_multi_fps_command_has_independent_streams(self) -> None:
-        req = FusionTrainRequest(recipe="action_rally_winner")
+        req = FusionTrainRequest(
+            recipe="action_rally_winner",
+            action_learning_rate=3e-4,
+            rally_learning_rate=3e-5,
+            winner_learning_rate=3e-5,
+            action_fg_upsample=0.5,
+        )
+        self.assertEqual(req.val_ratio, 0.1)
+        self.assertEqual(req.start_val_epoch, 10)
         prepared = PreparedLabels(
             label_dirs={
                 "action": Path("/run/labels/action-annotations"),
@@ -126,6 +134,7 @@ class BuildCommandTests(unittest.TestCase):
             label_subdirs=("action-annotations", "rally-annotations"),
             frame_dir=Path("/frames"),
             dataset="yp_action_rally",
+            extra_args=["--actor_dir", "/run/labels/actor-candidates"],
         )
         cmd = spot_training.build_command(
             req,
@@ -136,10 +145,17 @@ class BuildCommandTests(unittest.TestCase):
             audio_dir=None,
         )
         joined = " ".join(cmd)
-        self.assertIn("--tasks action,rally,winner", joined)
+        self.assertIn("--tasks action,location,actor,rally,winner", joined)
         self.assertIn("--task_sample_fps action=30.0", joined)
         self.assertIn("--task_sample_fps rally=5.0", joined)
         self.assertIn("--task_sample_fps winner=5.0", joined)
+        self.assertIn("--task_learning_rate action=0.0003", joined)
+        self.assertIn("--task_learning_rate rally=3e-05", joined)
+        self.assertIn("--task_learning_rate winner=3e-05", joined)
+        self.assertIn("--task_audio_backend action=logmel", joined)
+        self.assertIn("--task_audio_backend rally=none", joined)
+        self.assertIn("--actor_dir /run/labels/actor-candidates", joined)
+        self.assertIn("--task_fg_upsample action=0.5", joined)
         self.assertIn(
             "--task_label_dir action=/run/labels/action-annotations", joined
         )
@@ -147,7 +163,7 @@ class BuildCommandTests(unittest.TestCase):
             "--task_label_dir rally=/run/labels/rally-annotations", joined
         )
         self.assertNotIn("--sample_fps ", joined)
-        self.assertIn("--audio_backend none", joined)
+        self.assertIn("--audio_backend logmel", joined)
 
     def test_run_name_token_per_recipe(self) -> None:
         self.assertEqual(spot_training.recipe_token(RECIPES["rally_winner"]), "ral_win")

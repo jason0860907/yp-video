@@ -219,7 +219,7 @@ def _ensure_fusion_audio(
     video: Path, labels: Path, checkpoint: Path
 ) -> Path | None:
     config = _read_package_json(checkpoint, "config.json")
-    backend = str(config.get("audio_backend") or "none")
+    backend = str(config["audio_backend_by_stream"]["action"])
     if backend == "none":
         return None
     audio_dir = ACTION_AUDIO_DIR / backend

@@ -74,7 +74,7 @@
       "type": "array"
     },
     "val_ratio": {
-      "default": 0.2,
+      "default": 0.1,
       "description": "ratio: fraction of videos held out as the validation split.",
       "exclusiveMaximum": 1,
       "exclusiveMinimum": 0,
@@ -241,6 +241,63 @@
       "title": "Learning Rate",
       "type": "number"
     },
+    "action_learning_rate": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Optional Action head learning rate override for mixed training. The shared backbone and other heads keep learning_rate.",
+      "title": "Action Learning Rate"
+    },
+    "rally_learning_rate": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Optional Rally head learning rate override for mixed training.",
+      "title": "Rally Learning Rate"
+    },
+    "winner_learning_rate": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Optional Winner head learning rate override for mixed training.",
+      "title": "Winner Learning Rate"
+    },
+    "action_fg_upsample": {
+      "anyOf": [
+        {
+          "exclusiveMaximum": 1,
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Optional Action foreground sampling threshold for mixed training. At 0.5, half of Action clips are anchored on an annotated event.",
+      "title": "Action Fg Upsample"
+    },
     "num_workers": {
       "default": 8,
       "description": "Actual training DataLoader worker processes; validation uses at most 4.",
@@ -260,8 +317,8 @@
       "type": "string"
     },
     "start_val_epoch": {
-      "default": 0,
-      "description": "Skip validation before this epoch to save time early in a long run.",
+      "default": 10,
+      "description": "Skip full metric evaluation before this zero-based epoch; validation loss is still computed every epoch.",
       "minimum": 0,
       "title": "Start Val Epoch",
       "type": "integer"

@@ -259,6 +259,18 @@ export function FusionTrainPage() {
                 {visible.has('winner_sample_fps') && (
                   <SchemaNumberField name="winner_sample_fps" label="Winner fps" />
                 )}
+                {visible.has('action_learning_rate') && (
+                  <SchemaNumberField name="action_learning_rate" label="Action LR" />
+                )}
+                {visible.has('rally_learning_rate') && (
+                  <SchemaNumberField name="rally_learning_rate" label="Rally LR" />
+                )}
+                {visible.has('winner_learning_rate') && (
+                  <SchemaNumberField name="winner_learning_rate" label="Winner LR" />
+                )}
+                {visible.has('action_fg_upsample') && (
+                  <SchemaNumberField name="action_fg_upsample" label="Action FG rate" step={0.05} />
+                )}
                 {visible.has('acc_grad_iter') && <SchemaNumberField name="acc_grad_iter" label="Grad accum" />}
                 <SchemaNumberField name="warm_up_epochs" label="Warmup" />
                 <SchemaNumberField name="num_workers" label="Workers" />
