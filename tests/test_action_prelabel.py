@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 from yp_video.action import prelabel
-from yp_video.contracts.action import ASSOCIATION_PACKAGE_TYPE, SPOT_PACKAGE_TYPE
+from yp_video.contracts.action import SPOT_PACKAGE_TYPE
 
 
 def _make_package(root: Path, name: str, manifest: dict | None, files=("checkpoint_best.pt",)) -> None:
@@ -34,13 +34,13 @@ class ListCheckpointsByTaskTest(unittest.TestCase):
                 files=("checkpoint_best.pt", "checkpoint_best_actor.pt"),
             )
             _make_package(root, "rally", {"type": SPOT_PACKAGE_TYPE, "tasks": ["rally", "winner"], "best": {"epoch": 1}})
-            _make_package(root, "independent", {"type": ASSOCIATION_PACKAGE_TYPE})
+            _make_package(root, "foreign", {"type": "some-other-package-type"})
             _make_package(root, "legacy", None)
 
             action = {row["experiment"]: row for row in prelabel.list_checkpoints(root, task="action")}
             actor = {row["experiment"]: row for row in prelabel.list_checkpoints(root, task="actor")}
             rally = {row["experiment"]: row for row in prelabel.list_checkpoints(root, task="rally")}
-            independent = prelabel.list_checkpoints(root, package_type=ASSOCIATION_PACKAGE_TYPE)
+            unfiltered = {row["experiment"] for row in prelabel.list_checkpoints(root)}
 
         self.assertEqual(set(action), {"fusion"})
         self.assertEqual(action["fusion"]["name"], "fusion/checkpoint_best.pt")
@@ -49,7 +49,8 @@ class ListCheckpointsByTaskTest(unittest.TestCase):
         self.assertEqual(actor["fusion"]["name"], "fusion/checkpoint_best_actor.pt")
         self.assertEqual(actor["fusion"]["epoch"], 2)
         self.assertEqual(set(rally), {"rally"})
-        self.assertEqual([row["experiment"] for row in independent], ["independent"])
+        # Packages of any other type — foreign or manifest-less — never list.
+        self.assertEqual(unfiltered, {"fusion", "rally"})
 
 
 if __name__ == "__main__":

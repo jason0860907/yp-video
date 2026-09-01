@@ -74,7 +74,6 @@ const STALE_QUERIES: Record<string, string[][]> = {
   spot_prelabel_batch: [['action-videos']],
   player_detection: [['extraction-videos'], ['association-videos'], ['extraction-records']],
   actor_association_predict: [['extraction-videos'], ['association-videos'], ['extraction-records'], ['reid-videos']],
-  actor_association_train: [['actor-association-status'], ['association-train-history'], ['association-videos']],
   player_tracking: [['extraction-videos'], ['reid-videos'], ['tracklets'], ['tracklet-masks']],
   player_embed: [['reid-videos'], ['reid-clusters'], ['reid-players']],
   spot_train: [['fusion-model-status'], ['fusion-model-performance'], ['spot-info'], ['spot-predict-info'], ['actor-association-status']],

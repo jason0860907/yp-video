@@ -59,12 +59,11 @@ export function AssociationPredictPage() {
   const videos = videosQuery.data ?? [];
   const associationCheckpoints = statusQuery.data?.association_checkpoints ?? [];
 
-  // The fusion actor head is the mainline association model: once checkpoints
-  // exist, default to the newest fusion one (the listing is newest-first).
-  // The geometric rule stays one click away as the explicit fallback.
+  // Default to the newest actor head (the listing is newest-first). The
+  // geometric rule stays one click away as the explicit fallback.
   const defaultPolicy = useMemo(() => {
-    const fusion = associationCheckpoints.find((c) => c.family === 'fusion-actor-head');
-    return fusion ? ASSOCIATION_PREFIX + fusion.path : RULE;
+    const newest = associationCheckpoints[0];
+    return newest ? ASSOCIATION_PREFIX + newest.path : RULE;
   }, [associationCheckpoints]);
   useEffect(() => {
     if (policy === RULE && defaultPolicy !== RULE && !touchedPolicy.current) {
@@ -181,44 +180,13 @@ export function AssociationPredictPage() {
               <option value={RULE}>rule-based (geometry, never abstains)</option>
               {associationCheckpoints.map((c) => (
                 <option key={c.path} value={ASSOCIATION_PREFIX + c.path}>
-                  {c.name} — {c.family === 'fusion-actor-head'
-                    ? 'SPOT joint actor head (fusion)'
-                    : 'independent visual association'}
+                  {c.name} — SPOT joint actor head (fusion)
                 </option>
               ))}
             </select>
           </label>
 
-          {chosenAssociation?.family === 'yp-association-v1' && (
-            <dl className="mt-3 space-y-1 rounded-lg border border-border bg-surface-50 px-3 py-2 text-[11px]">
-              {(
-                [
-                  ['Selected the right player', 'player_top1'],
-                  ['Answers with a player', 'player_coverage'],
-                  ['All outcomes exact', 'overall_exact'],
-                  ['Occluded recall', 'occluded_recall'],
-                  ['Untracked recall', 'untracked_recall'],
-                ] as const
-              ).map(([label, key]) => {
-                const value = chosenAssociation.metrics[key];
-                return (
-                  <div key={key} className="flex justify-between">
-                    <dt className="text-text-muted">{label}</dt>
-                    <dd className="font-mono tabular-nums text-text-secondary">
-                      {value == null ? '—' : `${(value * 100).toFixed(1)}%`}
-                    </dd>
-                  </div>
-                );
-              })}
-              <p className="pt-1 text-[10px] leading-snug text-text-muted">
-                Validated on {chosenAssociation.validation_videos?.length ?? 0} held-out
-                video(s). The best epoch is selected by player Top-1, not action
-                loss.
-              </p>
-            </dl>
-          )}
-
-          {chosenAssociation?.family === 'fusion-actor-head' && (
+          {chosenAssociation && (
             <dl className="mt-3 space-y-1 rounded-lg border border-border bg-surface-50 px-3 py-2 text-[11px]">
               {(
                 [

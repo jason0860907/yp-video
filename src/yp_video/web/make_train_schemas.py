@@ -14,7 +14,6 @@ import json
 
 from yp_video.config import PROJECT_ROOT
 from yp_video.web.train_requests import (
-    AssociationTrainRequest,
     FusionTrainRequest,
     ReidExportRequest,
     ReidTrainRequest,
@@ -22,7 +21,6 @@ from yp_video.web.train_requests import (
 
 _SCHEMAS = {
     "fusion_train_request.schema.json": FusionTrainRequest,
-    "association_train_request.schema.json": AssociationTrainRequest,
     "reid_export_request.schema.json": ReidExportRequest,
     "reid_train_request.schema.json": ReidTrainRequest,
 }

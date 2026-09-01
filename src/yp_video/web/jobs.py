@@ -45,7 +45,6 @@ class JobType(str, Enum):
     SPOT_PRELABEL_BATCH = "spot_prelabel_batch"
     REID_DATASET_EXPORT = "reid_dataset_export"
     REID_TRAIN = "reid_train"
-    ACTOR_ASSOCIATION_TRAIN = "actor_association_train"
     ACTOR_ASSOCIATION_PREDICT = "actor_association_predict"
     DOWNLOAD = "download"
     R2_UPLOAD = "r2_upload"

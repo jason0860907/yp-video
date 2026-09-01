@@ -1,4 +1,4 @@
-"""Ask the independent yp-association model who acted in each known event.
+"""Ask the fusion actor head who acted in each known event.
 
 The model needs frames and a GPU, both of which live in the other repo behind
 its own venv, so this is a subprocess call — the same shape as
@@ -41,15 +41,12 @@ from yp_video.contracts.action import (
     ACTION_CONTRACT_VERSION_ENV,
     ACTOR_FILE_SUFFIX,
     LABEL_FILE_SUFFIX,
-    ASSOCIATION_PACKAGE_TYPE,
     SPOT_PACKAGE_TYPE,
 )
 from yp_video.core.jsonl import atomic_write, read_jsonl, write_jsonl
 
-INDEPENDENT_ASSOCIATE_MODULE = "yp_spot.association.predict"
 FUSION_ASSOCIATE_MODULE = "yp_spot.associate"
 FUSION_ACTOR_FORMAT = "fusion-actor-head"
-INDEPENDENT_FORMAT = "yp-association-v1"
 
 
 def action_label_path(stem: str) -> Path | None:
@@ -79,7 +76,7 @@ def run(
     if labels is None:
         raise FileNotFoundError(f"No action labels for {stem} — run Action Predict first")
 
-    total_steps = 4 if family == FUSION_ACTOR_FORMAT else 3
+    total_steps = 4
     if on_progress is not None:
         on_progress(0, total_steps, "building candidates from tracking...")
     _meta, events = read_jsonl(labels)
@@ -95,11 +92,9 @@ def run(
         on_progress(1, total_steps, "ensuring the frame cache...")
     ensure_action_frame_cache(video, cache_root=ACTION_FRAMES_DIR)
 
-    audio_dir = None
-    if family == FUSION_ACTOR_FORMAT:
-        if on_progress is not None:
-            on_progress(2, total_steps, "ensuring Log-mel audio...")
-        audio_dir = _ensure_fusion_audio(video, labels, checkpoint)
+    if on_progress is not None:
+        on_progress(2, total_steps, "ensuring Log-mel audio...")
+    audio_dir = _ensure_fusion_audio(video, labels, checkpoint)
 
     with tempfile.TemporaryDirectory() as scratch:
         scratch_path = Path(scratch)
@@ -111,28 +106,17 @@ def run(
             rows,
         )
         answers_file = scratch_path / "answers.json"
-        if family == INDEPENDENT_FORMAT:
-            command = [
-                str(SPOT_PYTHON),
-                "-m", INDEPENDENT_ASSOCIATE_MODULE,
-                "--checkpoint-path", str(checkpoint),
-                "--frame-dir", str(ACTION_FRAMES_DIR),
-                "--label-file", str(labels),
-                "--actor-candidates", str(candidates_dir),
-                "--out", str(answers_file),
-            ]
-        else:
-            command = [
-                str(SPOT_PYTHON),
-                "-m", FUSION_ASSOCIATE_MODULE,
-                "--checkpoint_path", str(checkpoint),
-                "--frame_dir", str(ACTION_FRAMES_DIR),
-                "--label_file", str(labels),
-                "--actor_candidates", str(candidates_dir),
-                "--out", str(answers_file),
-            ]
-            if audio_dir is not None:
-                command.extend(["--audio_dir", str(audio_dir)])
+        command = [
+            str(SPOT_PYTHON),
+            "-m", FUSION_ASSOCIATE_MODULE,
+            "--checkpoint_path", str(checkpoint),
+            "--frame_dir", str(ACTION_FRAMES_DIR),
+            "--label_file", str(labels),
+            "--actor_candidates", str(candidates_dir),
+            "--out", str(answers_file),
+        ]
+        if audio_dir is not None:
+            command.extend(["--audio_dir", str(audio_dir)])
 
         if on_progress is not None:
             on_progress(total_steps - 1, total_steps, f"scoring {len(rows)} events...")
@@ -204,13 +188,7 @@ def _read_package_json(checkpoint: Path, filename: str) -> dict:
 
 def checkpoint_family(checkpoint: Path) -> str | None:
     """Architecture contract declared by the checkpoint package."""
-    config = _read_package_json(checkpoint, "config.json")
     manifest = _read_package_json(checkpoint, "manifest.json")
-    if (
-        config.get("task") == "association"
-        and config.get("checkpoint_format") == INDEPENDENT_FORMAT
-    ):
-        return INDEPENDENT_FORMAT
     if manifest.get("type") == SPOT_PACKAGE_TYPE and "actor" in (manifest.get("tasks") or ()):
         return FUSION_ACTOR_FORMAT
     return None
@@ -277,13 +255,6 @@ def rejection(checkpoint: Path) -> str | None:
         state = torch.load(str(checkpoint), weights_only=True, map_location="cpu")
     except Exception as exc:  # noqa: BLE001
         return f"Cannot read {checkpoint.name}: {exc}"
-    if family == INDEPENDENT_FORMAT:
-        if isinstance(state, dict) and state.get("format") == INDEPENDENT_FORMAT:
-            return None
-        return (
-            f"{checkpoint.parent.name}/{checkpoint.name} is not an independent "
-            "yp-association-v1 model — train it in Association Train"
-        )
     if isinstance(state, dict) and any("_pred_actor" in key for key in state):
         return None
     return (
@@ -293,20 +264,16 @@ def rejection(checkpoint: Path) -> str | None:
 
 
 def list_association_checkpoints() -> list[dict]:
-    """Association checkpoints, independent and fusion actor heads alike.
+    """SPOT packages that serve the fusion actor head.
 
-    Read from each package's ``config.json`` rather than its weights: this
-    feeds a status poll, and torch-loading every checkpoint on every poll to
-    answer "does it have the head" would cost seconds. The weights remain the
+    Read from each package's manifest rather than its weights: this feeds a
+    status poll, and torch-loading every checkpoint on every poll to answer
+    "does it have the head" would cost seconds. The weights remain the
     authority at submit time — see ``rejection``.
     """
     out: list[dict] = []
-    entries = [
-        *prelabel.list_checkpoints(package_type=ASSOCIATION_PACKAGE_TYPE),
-        # SPOT packages that serve the actor head — the row already points at
-        # the actor-best weights file.
-        *prelabel.list_checkpoints(task="actor"),
-    ]
+    # The row already points at the actor-best weights file.
+    entries = prelabel.list_checkpoints(task="actor")
     for entry in entries:
         checkpoint = prelabel.resolve_checkpoint_path(entry["path"])
         package = checkpoint.parent

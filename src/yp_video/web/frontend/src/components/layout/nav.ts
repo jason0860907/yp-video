@@ -83,7 +83,6 @@ export const NAV: NavSection[] = [
     collapsible: true,
     items: [
       { path: '/association-predict', label: 'Association Predict', icon: ICON.predict },
-      { path: '/association-train', label: 'Association Train', icon: ICON.train },
     ],
   },
   {

@@ -21,7 +21,6 @@ from yp_video.config import SPOT_DIR
 from yp_video.web.make_train_schemas import _SCHEMAS
 from yp_video.contracts.action import RECIPES
 from yp_video.web.train_requests import (
-    AssociationTrainRequest,
     FeatureArch,
     FusionTrainRequest,
     RecipeId,
@@ -66,13 +65,6 @@ class DefaultsAreValidRequests(unittest.TestCase):
         for filename, model in _SCHEMAS.items():
             with self.subTest(schema=filename):
                 seed = SEEDS.get(model)
-                if model is AssociationTrainRequest:
-                    # min_length=1 lists are the page's job; the form starts
-                    # empty and fills them from the Done split at submit.
-                    seed = {
-                        "train_videos": ["train_video"],
-                        "val_videos": ["val_video"],
-                    }
                 payload = build_defaults(model, seed)
                 model.model_validate(payload)
 
@@ -135,11 +127,6 @@ class ArchLiteralsMirrorSpotRegistry(unittest.TestCase):
         bases, suffixes = self.spot_registry()
         expected = {base + suffix for base in bases for suffix in ("", *suffixes)}
         self.assertEqual(set(typing.get_args(FeatureArch)), expected)
-
-    def test_association_backbone_matches_registry_bases(self) -> None:
-        bases, _ = self.spot_registry()
-        field = AssociationTrainRequest.model_fields["backbone"]
-        self.assertEqual(set(typing.get_args(field.annotation)), bases)
 
 
 if __name__ == "__main__":

@@ -3,9 +3,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from fastapi import HTTPException
-
-from yp_video.contracts.action import SPOT_PACKAGE_TYPE
 from yp_video.action.spot_runs import (
     best_epochs_per_task,
     checkpoint_package_options,
@@ -14,7 +11,6 @@ from yp_video.action.spot_runs import (
 from yp_video.web.spot_runs import (
     TrainProgress,
     make_train_parsers,
-    performance_payload,
 )
 
 
@@ -77,44 +73,6 @@ class SpotTaskMetricsProgressTest(unittest.TestCase):
 
         _feed(parsers, "Val loss  0.10  0.20  0.90  0.00  1.20")
         self.assertEqual(ctx.latest_val_loss, 1.2)
-
-    def test_performance_can_filter_a_shared_checkpoint_root(self):
-        with tempfile.TemporaryDirectory() as raw_dir:
-            root = Path(raw_dir)
-            for name, package_type in (
-                ("yp_fusion_one", "actor-association-spot"),
-                ("yp_action_one", "yp-video-action-checkpoint"),
-            ):
-                run = root / name
-                run.mkdir()
-                (run / "manifest.json").write_text(
-                    json.dumps({"type": package_type}), encoding="utf-8"
-                )
-                (run / "metrics.jsonl").write_text(
-                    json.dumps(
-                        {
-                            "epoch": 0,
-                            "mAP": {"harmonic": 0.5},
-                            "tasks": {"actor": {"primary_metric": "player_top1"}},
-                        }
-                    )
-                    + "\n",
-                    encoding="utf-8",
-                )
-
-            payload = performance_payload(
-                root,
-                package_types=("actor-association-spot",),
-            )
-
-            self.assertEqual(payload["runs"], ["yp_fusion_one"])
-            self.assertIn("actor", payload["entries"][0]["tasks"])
-            with self.assertRaises(HTTPException):
-                performance_payload(
-                    root,
-                    "yp_action_one",
-                    package_types=("actor-association-spot",),
-                )
 
 
 def _write_run(root: Path, epochs: list[dict], definitions: dict) -> Path:
@@ -204,7 +162,6 @@ class ExportBestPerTaskTest(unittest.TestCase):
             run_dir=run_dir,
             package_dir=package_dir,
             checkpoints_root=root / "checkpoints",
-            package_type=SPOT_PACKAGE_TYPE,
             label_subdirs=("action-annotations", "actor-candidates"),
             training={},
             cmd=[],

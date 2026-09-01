@@ -15,7 +15,6 @@ import { ReidPredictPage } from '@/pages/ReidPredictPage';
 import { PlayerDetectionPage } from '@/pages/PlayerDetectionPage';
 import { TrackingPage } from '@/pages/TrackingPage';
 import { AssociationPredictPage } from '@/pages/AssociationPredictPage';
-import { AssociationTrainPage } from '@/pages/AssociationTrainPage';
 import { FusionTrainPage } from '@/pages/FusionTrainPage';
 import { ReidTrainPage } from '@/pages/ReidTrainPage';
 import { AuditPage } from '@/pages/AuditPage';
@@ -32,7 +31,6 @@ const PAGES: Record<string, ReactElement> = {
   '/player-detection': <PlayerDetectionPage />,
   '/reid-predict': <ReidPredictPage />,
   '/association-predict': <AssociationPredictPage />,
-  '/association-train': <AssociationTrainPage />,
   '/fusion-train': <FusionTrainPage />,
   '/reid-train': <ReidTrainPage />,
   '/upload': <UploadPage />,

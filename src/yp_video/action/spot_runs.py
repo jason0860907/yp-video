@@ -69,20 +69,15 @@ def load_json_file(path: Path) -> dict | list | None:
 def checkpoint_package_options(
     checkpoints_dir: Path,
     *,
-    tasks: Sequence[str] | None = None,
-    package_types: Sequence[str] | None = None,
+    tasks: Sequence[str],
 ) -> list[dict]:
     """Selectable init-checkpoint options: packaged runs under ``checkpoints_dir``.
 
-    Pick by ``tasks`` for a SPOT recipe — eligible packages carry every head
-    the recipe trains (a superset is fine: unused heads are skipped on load;
-    a missing one would leave that head randomly initialized while looking
-    like a fine-tune) — or by ``package_types`` for a non-SPOT family. A
-    package with no readable manifest is excluded: what it contains cannot
-    be verified.
+    Eligible packages carry every head the recipe trains (a superset is fine:
+    unused heads are skipped on load; a missing one would leave that head
+    randomly initialized while looking like a fine-tune). A package with no
+    readable manifest is excluded: what it contains cannot be verified.
     """
-    if (tasks is None) == (package_types is None):
-        raise ValueError("pass exactly one of tasks / package_types")
     options: list[dict] = []
     if checkpoints_dir.exists():
         for run_dir in sorted(checkpoints_dir.iterdir(), reverse=True):
@@ -92,12 +87,9 @@ def checkpoint_package_options(
             manifest = load_json_file(run_dir / "manifest.json")
             if not isinstance(manifest, dict):
                 continue
-            if tasks is not None:
-                if manifest.get("type") != SPOT_PACKAGE_TYPE or not set(tasks) <= set(
-                    manifest.get("tasks") or ()
-                ):
-                    continue
-            elif manifest.get("type") not in package_types:
+            if manifest.get("type") != SPOT_PACKAGE_TYPE or not set(tasks) <= set(
+                manifest.get("tasks") or ()
+            ):
                 continue
             options.append(
                 {"label": _package_label(run_dir, manifest), "value": str(ckpt)}
@@ -224,7 +216,6 @@ def export_checkpoint_package(
     run_dir: Path,
     package_dir: Path,
     checkpoints_root: Path,
-    package_type: str,
     label_subdirs: Sequence[str],
     training: dict,
     cmd: list[str],
@@ -311,7 +302,7 @@ def export_checkpoint_package(
         best_per_task[task] = entry
 
     manifest = {
-        "type": package_type,
+        "type": SPOT_PACKAGE_TYPE,
         "version": 1,
         "contract_version": ACTION_CONTRACT_VERSION,
         **({"tasks": list(tasks), "recipe": recipe} if tasks is not None else {}),
@@ -488,16 +479,12 @@ def _freshest_metrics_dir(package_dir: Path) -> Path:
 def performance_payload(
     checkpoints_dir: Path,
     run: str | None = None,
-    *,
-    package_types: Sequence[str] | None = None,
 ) -> dict:
     """Per-epoch validation metrics (lr, mAP, per-class, per-video) for a run.
 
     Reads ``metrics.jsonl`` (falling back to the legacy ``loss.json``) from a
     checkpoint package. Defaults to the most recently modified run; pass
     ``run`` to select one by name. ``runs`` lists the runs (newest first).
-    ``package_types`` filters a shared checkpoint root to one model family by
-    manifest type — the same declaration every other package reader keys on.
     """
     if not checkpoints_dir.exists():
         return {"entries": [], "runs": []}
@@ -505,19 +492,8 @@ def performance_payload(
     def has_metrics(d: Path) -> bool:
         return (d / "metrics.jsonl").exists() or (d / "loss.json").exists()
 
-    def family_matches(d: Path) -> bool:
-        if package_types is None:
-            return True
-        manifest = load_json_file(d / "manifest.json")
-        declared = manifest.get("type") if isinstance(manifest, dict) else None
-        return declared in package_types
-
     runs = sorted(
-        (
-            d
-            for d in checkpoints_dir.iterdir()
-            if d.is_dir() and has_metrics(d) and family_matches(d)
-        ),
+        (d for d in checkpoints_dir.iterdir() if d.is_dir() and has_metrics(d)),
         key=lambda d: d.stat().st_mtime,
         reverse=True,
     )

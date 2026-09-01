@@ -36,7 +36,6 @@ const ACTION_LABELS: Record<string, string> = {
   // Training and inference.
   'POST /api/spot-predict/start': '啟動 Rally SPOT 推論',
   'POST /api/action-annotate/prelabel-batch': '批次 Action 預標',
-  'POST /api/actor-association/train': '啟動 Association 訓練',
   'POST /api/actor-association/predict': '批次重算動作歸屬',
   'POST /api/fusion-model/train': '啟動 Fusion 訓練',
   'POST /api/reid-train/train': '啟動 ReID 訓練',

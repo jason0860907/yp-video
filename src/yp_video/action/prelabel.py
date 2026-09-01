@@ -32,21 +32,19 @@ def list_checkpoints(
     root: Path = SPOT_CHECKPOINTS_DIR,
     *,
     task: str | None = None,
-    package_type: str = SPOT_PACKAGE_TYPE,
 ) -> list[dict]:
-    """Checkpoint packages under ``root``, one row per package.
+    """SPOT checkpoint packages under ``root``, one row per package.
 
     ``task`` keeps only packages whose manifest serves it, and points the row
     at that task's own best-epoch weights (``best_per_task[task].file``) —
     a fusion run's action-best and actor-best epochs rarely coincide, and
     serving a task its selection-criterion epoch quietly hands it a
-    compromised head. ``package_type`` selects the family (the independent
-    association trainer has its own).
+    compromised head.
     """
     checkpoints = []
     for run_dir in _iter_package_dirs(root):
         manifest = _load_json(run_dir / "manifest.json")
-        if manifest.get("type") != package_type:
+        if manifest.get("type") != SPOT_PACKAGE_TYPE:
             continue
         tasks = list(manifest.get("tasks") or [])
         if task is not None and task not in tasks:

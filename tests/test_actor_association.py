@@ -6,7 +6,7 @@ import unittest
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 from fastapi import HTTPException
 from pydantic import TypeAdapter
@@ -17,11 +17,11 @@ from yp_video.actor import review as actor_review
 from yp_video.actor.labels import ActorLabel, ActorVerdict
 from yp_video.actor.policy import EventContext, RulePolicy
 from yp_video.actor.ranking import DecisionReason, rule_decision
+from yp_video.contracts.action import SPOT_PACKAGE_TYPE
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import write_jsonl
 from yp_video.extraction import actor_fix, done
 from yp_video.person.detector import PersonBox
-from yp_video.contracts.action import SPOT_PACKAGE_TYPE
 from yp_video.web.routers import actor_association as router
 
 
@@ -238,128 +238,7 @@ class DoneConfirmationTests(unittest.TestCase):
         )
 
 
-class AssociationTrainingSelectionTests(unittest.TestCase):
-    def test_training_request_requires_disjoint_train_and_validation(self) -> None:
-        adapter = TypeAdapter(router.AssociationTrainRequest)
-        with self.assertRaises(ValueError):
-            adapter.validate_python({})
-        with self.assertRaises(ValueError):
-            adapter.validate_python(
-                {
-                    "train_videos": ["same.mp4"],
-                    "val_videos": ["same.mp4"],
-                }
-            )
-
-    def test_only_the_selected_videos_build_the_spot_snapshot(self) -> None:
-        paths = {
-            "a.mp4": Path("/cuts/a.mp4"),
-            "b.mp4": Path("/cuts/b.mp4"),
-        }
-        labels = {
-            "a": Path("/labels/a_actions.jsonl"),
-            "b": Path("/labels/b_actions.jsonl"),
-        }
-        with (
-            patch.object(router, "find_cut", side_effect=paths.get),
-            patch.object(
-                router.spot_associate,
-                "action_label_path",
-                side_effect=labels.get,
-            ),
-            patch.object(router.actor_labels, "load", return_value={"event": object()}),
-            patch.object(router, "read_jsonl_cached", return_value=({}, [{}])),
-            patch.object(
-                router.actor_candidates,
-                "build",
-                return_value=([{"id": "event"}], {"track": 1}),
-            ),
-        ):
-            result = router._association_training_items(
-                ["b.mp4", "a.mp4"]
-            )
-
-        self.assertEqual(
-            result,
-            [(labels["b"], paths["b.mp4"]), (labels["a"], paths["a.mp4"])],
-        )
-
-    def test_video_without_actor_review_is_rejected_before_gpu_work(self) -> None:
-        with (
-            patch.object(router, "find_cut", return_value=Path("/cuts/a.mp4")),
-            patch.object(
-                router.spot_associate,
-                "action_label_path",
-                return_value=Path("/labels/a_actions.jsonl"),
-            ),
-            patch.object(router.actor_labels, "load", return_value={}),
-        ):
-            with self.assertRaises(HTTPException) as caught:
-                router._association_training_items(["a.mp4"])
-
-        self.assertEqual(caught.exception.status_code, 400)
-        self.assertIn("Association Label", str(caught.exception.detail))
-
-
 class NeuralAssociationTrainTests(unittest.IsolatedAsyncioTestCase):
-    async def test_train_starts_the_independent_association_runner(self) -> None:
-        request = router.AssociationTrainRequest(
-            train_videos=["train.mp4"],
-            val_videos=["val.mp4"],
-            run_name="yp_actor_test",
-            backbone="rny002",
-        )
-        train_item = (Path("/labels/train_actions.jsonl"), Path("/cuts/train.mp4"))
-        val_item = (Path("/labels/val_actions.jsonl"), Path("/cuts/val.mp4"))
-        start = AsyncMock(return_value={"id": "job"})
-
-        with tempfile.TemporaryDirectory() as raw_dir:
-            root = Path(raw_dir)
-            with (
-                patch.object(router, "SPOT_CHECKPOINTS_DIR", root / "checkpoints"),
-                patch.object(router, "SPOT_DIR", root / "yp-spot"),
-                patch.object(
-                    router,
-                    "_association_training_items",
-                    side_effect=[[train_item], [val_item]],
-                ),
-                patch.object(
-                    router,
-                    "_start_association_training",
-                    start,
-                ),
-            ):
-                result = await router.train(request)
-
-        self.assertEqual(result, {"id": "job"})
-        self.assertEqual(start.await_args.args[0].backbone, "rny002")
-        self.assertEqual(start.await_args.kwargs["train_items"], [train_item])
-        self.assertEqual(start.await_args.kwargs["val_items"], [val_item])
-        self.assertIsNone(start.await_args.kwargs["init_checkpoint"])
-
-    async def test_train_rejects_a_duplicate_active_job_before_validation(
-        self,
-    ) -> None:
-        request = router.AssociationTrainRequest(
-            train_videos=["train.mp4"],
-            val_videos=["val.mp4"],
-        )
-        blocking = SimpleNamespace(name="Association Train (already-running)")
-        with (
-            patch.object(
-                router.job_manager,
-                "active_job",
-                return_value=blocking,
-            ),
-            patch.object(router, "_association_training_items") as prepare,
-        ):
-            with self.assertRaises(HTTPException) as caught:
-                await router.train(request)
-
-        self.assertEqual(caught.exception.status_code, 409)
-        self.assertIn("already active", str(caught.exception.detail))
-        prepare.assert_not_called()
-
     def test_association_epochs_normalize_into_the_shared_task_shape(self) -> None:
         """The independent trainer's per-epoch records carry no mAP — they
         must surface as an `actor` task so the one shared performance card
@@ -392,18 +271,6 @@ class NeuralAssociationTrainTests(unittest.IsolatedAsyncioTestCase):
 
 class SpotActorInferenceContractTests(unittest.TestCase):
     @staticmethod
-    def _declare_independent(package: Path) -> None:
-        (package / "config.json").write_text(
-            json.dumps(
-                {
-                    "task": "association",
-                    "checkpoint_format": "yp-association-v1",
-                }
-            ),
-            encoding="utf-8",
-        )
-
-    @staticmethod
     def _declare_fusion(package: Path) -> None:
         (package / "config.json").write_text(
             json.dumps({"tasks": ["action", "location", "actor"], "audio_backend": "logmel"}),
@@ -422,88 +289,6 @@ class SpotActorInferenceContractTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-    def test_inference_uses_the_independent_event_model_contract(self) -> None:
-        with tempfile.TemporaryDirectory() as raw_dir:
-            root = Path(raw_dir)
-            package = root / "checkpoints" / "yp_actor"
-            package.mkdir(parents=True)
-            checkpoint = package / "checkpoint_best.pt"
-            checkpoint.touch()
-            self._declare_independent(package)
-            label_file = root / "video_actions.jsonl"
-            label_file.touch()
-            predictions = root / "video_predictions.json"
-            captured: list[str] = []
-
-            def run_subprocess(command, **_kwargs):
-                captured.extend(command)
-                output = Path(command[command.index("--out") + 1])
-                output.write_text(
-                    json.dumps(
-                        {
-                            "events": [
-                                {
-                                    "id": "event",
-                                    "track": "1:1",
-                                    "confidence": 0.9,
-                                    "kind": "track",
-                                }
-                            ]
-                        }
-                    ),
-                    encoding="utf-8",
-                )
-                return SimpleNamespace(returncode=0, stdout="", stderr="")
-
-            with (
-                patch.object(
-                    router.spot_associate,
-                    "action_label_path",
-                    return_value=label_file,
-                ),
-                patch.object(
-                    router.spot_associate,
-                    "read_jsonl",
-                    return_value=({}, [{"id": "event"}]),
-                ),
-                patch.object(
-                    router.spot_associate.candidates,
-                    "candidates_only",
-                    return_value=[{"id": "event", "frame": 10}],
-                ),
-                patch.object(
-                    router.spot_associate,
-                    "ensure_action_frame_cache",
-                ),
-                patch.object(
-                    router.spot_associate.subprocess,
-                    "run",
-                    side_effect=run_subprocess,
-                ),
-                patch.object(
-                    router.spot_associate,
-                    "ACTOR_PREDICTIONS_DIR",
-                    predictions.parent,
-                ),
-                patch.object(
-                    router.spot_associate,
-                    "predictions_path",
-                    return_value=predictions,
-                ),
-            ):
-                answers = router.spot_associate.run(
-                    root / "video.mp4",
-                    checkpoint,
-                )
-
-        self.assertEqual(answers["event"].track.key, "1:1")
-        self.assertIn("yp_spot.association.predict", captured)
-        self.assertEqual(
-            captured[captured.index("--checkpoint-path") + 1],
-            str(checkpoint),
-        )
-        self.assertNotIn("--audio-dir", captured)
-
     def test_picker_lists_a_fusion_actor_head_with_its_family(self) -> None:
         with tempfile.TemporaryDirectory() as raw_dir:
             package = Path(raw_dir) / "yp_actor_only"
@@ -514,10 +299,7 @@ class SpotActorInferenceContractTests(unittest.TestCase):
             with patch.object(
                 router.spot_associate.prelabel,
                 "list_checkpoints",
-                side_effect=[
-                    [],
-                    [{"path": str(checkpoint), "epoch": 4, "mtime": 123.0}],
-                ],
+                return_value=[{"path": str(checkpoint), "epoch": 4, "mtime": 123.0}],
             ):
                 listed = router.spot_associate.list_association_checkpoints()
 
@@ -559,10 +341,7 @@ class SpotActorInferenceContractTests(unittest.TestCase):
             with patch.object(
                 router.spot_associate.prelabel,
                 "list_checkpoints",
-                side_effect=[
-                    [],
-                    [{"path": str(checkpoint), "epoch": 4, "mtime": 123.0}],
-                ],
+                return_value=[{"path": str(checkpoint), "epoch": 4, "mtime": 123.0}],
             ):
                 listed = router.spot_associate.list_association_checkpoints()
 

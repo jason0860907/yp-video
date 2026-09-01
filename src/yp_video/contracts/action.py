@@ -376,10 +376,8 @@ ACTOR_WINDOW_OFFSETS = tuple(
 # The manifest ``type`` a trainer stamps on its exported package. A SPOT
 # package (any recipe) is one type; WHICH heads it carries is
 # ``manifest["tasks"]``, and every reader — init-checkpoint pickers, predict
-# surfaces — asks for the task it needs. The independent association trainer
-# exports a different model class, hence its own type.
+# surfaces — asks for the task it needs.
 SPOT_PACKAGE_TYPE = "yp-video-spot-checkpoint"
-ASSOCIATION_PACKAGE_TYPE = "yp-video-association-checkpoint"
 
 
 class ActorTargetKind(str, Enum):

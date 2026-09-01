@@ -319,15 +319,8 @@ def validate_checkpoint_dir(path: Path, *, root: Path) -> Path:
         raise HTTPException(400, str(exc)) from exc
 
 
-def performance_payload(
-    checkpoints_dir: Path,
-    run: str | None = None,
-    *,
-    package_types: tuple[str, ...] | None = None,
-) -> dict:
+def performance_payload(checkpoints_dir: Path, run: str | None = None) -> dict:
     try:
-        return _runs.performance_payload(
-            checkpoints_dir, run, package_types=package_types
-        )
+        return _runs.performance_payload(checkpoints_dir, run)
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc

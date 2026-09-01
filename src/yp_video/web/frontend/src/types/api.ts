@@ -736,7 +736,7 @@ export interface ReidAssociationDatasetSummary {
 export interface AssociationCheckpoint {
   path: string;
   name: string;
-  family: 'yp-association-v1' | 'fusion-actor-head';
+  family: 'fusion-actor-head';
   epoch: number | null;
   mtime: number | null;
   holdout: string | null;
@@ -766,9 +766,7 @@ export interface AssociationCheckpoint {
 export interface ReidAssociationStatus {
   association_checkpoints: AssociationCheckpoint[];
   spot_available?: boolean;
-  init_checkpoints?: SelectOption[];
   frame_dir?: string;
-  active_job: Job | null;
 }
 
 export interface ReidDatasetInfo {

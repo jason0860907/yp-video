@@ -9,11 +9,7 @@ extraction records they both read.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import os
-import re
-import time
 from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import unquote
@@ -22,29 +18,17 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from yp_video.action import prelabel
-from yp_video.action.frames import ensure_action_frame_caches
-from yp_video.action.training import materialize_holdout_split
-from yp_video.actor import candidates as actor_candidates
 from yp_video.actor import dataset as actor_dataset
 from yp_video.actor import evaluate as actor_evaluate
 from yp_video.actor import labels as actor_labels
 from yp_video.actor import policy as actor_policy
 from yp_video.actor import spot_associate, spot_predictions
 from yp_video.actor.ranking import RULE_BASED
-from yp_video.actor.training_labels import prepare_action_training_labels
 from yp_video.config import (
     ACTION_FRAMES_DIR,
-    SPOT_CHECKPOINTS_DIR,
     SPOT_DIR,
     SPOT_PYTHON,
     find_cut,
-)
-from yp_video.contracts.action import (
-    ACTION_CONTRACT_VERSION,
-    ACTION_CONTRACT_VERSION_ENV,
-    ACTOR_LABEL_SUBDIR,
-    ASSOCIATION_PACKAGE_TYPE,
-    TASKS,
 )
 from yp_video.core import label_done
 from yp_video.core.cache import StatCache
@@ -58,31 +42,17 @@ from yp_video.tracklets import store as tracks_store
 from yp_video.tracklets.geometry import TrackRef
 from yp_video.web import audit, worklists
 from yp_video.web.job_helpers import (
-    ProgressParser,
-    fail_job_from_exc,
     init_batch_items,
     spawn_batch_video_job,
-    stop_vllm_for_job,
-    stream_subprocess,
-    subprocess_failure,
-    terminal_prefix,
 )
 from yp_video.web.jobs import JobSummary, JobType, job_manager
 from yp_video.web.r2_client import sync_to_r2
 from yp_video.web.schemas import StrictModel
-from yp_video.web.spot_runs import (
-    PackageExporter,
-    actor_task_metrics,
-    export_checkpoint_package,
-    performance_payload,
-)
-from yp_video.web.train_requests import AssociationTrainRequest
 
 log = logging.getLogger(__name__)
 router = APIRouter()
 
 _evaluation_cache: StatCache = StatCache()
-_train_start_lock = asyncio.Lock()
 
 
 @router.get("/videos")
@@ -113,7 +83,7 @@ def set_done(name: str, req: DoneRequest) -> dict:
 
 @router.get("/status")
 def status() -> dict:
-    """Which models exist, and whether a training job is running.
+    """Which fusion actor heads exist.
 
     Cheap on purpose, and it must stay that way: this is the single query the
     Association Predict pickers wait on. It used to also return the training
@@ -128,29 +98,8 @@ def status() -> dict:
         # tracked candidates; this also includes fusion actor heads.
         "association_checkpoints": association_checkpoints,
         "spot_available": SPOT_DIR.exists() and SPOT_PYTHON.exists(),
-        "init_checkpoints": [
-            {
-                "value": row["path"],
-                "label": (
-                    f"{row['name']} (Top-1 "
-                    f"{float(((row.get('best') or {}).get('value') or 0)):.1%})"
-                ),
-            }
-            for row in association_checkpoints
-            if row["family"] == spot_associate.INDEPENDENT_FORMAT
-        ],
         "frame_dir": str(ACTION_FRAMES_DIR),
-        "active_job": active.to_dict() if (active := job_manager.active_job(JobType.ACTOR_ASSOCIATION_TRAIN)) else None,
     }
-
-
-@router.get("/train-performance")
-def train_performance(run: str | None = None) -> dict:
-    """Per-epoch metrics for independent association runs, in the shared
-    performance shape — the same card every other Train page renders."""
-    return performance_payload(
-        SPOT_CHECKPOINTS_DIR, run, package_types=(ASSOCIATION_PACKAGE_TYPE,)
-    )
 
 
 @router.get("/performance")
@@ -196,372 +145,11 @@ async def performance() -> dict:
     )
 
 
-def _association_training_items(
-    names: list[str],
-) -> list[tuple[Path, Path]]:
-    """Resolve the exact action-label/video pairs selected on this page.
-
-    Association supervision may sit on top of either manual action labels or
-    action predictions.  Reusing Action Train's global annotation scan would
-    silently drop the latter, so the association surface resolves each video
-    through the same manual-first source rule used by inference.
-    """
-    items: list[tuple[Path, Path]] = []
-    seen: set[str] = set()
-    for name in names:
-        path = find_cut(name)
-        if path is None:
-            raise HTTPException(404, f"Video not found: {name}")
-        if path.stem in seen:
-            continue
-        seen.add(path.stem)
-        label_path = spot_associate.action_label_path(path.stem)
-        if label_path is None:
-            raise HTTPException(
-                400,
-                f"No action labels for {name}; run Action Predict or label it first",
-            )
-        if not actor_labels.load(path.stem):
-            raise HTTPException(
-                400,
-                f"No reviewed actors for {name}; review it in Association Label first",
-            )
-        _meta, events = read_jsonl_cached(label_path)
-        actor_rows, _tally = actor_candidates.build(path.stem, events)
-        if not actor_rows:
-            raise HTTPException(
-                400,
-                f"No usable yp-actor targets for {name}; it needs reviewed "
-                "tracklet labels and Rally Tracking",
-            )
-        items.append((label_path, path))
-    return items
-
-
-@router.post("/train", response_model=JobSummary)
-async def train(req: AssociationTrainRequest) -> dict:
-    async with _train_start_lock:
-        return await _train_locked(req)
-
-
-async def _train_locked(req: AssociationTrainRequest) -> dict:
-    active = job_manager.active_job(JobType.ACTOR_ASSOCIATION_TRAIN)
-    if active is not None:
-        raise HTTPException(
-            409,
-            f"Association training is already active: {active.name}",
-        )
-    name = req.run_name or f"yp_actor_{time.strftime('%Y%m%d-%H%M%S')}"
-    if not re.fullmatch(r"[A-Za-z0-9_.-]+", name) or name.startswith("."):
-        raise HTTPException(
-            400,
-            "Run name may contain only letters, numbers, dot, underscore and dash",
-        )
-    checkpoint_dir = SPOT_CHECKPOINTS_DIR / name
-    save_dir = SPOT_DIR / "exp" / name
-    if checkpoint_dir.exists() or save_dir.exists():
-        raise HTTPException(
-            409,
-            f"Association run {name} already exists; run names are immutable",
-        )
-    train_items = _association_training_items(req.train_videos)
-    val_items = _association_training_items(req.val_videos)
-    init_checkpoint = None
-    if req.init_checkpoint:
-        try:
-            init_checkpoint = prelabel.resolve_checkpoint(req.init_checkpoint)
-        except (FileNotFoundError, ValueError) as exc:
-            raise HTTPException(404, str(exc)) from exc
-        reason = spot_associate.rejection(init_checkpoint)
-        if reason:
-            raise HTTPException(400, reason)
-    return await _start_association_training(
-        req,
-        save_dir=save_dir,
-        checkpoint_dir=checkpoint_dir,
-        train_items=train_items,
-        val_items=val_items,
-        init_checkpoint=init_checkpoint,
-    )
-
-
-def _export_association_package(
-    *,
-    run_dir: Path,
-    package_dir: Path,
-    req: AssociationTrainRequest,
-    cmd: list[str],
-    label_summary: dict,
-) -> dict:
-    summary = export_checkpoint_package(
-        run_dir=run_dir,
-        package_dir=package_dir,
-        checkpoints_root=SPOT_CHECKPOINTS_DIR,
-        package_type=ASSOCIATION_PACKAGE_TYPE,
-        label_subdirs=(TASKS["action"].label_subdir, TASKS["actor"].label_subdir),
-        training={
-            "purpose": "association",
-            "frame_dir": str(ACTION_FRAMES_DIR),
-            "selection_metric": "player_top1",
-            "label_summary": label_summary,
-        },
-        cmd=cmd,
-    )
-    manifest_path = package_dir / "manifest.json"
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    best = manifest.get("best") or {}
-    metrics_path = run_dir / "metrics.jsonl"
-    if metrics_path.exists() and isinstance(best.get("epoch"), int):
-        for line in metrics_path.read_text(encoding="utf-8").splitlines():
-            record = json.loads(line)
-            if record.get("epoch") == best["epoch"]:
-                best["metrics"] = record.get("val") or {}
-                break
-    manifest["best"] = best
-    manifest_path.write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    summary["best"] = best
-    return summary
-
-
-async def _start_association_training(
-    req: AssociationTrainRequest,
-    *,
-    save_dir: Path,
-    checkpoint_dir: Path,
-    train_items: list[tuple[Path, Path]],
-    val_items: list[tuple[Path, Path]],
-    init_checkpoint: Path | None,
-) -> dict:
-    job = job_manager.create_job(
-        JobType.ACTOR_ASSOCIATION_TRAIN,
-        {
-            "save_dir": str(save_dir),
-            "checkpoint_dir": str(checkpoint_dir),
-            "train_videos": [video.name for _label, video in train_items],
-            "val_videos": [video.name for _label, video in val_items],
-            "backbone": req.backbone,
-            "epochs": req.num_epochs,
-        },
-        name=f"Association Train ({save_dir.name})",
-    )
-
-    async def run_job() -> None:
-        exporter: PackageExporter | None = None
-        try:
-            await job_manager.update_job(
-                job.id, status="running", message="Preparing association events..."
-            )
-            items = [*train_items, *val_items]
-            frame_summary = await asyncio.to_thread(
-                ensure_action_frame_caches,
-                [(video, None) for _label, video in items],
-                cache_root=ACTION_FRAMES_DIR,
-            )
-            label_summary = await asyncio.to_thread(
-                prepare_action_training_labels,
-                items=items,
-                frame_dir=ACTION_FRAMES_DIR,
-                save_dir=save_dir,
-                tasks=("action", "location", "actor"),
-                camera_view="all",
-            )
-            val_stems = {label.stem.removesuffix("_actions") for label, _video in val_items}
-            split = await asyncio.to_thread(
-                materialize_holdout_split,
-                Path(label_summary["label_dir"]),
-                val_stems,
-                split_dir=save_dir / "label-splits" / "action",
-                known_stems=val_stems,
-            )
-            label_summary = {**label_summary, **split}
-            cmd = [
-                str(SPOT_PYTHON),
-                "-m",
-                "yp_spot.association.train",
-                "--train-labels",
-                str(save_dir / "label-splits" / "action" / "train"),
-                "--val-labels",
-                str(save_dir / "label-splits" / "action" / "val"),
-                "--actor-dir",
-                str(save_dir / "labels" / ACTOR_LABEL_SUBDIR),
-                "--frame-dir",
-                str(ACTION_FRAMES_DIR),
-                "--save-dir",
-                str(save_dir),
-                "--backbone",
-                req.backbone,
-                "--batch-size",
-                str(req.batch_size),
-                "--epochs",
-                str(req.num_epochs),
-                "--learning-rate",
-                str(req.learning_rate),
-                "--backbone-learning-rate",
-                str(req.backbone_learning_rate),
-                "--warmup-epochs",
-                str(req.warm_up_epochs),
-                "--num-workers",
-                str(req.num_workers),
-                "--crop-dim",
-                str(req.crop_dim),
-            ]
-            if init_checkpoint:
-                cmd.extend(["--init-checkpoint", str(init_checkpoint)])
-            await job_manager.update_job(
-                job.id,
-                progress=0.2,
-                message="Waiting for GPU...",
-                params={
-                    **job.params,
-                    "frame_cache": frame_summary,
-                    "training_labels": label_summary,
-                    "command": cmd,
-                },
-            )
-            exporter = PackageExporter(
-                job.id,
-                save_dir,
-                lambda: _export_association_package(
-                    run_dir=save_dir,
-                    package_dir=checkpoint_dir,
-                    req=req,
-                    cmd=cmd,
-                    label_summary=label_summary,
-                ),
-            )
-
-            best_state: dict = {}
-
-            def on_metrics(match: re.Match) -> dict:
-                record = json.loads(match.group(1))
-                epoch = int(record["epoch"])
-                validation = record.get("val") or {}
-                if record.get("best"):
-                    exporter.schedule(epoch, "new_best")
-                top1 = validation.get("player_top1")
-                overall = validation.get("overall_exact")
-                progress = 0.2 + 0.79 * ((epoch + 1) / req.num_epochs)
-                loss = record.get("loss") or {}
-                # The shared live-progress schema (see spot_runs.TrainProgress):
-                # one Train page job card renders every trainer, so this
-                # trainer reports itself as its one task.
-                task_metrics = actor_task_metrics(record)
-                snapshot = {
-                    "epoch": epoch,
-                    "epoch_display": epoch + 1,
-                    "epochs": req.num_epochs,
-                    "completed_epoch": epoch,
-                    "latest_train_loss": loss.get("train"),
-                    "latest_val_loss": loss.get("val"),
-                    "latest_val_map": None,
-                    "latest_task_metrics": task_metrics,
-                }
-                if record.get("best"):
-                    best_state.update(
-                        best_epoch=epoch,
-                        best_value=top1,
-                        best_task_metrics=task_metrics,
-                    )
-                return {
-                    "progress": min(progress, 0.99),
-                    "message": (
-                        f"Epoch {epoch + 1}/{req.num_epochs} · player Top-1 "
-                        f"{float(top1 or 0):.1%} · overall "
-                        f"{float(overall or 0):.1%}"
-                    ),
-                    "params": {
-                        "association_train_progress": {
-                            **snapshot,
-                            **best_state,
-                        }
-                    },
-                }
-
-            parsers = [
-                ProgressParser(r"ASSOCIATION_METRICS (\{.*\})", on_metrics)
-            ]
-            env = {
-                **os.environ,
-                "PYTHONUNBUFFERED": "1",
-                "PYTHONPATH": (
-                    f"{SPOT_DIR}{os.pathsep}{os.environ['PYTHONPATH']}"
-                    if os.environ.get("PYTHONPATH")
-                    else str(SPOT_DIR)
-                ),
-                "CUDA_VISIBLE_DEVICES": str(req.gpu),
-                ACTION_CONTRACT_VERSION_ENV: ACTION_CONTRACT_VERSION,
-            }
-            async with stop_vllm_for_job(job.id, when=req.stop_vllm):
-                async with job_manager.gpu_lock:
-                    await job_manager.update_job(
-                        job.id, message="Training independent association model..."
-                    )
-                    rc, last_line = await stream_subprocess(
-                        job.id,
-                        cmd,
-                        cwd=SPOT_DIR,
-                        env=env,
-                        parsers=parsers,
-                        is_key_line=lambda line: (
-                            "ASSOCIATION_METRICS " in line
-                            or "Best epoch:" in line
-                        ),
-                        tee_to_terminal=True,
-                        log_path=save_dir / "terminal.log",
-                    )
-            if rc != 0:
-                raise RuntimeError(subprocess_failure("Association training", rc, last_line))
-            checkpoint_summary = await exporter.export_once(
-                expected_epoch=None, reason="completed", update_job=False
-            )
-            if checkpoint_summary is None:
-                raise RuntimeError("Training completed without a best checkpoint")
-            await job_manager.update_job(
-                job.id,
-                status="completed",
-                progress=1.0,
-                message=f"Association model ready: {checkpoint_dir}",
-                params={
-                    **job.params,
-                    "checkpoint_package": checkpoint_summary,
-                },
-            )
-        except asyncio.CancelledError:
-            checkpoint_summary = None
-            if (
-                exporter is not None
-                and (save_dir / "checkpoint_best.pt").exists()
-            ):
-                checkpoint_summary = await exporter.export_once(
-                    expected_epoch=None, reason="cancelled", update_job=False
-                )
-            if checkpoint_summary:
-                await job_manager.update_job(
-                    job.id,
-                    params={**job.params, "checkpoint_package": checkpoint_summary},
-                )
-            raise
-        except Exception as exc:  # noqa: BLE001
-            print(
-                f"{terminal_prefix(job)}Failed: {type(exc).__name__}: {exc}",
-                flush=True,
-            )
-            log.exception("Association training failed")
-            await fail_job_from_exc(job.id, exc)
-
-    task = asyncio.create_task(run_job())
-    job_manager.attach_task(job, task)
-    return job.to_dict()
-
-
 class PredictRequest(StrictModel):
     model_config = ConfigDict(extra="forbid")
 
     videos: list[str]
-    #: An independent yp-association checkpoint. None selects the rule.
+    #: A fusion actor-head checkpoint package. None selects the rule.
     association_checkpoint: str | None = None
     stop_vllm: bool = False
 
