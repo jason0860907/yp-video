@@ -245,52 +245,55 @@ export function FusionTrainPage() {
               <SchemaNumberField name="batch_size" label="Batch" />
             </div>
 
-            {/* Learning rates live together: one base rate for the backbone
-                and every head, plus the per-head overrides this recipe
-                exposes — instead of the base sitting here and the overrides
-                hiding in Advanced. */}
-            <div className="mt-5 border-t border-border pt-4">
-              <SectionLabel>Learning rates</SectionLabel>
-              <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
-                <SchemaNumberField name="learning_rate" label="Base rate" />
-                {visible.has('action_learning_rate') && (
-                  <SchemaNumberField name="action_learning_rate" label="Action head" />
-                )}
-                {visible.has('rally_learning_rate') && (
-                  <SchemaNumberField name="rally_learning_rate" label="Rally head" />
-                )}
-                {visible.has('winner_learning_rate') && (
-                  <SchemaNumberField name="winner_learning_rate" label="Winner head" />
-                )}
-              </div>
-              <p className="mt-1.5 text-[10px] leading-relaxed text-text-muted">
-                Heads without an override follow the base rate.
-              </p>
-            </div>
-
             <Collapsible label="Advanced" className="mt-4">
-              <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3">
-                {visible.has('sample_fps') && <SchemaNumberField name="sample_fps" label="Sample fps" />}
-                {visible.has('action_sample_fps') && (
-                  <SchemaNumberField name="action_sample_fps" label="Action fps" />
-                )}
-                {visible.has('rally_sample_fps') && (
-                  <SchemaNumberField name="rally_sample_fps" label="Rally fps" />
-                )}
-                {visible.has('winner_sample_fps') && (
-                  <SchemaNumberField name="winner_sample_fps" label="Winner fps" />
-                )}
-                <SchemaNumberField name="clip_len" label="Clip len" />
-                {visible.has('action_fg_upsample') && (
-                  <SchemaNumberField name="action_fg_upsample" label="Action FG rate" step={0.05} />
-                )}
-                {visible.has('acc_grad_iter') && <SchemaNumberField name="acc_grad_iter" label="Grad accum" />}
-                <SchemaNumberField name="warm_up_epochs" label="Warmup" />
-                <SchemaNumberField name="num_workers" label="Workers" />
-                <SchemaNumberField name="gpu" label="GPU" />
-                <SchemaSelectField name="criterion" />
-                <SchemaNumberField name="start_val_epoch" label="Start val" />
-                <SchemaNumberField name="epoch_num_frames" label="Epoch frames" />
+              <div className="space-y-4">
+                {/* Per-head knobs first, one labelled row each. */}
+                <div>
+                  <SectionLabel className="mb-1.5">Learning rate</SectionLabel>
+                  <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
+                    <SchemaNumberField name="learning_rate" label="Base" />
+                    {visible.has('action_learning_rate') && (
+                      <SchemaNumberField name="action_learning_rate" label="Action" />
+                    )}
+                    {visible.has('rally_learning_rate') && (
+                      <SchemaNumberField name="rally_learning_rate" label="Rally" />
+                    )}
+                    {visible.has('winner_learning_rate') && (
+                      <SchemaNumberField name="winner_learning_rate" label="Winner" />
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <SectionLabel className="mb-1.5">Sample fps</SectionLabel>
+                  <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
+                    {visible.has('sample_fps') && <SchemaNumberField name="sample_fps" label="All tasks" />}
+                    {visible.has('action_sample_fps') && (
+                      <SchemaNumberField name="action_sample_fps" label="Action" />
+                    )}
+                    {visible.has('rally_sample_fps') && (
+                      <SchemaNumberField name="rally_sample_fps" label="Rally" />
+                    )}
+                    {visible.has('winner_sample_fps') && (
+                      <SchemaNumberField name="winner_sample_fps" label="Winner" />
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <SectionLabel className="mb-1.5">Trainer</SectionLabel>
+                  <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3">
+                    <SchemaNumberField name="clip_len" label="Clip len" />
+                    {visible.has('action_fg_upsample') && (
+                      <SchemaNumberField name="action_fg_upsample" label="Action FG rate" step={0.05} />
+                    )}
+                    {visible.has('acc_grad_iter') && <SchemaNumberField name="acc_grad_iter" label="Grad accum" />}
+                    <SchemaNumberField name="warm_up_epochs" label="Warmup" />
+                    <SchemaNumberField name="num_workers" label="Workers" />
+                    <SchemaNumberField name="gpu" label="GPU" />
+                    <SchemaSelectField name="criterion" />
+                    <SchemaNumberField name="start_val_epoch" label="Start val" />
+                    <SchemaNumberField name="epoch_num_frames" label="Epoch frames" />
+                  </div>
+                </div>
               </div>
             </Collapsible>
 
