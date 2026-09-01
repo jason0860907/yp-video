@@ -36,6 +36,7 @@ const SERIES_COLORS = [
   'text-accent-light',
   'text-text-secondary',
   'text-amber-400',
+  'text-rose-400',
 ] as const;
 
 interface Point {
@@ -78,7 +79,7 @@ function buildSeries(entries: ActionPerfEntry[]): Series[] {
     harmonic.pts.every((p, i) => p.ep === temporal.pts[i]!.ep && p.v === temporal.pts[i]!.v)
   ) {
     series = series.filter((s) => s.key !== 'temporal');
-    harmonic.label = 'mAP';
+    harmonic.label = 'Segment mAP';
   }
   return series;
 }
@@ -117,9 +118,30 @@ function buildTaskSeries(entries: ActionPerfEntry[], task: string): Series[] {
     .filter((s) => s.pts.length > 0);
 }
 
-/** Auxiliary heads worth their own per-epoch panel. The spotting head IS the
- *  mAP chart, and location has no per-epoch story worth a panel. */
-const UNPLOTTED_TASKS = new Set(['rally', 'action', 'location']);
+/** Fixed task order so every run colors its tasks the same way. */
+const TASK_ORDER = ['action', 'rally', 'winner', 'actor', 'location'] as const;
+
+/** One series per task — its primary metric per epoch. The cross-task
+ *  overview: five heads, five lines, same 0-1 axis. */
+function buildOverviewSeries(entries: ActionPerfEntry[]): Series[] {
+  const lastTasks = entries[entries.length - 1]?.tasks ?? {};
+  const names = TASK_ORDER.filter((t) => t in lastTasks);
+  return names
+    .map((task, index) => {
+      const primary = lastTasks[task]!.primary_metric;
+      return toSeries(
+        {
+          key: task,
+          label: TASK_LABELS[task] ?? task,
+          colorClass: SERIES_COLORS[index % SERIES_COLORS.length]!,
+        },
+        entries
+          .map((e) => ({ ep: e.epoch, v: e.tasks?.[task]?.validation.metrics[primary] }))
+          .filter((pnt): pnt is Point => typeof pnt.v === 'number' && Number.isFinite(pnt.v)),
+      );
+    })
+    .filter((s) => s.pts.length > 0);
+}
 
 /** Shorten a long broadcast filename to something a bar row can show.
  *  Prefer the segment naming the teams ("A vs. B") over the date/time head. */
@@ -140,12 +162,20 @@ export function TrainPerfCard({
 }) {
   const entries = useMemo(() => (data.entries ?? []).filter((e) => typeof e.val_mAP === 'number'), [data.entries]);
   const series = useMemo(() => buildSeries(entries), [entries]);
+  const overview = useMemo(() => buildOverviewSeries(entries), [entries]);
+  const multiTask = overview.length >= 2;
   const taskCharts = useMemo(() => {
-    const names = Object.keys(entries[entries.length - 1]?.tasks ?? {}).filter((t) => !UNPLOTTED_TASKS.has(t));
+    const names = TASK_ORDER.filter((t) => t in (entries[entries.length - 1]?.tasks ?? {}));
     return names
+      .filter((t) => t !== 'location') // location's spatial line lives in the overview
+      // With a headline panel (single-task runs) the spotting head is already
+      // charted; per-task panels then cover only the auxiliary heads.
+      .filter((t) => multiTask || (t !== 'action' && t !== 'rally'))
       .map((task) => ({ task, series: buildTaskSeries(entries, task) }))
-      .filter((c) => c.series.length > 0);
-  }, [entries]);
+      // A one-line panel duplicates its overview line; only multi-metric
+      // panels add information.
+      .filter((c) => c.series.length > (multiTask ? 1 : 0));
+  }, [entries, multiTask]);
   // Association runs report no mAP (val_mAP is pinned to 0) but do carry task
   // metrics — for them the actor chart IS the chart, and the mAP curve plus
   // its legend would just draw a flat zero.
@@ -178,15 +208,21 @@ export function TrainPerfCard({
   }, [entries, data.best?.epoch]);
 
   const lastTasks = entries[entries.length - 1]?.tasks ?? {};
-  const spottingLabel = 'rally' in lastTasks ? 'Rally' : 'Action';
+  const rallyRun = 'rally' in lastTasks && !('action' in lastTasks);
 
-  if (!entries.length || (!series.length && !mapless)) return null;
+  if (!entries.length || (!series.length && !mapless && !overview.length)) return null;
 
-  // Spotting head left, one panel per auxiliary head after it; a lone chart
-  // spans the full width.
+  // Overview first (multi-task runs), spotting head next, one panel per
+  // auxiliary head after it; a lone chart spans the full width.
   const charts: Array<{ title: string; series: Series[]; bestEpoch?: number }> = [];
-  if (series.length) {
-    charts.push({ title: `${spottingLabel} · val mAP`, series, bestEpoch: data.best?.epoch });
+  if (multiTask) {
+    charts.push({ title: 'All tasks · primary metric', series: overview, bestEpoch: data.best?.epoch });
+  } else if (series.length) {
+    charts.push({
+      title: rallyRun ? 'Rally · Segment mAP' : 'Action · mAP',
+      series,
+      bestEpoch: data.best?.epoch,
+    });
   }
   for (const { task, series: taskSeries } of taskCharts) {
     charts.push({
@@ -251,7 +287,9 @@ export function TrainPerfCard({
       />
       {/* A single class (rally runs) carries no comparison — the headline line already shows it. */}
       {perClass.length > 1 && <PerClassChart rows={perClass} bestEpoch={data.best?.epoch} />}
-      {perVideo.length > 0 && <PerVideoChart rows={perVideo} bestEpoch={data.best?.epoch} />}
+      {perVideo.length > 0 && (
+        <PerVideoChart rows={perVideo} bestEpoch={data.best?.epoch} metricLabel={rallyRun ? 'segment mAP' : 'harmonic mAP'} />
+      )}
       {!hasDetail && (
         <p className="mt-4 text-[11px] text-text-muted">
           Per-action and per-video mAP appear here for runs trained after this feature landed (older runs don't record it).
@@ -383,12 +421,12 @@ function EpochChart({ series, entries, bestEpoch }: { series: Series[]; entries:
   );
 }
 
-function PerVideoChart({ rows, bestEpoch }: { rows: ActionVideoMap[]; bestEpoch?: number }) {
+function PerVideoChart({ rows, bestEpoch, metricLabel }: { rows: ActionVideoMap[]; bestEpoch?: number; metricLabel: string }) {
   const max = Math.max(0.001, ...rows.map((r) => r.harmonic));
   return (
     <div className="mt-4">
       <div className="mb-1.5 text-xs font-semibold text-text-primary">
-        Per-video harmonic mAP{typeof bestEpoch === 'number' ? ` · best epoch ${bestEpoch}` : ''}
+        Per-video {metricLabel}{typeof bestEpoch === 'number' ? ` · best epoch ${bestEpoch}` : ''}
       </div>
       <div className="space-y-1.5">
         {rows.map((r) => {

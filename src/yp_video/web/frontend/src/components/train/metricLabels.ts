@@ -8,6 +8,7 @@ export const METRIC_LABELS: Record<string, string> = {
   overall_top1: 'Overall Top-1',
   player_top1: 'Player Top-1',
   winner_top1: 'Winner Top-1',
+  majority_baseline: 'Majority baseline',
   occluded_recall: 'Occluded recall',
   untracked_recall: 'Untracked recall',
   loss: 'Loss',
