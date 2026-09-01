@@ -270,19 +270,34 @@ export function FusionTrainPage() {
               </p>
             </div>
 
+            {/* Sample rates get the same treatment as learning rates: the
+                per-task decode fps together in one labelled block instead of
+                scattered through Advanced. */}
+            <div className="mt-5 border-t border-border pt-4">
+              <SectionLabel>Sample fps</SectionLabel>
+              <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
+                {visible.has('sample_fps') && <SchemaNumberField name="sample_fps" label="All tasks" />}
+                {visible.has('action_sample_fps') && (
+                  <SchemaNumberField name="action_sample_fps" label="Action stream" />
+                )}
+                {visible.has('rally_sample_fps') && (
+                  <SchemaNumberField name="rally_sample_fps" label="Rally stream" />
+                )}
+                {visible.has('winner_sample_fps') && (
+                  <SchemaNumberField name="winner_sample_fps" label="Winner stream" />
+                )}
+              </div>
+              <p className="mt-1.5 text-[10px] leading-relaxed text-text-muted">
+                Frames decoded per second of video for each task stream.
+                Action needs a high rate to hit the exact contact frame;
+                Rally/Winner segments survive a coarse one. Location and actor
+                ride the action stream.
+              </p>
+            </div>
+
             <Collapsible label="Advanced" className="mt-4">
               <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3">
                 <SchemaNumberField name="clip_len" label="Clip len" />
-                {visible.has('sample_fps') && <SchemaNumberField name="sample_fps" label="Sample fps" />}
-                {visible.has('action_sample_fps') && (
-                  <SchemaNumberField name="action_sample_fps" label="Action fps" />
-                )}
-                {visible.has('rally_sample_fps') && (
-                  <SchemaNumberField name="rally_sample_fps" label="Rally fps" />
-                )}
-                {visible.has('winner_sample_fps') && (
-                  <SchemaNumberField name="winner_sample_fps" label="Winner fps" />
-                )}
                 {visible.has('action_fg_upsample') && (
                   <SchemaNumberField name="action_fg_upsample" label="Action FG rate" step={0.05} />
                 )}
