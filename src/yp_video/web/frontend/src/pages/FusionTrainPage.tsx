@@ -108,7 +108,7 @@ export function FusionTrainPage() {
   const validationChoices: ValidationChoice[] = isRally
     ? (rallyAnnotations?.per_video ?? [])
         .filter((video) => values.camera_view === 'all' || video.view === values.camera_view)
-        .map((video) => ({ name: video.video, kind: video.view as CutKind, events: 0 }))
+        .map((video) => ({ name: video.video, kind: video.view as CutKind, events: 0, is_val: video.is_val }))
     : (actionAnnotations?.per_video ?? [])
         .filter(
           (video) =>

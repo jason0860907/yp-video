@@ -191,7 +191,7 @@ export interface FusionModelStatus {
     total_hours?: number;
     with_video?: number;
     missing_videos?: number;
-    per_video?: Array<{ video: string; view: string }>;
+    per_video?: Array<{ video: string; view: string; is_val?: boolean }>;
   };
   supervision: {
     action_videos: number;

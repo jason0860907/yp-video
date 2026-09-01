@@ -13,7 +13,7 @@ from yp_video.action import rally as rally_spot
 from yp_video.action import training
 from yp_video.actor import labels as association_labels
 from yp_video.config import SPOT_CHECKPOINTS_DIR, SPOT_DIR, SPOT_PYTHON, cut_kind_of
-from yp_video.contracts.action import RECIPES, TASKS
+from yp_video.contracts.action import LABEL_FILE_SUFFIX, RECIPES, TASKS
 from yp_video.web.jobs import JobSummary, JobType, job_manager
 from yp_video.web.r2_client import resolve_cut
 from yp_video.web.spot_runs import checkpoint_package_options, performance_payload
@@ -33,6 +33,12 @@ def status() -> dict:
     ]
     joint_videos = sum(1 for row in per_video if row["has_association_label"])
     rally_items, rally_missing = rally_spot.select_training_items(resolve_cut, 0)
+    # The saved val set (action-val-set.txt) names label files; mark rally
+    # rows by the same membership so "Load saved val set" works for every
+    # recipe, keeping one holdout across runs.
+    from pathlib import Path
+
+    val_names = {Path(entry).name for entry in training.read_val_set_file()}
     return {
         "recipes": [
             {
@@ -62,7 +68,12 @@ def status() -> dict:
             "with_video": len(rally_items),
             "missing_videos": len(rally_missing),
             "per_video": [
-                {"video": video.stem, "view": cut_kind_of(video)} for _ann, video in rally_items
+                {
+                    "video": video.stem,
+                    "view": cut_kind_of(video),
+                    "is_val": f"{video.stem}{LABEL_FILE_SUFFIX}" in val_names,
+                }
+                for _ann, video in rally_items
             ],
         },
         "supervision": {
