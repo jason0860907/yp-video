@@ -107,7 +107,7 @@
         "acc_grad_iter": 1,
         "num_epochs": 30,
         "warm_up_epochs": 2,
-        "learning_rate": 0.0003,
+        "learning_rate": 3e-05,
         "audio_backend": "none",
         "sample_fps": 5.0
       }
@@ -129,7 +129,7 @@
         "acc_grad_iter": 1,
         "num_epochs": 30,
         "warm_up_epochs": 2,
-        "learning_rate": 0.0003,
+        "learning_rate": 3e-05,
         "audio_backend": "none",
         "sample_fps": 5.0
       }
@@ -153,7 +153,7 @@
         "acc_grad_iter": 4,
         "num_epochs": 100,
         "warm_up_epochs": 3,
-        "learning_rate": 1e-05,
+        "learning_rate": 3e-05,
         "audio_backend": "logmel"
       }
     },
@@ -215,7 +215,7 @@
         "learning_rate": 3e-05,
         "audio_backend": "logmel",
         "dataset_scope": "partial_labels",
-        "action_learning_rate": 0.0003,
+        "action_learning_rate": 3e-05,
         "rally_learning_rate": 3e-05,
         "winner_learning_rate": 3e-05,
         "action_fg_upsample": 0.5,

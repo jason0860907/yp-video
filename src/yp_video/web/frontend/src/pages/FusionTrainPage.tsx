@@ -243,7 +243,31 @@ export function FusionTrainPage() {
               {visible.has('video_limit') && <SchemaNumberField name="video_limit" label="Video limit" />}
               <SchemaNumberField name="num_epochs" label="Epochs" />
               <SchemaNumberField name="batch_size" label="Batch" />
-              <SchemaNumberField name="learning_rate" label="Learning rate" />
+            </div>
+
+            {/* Learning rates live together: one base rate for the backbone
+                and every head, plus the per-head overrides this recipe
+                exposes — instead of the base sitting here and the overrides
+                hiding in Advanced. */}
+            <div className="mt-5 border-t border-border pt-4">
+              <SectionLabel>Learning rates</SectionLabel>
+              <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
+                <SchemaNumberField name="learning_rate" label="Base rate" />
+                {visible.has('action_learning_rate') && (
+                  <SchemaNumberField name="action_learning_rate" label="Action head" />
+                )}
+                {visible.has('rally_learning_rate') && (
+                  <SchemaNumberField name="rally_learning_rate" label="Rally head" />
+                )}
+                {visible.has('winner_learning_rate') && (
+                  <SchemaNumberField name="winner_learning_rate" label="Winner head" />
+                )}
+              </div>
+              <p className="mt-1.5 text-[10px] leading-relaxed text-text-muted">
+                Backbone and every head run at the base rate; a per-head field
+                overrides just that head. Heads without a field here (location,
+                actor) always follow the base rate.
+              </p>
             </div>
 
             <Collapsible label="Advanced" className="mt-4">
@@ -258,15 +282,6 @@ export function FusionTrainPage() {
                 )}
                 {visible.has('winner_sample_fps') && (
                   <SchemaNumberField name="winner_sample_fps" label="Winner fps" />
-                )}
-                {visible.has('action_learning_rate') && (
-                  <SchemaNumberField name="action_learning_rate" label="Action LR" />
-                )}
-                {visible.has('rally_learning_rate') && (
-                  <SchemaNumberField name="rally_learning_rate" label="Rally LR" />
-                )}
-                {visible.has('winner_learning_rate') && (
-                  <SchemaNumberField name="winner_learning_rate" label="Winner LR" />
                 )}
                 {visible.has('action_fg_upsample') && (
                   <SchemaNumberField name="action_fg_upsample" label="Action FG rate" step={0.05} />

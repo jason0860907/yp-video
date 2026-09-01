@@ -178,15 +178,18 @@ class Recipe:
 
 
 _RALLY_FIELDS = ("sample_fps", "video_limit")
+# Every recipe defaults to the same base learning rate (3e-5, matching the
+# yp-spot CLI default); per-task overrides start equal to it so the form
+# shows one number everywhere until the operator deliberately diverges.
 _RALLY_DEFAULTS = {
     "batch_size": 8, "acc_grad_iter": 1, "num_epochs": 30,
-    "warm_up_epochs": 2, "learning_rate": 3e-4, "audio_backend": "none",
+    "warm_up_epochs": 2, "learning_rate": 3e-5, "audio_backend": "none",
     "sample_fps": 5.0,
 }
 _ACTION_FIELDS = ("sample_fps", "acc_grad_iter", "audio_backend", "include_predictions")
 _ACTION_DEFAULTS = {
     "batch_size": 32, "acc_grad_iter": 4, "num_epochs": 100,
-    "warm_up_epochs": 3, "learning_rate": 1e-5, "audio_backend": "logmel",
+    "warm_up_epochs": 3, "learning_rate": 3e-5, "audio_backend": "logmel",
 }
 _FUSION_DEFAULTS = {
     "batch_size": 8, "acc_grad_iter": 1, "num_epochs": 50,
@@ -214,7 +217,7 @@ _MULTI_FPS_DEFAULTS = {
     "learning_rate": 3e-5,
     "audio_backend": "logmel",
     "dataset_scope": "partial_labels",
-    "action_learning_rate": 3e-4,
+    "action_learning_rate": 3e-5,
     "rally_learning_rate": 3e-5,
     "winner_learning_rate": 3e-5,
     "action_fg_upsample": 0.5,
