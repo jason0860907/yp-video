@@ -26,6 +26,7 @@ from yp_video.contracts.action import (
     ACTION_CONTRACT_VERSION,
     ACTION_CONTRACT_VERSION_ENV,
     ACTION_LABELS_ORDERED,
+    LABEL_FILE_GLOB,
     SPOT_PROGRESS_PREFIX,
     event_id,
 )
@@ -794,7 +795,7 @@ async def _run_prelabel_batch_subprocess(
 def export_dataset() -> Response:
     ACTION_ANNOTATIONS_DIR.mkdir(parents=True, exist_ok=True)
     records = []
-    for path in sorted(ACTION_ANNOTATIONS_DIR.glob("*_actions.jsonl")):
+    for path in sorted(ACTION_ANNOTATIONS_DIR.glob(LABEL_FILE_GLOB)):
         data = load_annotation(path)
         if data is not None:
             # The export is self-contained: rallies and the rally-derived

@@ -45,13 +45,13 @@ import time
 from pathlib import Path
 
 from yp_video.actor.labels import ActorLabel, ActorVerdict
-from yp_video.actor.policy import contact_point
+from yp_video.actor.policy import EventContext, RulePolicy, contact_point
 from yp_video.actor.resolution import ActorResolution, actor_resolution
-from yp_video.actor.service import ActorAssociationService
 from yp_video.contracts.action import event_id as action_event_id
 from yp_video.core.jsonl import read_jsonl, read_jsonl_cached, write_jsonl
 from yp_video.core.progress import ProgressFn
 from yp_video.extraction.cropping import (
+    CropTarget,
     clamp_box,
     cut,
     label_target,
@@ -68,7 +68,6 @@ from yp_video.person.detector import (
     DETECTOR_NAME,
     PersonBox,
     person_detector,
-    person_from_detection,
 )
 from yp_video.tracklets.store import load_span_detections
 from yp_video.reid.embedder import base_embedder_name, build_embedders
@@ -496,7 +495,6 @@ def _apply_actor_fix(
     # None for invisible / point-less events — or a record whose metadata
     # lost its frame size, which used to slip through this check.
     contact = contact_point(record.get("xy"), frame_w, frame_h)
-    detections = record.get("detections") or []
 
     revert = label is None
     human_picked = actor_resolution(record) in (
@@ -526,18 +524,21 @@ def _apply_actor_fix(
     person = None
     n_candidates = record.get("candidates", 0)
     if revert:
-        # No contact point (invisible event) → there IS no automatic pick;
-        # revert just clears back to miss.
-        people = [person_from_detection(d) for d in detections]
-        if contact is not None:
-            association = ActorAssociationService().associate(people, *contact)
-            candidates = association.production_candidates
-            record["association"] = association.diagnostic()
-        else:
-            candidates = []
-        n_candidates = len(candidates)
+        # Re-run the automatic pick through the production policy. On an
+        # unusable contact point (no point, or an invisible ball) it
+        # abstains — revert then just clears back to miss.
+        pick = RulePolicy().decide(
+            EventContext.for_event(record, width=frame_w, height=frame_h)
+        )
+        if pick.diagnostic:
+            record["association"] = pick.diagnostic
+        n_candidates = pick.candidates
         record["candidates"] = n_candidates
-        person = candidates[0] if candidates else None
+        if pick.box is not None:
+            # The pick's box IS one of the stored detections; snap recovers it.
+            person = person_for(
+                record, CropTarget(pick.box, record["frame"], snap=True)
+            )
     elif target is not None:
         person = person_for(record, target)
 

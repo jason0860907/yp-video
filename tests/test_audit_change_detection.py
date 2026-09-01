@@ -14,7 +14,7 @@ import unittest
 from pathlib import Path
 
 from yp_video.web import audit
-from yp_video.web.routers import annotate
+from yp_video.web import rally_annotations
 
 
 class DiffTests(unittest.TestCase):
@@ -56,11 +56,11 @@ class RallySaveTests(unittest.TestCase):
 
     @staticmethod
     def _delta(out, video, duration, anns):
-        rows, before = annotate._write_annotations_atomic(out, video, duration, anns)
+        rows, before = rally_annotations.write_annotations_atomic(out, video, duration, anns)
         return rows, audit.diff(before, rows, key=lambda r: r["rally_id"])
 
     def _ann(self, start, end, rally_id=None, winner=None):
-        return annotate.Annotation(
+        return rally_annotations.Annotation(
             start=start, end=end, label="rally", rally_id=rally_id, winner=winner
         )
 
@@ -76,7 +76,7 @@ class RallySaveTests(unittest.TestCase):
         """This is the autosave case: the timer fires, the content is the same."""
         with tempfile.TemporaryDirectory() as raw_dir:
             out = Path(raw_dir) / "m_annotations.jsonl"
-            annotate._write_annotations_atomic(
+            rally_annotations.write_annotations_atomic(
                 out, "m", 60.0, [self._ann(1, 2), self._ann(3, 4)]
             )
             _rows, delta = self._delta(
@@ -88,7 +88,7 @@ class RallySaveTests(unittest.TestCase):
     def test_moving_a_boundary_is_an_edit(self) -> None:
         with tempfile.TemporaryDirectory() as raw_dir:
             out = Path(raw_dir) / "m_annotations.jsonl"
-            annotate._write_annotations_atomic(out, "m", 60.0, [self._ann(1, 2)])
+            rally_annotations.write_annotations_atomic(out, "m", 60.0, [self._ann(1, 2)])
             _rows, delta = self._delta(
                 out, "m", 60.0, [self._ann(1, 2.5, rally_id=1)]
             )
@@ -98,7 +98,7 @@ class RallySaveTests(unittest.TestCase):
         """`winner` is written only when set, so it must not read as unchanged."""
         with tempfile.TemporaryDirectory() as raw_dir:
             out = Path(raw_dir) / "m_annotations.jsonl"
-            annotate._write_annotations_atomic(out, "m", 60.0, [self._ann(1, 2)])
+            rally_annotations.write_annotations_atomic(out, "m", 60.0, [self._ann(1, 2)])
             _rows, delta = self._delta(
                 out, "m", 60.0, [self._ann(1, 2, rally_id=1, winner="left")]
             )
@@ -107,7 +107,7 @@ class RallySaveTests(unittest.TestCase):
     def test_deleting_and_adding_are_counted_apart(self) -> None:
         with tempfile.TemporaryDirectory() as raw_dir:
             out = Path(raw_dir) / "m_annotations.jsonl"
-            annotate._write_annotations_atomic(
+            rally_annotations.write_annotations_atomic(
                 out, "m", 60.0, [self._ann(1, 2), self._ann(3, 4)]
             )
             _rows, delta = self._delta(

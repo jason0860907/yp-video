@@ -15,8 +15,8 @@ from yp_video.action.spot_runs import _normalize_metrics_entry
 from yp_video.actor import labels as actor_labels
 from yp_video.actor import review as actor_review
 from yp_video.actor.labels import ActorLabel, ActorVerdict
+from yp_video.actor.policy import EventContext, RulePolicy
 from yp_video.actor.ranking import DecisionReason, rule_decision
-from yp_video.actor.service import ActorAssociationService
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import write_jsonl
 from yp_video.extraction import actor_fix, done
@@ -898,13 +898,19 @@ class LearnedAssociationTests(unittest.TestCase):
         necessarily run, so the geometric question is the only one answerable
         there. The learned path answers a tracklet question and is reached by
         naming it in Association Predict, not by activating anything here."""
-        actor = _person(score=0.9, box=(30, 20, 70, 120))
+        context = EventContext(
+            frame=0,
+            contact=(50.0, 20.0),
+            visible=True,
+            event_id="e",
+            detections=[{"box": [30, 20, 70, 120], "score": 0.9}],
+        )
 
-        result = ActorAssociationService().associate([actor], 50, 20)
+        pick = RulePolicy().decide(context)
 
-        self.assertIs(result.production.selected, actor)
-        self.assertEqual(result.production_candidates, [actor])
-        self.assertEqual(result.diagnostic()["version"], "rule-based")
+        self.assertEqual(tuple(pick.box), (30, 20, 70, 120))
+        self.assertEqual(pick.candidates, 1)
+        self.assertEqual(pick.diagnostic["version"], "rule-based")
 
 
 if __name__ == "__main__":

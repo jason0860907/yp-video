@@ -21,12 +21,13 @@ from yp_video.action.rally import events_to_rally_segments
 from yp_video.contracts.action import WINNER_TAIL_S
 from yp_video.core import rallies as core_rallies
 from yp_video.core.jsonl import read_jsonl
+from yp_video.web import rally_annotations
 from yp_video.web.routers import annotate
 
 
 def _write(tmp: Path, annotations: list[annotate.Annotation]) -> Path:
     out = tmp / "vid_annotations.jsonl"
-    annotate._write_annotations_atomic(out, "vid.mp4", 100.0, annotations)
+    rally_annotations.write_annotations_atomic(out, "vid.mp4", 100.0, annotations)
     return out
 
 
@@ -34,8 +35,8 @@ class SavePersistsSideTest(unittest.TestCase):
     def test_side_saved_only_when_set(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = _write(Path(tmp), [
-                annotate.Annotation(start=1.0, end=10.0, label="rally", winner="left"),
-                annotate.Annotation(start=20.0, end=30.0, label="rally"),
+                rally_annotations.Annotation(start=1.0, end=10.0, label="rally", winner="left"),
+                rally_annotations.Annotation(start=20.0, end=30.0, label="rally"),
             ])
             _meta, rows = read_jsonl(path)
         self.assertEqual(rows[0]["winner"], "left")
@@ -43,15 +44,15 @@ class SavePersistsSideTest(unittest.TestCase):
 
     def test_unknown_side_rejected(self):
         with self.assertRaises(ValidationError):
-            annotate.Annotation(start=1.0, end=2.0, label="rally", winner="up")
+            rally_annotations.Annotation(start=1.0, end=2.0, label="rally", winner="up")
 
 
 class LoadRalliesCarriesSideTest(unittest.TestCase):
     def test_side_reaches_every_consumer(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = _write(Path(tmp), [
-                annotate.Annotation(start=1.0, end=10.0, label="rally", winner="near"),
-                annotate.Annotation(start=20.0, end=30.0, label="rally"),
+                rally_annotations.Annotation(start=1.0, end=10.0, label="rally", winner="near"),
+                rally_annotations.Annotation(start=20.0, end=30.0, label="rally"),
             ])
             with patch.object(core_rallies, "rally_annotation_path", return_value=path):
                 rallies = core_rallies.load_rallies("vid")
@@ -99,8 +100,8 @@ class TrainingLabelsCarrySideTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             ann = _write(tmp_path, [
-                annotate.Annotation(start=1.0, end=10.0, label="rally", winner="far"),
-                annotate.Annotation(start=20.0, end=30.0, label="rally"),
+                rally_annotations.Annotation(start=1.0, end=10.0, label="rally", winner="far"),
+                rally_annotations.Annotation(start=20.0, end=30.0, label="rally"),
             ])
             video = tmp_path / "vid.mp4"
             video.touch()

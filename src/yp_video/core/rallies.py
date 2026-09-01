@@ -47,8 +47,11 @@ RALLY_SOURCES = (
 SOURCE_BY_TAG = {source.tag: source for source in RALLY_SOURCES}
 
 
+ANNOTATION_SUFFIX = "_annotations.jsonl"
+
+
 def annotation_name(stem: str) -> str:
-    return f"{stem}_annotations.jsonl"
+    return f"{stem}{ANNOTATION_SUFFIX}"
 
 
 def rally_annotation_path(stem: str) -> Path | None:

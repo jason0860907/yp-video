@@ -40,6 +40,7 @@ from yp_video.contracts.action import (
     ACTION_CONTRACT_VERSION,
     ACTION_CONTRACT_VERSION_ENV,
     ACTOR_FILE_SUFFIX,
+    LABEL_FILE_SUFFIX,
     ASSOCIATION_PACKAGE_TYPE,
     SPOT_PACKAGE_TYPE,
 )
@@ -54,7 +55,7 @@ INDEPENDENT_FORMAT = "yp-association-v1"
 def action_label_path(stem: str) -> Path | None:
     """The action labels this video's events come from, manual winning."""
     for directory in (ACTION_ANNOTATIONS_DIR, ACTION_PRE_ANNOTATIONS_DIR):
-        path = directory / f"{stem}_actions.jsonl"
+        path = directory / f"{stem}{LABEL_FILE_SUFFIX}"
         if path.exists():
             return path
     return None

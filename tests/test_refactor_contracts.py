@@ -464,7 +464,7 @@ class StagesStopWhereTheyShouldTests(unittest.TestCase):
             sorted(params), ["on_progress", "video_path"]
         )
         source = inspect.getsource(pipeline.detect_video)
-        for forbidden in ("cut(", "ActorAssociationService", "embed_video"):
+        for forbidden in ("cut(", "RulePolicy", "rule_decision", "embed_video"):
             self.assertNotIn(forbidden, source, f"detection must not {forbidden}")
 
     def test_retired_detector_output_is_queued_for_migration(self) -> None:

@@ -27,6 +27,7 @@ from yp_video.config import (
     EXTRACTION_DIR,
 )
 from yp_video.core.jsonl import read_jsonl_cached
+from yp_video.contracts.action import LABEL_FILE_SUFFIX
 from yp_video.core.rallies import (
     load_rallies,
     rally_annotation_path,
@@ -190,7 +191,7 @@ def masked_crop_dir(stem: str) -> Path:
 def action_annotation_path(stem: str) -> Path | None:
     """Manual action annotations win over pre-annotations."""
     for directory in (ACTION_ANNOTATIONS_DIR, ACTION_PRE_ANNOTATIONS_DIR):
-        path = directory / f"{stem}_actions.jsonl"
+        path = directory / f"{stem}{LABEL_FILE_SUFFIX}"
         if path.exists():
             return path
     return None

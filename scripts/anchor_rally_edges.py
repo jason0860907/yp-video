@@ -52,7 +52,7 @@ from yp_video.core.jsonl import atomic_write, read_jsonl, read_jsonl_header
 from yp_video.core.rallies import annotation_name, rally_fingerprint
 from yp_video.tracklets.store import tracks_path
 from yp_video.web.r2_client import r2_client
-from yp_video.web.routers.annotate import Annotation, _write_annotations_atomic
+from yp_video.web.rally_annotations import Annotation, write_annotations_atomic
 
 R2_CATEGORY = "rally-spot/annotations"
 #: Matches rally_fingerprint's own rounding, so a re-stamp cannot disagree
@@ -205,7 +205,7 @@ def _write(plan: Plan) -> None:
         )
         for row in plan.rows
     ]
-    _write_annotations_atomic(
+    write_annotations_atomic(
         plan.path,
         str(plan.meta.get("video") or plan.stem),
         float(plan.meta.get("duration") or 0.0),

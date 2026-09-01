@@ -36,7 +36,7 @@ from yp_video.contracts.action import (
 )
 from yp_video.core.ffmpeg import probe_video_metadata
 from yp_video.core.jsonl import write_jsonl
-from yp_video.core.rallies import number_rallies
+from yp_video.core.rallies import annotation_name, number_rallies
 from yp_video.web import worklists
 from yp_video.web.job_helpers import (
     ProgressParser,
@@ -79,7 +79,7 @@ class RallyPredictRequest(StrictModel):
 
 
 def _pre_annotation_path(stem: str) -> Path:
-    return RALLY_SPOT_PRE_ANNOTATIONS_DIR / f"{stem}_annotations.jsonl"
+    return RALLY_SPOT_PRE_ANNOTATIONS_DIR / annotation_name(stem)
 
 
 @router.get("/videos")
@@ -90,10 +90,10 @@ def list_videos() -> list[dict]:
             "name": f.name,
             "kind": cut_kind_of(f),
             "status": worklists.rally_status(f.stem),
-            "has_annotation": (RALLY_ANNOTATIONS_DIR / f"{f.stem}_annotations.jsonl").exists(),
+            "has_annotation": (RALLY_ANNOTATIONS_DIR / annotation_name(f.stem)).exists(),
             "has_pre_annotation": _pre_annotation_path(f.stem).exists(),
             "has_vlm_pre_annotation": (
-                RALLY_PRE_ANNOTATIONS_DIR / f"{f.stem}_annotations.jsonl"
+                RALLY_PRE_ANNOTATIONS_DIR / annotation_name(f.stem)
             ).exists(),
         })
     return results

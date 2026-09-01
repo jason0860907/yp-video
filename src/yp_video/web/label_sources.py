@@ -19,6 +19,7 @@ from yp_video.action.frames import ensure_action_frame_caches
 from yp_video.actor import labels as association_labels
 from yp_video.actor.training_labels import prepare_action_training_labels
 from yp_video.config import ACTION_FRAMES_DIR
+from yp_video.core.rallies import ANNOTATION_SUFFIX
 from yp_video.contracts.action import (
     LABEL_FILE_SUFFIX,
     RALLY_LABEL_FILE_SUFFIX,
@@ -206,6 +207,6 @@ def check_task_supervision(recipe: Recipe, prepared: PreparedLabels) -> None:
 def label_stem(entry: str) -> str:
     """A validation-list entry (stem, ``<stem>.mp4``, or a label filename) → stem."""
     name = Path(entry.strip()).name
-    for suffix in (LABEL_FILE_SUFFIX, RALLY_LABEL_FILE_SUFFIX, "_annotations.jsonl", ".mp4"):
+    for suffix in (LABEL_FILE_SUFFIX, RALLY_LABEL_FILE_SUFFIX, ANNOTATION_SUFFIX, ".mp4"):
         name = name.removesuffix(suffix)
     return name

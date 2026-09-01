@@ -74,7 +74,7 @@ def annotation_stats(resolve: CutResolver) -> dict:
     videos = 0
     events = 0
     frames = 0
-    for path in sorted(ACTION_ANNOTATIONS_DIR.glob("*_actions.jsonl")):
+    for path in sorted(ACTION_ANNOTATIONS_DIR.glob(LABEL_FILE_GLOB)):
         try:
             meta, records = read_jsonl(path)
         except (OSError, json.JSONDecodeError):
@@ -132,12 +132,12 @@ def label_items(
     bytes live only in R2 trains fine off its existing frame cache, and the
     cache phase raises if that cache would need a rebuild.
     """
-    label_files = sorted(ACTION_ANNOTATIONS_DIR.glob("*_actions.jsonl"))
+    label_files = sorted(ACTION_ANNOTATIONS_DIR.glob(LABEL_FILE_GLOB))
     if include_predictions:
         annotated = {path.name for path in label_files}
         label_files += sorted(
             path
-            for path in ACTION_PRE_ANNOTATIONS_DIR.glob("*_actions.jsonl")
+            for path in ACTION_PRE_ANNOTATIONS_DIR.glob(LABEL_FILE_GLOB)
             if path.name not in annotated
         )
 

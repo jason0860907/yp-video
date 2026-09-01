@@ -11,6 +11,7 @@ from yp_video.config import (
     find_cut,
     load_env,
 )
+from yp_video.core.rallies import annotation_name
 from yp_video.web.job_helpers import (
     batch_message,
     batch_progress,
@@ -149,7 +150,7 @@ async def start_detection(req: DetectRequest):
                         job.id, items, i, message="converting to rally...",
                         overall_message=batch_message(i, total, video_name, "converting to rally..."),
                     )
-                    rally_path = RALLY_PRE_ANNOTATIONS_DIR / f"{Path(video_name).stem}_annotations.jsonl"
+                    rally_path = RALLY_PRE_ANNOTATIONS_DIR / annotation_name(Path(video_name).stem)
                     n_rallies = await loop.run_in_executor(
                         None,
                         lambda inp=Path(output_file), out=rally_path,

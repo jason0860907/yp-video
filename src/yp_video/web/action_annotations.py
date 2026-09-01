@@ -17,16 +17,17 @@ from typing import NamedTuple
 from fastapi import HTTPException
 
 from yp_video.config import ACTION_ANNOTATIONS_DIR, ACTION_PRE_ANNOTATIONS_DIR
+from yp_video.contracts.action import LABEL_FILE_SUFFIX
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import read_jsonl
 
 
 def annotation_path(video_name: str) -> Path:
-    return ACTION_ANNOTATIONS_DIR / f"{Path(video_name).stem}_actions.jsonl"
+    return ACTION_ANNOTATIONS_DIR / f"{Path(video_name).stem}{LABEL_FILE_SUFFIX}"
 
 
 def pre_annotation_path(video_name: str) -> Path:
-    return ACTION_PRE_ANNOTATIONS_DIR / f"{Path(video_name).stem}_actions.jsonl"
+    return ACTION_PRE_ANNOTATIONS_DIR / f"{Path(video_name).stem}{LABEL_FILE_SUFFIX}"
 
 
 _annotation_cache = StatCache()

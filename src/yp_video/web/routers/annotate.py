@@ -4,17 +4,14 @@ import asyncio
 import io
 import json
 import logging
-import os
 import shutil
 import tempfile
 import zipfile
 from pathlib import Path
-from typing import Literal
 from urllib.parse import unquote
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, Response
-from pydantic import Field
 from starlette.background import BackgroundTask
 
 from yp_video.config import (
@@ -26,11 +23,17 @@ from yp_video.config import (
 )
 from yp_video.core import label_done
 from yp_video.core.ffmpeg import FFmpegError, export_segment
-from yp_video.core.jsonl import read_jsonl, read_jsonl_header
-from yp_video.core.rallies import RALLY_SOURCES, SOURCE_BY_TAG, resolve_rally_ids
+from yp_video.core.jsonl import read_jsonl
+from yp_video.core.rallies import (
+    RALLY_SOURCES,
+    SOURCE_BY_TAG,
+    annotation_name,
+    resolve_rally_ids,
+)
 from yp_video.web import audit, worklists
 from yp_video.web.r2_client import r2_client, serve_video_or_r2_redirect, sync_to_r2
 from yp_video.web.schemas import StrictModel
+from yp_video.web.rally_annotations import Annotation, write_annotations_atomic
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -41,20 +44,6 @@ router = APIRouter()
 # the same table, so "which file counts" has one answer.
 _SOURCES = RALLY_SOURCES
 _SOURCE_BY_TAG = SOURCE_BY_TAG
-
-
-class Annotation(StrictModel):
-    id: str | None = None
-    #: None = a new rally; the save assigns it a fresh id (see
-    #: _write_annotations_atomic). A present id is kept verbatim — identity
-    #: follows the row, not its position.
-    rally_id: int | None = Field(default=None, ge=1)
-    start: float
-    end: float
-    label: str
-    #: Court side the rally's winner played on (camera-frame): left/right for
-    #: sideline footage, near/far for broadcast. None = not annotated yet.
-    winner: Literal["left", "right", "near", "far"] | None = None
 
 
 class SaveAnnotationsRequest(StrictModel):
@@ -169,86 +158,6 @@ def stream_video(path: str):
     raise HTTPException(404, f"Video not found: {video_path}")
 
 
-def _prior_max_rally_id(output_path: Path) -> int:
-    """The id high-water mark of the file being replaced, or 0.
-
-    Persisted in the header so a deleted id is never reused: minting from
-    max(present) would hand a re-added rally the id of a deleted one, and
-    every stored tracklet key "<id>:<track>" would silently re-attach.
-    """
-    if not output_path.exists():
-        return 0
-    try:
-        raw = read_jsonl_header(output_path).get("max_rally_id")
-        return raw if isinstance(raw, int) and raw > 0 else 0
-    except (OSError, ValueError):
-        return 0
-
-
-def _prior_rows(output_path: Path) -> list[dict]:
-    """The rows currently on disk, or [] when there is no file yet."""
-    if not output_path.exists():
-        return []
-    try:
-        return read_jsonl(output_path)[1]
-    except (OSError, ValueError, json.JSONDecodeError):
-        # An unreadable prior file is not a reason to refuse the save; it just
-        # means every row counts as new for the audit summary.
-        return []
-
-
-def _write_annotations_atomic(
-    output_path: Path, video: str, duration: float, annotations: list[Annotation]
-) -> tuple[list[dict], list[dict]]:
-    """Write JSONL via tmp file + atomic rename.
-
-    Returns the rows as written and the rows that were there before, so the
-    caller can audit the difference. The comparison itself belongs to the
-    handler: this function's job is the file.
-
-    Ids are assigned here and only here: rows that carry one keep it —
-    identity follows the row, sorting is presentation order — and new (None)
-    rows are minted ids above the high-water mark, in start order.
-    """
-    before = _prior_rows(output_path)
-    high = max(
-        _prior_max_rally_id(output_path),
-        *(a.rally_id for a in annotations if a.rally_id is not None),
-        0,
-    )
-    ordered = sorted(annotations, key=lambda ann: (ann.start, ann.end, ann.label))
-    rows: list[dict] = []
-    for a in ordered:
-        assigned = a.rally_id
-        if assigned is None:
-            high += 1
-            assigned = high
-        row = {
-            "start": a.start,
-            "end": a.end,
-            "label": a.label,
-            "rally_id": assigned,
-        }
-        if a.winner is not None:
-            row["winner"] = a.winner
-        rows.append(row)
-    tmp_path = output_path.with_suffix(output_path.suffix + f".tmp.{os.getpid()}")
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        meta = {
-            "_meta": True,
-            "video": video,
-            "duration": duration,
-            "max_rally_id": high,
-        }
-        f.write(json.dumps(meta, ensure_ascii=False) + "\n")
-        for row in rows:
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp_path, output_path)
-    return rows, before
-
-
 @router.post("/annotations")
 async def save_annotations(req: SaveAnnotationsRequest) -> dict:
     provided = [a.rally_id for a in req.annotations if a.rally_id is not None]
@@ -260,13 +169,13 @@ async def save_annotations(req: SaveAnnotationsRequest) -> dict:
     RALLY_ANNOTATIONS_DIR.mkdir(parents=True, exist_ok=True)
 
     video_path = Path(req.video)
-    output_name = f"{video_path.stem}_annotations.jsonl"
+    output_name = annotation_name(video_path.stem)
     output_path = RALLY_ANNOTATIONS_DIR / output_name
 
     # Run file I/O in a thread so we don't block the event loop
     # (fsync can be slow under concurrent load).
     saved, before = await asyncio.to_thread(
-        _write_annotations_atomic,
+        write_annotations_atomic,
         output_path,
         req.video,
         req.duration,

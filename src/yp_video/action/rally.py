@@ -31,6 +31,7 @@ from yp_video.contracts.action import (
     WINNER_TAIL_S,
 )
 from yp_video.core.ffmpeg import FFmpegError, probe_video_metadata
+from yp_video.core.rallies import ANNOTATION_SUFFIX
 from yp_video.core.jsonl import read_jsonl, write_jsonl
 
 log = logging.getLogger(__name__)
@@ -43,7 +44,7 @@ _SUBSET_SEED = 42
 
 
 def annotation_files() -> list[Path]:
-    return sorted(RALLY_ANNOTATIONS_DIR.glob("*_annotations.jsonl"))
+    return sorted(RALLY_ANNOTATIONS_DIR.glob(f"*{ANNOTATION_SUFFIX}"))
 
 
 def rally_stats() -> dict:
@@ -89,7 +90,7 @@ def select_training_items(
     items: list[tuple[Path, Path]] = []
     missing: list[str] = []
     for path in annotation_files():
-        stem = path.name.removesuffix("_annotations.jsonl")
+        stem = path.name.removesuffix(ANNOTATION_SUFFIX)
         video_path = resolve(f"{stem}.mp4")
         if video_path is None:
             missing.append(f"{stem}.mp4")

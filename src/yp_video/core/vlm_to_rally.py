@@ -20,7 +20,7 @@ from pathlib import Path
 
 from yp_video.config import RALLY_PRE_ANNOTATIONS_DIR, SEG_ANNOTATIONS_DIR
 from yp_video.core.jsonl import read_jsonl, write_jsonl
-from yp_video.core.rallies import number_rallies
+from yp_video.core.rallies import annotation_name, number_rallies
 from yp_video.core.sampling import get_video_duration_cv2
 
 
@@ -190,7 +190,7 @@ def convert_directory(
 
     total_rallies = 0
     for vlm_path in vlm_files:
-        output_name = f"{vlm_path.stem}_annotations.jsonl"
+        output_name = annotation_name(vlm_path.stem)
         output_path = output_dir / output_name
 
         n_rallies = convert_vlm_to_rally(vlm_path, output_path, min_duration, min_score)

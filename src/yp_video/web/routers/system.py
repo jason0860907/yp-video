@@ -12,6 +12,7 @@ from yp_video.config import (
     iter_all_cuts,
 )
 from yp_video.web import worklists
+from yp_video.core.rallies import annotation_name
 from yp_video.web.access import current_actor
 from yp_video.web.schemas import StrictModel
 from yp_video.web.vllm_manager import vllm_manager
@@ -97,7 +98,7 @@ def list_videos() -> list[dict]:
             # is only written after detection + convert-to-rally completes.
             # seg-annotations is written incrementally, so a partial/aborted
             # run would leave a file there and falsely look done.
-            "has_detection": (RALLY_PRE_ANNOTATIONS_DIR / f"{stem}_annotations.jsonl").exists(),
-            "has_annotation": (RALLY_ANNOTATIONS_DIR / f"{stem}_annotations.jsonl").exists(),
+            "has_detection": (RALLY_PRE_ANNOTATIONS_DIR / annotation_name(stem)).exists(),
+            "has_annotation": (RALLY_ANNOTATIONS_DIR / annotation_name(stem)).exists(),
         })
     return results

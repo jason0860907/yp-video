@@ -28,6 +28,7 @@ import html
 import json
 from pathlib import Path
 
+from yp_video.contracts.action import LABEL_FILE_GLOB
 from yp_video.config import ACTION_PRE_ANNOTATIONS_DIR as ACTION_PRE_DIR
 
 # Matches the overlay colors used in action-annotate.js
@@ -244,7 +245,7 @@ def main():
     ap.add_argument("--next-serve-gap", type=float, default=0.7)
     args = ap.parse_args()
 
-    files = sorted(ACTION_PRE_DIR.glob("*_actions.jsonl"))
+    files = sorted(ACTION_PRE_DIR.glob(LABEL_FILE_GLOB))
     if args.match:
         files = [f for f in files if args.match in f.stem]
     files = files[: args.limit]
