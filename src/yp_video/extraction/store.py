@@ -52,6 +52,8 @@ ACTION_FIELDS = frozenset({"frame", "label", "xy", "visible"})
 
 # Rally-derived copies that annotation files and old records used to carry;
 # the live rally store owns them now. Stripped on read, never re-applied.
+# Still load-bearing: 17 of the extraction record files under
+# extraction/records/ predate the rule and carry a stale ``time``.
 LEGACY_ACTION_FIELDS = frozenset({"time", "rally_id", "relative_frame"})
 
 
@@ -102,17 +104,15 @@ def with_current_actions(records: Iterable[dict], stem: str) -> list[dict]:
     records = list(records)
     source = action_annotation_path(stem)
     if source is None:
-        # Compatibility for isolated imports/tests and legacy data whose
-        # annotation source is unavailable. This is explicitly the fallback,
-        # never the normal authority.
-        events = {str(r.get("id")): r for r in records}
-    else:
-        _meta, rows = read_jsonl_cached(source)
-        events = {
-            str(event.get("id") or f"f{event['frame']}"): event
-            for event in rows
-            if event.get("frame") is not None
-        }
+        # No action annotation means no current events: every derived row is
+        # an orphan of a deleted (or never-existing) source, so nothing joins.
+        return []
+    _meta, rows = read_jsonl_cached(source)
+    events = {
+        str(event.get("id") or f"f{event['frame']}"): event
+        for event in rows
+        if event.get("frame") is not None
+    }
 
     out = []
     for stored in records:

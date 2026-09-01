@@ -348,7 +348,7 @@ export function ReidPanel({ video, registerGuard, clock }: { video: string; regi
             </label>
             <label
               className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-text-secondary"
-              title="Show the background-suppressed crops the masked embedders embed (original shown where a video's masked embed hasn't run yet)"
+              title="Show the background-suppressed crops the masked embedders embed (missing until a video's masked embed has run)"
             >
               <input
                 type="checkbox"

@@ -20,6 +20,7 @@ from yp_video.core import label_done
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import read_jsonl, write_jsonl
 from yp_video.extraction import done, reassociate
+from yp_video.extraction import store as extraction_store
 from yp_video.tracklets.geometry import TrackRef
 
 
@@ -84,7 +85,23 @@ class ReassociationTests(unittest.TestCase):
         (self.crops / "human.jpg").write_bytes(b"human")
         (self.crops / "auto.jpg").write_bytes(b"auto")
 
+        # The action source every join runs against; events mirror the rows'
+        # action-owned fields (including "blind", written by one test later).
+        self.action = root / "match_actions.jsonl"
+        write_jsonl(
+            self.action,
+            {"video": "match"},
+            [
+                {"id": "human", "frame": 100, "xy": [0.5, 0.5]},
+                {"id": "auto", "frame": 200, "xy": [0.25, 0.5]},
+                {"id": "blind", "frame": 200, "xy": None, "visible": False},
+            ],
+        )
+
         self._patches = [
+            patch.object(
+                extraction_store, "action_annotation_path", return_value=self.action
+            ),
             patch.object(reassociate, "records_path", return_value=self.records),
             patch.object(reassociate, "crop_dir", return_value=self.crops),
             patch.object(

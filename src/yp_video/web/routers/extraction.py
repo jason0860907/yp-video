@@ -218,13 +218,16 @@ def _slim_records(path: Path, stem: str) -> list[dict]:
 @router.get("/crop/{name}/{crop_file}")
 def crop(name: str, crop_file: str, masked: bool = False) -> FileResponse:
     """One crop jpg. ``masked=True`` serves the background-suppressed variant
-    the masked embedders saw, falling back to the original while that video's
-    masked embed hasn't run yet."""
+    the masked embedders saw. No silent fallback to the original: a viewer
+    judging masked-embedder output must never be shown unmasked pixels."""
     stem = Path(unquote(name)).stem
     fname = Path(unquote(crop_file)).name
     path = extraction_store.masked_crop_dir(stem) / fname if masked else extraction_store.crop_dir(stem) / fname
-    if masked and not path.exists():
-        path = extraction_store.crop_dir(stem) / fname
     if not path.exists():
-        raise HTTPException(404, "Crop not found")
+        detail = (
+            "Masked crop not generated — run a masked embed for this video"
+            if masked
+            else "Crop not found"
+        )
+        raise HTTPException(404, detail)
     return FileResponse(path, media_type="image/jpeg")

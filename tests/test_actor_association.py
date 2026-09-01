@@ -802,10 +802,21 @@ class ConfirmEndpointTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw_dir:
             root = Path(raw_dir)
             records = root / "match.jsonl"
+            action = root / "match_actions.jsonl"
             write_jsonl(records, {"video": "match"}, self.RECORDS)
+            write_jsonl(
+                action,
+                {"video": "match"},
+                [{"id": r["id"], "frame": r["frame"]} for r in self.RECORDS],
+            )
             with (
                 patch.object(
                     router.extraction_store, "records_path", return_value=records
+                ),
+                patch.object(
+                    router.extraction_store,
+                    "action_annotation_path",
+                    return_value=action,
                 ),
                 patch.object(
                     actor_labels, "actors_path", return_value=root / "match_actors.json"

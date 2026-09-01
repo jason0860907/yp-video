@@ -22,6 +22,7 @@ from yp_video.actor.labels import ActorLabel, ActorVerdict
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import write_jsonl
 from yp_video.extraction import links
+from yp_video.extraction import store as extraction_store
 from yp_video.tracklets.geometry import (
     LINK_MIN_CONTAINMENT,
     BoxQuery,
@@ -264,11 +265,16 @@ class EventTrackPrecedenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw_dir:
             root = Path(raw_dir)
             tracks, records = root / "t.jsonl", root / "r.jsonl"
+            action = root / "match_actions.jsonl"
             write_jsonl(tracks, {"stride": 1}, tracklets)
             write_jsonl(records, {"video": "match"}, [self.RECORD])
+            write_jsonl(action, {"video": "match"}, [{"id": "e1", "frame": 100}])
             with (
                 patch.object(links, "tracks_path", return_value=tracks),
                 patch.object(links, "records_path", return_value=records),
+                patch.object(
+                    extraction_store, "action_annotation_path", return_value=action
+                ),
                 patch.object(
                     links, "tracklet_index", return_value=TrackletIndex(tracklets)
                 ),
@@ -482,12 +488,17 @@ class UnresolvedLabelsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw_dir:
             root = Path(raw_dir)
             tracks, records = root / "t.jsonl", root / "r.jsonl"
+            action = root / "match_actions.jsonl"
             if tracked:
                 write_jsonl(tracks, {"stride": 1}, [self.ACTOR])
             write_jsonl(records, {"video": "match"}, [record])
+            write_jsonl(action, {"video": "match"}, [{"id": "e1", "frame": 100}])
             with (
                 patch.object(links, "tracks_path", return_value=tracks),
                 patch.object(links, "records_path", return_value=records),
+                patch.object(
+                    extraction_store, "action_annotation_path", return_value=action
+                ),
                 patch.object(
                     links,
                     "tracklet_index",
