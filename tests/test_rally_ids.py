@@ -1,42 +1,22 @@
 """Stable rally ids: the file is the ledger, position is presentation.
 
-Covers the three moments an id exists: birth (the editor's save mints above
-the high-water mark; a model pass numbers its own file), reading (stored ids
-verified, never recomputed), and the freeze migration (positional numbering
-stamped in without moving a fingerprint).
+Covers the two moments an id exists: birth (the editor's save mints above
+the high-water mark; a model pass numbers its own file) and reading (stored
+ids verified, never recomputed).
 """
 
 from __future__ import annotations
 
 import asyncio
-import importlib.util
-import sys
 import tempfile
 import unittest
-from contextlib import contextmanager
 from pathlib import Path
-from unittest.mock import patch
 
 from fastapi import HTTPException
 
-from yp_video.core import rallies as core_rallies
-from yp_video.core.jsonl import read_jsonl, write_jsonl
+from yp_video.core.jsonl import read_jsonl
 from yp_video.core.rallies import number_rallies, resolve_rally_ids
 from yp_video.web.routers import annotate
-
-
-def _load_freeze_module():
-    root = Path(__file__).resolve().parents[1]
-    spec = importlib.util.spec_from_file_location(
-        "freeze_rally_ids", root / "scripts" / "freeze_rally_ids.py"
-    )
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    # Registered before exec: the script defines a dataclass, and dataclasses
-    # resolve annotations through sys.modules[cls.__module__].
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
 
 
 class ResolveTests(unittest.TestCase):
@@ -132,83 +112,6 @@ class SaveTests(unittest.TestCase):
             asyncio.run(annotate.save_annotations(request))
         self.assertEqual(caught.exception.status_code, 400)
         self.assertIn("5", str(caught.exception.detail))
-
-
-class FreezeTests(unittest.TestCase):
-    @contextmanager
-    def _sources(self):
-        with tempfile.TemporaryDirectory() as raw_dir:
-            root = Path(raw_dir)
-            table = tuple(
-                core_rallies.RallySource(s.tag, root / s.tag, s.r2_category)
-                for s in core_rallies.RALLY_SOURCES
-            )
-            with patch.object(core_rallies, "RALLY_SOURCES", table):
-                yield {s.tag: s.directory for s in table}
-
-    def test_freeze_stamps_positional_ids_without_moving_the_fingerprint(self) -> None:
-        freeze = _load_freeze_module()
-        with self._sources() as dirs:
-            directory = dirs["annotation"]
-            directory.mkdir(parents=True)
-            path = directory / core_rallies.annotation_name("m")
-            # Legacy file: no ids, deliberately out of start order.
-            write_jsonl(
-                path,
-                {"video": "m"},
-                [
-                    {"start": 30.0, "end": 40.0, "label": "rally"},
-                    {"start": 10.0, "end": 20.0, "label": "rally"},
-                ],
-            )
-            plan = freeze.plan_file(path, "annotation", "rally-spot/annotations")
-            self.assertEqual(plan.action, "stamp-ids")
-            self.assertIsNone(plan.refused)
-
-            with patch.object(freeze, "rally_annotation_path", core_rallies.rally_annotation_path), \
-                 patch.object(freeze, "rally_fingerprint", core_rallies.rally_fingerprint):
-                freeze.apply_plan(plan)
-
-            spans = core_rallies.load_rallies("m")
-            self.assertEqual(
-                [(r["start"], r["rally_id"]) for r in spans], [(10.0, 1), (30.0, 2)]
-            )
-            self.assertEqual(
-                core_rallies.rally_fingerprint("m"), plan.legacy_fingerprint
-            )
-            meta, _records = read_jsonl(path)
-            self.assertEqual(meta["max_rally_id"], 2)
-
-    def test_freeze_skips_and_preserves_already_stamped_files(self) -> None:
-        freeze = _load_freeze_module()
-        with self._sources() as dirs:
-            directory = dirs["annotation"]
-            directory.mkdir(parents=True)
-            path = directory / core_rallies.annotation_name("m")
-            write_jsonl(
-                path,
-                {"video": "m", "max_rally_id": 9},
-                [{"start": 1.0, "end": 2.0, "label": "rally", "rally_id": 9}],
-            )
-            plan = freeze.plan_file(path, "annotation", "rally-spot/annotations")
-            self.assertEqual(plan.action, "skip")
-
-    def test_freeze_refuses_a_mixed_file(self) -> None:
-        freeze = _load_freeze_module()
-        with self._sources() as dirs:
-            directory = dirs["annotation"]
-            directory.mkdir(parents=True)
-            path = directory / core_rallies.annotation_name("m")
-            write_jsonl(
-                path,
-                {"video": "m"},
-                [
-                    {"start": 1.0, "end": 2.0, "label": "rally", "rally_id": 1},
-                    {"start": 3.0, "end": 4.0, "label": "rally"},
-                ],
-            )
-            plan = freeze.plan_file(path, "annotation", "rally-spot/annotations")
-            self.assertEqual(plan.refused, "mixed: some records have rally_id, some not")
 
 
 if __name__ == "__main__":

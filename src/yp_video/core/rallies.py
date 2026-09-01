@@ -82,7 +82,7 @@ def resolve_rally_ids(records: Sequence[Mapping]) -> list[int]:
         if not isinstance(raw, int) or isinstance(raw, bool) or raw < 1:
             raise ValueError(
                 f"Rally record without a valid rally_id: {raw!r} — "
-                "run scripts/freeze_rally_ids.py on files from before ids were stored"
+                "ids are stamped at write time; a file without them is corrupt"
             )
         ids.append(raw)
     if len(set(ids)) != len(ids):
