@@ -25,7 +25,6 @@ from enum import Enum
 from pathlib import Path
 
 import aiohttp
-import requests
 from tqdm import tqdm
 
 from yp_video.config import load_env, load_prompt
@@ -51,18 +50,22 @@ class VLLMServerError(RuntimeError):
     """Raised when the vLLM server is unreachable after retries."""
 
 
-def check_server(server_url: str, retries: int = 5, backoff: float = 3.0) -> None:
+async def check_server(
+    session: aiohttp.ClientSession, server_url: str, retries: int = 5, backoff: float = 3.0
+) -> None:
     """Check if vLLM server is reachable, with retries and exponential backoff."""
     for attempt in range(1, retries + 1):
         try:
-            resp = requests.get(f"{server_url}/v1/models", timeout=10)
-            resp.raise_for_status()
-            return
-        except requests.exceptions.RequestException as e:
+            async with session.get(
+                f"{server_url}/v1/models", timeout=aiohttp.ClientTimeout(total=10)
+            ) as resp:
+                resp.raise_for_status()
+                return
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
             if attempt < retries:
                 wait = backoff * (2 ** (attempt - 1))  # 3, 6, 12, 24s
                 print(f"WARNING: vLLM server not reachable (attempt {attempt}/{retries}), retrying in {wait:.0f}s... ({e})")
-                time.sleep(wait)
+                await asyncio.sleep(wait)
             else:
                 raise VLLMServerError(
                     f"vLLM server not reachable at {server_url} after {retries} attempts: {e}"
@@ -151,60 +154,6 @@ def save_results(output_file: str, video_path: str, clip_duration: float,
             f.write(json.dumps(result_dict, ensure_ascii=False) + "\n")
 
 
-def analyze_clip_with_vllm(
-    video_path: str,
-    server_url: str,
-    model: str,
-    fps: float = 4.0,
-    prompt: str | None = None,
-) -> dict:
-    """Send video clip to vLLM server for analysis."""
-
-    # Use file:// URL for local files (requires --allowed-local-media-path on server)
-    video_url = f"file://{video_path}"
-
-    if prompt is None:
-        prompt = _select_prompt(video_path)
-
-    payload = {
-        "model": model,
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "video_url",
-                        "video_url": {
-                            "url": video_url
-                        }
-                    },
-                    {
-                        "type": "text",
-                        "text": prompt
-                    }
-                ]
-            }
-        ],
-        "max_tokens": 256,
-        "temperature": 0.1,
-        "chat_template_kwargs": {"enable_thinking": False},
-        "mm_processor_kwargs": {"fps": fps}
-    }
-
-    response = requests.post(
-        f"{server_url}/v1/chat/completions",
-        json=payload,
-        headers={"Content-Type": "application/json"},
-        timeout=120
-    )
-    response.raise_for_status()
-
-    result = response.json()
-    content = result["choices"][0]["message"]["content"]
-
-    return extract_json_from_response(content)
-
-
 async def analyze_clip_async(
     session: aiohttp.ClientSession,
     video_path: str,
@@ -214,7 +163,7 @@ async def analyze_clip_async(
     max_retries: int = 3,
     prompt: str | None = None,
 ) -> dict:
-    """Async version of analyze_clip_with_vllm with retry on transient errors."""
+    """Ask the vLLM server about one clip, with retry on transient errors."""
     video_url = f"file://{video_path}"
 
     if prompt is None:
@@ -273,66 +222,6 @@ def _parse_shot_type(value: str | ShotType) -> ShotType:
         return ShotType(value)
     except ValueError:
         return ShotType.FULL_COURT
-
-
-def process_single_clip(
-    video_path: str,
-    clip_path: str,
-    clip_index: int,
-    start_time: float,
-    end_time: float,
-    clip_duration: float,
-    server_url: str,
-    model: str
-) -> ClipResult | None:
-    """Process a single video clip: extract, analyze, and return result.
-
-    Args:
-        video_path: Source video path
-        clip_path: Output path for extracted clip
-        clip_index: Clip number for logging
-        start_time: Clip start time in seconds
-        end_time: Clip end time in seconds
-        clip_duration: Duration of clip to extract
-        server_url: vLLM server URL
-        model: Model name
-
-    Returns:
-        ClipResult if successful, None if failed
-    """
-    print(f"\nProcessing clip {clip_index}: {start_time:.1f}s - {end_time:.1f}s")
-
-    # Extract clip
-    try:
-        extract_clip(video_path, start_time, clip_duration, clip_path)
-    except FFmpegError as e:
-        print(f"  [ERROR] Failed to extract clip: {e}")
-        return None
-
-    # Analyze with vLLM
-    try:
-        analysis = analyze_clip_with_vllm(clip_path, server_url, model)
-
-        result = ClipResult(
-            start_time=start_time,
-            end_time=end_time,
-            in_rally=analysis.get("in_rally", False),
-            shot_type=_parse_shot_type(analysis.get("shot_type", "full_court")),
-        )
-
-        status = "RALLY" if result.in_rally else "NO"
-        print(f"  [{status}] {result.shot_type.value}")
-
-        return result
-
-    except requests.exceptions.ConnectionError:
-        raise
-    except requests.exceptions.RequestException as e:
-        print(f"  [ERROR] API request failed: {e}")
-        return None
-    except Exception as e:
-        print(f"  [ERROR] {e}")
-        return None
 
 
 def build_clip_specs(
@@ -533,9 +422,6 @@ def process_video(
     """
     video_path = os.path.abspath(video_path)
 
-    # Verify server is up before starting
-    check_server(server_url)
-
     if total_duration is None:
         total_duration = get_video_duration(video_path)
 
@@ -559,6 +445,14 @@ def process_video(
         )
 
     session = loop.run_until_complete(_create_session())
+
+    # Verify server is up before starting
+    try:
+        loop.run_until_complete(check_server(session, server_url))
+    except BaseException:
+        loop.run_until_complete(session.close())
+        loop.close()
+        raise
 
     # Pick prompt once based on the source video name so every clip in this
     # run uses the same one (broadcast vs. side-court practice recording).
