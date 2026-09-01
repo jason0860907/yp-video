@@ -171,7 +171,19 @@ export function TrainPerfCard({
       // With a headline panel (single-task runs) the spotting head is already
       // charted; per-task panels then cover only the auxiliary heads.
       .filter((t) => multiTask || (t !== 'action' && t !== 'rally'))
-      .map((task) => ({ task, series: buildTaskSeries(entries, task) }))
+      .map((task) => {
+        let taskSeries = buildTaskSeries(entries, task);
+        if (task === 'action') {
+          // Spatial mAP is recorded under the location head but is the other
+          // half of action's harmonic — chart them together.
+          const spatial = buildTaskSeries(entries, 'location').map((sp, i) => ({
+            ...sp,
+            colorClass: SERIES_COLORS[(taskSeries.length + i) % SERIES_COLORS.length]!,
+          }));
+          taskSeries = [...taskSeries, ...spatial];
+        }
+        return { task, series: taskSeries };
+      })
       // A one-line panel duplicates its overview line; only multi-metric
       // panels add information.
       .filter((c) => c.series.length > (multiTask ? 1 : 0));
