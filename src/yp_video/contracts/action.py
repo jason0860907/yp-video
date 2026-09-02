@@ -205,6 +205,9 @@ _MULTI_FPS_FIELDS = (
     "action_learning_rate",
     "rally_learning_rate",
     "winner_learning_rate",
+    "action_stream_weight",
+    "rally_stream_weight",
+    "winner_stream_weight",
     "action_fg_upsample",
 )
 _MULTI_FPS_DEFAULTS = {
@@ -220,6 +223,9 @@ _MULTI_FPS_DEFAULTS = {
     "action_learning_rate": 3e-5,
     "rally_learning_rate": 3e-5,
     "winner_learning_rate": 3e-5,
+    "action_stream_weight": 1,
+    "rally_stream_weight": 1,
+    "winner_stream_weight": 1,
     "action_fg_upsample": 0.5,
     "action_sample_fps": 30.0,
     "rally_sample_fps": 5.0,

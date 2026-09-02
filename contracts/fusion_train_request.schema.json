@@ -283,6 +283,27 @@
       "description": "Optional Winner head learning rate override for mixed training.",
       "title": "Winner Learning Rate"
     },
+    "action_stream_weight": {
+      "default": 1,
+      "maximum": 9,
+      "minimum": 1,
+      "title": "Action Stream Weight",
+      "type": "integer"
+    },
+    "rally_stream_weight": {
+      "default": 1,
+      "maximum": 9,
+      "minimum": 1,
+      "title": "Rally Stream Weight",
+      "type": "integer"
+    },
+    "winner_stream_weight": {
+      "default": 1,
+      "maximum": 9,
+      "minimum": 1,
+      "title": "Winner Stream Weight",
+      "type": "integer"
+    },
     "action_fg_upsample": {
       "anyOf": [
         {

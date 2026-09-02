@@ -278,6 +278,16 @@ export function FusionTrainPage() {
                     )}
                   </div>
                 </div>
+                {visible.has('action_stream_weight') && (
+                  <div>
+                    <SectionLabel className="mb-1.5">Stream weight</SectionLabel>
+                    <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
+                      <SchemaNumberField name="action_stream_weight" label="Action" />
+                      <SchemaNumberField name="rally_stream_weight" label="Rally" />
+                      <SchemaNumberField name="winner_stream_weight" label="Winner" />
+                    </div>
+                  </div>
+                )}
                 <div>
                   <SectionLabel className="mb-1.5">Trainer</SectionLabel>
                   <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3">

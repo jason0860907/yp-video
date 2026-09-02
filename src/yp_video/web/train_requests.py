@@ -205,6 +205,11 @@ class FusionTrainRequest(StrictModel):
         default=None, gt=0,
         description="Optional Winner head learning rate override for mixed training.",
     )
+    #: Relative share of the shared epoch frame budget per stream (integer;
+    #: 2/1/1 gives the action stream half of every epoch). 1 each = even split.
+    action_stream_weight: int = Field(default=1, ge=1, le=9)
+    rally_stream_weight: int = Field(default=1, ge=1, le=9)
+    winner_stream_weight: int = Field(default=1, ge=1, le=9)
     action_fg_upsample: float | None = Field(
         default=None,
         gt=0,

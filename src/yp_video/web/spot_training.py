@@ -205,6 +205,13 @@ def build_command(
         ):
             if task in recipe.tasks and learning_rate is not None:
                 cmd.extend(["--task_learning_rate", f"{task}={learning_rate}"])
+        for task, weight in (
+            ("action", req.action_stream_weight),
+            ("rally", req.rally_stream_weight),
+            ("winner", req.winner_stream_weight),
+        ):
+            if task in recipe.tasks and weight != 1:
+                cmd.extend(["--task_stream_weight", f"{task}={weight}"])
         if "action" in recipe.tasks and req.action_fg_upsample is not None:
             cmd.extend(
                 ["--task_fg_upsample", f"action={req.action_fg_upsample}"]
