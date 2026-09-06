@@ -115,9 +115,16 @@ TASKS: dict[str, TaskSpec] = {
             "action", "Action", "point", "action-annotations", "*_actions.jsonl",
             ("frame", "label"), (), "harmonic_mAP", True,
         ),
+        # L1 on normalized [0, 1] coordinates hands the backbone a
+        # gradient bounded by 0.25 per event; the class/actor cross-entropies
+        # reach 1. DETR's L1 box weight is 5 for the same reason. Measured on
+        # the 2026-09 five-task checkpoint: location ~4 vs actor ~21 median
+        # backbone grad norm at weight 1. The weight covers the xy L1 only;
+        # the visibility BCE that rides on this task is unbounded and trains
+        # at weight 1 (yp_spot VIS_LOSS_WEIGHT).
         TaskSpec(
             "location", "Location", "aux", "action-annotations", "*_actions.jsonl",
-            ("xy",), ("action",), "spatial_mAP", False,
+            ("xy",), ("action",), "spatial_mAP", False, loss_weight=5.0,
         ),
         TaskSpec(
             "actor", "Actor", "aux", "actor-candidates", "*_actor_candidates.jsonl",
@@ -177,23 +184,34 @@ class Recipe:
     defaults: Mapping[str, object]
 
 
-_RALLY_FIELDS = ("sample_fps", "video_limit")
+_RALLY_FIELDS = ("sample_fps", "acc_grad_iter", "video_limit")
 # Every recipe defaults to the same base learning rate (3e-5, matching the
 # yp-spot CLI default); per-task overrides start equal to it so the form
 # shows one number everywhere until the operator deliberately diverges.
+# Every recipe trains at an effective batch of 64 as 16 micro-batches of 4
+# clips: the per-step memory of a batch-4 run, with the optimizer seeing 16x
+# more per step.
 _RALLY_DEFAULTS = {
-    "batch_size": 8, "acc_grad_iter": 1, "num_epochs": 30,
+    "batch_size": 64, "acc_grad_iter": 16, "num_epochs": 30,
     "warm_up_epochs": 2, "learning_rate": 3e-5, "audio_backend": "none",
     "sample_fps": 5.0,
 }
-_ACTION_FIELDS = ("sample_fps", "acc_grad_iter", "audio_backend", "include_predictions")
+_ACTION_FIELDS = (
+    "sample_fps",
+    "acc_grad_iter",
+    "audio_backend",
+    "action_dilate_len",
+    "include_predictions",
+)
 _ACTION_DEFAULTS = {
-    "batch_size": 32, "acc_grad_iter": 4, "num_epochs": 100,
+    "batch_size": 64, "acc_grad_iter": 16, "num_epochs": 100,
     "warm_up_epochs": 3, "learning_rate": 3e-5, "audio_backend": "logmel",
+    "action_dilate_len": 0,
 }
 _FUSION_DEFAULTS = {
-    "batch_size": 8, "acc_grad_iter": 1, "num_epochs": 50,
+    "batch_size": 64, "acc_grad_iter": 16, "num_epochs": 50,
     "warm_up_epochs": 3, "learning_rate": 3e-5, "audio_backend": "logmel",
+    "action_dilate_len": 0,
 }
 _MULTI_FPS_FIELDS = (
     "action_sample_fps",
@@ -209,12 +227,14 @@ _MULTI_FPS_FIELDS = (
     "rally_stream_weight",
     "winner_stream_weight",
     "action_fg_upsample",
+    "action_dilate_len",
+    "acc_grad_iter",
 )
 _MULTI_FPS_DEFAULTS = {
-    "batch_size": 4,
+    "batch_size": 64,
     "feature_arch": "convnextt_dv3_gsm",
     "num_workers": 4,
-    "acc_grad_iter": 1,
+    "acc_grad_iter": 16,
     "num_epochs": 50,
     "warm_up_epochs": 3,
     "learning_rate": 3e-5,
@@ -227,6 +247,7 @@ _MULTI_FPS_DEFAULTS = {
     "rally_stream_weight": 1,
     "winner_stream_weight": 1,
     "action_fg_upsample": 0.5,
+    "action_dilate_len": 0,
     "action_sample_fps": 30.0,
     "rally_sample_fps": 5.0,
     "winner_sample_fps": 5.0,

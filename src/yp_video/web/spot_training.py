@@ -147,7 +147,6 @@ def build_command(
 ) -> list[str]:
     spotting = spotting_tasks(recipe.tasks)
     mixed = len(spotting) > 1
-    rally = spotting == ("rally",)
     cmd = [
         str(SPOT_PYTHON),
         "-m",
@@ -166,7 +165,7 @@ def build_command(
         "--batch_size",
         str(req.batch_size),
         "--acc_grad_iter",
-        str(1 if rally else req.acc_grad_iter),
+        str(req.acc_grad_iter),
         "--num_epochs",
         str(req.num_epochs),
         "--warm_up_epochs",
@@ -216,8 +215,12 @@ def build_command(
             cmd.extend(
                 ["--task_fg_upsample", f"action={req.action_fg_upsample}"]
             )
+        if "action" in recipe.tasks and req.action_dilate_len:
+            cmd.extend(["--task_dilate_len", f"action={req.action_dilate_len}"])
     else:
         cmd.extend(["--sample_fps", str(req.sample_fps)])
+        if "action" in recipe.tasks and req.action_dilate_len:
+            cmd.extend(["--dilate_len", str(req.action_dilate_len)])
     if audio_dir is not None:
         cmd.extend(["--audio_dir", str(audio_dir)])
     if req.camera_view != "all":
@@ -446,6 +449,11 @@ async def start_training_job(req: FusionTrainRequest) -> dict:
                             else str(SPOT_DIR)
                         ),
                         "CUDA_VISIBLE_DEVICES": str(req.gpu),
+                        # The actor head allocates a different amount per
+                        # batch (event count varies), which fragments the
+                        # caching allocator: the 2026-09-02 ass_act run died
+                        # at epoch 24 with 12 GiB reserved-but-unallocated.
+                        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
                         ACTION_CONTRACT_VERSION_ENV: ACTION_CONTRACT_VERSION,
                     }
                     rc, last_line = await stream_subprocess(

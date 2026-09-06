@@ -72,7 +72,7 @@
       ],
       "primary_metric": "spatial_mAP",
       "serveable": false,
-      "loss_weight": 1.0
+      "loss_weight": 5.0
     },
     "actor": {
       "name": "actor",
@@ -100,11 +100,12 @@
       "description": "Rally on/off segments from the rally annotations.",
       "fields": [
         "sample_fps",
+        "acc_grad_iter",
         "video_limit"
       ],
       "defaults": {
-        "batch_size": 8,
-        "acc_grad_iter": 1,
+        "batch_size": 64,
+        "acc_grad_iter": 16,
         "num_epochs": 30,
         "warm_up_epochs": 2,
         "learning_rate": 3e-05,
@@ -122,11 +123,12 @@
       "description": "Rally segments plus which court side won each rally.",
       "fields": [
         "sample_fps",
+        "acc_grad_iter",
         "video_limit"
       ],
       "defaults": {
-        "batch_size": 8,
-        "acc_grad_iter": 1,
+        "batch_size": 64,
+        "acc_grad_iter": 16,
         "num_epochs": 30,
         "warm_up_epochs": 2,
         "learning_rate": 3e-05,
@@ -146,15 +148,17 @@
         "sample_fps",
         "acc_grad_iter",
         "audio_backend",
+        "action_dilate_len",
         "include_predictions"
       ],
       "defaults": {
-        "batch_size": 32,
-        "acc_grad_iter": 4,
+        "batch_size": 64,
+        "acc_grad_iter": 16,
         "num_epochs": 100,
         "warm_up_epochs": 3,
         "learning_rate": 3e-05,
-        "audio_backend": "logmel"
+        "audio_backend": "logmel",
+        "action_dilate_len": 0
       }
     },
     "association_action": {
@@ -170,16 +174,18 @@
         "sample_fps",
         "acc_grad_iter",
         "audio_backend",
+        "action_dilate_len",
         "include_predictions",
         "dataset_scope"
       ],
       "defaults": {
-        "batch_size": 8,
-        "acc_grad_iter": 1,
+        "batch_size": 64,
+        "acc_grad_iter": 16,
         "num_epochs": 50,
         "warm_up_epochs": 3,
         "learning_rate": 3e-05,
-        "audio_backend": "logmel"
+        "audio_backend": "logmel",
+        "action_dilate_len": 0
       }
     },
     "action_rally_winner": {
@@ -206,13 +212,15 @@
         "action_stream_weight",
         "rally_stream_weight",
         "winner_stream_weight",
-        "action_fg_upsample"
+        "action_fg_upsample",
+        "action_dilate_len",
+        "acc_grad_iter"
       ],
       "defaults": {
-        "batch_size": 4,
+        "batch_size": 64,
         "feature_arch": "convnextt_dv3_gsm",
         "num_workers": 4,
-        "acc_grad_iter": 1,
+        "acc_grad_iter": 16,
         "num_epochs": 50,
         "warm_up_epochs": 3,
         "learning_rate": 3e-05,
@@ -225,6 +233,7 @@
         "rally_stream_weight": 1,
         "winner_stream_weight": 1,
         "action_fg_upsample": 0.5,
+        "action_dilate_len": 0,
         "action_sample_fps": 30.0,
         "rally_sample_fps": 5.0,
         "winner_sample_fps": 5.0,

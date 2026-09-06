@@ -44,7 +44,7 @@ class FusionModelStatusTests(unittest.TestCase):
         recipes = {row["id"]: row for row in payload["recipes"]}
         self.assertEqual(set(recipes), set(RECIPES))
         self.assertEqual(recipes["rally_winner"]["tasks"], ["rally", "winner"])
-        self.assertEqual(recipes["rally_winner"]["fields"], ["sample_fps", "video_limit"])
+        self.assertEqual(recipes["rally_winner"]["fields"], ["sample_fps", "acc_grad_iter", "video_limit"])
         self.assertEqual(recipes["rally"]["defaults"]["sample_fps"], 5.0)
         self.assertEqual(recipes["rally_winner"]["defaults"]["sample_fps"], 5.0)
         self.assertEqual(
@@ -80,7 +80,7 @@ class BuildCommandTests(unittest.TestCase):
         )
 
     def test_rally_winner_command(self) -> None:
-        req = FusionTrainRequest(recipe="rally_winner", sample_fps=5, audio_backend="logmel", acc_grad_iter=4, batch_size=8)
+        req = FusionTrainRequest(recipe="rally_winner", validation="ratio", sample_fps=5, audio_backend="logmel", acc_grad_iter=4, batch_size=8)
         cmd = spot_training.build_command(
             req, RECIPES["rally_winner"], self._prepared("yp_rally"),
             save_dir=Path("/run"), init_checkpoint=None, audio_dir=None,
@@ -89,9 +89,9 @@ class BuildCommandTests(unittest.TestCase):
         self.assertIn(" yp_rally /frames ", joined)
         self.assertIn("--tasks rally,winner", joined)
         self.assertIn("--sample_fps 5", joined)
-        # Rally is visual-only and never accumulates, whatever the form sent.
+        # Rally is visual-only whatever the form sent; accumulation passes through.
         self.assertIn("--audio_backend none", joined)
-        self.assertIn("--acc_grad_iter 1", joined)
+        self.assertIn("--acc_grad_iter 4", joined)
         self.assertIn("--label_dir /run/labels/x --val_ratio 0.1 --split_seed 42", joined)
         self.assertNotIn("--predict", joined)
 
@@ -99,6 +99,7 @@ class BuildCommandTests(unittest.TestCase):
         req = FusionTrainRequest(
             recipe="association_action", validation="manual", validation_videos=["a"],
             sample_fps=30, acc_grad_iter=2, batch_size=8, audio_backend="logmel",
+            action_dilate_len=2,
         )
         cmd = spot_training.build_command(
             req, RECIPES["association_action"],
@@ -110,6 +111,7 @@ class BuildCommandTests(unittest.TestCase):
         self.assertIn("--actor_dir /run/labels/actor-candidates", joined)
         self.assertIn("--audio_backend logmel --actor_dir", joined)
         self.assertIn("--audio_dir /audio", joined)
+        self.assertIn("--sample_fps 30.0 --dilate_len 2", joined)
         self.assertIn(
             "--train_labels /run/label-splits/action/train "
             "--val_labels /run/label-splits/action/val",
@@ -119,10 +121,12 @@ class BuildCommandTests(unittest.TestCase):
     def test_multi_fps_command_has_independent_streams(self) -> None:
         req = FusionTrainRequest(
             recipe="action_rally_winner",
+            validation="ratio",
             action_learning_rate=3e-4,
             rally_learning_rate=3e-5,
             winner_learning_rate=3e-5,
             action_fg_upsample=0.5,
+            action_dilate_len=1,
         )
         self.assertEqual(req.val_ratio, 0.1)
         self.assertEqual(req.start_val_epoch, 10)
@@ -156,6 +160,8 @@ class BuildCommandTests(unittest.TestCase):
         self.assertIn("--task_audio_backend rally=none", joined)
         self.assertIn("--actor_dir /run/labels/actor-candidates", joined)
         self.assertIn("--task_fg_upsample action=0.5", joined)
+        self.assertIn("--task_dilate_len action=1", joined)
+        self.assertNotIn("--dilate_len", joined)
         self.assertIn(
             "--task_label_dir action=/run/labels/action-annotations", joined
         )
@@ -177,7 +183,7 @@ class BuildCommandTests(unittest.TestCase):
     def test_bad_run_name_is_refused(self) -> None:
         with self.assertRaises(HTTPException) as caught:
             spot_training.resolve_run_name(
-                FusionTrainRequest(run_name="../escape"), RECIPES["action"]
+                FusionTrainRequest(run_name="../escape", validation="ratio"), RECIPES["action"]
             )
         self.assertEqual(caught.exception.status_code, 400)
 

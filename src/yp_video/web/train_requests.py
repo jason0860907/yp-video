@@ -84,11 +84,11 @@ class FusionTrainRequest(StrictModel):
         description="Train on all views together or restrict to one camera view.",
     )
     validation: Validation = Field(
-        default="ratio",
+        default="manual",
         description=(
-            "ratio holds out a seeded val_ratio of the videos; manual validates "
-            "on validation_videos; none validates on the training set (a "
-            "final fit, no model selection)."
+            "manual validates on validation_videos, the curated hold-out set; "
+            "ratio holds out a seeded val_ratio of the videos; none validates "
+            "on the training set (a final fit, no model selection)."
         ),
     )
     validation_videos: list[str] = Field(
@@ -161,8 +161,8 @@ class FusionTrainRequest(StrictModel):
         ge=1,
         le=64,
         description=(
-            "Action recipes: split each optimizer step into N micro-batches "
-            "(batch_size must divide evenly)."
+            "Split each optimizer step into N micro-batches (batch_size must "
+            "divide evenly)."
         ),
     )
     audio_backend: Literal["logmel", "none"] = Field(
@@ -217,6 +217,15 @@ class FusionTrainRequest(StrictModel):
         description=(
             "Optional Action foreground sampling threshold for mixed training. "
             "At 0.5, half of Action clips are anchored on an annotated event."
+        ),
+    )
+    action_dilate_len: int = Field(
+        default=0,
+        ge=0,
+        le=32,
+        description=(
+            "Action recipes: mark the N sampled frames on either side of each "
+            "annotated touch as positive too. 0 = only the annotated frame."
         ),
     )
     num_workers: int = Field(

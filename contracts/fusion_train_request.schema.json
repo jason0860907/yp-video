@@ -55,8 +55,8 @@
       "type": "string"
     },
     "validation": {
-      "default": "ratio",
-      "description": "ratio holds out a seeded val_ratio of the videos; manual validates on validation_videos; none validates on the training set (a final fit, no model selection).",
+      "default": "manual",
+      "description": "manual validates on validation_videos, the curated hold-out set; ratio holds out a seeded val_ratio of the videos; none validates on the training set (a final fit, no model selection).",
       "enum": [
         "ratio",
         "manual",
@@ -144,7 +144,7 @@
     },
     "acc_grad_iter": {
       "default": 1,
-      "description": "Action recipes: split each optimizer step into N micro-batches (batch_size must divide evenly).",
+      "description": "Split each optimizer step into N micro-batches (batch_size must divide evenly).",
       "maximum": 64,
       "minimum": 1,
       "title": "Acc Grad Iter",
@@ -318,6 +318,14 @@
       "default": null,
       "description": "Optional Action foreground sampling threshold for mixed training. At 0.5, half of Action clips are anchored on an annotated event.",
       "title": "Action Fg Upsample"
+    },
+    "action_dilate_len": {
+      "default": 0,
+      "description": "Action recipes: mark the N sampled frames on either side of each annotated touch as positive too. 0 = only the annotated frame.",
+      "maximum": 32,
+      "minimum": 0,
+      "title": "Action Dilate Len",
+      "type": "integer"
     },
     "num_workers": {
       "default": 8,

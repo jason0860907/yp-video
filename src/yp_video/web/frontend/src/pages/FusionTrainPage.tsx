@@ -73,15 +73,30 @@ export function FusionTrainPage() {
   const isRally = tasks.includes('rally');
   const isManual = values.validation === 'manual';
 
-  // Switching recipe resets the trainer knobs to that recipe's defaults —
-  // rally and action runs want very different batch/epoch/LR values.
-  const pickRecipe = (id: FusionRecipeId) => {
-    set('recipe', id);
-    const next = status?.recipes.find((item) => item.id === id);
+  // A recipe's defaults replace the schema-wide ones — rally and action runs
+  // want very different batch/epoch/LR values, and the schema only carries
+  // one number per field.
+  const applyRecipeDefaults = (next: FusionModelStatus['recipes'][number] | undefined) => {
     for (const [key, value] of Object.entries(next?.defaults ?? {})) {
       set(key as keyof FusionForm, value as FusionForm[keyof FusionForm]);
     }
     if (!next?.fields.includes('include_predictions')) set('include_predictions', false);
+  };
+
+  // The form is seeded from the schema before /status arrives; once it does,
+  // the initially selected recipe gets its own defaults the same way a
+  // switched-to recipe would.
+  const recipeSeeded = useRef(false);
+  useEffect(() => {
+    if (recipeSeeded.current || !status) return;
+    applyRecipeDefaults(status.recipes.find((item) => item.id === values.recipe));
+    recipeSeeded.current = true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status]);
+
+  const pickRecipe = (id: FusionRecipeId) => {
+    set('recipe', id);
+    applyRecipeDefaults(status?.recipes.find((item) => item.id === id));
     setValidationVideos(new Set());
   };
 
@@ -295,6 +310,9 @@ export function FusionTrainPage() {
                     {visible.has('action_fg_upsample') && (
                       <SchemaNumberField name="action_fg_upsample" label="Action FG rate" step={0.05} />
                     )}
+                    {visible.has('action_dilate_len') && (
+                      <SchemaNumberField name="action_dilate_len" label="Action dilate" />
+                    )}
                     {visible.has('acc_grad_iter') && <SchemaNumberField name="acc_grad_iter" label="Grad accum" />}
                     <SchemaNumberField name="warm_up_epochs" label="Warmup" />
                     <SchemaNumberField name="num_workers" label="Workers" />
@@ -312,7 +330,7 @@ export function FusionTrainPage() {
                 <SchemaSelectField
                   name="validation"
                   label="Validation"
-                  optionLabels={{ ratio: 'Seeded ratio', manual: 'Pick videos', none: 'None (final fit)' }}
+                  optionLabels={{ manual: 'Held-out videos', ratio: 'Seeded ratio', none: 'None (final fit)' }}
                 />
                 {values.validation === 'ratio' && (
                   <>

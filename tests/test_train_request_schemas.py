@@ -18,8 +18,8 @@ import unittest
 from pydantic import BaseModel, ValidationError
 
 from yp_video.config import SPOT_DIR
-from yp_video.web.make_train_schemas import _SCHEMAS
 from yp_video.contracts.action import RECIPES
+from yp_video.web.make_train_schemas import _SCHEMAS
 from yp_video.web.train_requests import (
     FeatureArch,
     FusionTrainRequest,
@@ -31,6 +31,10 @@ from yp_video.web.train_requests import (
 #: way the pages seed them (see useSchemaForm call sites).
 SEEDS: dict[type[BaseModel], dict[str, object]] = {
     ReidTrainRequest: {"dataset": "scratch_dataset"},
+    # The page preselects every annotation flagged is_val; validation
+    # defaults to that held-out set, so a bare form is never submitted
+    # without it.
+    FusionTrainRequest: {"validation_videos": ["match"]},
 }
 
 
@@ -79,7 +83,11 @@ class DefaultsAreValidRequests(unittest.TestCase):
         such reset must be a valid request as-is."""
         for recipe in RECIPES.values():
             with self.subTest(recipe=recipe.id):
-                payload = {**build_defaults(FusionTrainRequest), "recipe": recipe.id, **recipe.defaults}
+                payload = {
+                    **build_defaults(FusionTrainRequest, SEEDS[FusionTrainRequest]),
+                    "recipe": recipe.id,
+                    **recipe.defaults,
+                }
                 FusionTrainRequest.model_validate(payload)
 
     def test_recipe_literal_mirrors_the_registry(self) -> None:
