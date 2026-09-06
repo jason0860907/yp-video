@@ -91,22 +91,25 @@ def run_spot_inference(
     video_path: Path,
     *,
     checkpoint: Path,
-    task: str,
+    tasks: Sequence[str],
     batch_size: int = 8,
     num_workers: int = 4,
     clip_len: int = 64,
     use_amp: bool = True,
-    postprocess: bool = True,
     segments: Sequence[tuple[float, float]] | None = None,
     on_progress: Callable[[float], None] | None = None,
     on_events: Callable[[list[dict]], None] | None = None,
-) -> list[dict]:
-    """Run one yp-spot inference subprocess and return its loaded predictions.
+) -> dict[str, list[dict]]:
+    """Run one yp-spot inference subprocess — one decode pass over the video
+    for every head in ``tasks`` — and return ``{task: predictions}``.
 
     Shared by the action (``predict_actions_to_jsonl``) and rally
-    (``yp_video.action.rally.predict_rally_segments``) entry points. Streams
-    stdout so progress ticks surface live; merges stderr in so a single reader
-    can't deadlock and the error tail is captured too.
+    (``yp_video.action.rally.predict_rally_segments``) entry points and the
+    fusion Inference job, which asks for rally and action together. Streams
+    stdout so progress ticks surface live; merges stderr in so a single
+    reader can't deadlock and the error tail is captured too. yp-spot
+    postprocesses point heads (score filter + NMS) and leaves segment heads
+    dense, so callers never say which.
 
     Raises:
         SpotInferenceError: yp-spot is not installed, or its inference
@@ -119,17 +122,17 @@ def run_spot_inference(
         )
 
     with tempfile.TemporaryDirectory(prefix="yp-spot-infer-") as tmp_root:
-        pred_file = Path(tmp_root) / "predictions.json"
+        save_dir = Path(tmp_root)
+        pred_files = {task: save_dir / task / "predictions.json" for task in tasks}
         cmd = prelabel.build_command(
             video_source=str(video_path),
             checkpoint_path=checkpoint,
-            task=task,
-            save_dir=pred_file.parent,
+            tasks=tasks,
+            save_dir=save_dir,
             batch_size=batch_size,
             num_workers=num_workers,
             clip_len=clip_len,
             use_amp=use_amp,
-            postprocess=postprocess,
             segments=segments,
         )
         env = {
@@ -189,10 +192,12 @@ def run_spot_inference(
             raise SpotInferenceError(
                 f"yp-spot inference failed (rc={rc}): " + " | ".join(list(tail)[-5:])
             )
-        if not pred_file.exists():
-            raise SpotInferenceError(f"yp-spot produced no predictions at {pred_file}")
-
-        return prelabel.load_predictions(pred_file)
+        missing = [task for task, path in pred_files.items() if not path.exists()]
+        if missing:
+            raise SpotInferenceError(
+                f"yp-spot produced no predictions for {missing} under {save_dir}"
+            )
+        return {task: prelabel.load_predictions(path) for task, path in pred_files.items()}
 
 
 def predict_actions_to_jsonl(
@@ -269,7 +274,7 @@ def predict_actions_to_jsonl(
     predictions = run_spot_inference(
         video_path,
         checkpoint=checkpoint,
-        task="action",
+        tasks=("action",),
         batch_size=batch_size,
         num_workers=num_workers,
         clip_len=clip_len,
@@ -277,7 +282,7 @@ def predict_actions_to_jsonl(
         segments=segments,
         on_progress=on_progress,
         on_events=_on_partial if on_events is not None else None,
-    )
+    )["action"]
 
     data = prelabel.predictions_to_annotation(
         predictions,

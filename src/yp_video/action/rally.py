@@ -335,20 +335,17 @@ def predict_rally_segments(
         if len(segments) > 1:
             on_rallies(segments[:-1])
 
-    # postprocess=False: the dense segment model needs every per-frame event;
-    # score filtering and NMS would shred contiguous runs.
     predictions = run_spot_inference(
         video_path,
         checkpoint=checkpoint,
-        task="rally",
+        tasks=("rally",),
         batch_size=batch_size,
         num_workers=num_workers,
         clip_len=clip_len,
         use_amp=use_amp,
-        postprocess=False,
         on_progress=on_progress,
         on_events=_on_events if on_rallies else None,
-    )
+    )["rally"]
     events = (predictions[0].get("events") or []) if predictions else []
     segments = events_to_rally_segments(
         events,

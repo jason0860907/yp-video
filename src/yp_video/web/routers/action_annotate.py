@@ -220,7 +220,7 @@ def _spot_app_log_line(prefix: str, line: str) -> str | None:
         video = data.get("video_basename") or Path(str(data.get("video") or "")).name
         return f"{prefix}{video}: {prelabel.spot_progress_message(data)}"
     if line.startswith((
-        "Starting inference", "Timing ", "Saved predictions",
+        "Starting inference", "Timing ", "Saved ",
         "Failed inference", "Failure summary", "Warning:", "Decode pipeline:",
     )):
         return f"{prefix}{line}"
@@ -489,7 +489,7 @@ async def _run_prelabel_batch_subprocess(
                 message=batch_message(idx, total, video.name, "reading metadata"),
             )
             metas.append(await asyncio.to_thread(video_metadata, video))
-            pred_file = tmp_root_path / f"{idx:05d}" / "predictions.json"
+            pred_file = tmp_root_path / f"{idx:05d}" / "action" / "predictions.json"
             pred_file.parent.mkdir(parents=True, exist_ok=True)
             pred_files.append(pred_file)
 
@@ -649,7 +649,7 @@ async def _run_prelabel_batch_subprocess(
                 cmd = prelabel.build_command(
                     video_source=source,
                     checkpoint_path=checkpoint,
-                    task="action",
+                    tasks=("action",),
                     save_dir=pred_file.parent,
                     batch_size=req.batch_size,
                     num_workers=req.num_workers,
@@ -672,7 +672,7 @@ async def _run_prelabel_batch_subprocess(
                     is_key_line=lambda line: (
                         line.startswith("Starting inference")
                         or line.startswith("SPOT_PROGRESS ")
-                        or line.startswith("Saved predictions")
+                        or line.startswith("Saved ")
                         or line.startswith("Timing ")
                         or line.startswith("Failed inference")
                         or line.startswith("Failure summary")

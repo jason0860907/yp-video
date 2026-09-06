@@ -101,3 +101,26 @@ def event_timeline(events: Sequence[dict], *, fps: float) -> list[dict]:
         if item is not None:
             out.append(item)
     return sorted(out, key=lambda x: x["time"])
+
+
+def filter_events_to_spans(
+    predictions: Sequence[dict],
+    spans: Sequence[tuple[float, float]],
+    *,
+    fps: float,
+) -> list[dict]:
+    """Keep only the events whose time falls inside one of the ``(start_s,
+    end_s)`` spans.
+
+    ``predictions`` are yp-spot records (native frame numbers). This is the
+    post-hoc form of the ``segments`` decode restriction, for a pass that
+    scanned the whole video because another head needed every frame.
+    """
+    def inside(frame: int) -> bool:
+        t = frame / fps
+        return any(lo <= t <= hi for lo, hi in spans)
+
+    return [
+        {**record, "events": [ev for ev in record.get("events", []) if inside(int(ev["frame"]))]}
+        for record in predictions
+    ]

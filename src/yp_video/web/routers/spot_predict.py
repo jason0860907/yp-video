@@ -205,14 +205,13 @@ async def start(req: RallyPredictRequest) -> dict:
                 cmd = prelabel.build_command(
                     video_source=sources,
                     checkpoint_path=checkpoint,
-                    task="rally",
+                    tasks=("rally",),
                     save_dir=[tmp_dir / p.stem for p in video_paths],
                     batch_size=req.batch_size,
                     num_workers=req.num_workers,
                     clip_len=req.clip_len,
                     prefetch_factor=req.prefetch_factor,
                     use_amp=req.use_amp,
-                    postprocess=False,
                 )
 
                 state = {"index": 0, "enqueued": 0}
@@ -232,7 +231,7 @@ async def start(req: RallyPredictRequest) -> dict:
                 async def convert_one(i: int) -> None:
                     nonlocal failed
                     video_path = video_paths[i]
-                    predictions_file = tmp_dir / video_path.stem / "predictions.json"
+                    predictions_file = tmp_dir / video_path.stem / "rally" / "predictions.json"
                     if not predictions_file.exists():
                         failed += 1
                         job_manager.append_log(

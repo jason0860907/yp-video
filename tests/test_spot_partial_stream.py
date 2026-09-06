@@ -13,11 +13,11 @@ from yp_video.action.predict import _spot_partial_payload
 def _stub_command(lines: list[str], save_dir: Path) -> list[str]:
     """A subprocess that prints the given stdout lines and writes an empty
     predictions.json where run_spot_inference expects it."""
-    pred_file = str(Path(save_dir) / "predictions.json")
+    pred_file = Path(save_dir) / "action" / "predictions.json"
     body = "\n".join(
-        ["import pathlib"]
+        ["import pathlib", f"pathlib.Path({str(pred_file.parent)!r}).mkdir(parents=True, exist_ok=True)"]
         + [f"print({line!r})" for line in lines]
-        + [f"pathlib.Path({pred_file!r}).write_text('[]')"]
+        + [f"pathlib.Path({str(pred_file)!r}).write_text('[]')"]
     )
     return [sys.executable, "-c", body]
 
@@ -63,7 +63,7 @@ class SpotPartialReaderTests(unittest.TestCase):
             predict.run_spot_inference(
                 Path("video.mp4"),
                 checkpoint=Path("ckpt.pt"),
-                task="action",
+                tasks=("action",),
                 on_events=lambda events: seen.append(list(events)),
             )
         return seen

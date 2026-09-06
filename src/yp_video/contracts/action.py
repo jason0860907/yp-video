@@ -493,7 +493,8 @@ SPOT_PROGRESS_PREFIX = "SPOT_PROGRESS "
 # yp-spot may ALSO stream partial foreground events as inference runs, so the
 # consumer can surface results progressively instead of waiting for the final
 # ``predictions.json``. One line per inference batch (native frame numbers):
-#   ``SPOT_PARTIAL {"cumulative":<bool>,"events":[...]}``
+#   ``SPOT_PARTIAL {"task":<head>,"cumulative":<bool>,"events":[...]}``
+# ``task`` names the head the events belong to — one run may carry several.
 # Dense (rally) runs stream deltas — that batch's newly-settled per-frame
 # events, ``{"frame","score"}`` plus ``winner_probs`` on winner-head checkpoints —
 # with ``cumulative=false``: the reader accumulates them. Postprocessed

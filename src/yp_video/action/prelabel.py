@@ -128,22 +128,25 @@ def build_command(
     *,
     video_source: str | Sequence[str],
     checkpoint_path: Path,
-    task: str,
+    tasks: Sequence[str],
     save_dir: Path | list[Path],
     batch_size: int,
     num_workers: int,
     clip_len: int,
     prefetch_factor: int | None = None,
     use_amp: bool = True,
-    postprocess: bool = True,
     segments: Sequence[tuple[float, float]] | None = None,
 ) -> list[str]:
     """The yp-spot inference command line.
 
-    ``video_source`` is what yp-spot decodes: a local file path or a presigned
-    R2 URL (``r2_client.cut_media_source``) — cv2 and ffmpeg read both, so a
-    cut whose bytes live only in R2 predicts without a local copy.
+    ``tasks`` are the spotting heads to run in one decode pass; each writes
+    ``<save_dir>/<task>/predictions.json``. ``video_source`` is what yp-spot
+    decodes: a local file path or a presigned R2 URL
+    (``r2_client.cut_media_source``) — cv2 and ffmpeg read both, so a cut
+    whose bytes live only in R2 predicts without a local copy.
     """
+    if not tasks:
+        raise ValueError("tasks must name at least one spotting head")
     video_sources = [video_source] if isinstance(video_source, str) else list(video_source)
     save_dirs = [save_dir] if isinstance(save_dir, Path) else list(save_dir)
     if len(save_dirs) not in (1, len(video_sources)):
@@ -156,7 +159,7 @@ def build_command(
         "-m", SPOT_INFERENCE_MODULE,
         "--video_path", *video_sources,
         "--checkpoint_path", str(checkpoint_path),
-        "--task", task,
+        "--tasks", ",".join(tasks),
         "--save_dir", *(str(path) for path in save_dirs),
         "--batch_size", str(batch_size),
         "--num_workers", str(num_workers),
@@ -165,10 +168,6 @@ def build_command(
     if prefetch_factor is not None:
         cmd.extend(["--prefetch_factor", str(prefetch_factor)])
     cmd.append("--amp" if use_amp else "--no-amp")
-    if not postprocess:
-        # Dense/segment models need every per-frame event; score filtering and
-        # NMS would shred contiguous runs.
-        cmd.append("--no-postprocess")
     if segments is not None:
         cmd.extend([
             "--segments",
