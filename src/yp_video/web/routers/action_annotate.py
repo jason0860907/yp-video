@@ -30,15 +30,17 @@ from yp_video.contracts.action import (
     event_id,
 )
 from yp_video.core import label_done
-from yp_video.core.annotation_ids import action_id
-from yp_video.core.ffmpeg import parse_optional_float as _parse_optional_float
 from yp_video.core.jsonl import read_jsonl
 from yp_video.core.rallies import load_rallies
 from yp_video.web import audit, worklists
 from yp_video.web.action_annotations import (
     annotation_path,
     load_annotation,
+    normalize_events,
+    persistable_events,
     pre_annotation_path,
+    save_spot_pre_annotation,
+    write_annotation_atomic,
 )
 from yp_video.web.action_waveform import audio_waveform, video_metadata
 from yp_video.web.job_helpers import (
@@ -132,75 +134,6 @@ def _load_rallies(video: Path) -> list[dict]:
     return load_rallies(video.stem)
 
 
-def _rally_for_event(event: dict, fps: float, rallies: list[dict]) -> dict | None:
-    if not rallies:
-        return None
-    explicit_time = _parse_optional_float(event.get("time"))
-    if explicit_time is not None:
-        time = explicit_time
-    else:
-        frame = _parse_optional_float(event.get("frame")) or 0.0
-        time = frame / fps if fps > 0 else 0.0
-    for rally in rallies:
-        if rally["start"] <= time < rally["end"]:
-            return rally
-    existing_id = _coerce_rally_id(event.get("rally_id"))
-    if existing_id:
-        for rally in rallies:
-            if rally["rally_id"] == existing_id:
-                return rally
-    return None
-
-
-def _coerce_rally_id(value: object) -> int | None:
-    if isinstance(value, int) and value > 0:
-        return value
-    if isinstance(value, str) and value.isdigit() and int(value) > 0:
-        return int(value)
-    return None
-
-
-def _normalize_events(video_stem: str, events: list[dict], *, fps: float, num_frames: int, rallies: list[dict]) -> list[dict]:
-    normalized = []
-    max_frame = max(0, num_frames - 1)
-    for i, raw in enumerate(events):
-        event = dict(raw)
-        frame = max(0, min(int(round(float(event.get("frame", 0) or 0))), max_frame))
-        event["frame"] = frame
-        event["id"] = action_id(video_stem, event, i)
-        time = frame / fps if fps > 0 else float(event.get("time") or 0)
-        event["time"] = round(time, 4)
-        event["visible"] = _truthy_event_visible(event.get("visible", True))
-        rally = _rally_for_event(event, fps, rallies)
-        if rally:
-            event["rally_id"] = rally["rally_id"]
-            event["relative_frame"] = max(0, int(round((time - rally["start"]) * fps)))
-        else:
-            event["rally_id"] = None
-            event["relative_frame"] = None
-        normalized.append(event)
-    normalized.sort(key=lambda e: (e["frame"], e["label"], e["id"]))
-    return normalized
-
-
-#: What the store persists per event: the human's facts, nothing derived.
-#: rally_id / relative_frame / time are recomputed from the live rally store
-#: on every read (_normalize_events) — a stored copy goes stale the moment
-#: rallies are re-edited, which is exactly how the Association board once
-#: ended up navigating by outdated spans.
-PERSISTED_EVENT_FIELDS = ("id", "frame", "label", "xy", "visible")
-
-
-def _persistable_events(events: list[dict]) -> list[dict]:
-    return [{key: event[key] for key in PERSISTED_EVENT_FIELDS} for event in events]
-
-
-def _truthy_event_visible(value: object) -> bool:
-    if isinstance(value, str):
-        return value.strip().lower() not in {"0", "false", "no", "off"}
-    return value is not False
-
-
 def _prior_events(output_path: Path) -> list[dict]:
     """The events currently on disk, or [] when there is no file yet."""
     if not output_path.exists():
@@ -213,17 +146,6 @@ def _prior_events(output_path: Path) -> list[dict]:
         return []
 
 
-def _write_annotation_atomic(output_path: Path, data: dict) -> None:
-    tmp_path = output_path.with_suffix(output_path.suffix + f".tmp.{os.getpid()}")
-    meta = {k: v for k, v in data.items() if k != "events"}
-    meta["_meta"] = True
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        f.write(json.dumps(meta, ensure_ascii=False) + "\n")
-        for event in data.get("events", []):
-            f.write(json.dumps(event, ensure_ascii=False) + "\n")
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp_path, output_path)
 
 
 async def _save_spot_action_annotation(
@@ -236,23 +158,14 @@ async def _save_spot_action_annotation(
     min_score: float,
 ) -> dict:
     predictions = await asyncio.to_thread(prelabel.load_predictions, pred_file)
-    data = prelabel.predictions_to_annotation(
-        predictions,
-        video_path=video,
-        metadata=meta,
-        checkpoint_path=checkpoint,
+    data = await asyncio.to_thread(
+        save_spot_pre_annotation,
+        video=video,
+        meta=meta,
+        predictions=predictions,
+        checkpoint=checkpoint,
         min_score=min_score,
     )
-    data["events"] = _persistable_events(_normalize_events(
-        video.stem,
-        data.get("events", []),
-        fps=float(data.get("fps") or meta["fps"]),
-        num_frames=int(data.get("num_frames") or meta["num_frames"]),
-        rallies=[],
-    ))
-    data["num_events"] = len(data["events"])
-    ann_path.parent.mkdir(parents=True, exist_ok=True)
-    await asyncio.to_thread(_write_annotation_atomic, ann_path, data)
     sync_to_r2(ann_path, "action/pre-annotations")
     return data
 
@@ -410,7 +323,7 @@ async def get_annotations(
     forced = await asyncio.to_thread(load_annotation, path)
     if forced is not None:
         # Shallow copies throughout — the cached dict is shared; every key
-        # below is reassigned wholesale, and _normalize_events copies each
+        # below is reassigned wholesale, and normalize_events copies each
         # event.
         ann = dict(forced)
         # Which store this payload came from — the editor's "what am I
@@ -421,7 +334,7 @@ async def get_annotations(
         ann.setdefault("fps", meta["fps"])
         ann.setdefault("num_frames", meta["num_frames"])
         ann["rallies"] = rallies
-        ann["events"] = _normalize_events(
+        ann["events"] = normalize_events(
             video.stem,
             ann.get("events", []),
             fps=float(ann["fps"]),
@@ -461,7 +374,7 @@ async def save_annotations(req: SaveActionAnnotationsRequest) -> dict:
         raise HTTPException(404, "Video not found")
 
     ACTION_ANNOTATIONS_DIR.mkdir(parents=True, exist_ok=True)
-    events = _persistable_events(_normalize_events(
+    events = persistable_events(normalize_events(
         video.stem,
         [event.model_dump(mode="json") for event in req.events],
         fps=req.fps,
@@ -478,7 +391,7 @@ async def save_annotations(req: SaveActionAnnotationsRequest) -> dict:
     }
     output_path = annotation_path(video.name)
     before = await asyncio.to_thread(_prior_events, output_path)
-    await asyncio.to_thread(_write_annotation_atomic, output_path, data)
+    await asyncio.to_thread(write_annotation_atomic, output_path, data)
     sync_to_r2(output_path, "action/annotations")
 
     # Same autosave timer as the rally editor: an unchanged rewrite is not an
@@ -813,7 +726,7 @@ def export_dataset() -> Response:
             # never stored in the annotation file.
             stem = data.get("video", path.stem.removesuffix("_actions"))
             rallies = load_rallies(stem)
-            events = _normalize_events(
+            events = normalize_events(
                 stem,
                 data.get("events", []),
                 fps=float(data.get("fps") or 30.0),
