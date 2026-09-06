@@ -188,11 +188,12 @@ _RALLY_FIELDS = ("sample_fps", "acc_grad_iter", "video_limit")
 # Every recipe defaults to the same base learning rate (3e-5, matching the
 # yp-spot CLI default); per-task overrides start equal to it so the form
 # shows one number everywhere until the operator deliberately diverges.
-# Every recipe trains at an effective batch of 64 as 16 micro-batches of 4
-# clips: the per-step memory of a batch-4 run, with the optimizer seeing 16x
-# more per step.
+# Every recipe trains at an effective batch of 64 as 32 micro-batches of 2
+# clips: at the 224x398 model input (yp_spot DEFAULT_INPUT_SIZE) a 4-clip
+# step no longer fits the 24 GB card for either backbone, while 2 clips
+# leaves headroom for the five-head runs.
 _RALLY_DEFAULTS = {
-    "batch_size": 64, "acc_grad_iter": 16, "num_epochs": 30,
+    "batch_size": 64, "acc_grad_iter": 32, "num_epochs": 30,
     "warm_up_epochs": 2, "learning_rate": 3e-5, "audio_backend": "none",
     "sample_fps": 5.0,
 }
@@ -204,12 +205,12 @@ _ACTION_FIELDS = (
     "include_predictions",
 )
 _ACTION_DEFAULTS = {
-    "batch_size": 64, "acc_grad_iter": 16, "num_epochs": 100,
+    "batch_size": 64, "acc_grad_iter": 32, "num_epochs": 100,
     "warm_up_epochs": 3, "learning_rate": 3e-5, "audio_backend": "logmel",
     "action_dilate_len": 0,
 }
 _FUSION_DEFAULTS = {
-    "batch_size": 64, "acc_grad_iter": 16, "num_epochs": 50,
+    "batch_size": 64, "acc_grad_iter": 32, "num_epochs": 50,
     "warm_up_epochs": 3, "learning_rate": 3e-5, "audio_backend": "logmel",
     "action_dilate_len": 0,
 }
@@ -234,7 +235,7 @@ _MULTI_FPS_DEFAULTS = {
     "batch_size": 64,
     "feature_arch": "convnextt_dv3_gsm",
     "num_workers": 4,
-    "acc_grad_iter": 16,
+    "acc_grad_iter": 32,
     "num_epochs": 50,
     "warm_up_epochs": 3,
     "learning_rate": 3e-5,
