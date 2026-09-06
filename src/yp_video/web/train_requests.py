@@ -238,7 +238,7 @@ class FusionTrainRequest(StrictModel):
         default="map", description="Which epoch counts as best: top validation mAP or lowest loss."
     )
     start_val_epoch: int = Field(
-        default=10,
+        default=0,
         ge=0,
         description=(
             "Skip full metric evaluation before this zero-based epoch; "

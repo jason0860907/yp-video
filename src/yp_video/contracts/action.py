@@ -247,7 +247,7 @@ _MULTI_FPS_DEFAULTS = {
     "action_stream_weight": 1,
     "rally_stream_weight": 1,
     "winner_stream_weight": 1,
-    "action_fg_upsample": 0.5,
+    "action_fg_upsample": None,
     "action_dilate_len": 0,
     "action_sample_fps": 30.0,
     "rally_sample_fps": 5.0,

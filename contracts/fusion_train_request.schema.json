@@ -346,7 +346,7 @@
       "type": "string"
     },
     "start_val_epoch": {
-      "default": 10,
+      "default": 0,
       "description": "Skip full metric evaluation before this zero-based epoch; validation loss is still computed every epoch.",
       "minimum": 0,
       "title": "Start Val Epoch",

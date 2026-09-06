@@ -129,7 +129,7 @@ class BuildCommandTests(unittest.TestCase):
             action_dilate_len=1,
         )
         self.assertEqual(req.val_ratio, 0.1)
-        self.assertEqual(req.start_val_epoch, 10)
+        self.assertEqual(req.start_val_epoch, 0)
         prepared = PreparedLabels(
             label_dirs={
                 "action": Path("/run/labels/action-annotations"),
