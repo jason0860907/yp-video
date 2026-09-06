@@ -27,8 +27,6 @@ from yp_video.config import (
     SPOT_CHECKPOINTS_DIR,
     SPOT_DIR,
     cut_kind_of,
-    find_cut,
-    iter_all_cuts,
 )
 from yp_video.contracts.action import (
     ACTION_CONTRACT_VERSION,
@@ -53,7 +51,12 @@ from yp_video.web.job_helpers import (
     update_batch_item,
 )
 from yp_video.web.jobs import JobSummary, JobType, job_manager
-from yp_video.web.r2_client import sync_to_r2
+from yp_video.web.r2_client import (
+    all_cut_paths,
+    cut_media_source,
+    resolve_cut,
+    sync_to_r2,
+)
 from yp_video.web.schemas import StrictModel
 
 log = logging.getLogger(__name__)
@@ -85,7 +88,7 @@ def _pre_annotation_path(stem: str) -> Path:
 @router.get("/videos")
 def list_videos() -> list[dict]:
     results = []
-    for f in sorted(iter_all_cuts(), key=lambda p: p.name):
+    for f in sorted(all_cut_paths(), key=lambda p: p.name):
         results.append({
             "name": f.name,
             "kind": cut_kind_of(f),
@@ -121,13 +124,14 @@ def spot_info() -> dict:
 def _save_rally_pre_annotation(
     *,
     video_path: Path,
+    source: str,
     predictions_file: Path,
     checkpoint: Path,
     req: RallyPredictRequest,
 ) -> dict:
     predictions = prelabel.load_predictions(predictions_file)
     events = (predictions[0].get("events") or []) if predictions else []
-    metadata = probe_video_metadata(video_path)
+    metadata = probe_video_metadata(source)
     segments, max_rally_id = number_rallies(
         rally_spot.events_to_rally_segments(
             events,
@@ -166,15 +170,22 @@ async def start(req: RallyPredictRequest) -> dict:
         raise HTTPException(400, str(exc)) from exc
 
     video_paths: list[Path] = []
+    sources: list[str] = []
     skipped: list[str] = []
     for name in req.videos:
-        path = find_cut(name)
+        path = resolve_cut(name)
         if path is None:
             raise HTTPException(404, f"Video not found: {name}")
         if not req.overwrite and _pre_annotation_path(path.stem).exists():
             skipped.append(path.stem)
             continue
+        # The local file or a presigned R2 URL — yp-spot decodes either, so
+        # a cut whose bytes live only in R2 predicts without a local copy.
+        source = cut_media_source(path)
+        if source is None:
+            raise HTTPException(404, f"Video not found: {name}")
         video_paths.append(path)
+        sources.append(source)
 
     if not video_paths:
         raise HTTPException(
@@ -206,7 +217,7 @@ async def start(req: RallyPredictRequest) -> dict:
                 # starting the next video, so each finished video converts to a
                 # pre-annotation immediately — a mid-batch cancel keeps them.
                 cmd = prelabel.build_command(
-                    video_path=video_paths,
+                    video_source=sources,
                     checkpoint_path=checkpoint,
                     task="rally",
                     save_dir=[tmp_dir / p.stem for p in video_paths],
@@ -254,6 +265,7 @@ async def start(req: RallyPredictRequest) -> dict:
                         result = await asyncio.to_thread(
                             _save_rally_pre_annotation,
                             video_path=video_path,
+                            source=sources[i],
                             predictions_file=predictions_file,
                             checkpoint=checkpoint,
                             req=req,

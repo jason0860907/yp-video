@@ -116,7 +116,7 @@ def run_spot_inference(
     with tempfile.TemporaryDirectory(prefix="yp-spot-infer-") as tmp_root:
         pred_file = Path(tmp_root) / "predictions.json"
         cmd = prelabel.build_command(
-            video_path=video_path,
+            video_source=str(video_path),
             checkpoint_path=checkpoint,
             task=task,
             save_dir=pred_file.parent,

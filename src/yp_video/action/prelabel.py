@@ -126,7 +126,7 @@ def resolve_checkpoint_path(
 
 def build_command(
     *,
-    video_path: Path | list[Path],
+    video_source: str | Sequence[str],
     checkpoint_path: Path,
     task: str,
     save_dir: Path | list[Path],
@@ -138,17 +138,23 @@ def build_command(
     postprocess: bool = True,
     segments: Sequence[tuple[float, float]] | None = None,
 ) -> list[str]:
-    video_paths = [video_path] if isinstance(video_path, Path) else list(video_path)
+    """The yp-spot inference command line.
+
+    ``video_source`` is what yp-spot decodes: a local file path or a presigned
+    R2 URL (``r2_client.cut_media_source``) — cv2 and ffmpeg read both, so a
+    cut whose bytes live only in R2 predicts without a local copy.
+    """
+    video_sources = [video_source] if isinstance(video_source, str) else list(video_source)
     save_dirs = [save_dir] if isinstance(save_dir, Path) else list(save_dir)
-    if len(save_dirs) not in (1, len(video_paths)):
+    if len(save_dirs) not in (1, len(video_sources)):
         raise ValueError("save_dir must contain one path or one path per video")
-    if segments is not None and len(video_paths) != 1:
-        raise ValueError("segments requires exactly one video_path")
+    if segments is not None and len(video_sources) != 1:
+        raise ValueError("segments requires exactly one video_source")
 
     cmd = [
         str(SPOT_PYTHON),
         "-m", SPOT_INFERENCE_MODULE,
-        "--video_path", *(str(path) for path in video_paths),
+        "--video_path", *video_sources,
         "--checkpoint_path", str(checkpoint_path),
         "--task", task,
         "--save_dir", *(str(path) for path in save_dirs),

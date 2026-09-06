@@ -20,7 +20,6 @@ from yp_video.config import (
     ACTION_ANNOTATIONS_DIR,
     CUT_R2_CATEGORIES,
     SPOT_DIR,
-    find_cut,
 )
 from yp_video.contracts.action import (
     ACTION_CONTRACT_VERSION,
@@ -57,7 +56,12 @@ from yp_video.web.job_helpers import (
     update_batch_item,
 )
 from yp_video.web.jobs import JobSummary, JobType, job_manager
-from yp_video.web.r2_client import resolve_cut, serve_video_or_r2_redirect, sync_to_r2
+from yp_video.web.r2_client import (
+    cut_media_source,
+    resolve_cut,
+    serve_video_or_r2_redirect,
+    sync_to_r2,
+)
 from yp_video.web.schemas import StrictModel
 
 log = logging.getLogger(__name__)
@@ -264,7 +268,7 @@ def _resolve_prelabel_entries(names: list[str], *, overwrite: bool) -> list[tupl
         if not name or name in seen:
             continue
         seen.add(name)
-        video = find_cut(name)
+        video = resolve_cut(name)
         if video is None:
             missing.append(name)
             continue
@@ -723,8 +727,14 @@ async def _run_prelabel_batch_subprocess(
                         duration_s=float(video_metadata(video)["duration"]),
                     )
 
+                # The local file or a presigned R2 URL — yp-spot decodes
+                # either, so an R2-only cut predicts without a local copy.
+                source = cut_media_source(video)
+                if source is None:
+                    raise RuntimeError(f"Video not found: {video.name}")
+
                 cmd = prelabel.build_command(
-                    video_path=video,
+                    video_source=source,
                     checkpoint_path=checkpoint,
                     task="action",
                     save_dir=pred_file.parent,

@@ -35,7 +35,6 @@ def scratch_stores():
         video.touch()
         with (
             patch.object(action_annotate, "resolve_cut", return_value=video),
-            patch.object(action_annotate, "find_cut", return_value=video),
             patch.object(action_annotate, "ACTION_ANNOTATIONS_DIR", ann_dir),
             patch.object(action_annotations, "ACTION_ANNOTATIONS_DIR", ann_dir),
             patch.object(action_annotations, "ACTION_PRE_ANNOTATIONS_DIR", pre_dir),
