@@ -46,9 +46,13 @@ def _spot_progress_ratio(line: str) -> float | None:
     Returns ``None`` for any non-progress line. Parsing lives in ``prelabel`` so
     the web dashboard and this worker path share one implementation.
     """
-    if not line.startswith(SPOT_PROGRESS_PREFIX):
+    # tqdm redraws its bar on stderr without a newline, so with stderr merged
+    # into stdout the prefix can sit after a bar fragment on the same segment
+    # — locate it rather than anchoring at column 0.
+    at = line.find(SPOT_PROGRESS_PREFIX)
+    if at < 0:
         return None
-    data = prelabel.parse_spot_progress(line[len(SPOT_PROGRESS_PREFIX):])
+    data = prelabel.parse_spot_progress(line[at + len(SPOT_PROGRESS_PREFIX):])
     return prelabel.spot_progress_fraction(data) if data is not None else None
 
 
@@ -62,10 +66,11 @@ def _spot_partial_payload(line: str) -> tuple[bool, list[dict]] | None:
     is treated as an empty delta rather than crashing the reader — the
     authoritative event set still arrives via ``predictions.json`` at the end.
     """
-    if not line.startswith(SPOT_PARTIAL_PREFIX):
+    at = line.find(SPOT_PARTIAL_PREFIX)
+    if at < 0:
         return None
     try:
-        payload = json.loads(line[len(SPOT_PARTIAL_PREFIX):])
+        payload = json.loads(line[at + len(SPOT_PARTIAL_PREFIX):])
         events = payload.get("events")
         cumulative = bool(payload.get("cumulative"))
         return cumulative, (events if isinstance(events, list) else [])
