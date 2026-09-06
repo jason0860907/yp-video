@@ -176,6 +176,12 @@ export const API = {
     spot: '/spot-predict/spot',
     start: '/spot-predict/start',
   },
+  // One fusion checkpoint, every stage: rally + winner, action, association.
+  inference: {
+    videos: '/inference/videos',
+    spot: '/inference/spot',
+    start: '/inference/start',
+  },
   tracklets: {
     run: '/tracklets/run',
     get: (name: string) => `/tracklets/${encodeURIComponent(name)}`,

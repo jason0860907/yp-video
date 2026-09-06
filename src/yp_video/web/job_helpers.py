@@ -466,14 +466,23 @@ async def cancel_batch_items(job_id: str, items: list[dict]) -> None:
 
 
 def spawn_batch_video_job(
-    job, video_paths: list[Path], *, stop_vllm: bool, work, done_message, start_message: str
+    job,
+    video_paths: list[Path],
+    *,
+    stop_vllm: bool,
+    work,
+    done_message,
+    start_message: str,
+    on_done=None,
 ) -> None:
     """Run ``work(video_path, on_progress)`` per video inside the standard
     batch-job scaffolding: inference lock, throttled per-item progress,
     cancellation, and the final ok/failed roll-up. ``work`` is synchronous
     and GPU-bound — it runs in an executor thread; ``on_progress`` receives
     ``(done, total, message)`` and may be called from that thread — the
-    worker owns the wording (falls back to ``done/total``).
+    worker owns the wording (falls back to ``done/total``). ``on_done``
+    receives ``(video_path, result)`` on the event loop after each video
+    succeeds — the place for work that needs the loop, such as R2 mirroring.
     """
     total = len(video_paths)
 
@@ -521,6 +530,8 @@ def spawn_batch_video_job(
                                 None,
                                 lambda p=video_path, cb=on_progress: work(p, cb),
                             )
+                            if on_done is not None:
+                                on_done(video_path, counts)
                             await update_batch_item(
                                 job.id, items, i, status="completed", progress=1.0,
                                 message=done_message(counts),

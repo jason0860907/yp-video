@@ -302,6 +302,19 @@ export interface RallyPredictVideo {
   has_vlm_pre_annotation?: boolean;
 }
 
+/** One row of the Inference page: which stage outputs the cut already has. */
+export interface InferenceVideo {
+  name: string;
+  kind: CutKind;
+  /** SPOT rally pre-annotation exists (rally-spot/pre-annotations). */
+  has_rally_spot: boolean;
+  /** Machine action pre-annotation exists (action/pre-annotations). */
+  has_action_pre: boolean;
+  /** Why association cannot run yet — tracking or player detection missing — or null. */
+  association_blocker: string | null;
+  pipeline: PipelineState;
+}
+
 export interface VllmStatus {
   status: 'running' | 'starting' | 'stopped' | 'error';
   model?: string;

@@ -19,11 +19,9 @@ from fastapi import APIRouter, HTTPException
 from pydantic import Field
 
 from yp_video.action import prelabel
-from yp_video.action import rally as rally_spot
 from yp_video.config import (
     RALLY_ANNOTATIONS_DIR,
     RALLY_PRE_ANNOTATIONS_DIR,
-    RALLY_SPOT_PRE_ANNOTATIONS_DIR,
     SPOT_CHECKPOINTS_DIR,
     SPOT_DIR,
     cut_kind_of,
@@ -32,10 +30,13 @@ from yp_video.contracts.action import (
     ACTION_CONTRACT_VERSION,
     ACTION_CONTRACT_VERSION_ENV,
 )
-from yp_video.core.ffmpeg import probe_video_metadata
-from yp_video.core.jsonl import write_jsonl
-from yp_video.core.rallies import annotation_name, number_rallies
+from yp_video.core.rallies import annotation_name
 from yp_video.web import worklists
+from yp_video.web.fusion_inference import (
+    RallyOptions,
+    rally_spot_pre_annotation_path,
+    save_rally_pre_annotation,
+)
 from yp_video.web.job_helpers import (
     ProgressParser,
     batch_items_params,
@@ -82,7 +83,7 @@ class RallyPredictRequest(StrictModel):
 
 
 def _pre_annotation_path(stem: str) -> Path:
-    return RALLY_SPOT_PRE_ANNOTATIONS_DIR / annotation_name(stem)
+    return rally_spot_pre_annotation_path(stem)
 
 
 @router.get("/videos")
@@ -131,33 +132,18 @@ def _save_rally_pre_annotation(
 ) -> dict:
     predictions = prelabel.load_predictions(predictions_file)
     events = (predictions[0].get("events") or []) if predictions else []
-    metadata = probe_video_metadata(source)
-    segments, max_rally_id = number_rallies(
-        rally_spot.events_to_rally_segments(
-            events,
-            native_fps=float(metadata["fps"]),
+    _path, count = save_rally_pre_annotation(
+        video=video_path,
+        source=source,
+        events=events,
+        checkpoint=checkpoint,
+        options=RallyOptions(
             min_score=req.min_score,
             max_gap_s=req.max_gap_s,
             min_duration_s=req.min_duration_s,
-        )
+        ),
     )
-    write_jsonl(
-        _pre_annotation_path(video_path.stem),
-        {
-            "video": str(video_path),
-            "duration": float(metadata["duration"]),
-            "max_rally_id": max_rally_id,
-            "source": {
-                "type": "rally-spot",
-                "checkpoint": prelabel.checkpoint_ref(checkpoint),
-                "min_score": req.min_score,
-                "max_gap_s": req.max_gap_s,
-                "min_duration_s": req.min_duration_s,
-            },
-        },
-        segments,
-    )
-    return {"video": video_path.stem, "rallies": len(segments)}
+    return {"video": video_path.stem, "rallies": count}
 
 
 @router.post("/start", response_model=JobSummary)

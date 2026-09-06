@@ -51,6 +51,9 @@ export const NAV: NavSection[] = [
       // The one SPOT trainer for every recipe (rally / rally+winner / action /
       // association+action) sits right after the labels it consumes.
       { path: '/fusion-train', label: 'Train', icon: ICON.train },
+      // Every answer the fusion model gives, in one run: rally + winner,
+      // action, association. The per-stage predict pages below re-run one.
+      { path: '/inference', label: 'Inference', icon: ICON.predict },
     ],
   },
   {

@@ -46,6 +46,7 @@ class JobType(str, Enum):
     REID_DATASET_EXPORT = "reid_dataset_export"
     REID_TRAIN = "reid_train"
     ACTOR_ASSOCIATION_PREDICT = "actor_association_predict"
+    FUSION_INFERENCE = "fusion_inference"
     DOWNLOAD = "download"
     R2_UPLOAD = "r2_upload"
     R2_DOWNLOAD = "r2_download"

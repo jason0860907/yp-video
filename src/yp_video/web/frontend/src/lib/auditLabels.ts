@@ -34,6 +34,7 @@ const ACTION_LABELS: Record<string, string> = {
   'POST /api/annotate/clip-zip': '下載片段壓縮檔',
 
   // Training and inference.
+  'POST /api/inference/start': '啟動 Fusion 推論',
   'POST /api/spot-predict/start': '啟動 Rally SPOT 推論',
   'POST /api/action-annotate/prelabel-batch': '批次 Action 預標',
   'POST /api/actor-association/predict': '批次重算動作歸屬',
