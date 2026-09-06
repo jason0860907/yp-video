@@ -11,7 +11,6 @@ from unittest.mock import patch
 from fastapi import HTTPException
 from pydantic import TypeAdapter
 
-from yp_video.action.spot_runs import _normalize_metrics_entry
 from yp_video.actor import labels as actor_labels
 from yp_video.actor import review as actor_review
 from yp_video.actor.labels import ActorLabel, ActorVerdict
@@ -239,28 +238,6 @@ class DoneConfirmationTests(unittest.TestCase):
 
 
 class NeuralAssociationTrainTests(unittest.IsolatedAsyncioTestCase):
-    def test_association_epochs_normalize_into_the_shared_task_shape(self) -> None:
-        """The independent trainer's per-epoch records carry no mAP — they
-        must surface as an `actor` task so the one shared performance card
-        renders this trainer too."""
-        entry = _normalize_metrics_entry(
-            {
-                "epoch": 0,
-                "loss": {"train": 2.0, "val": 3.0},
-                "train": {"player_top1": 0.7, "overall_exact": 0.6},
-                "val": {"player_top1": 0.4, "overall_exact": 0.3},
-                "best": True,
-            }
-        )
-
-        actor = entry["tasks"]["actor"]
-        self.assertEqual(actor["primary_metric"], "player_top1")
-        self.assertEqual(actor["validation"]["metrics"]["player_top1"], 0.4)
-        self.assertEqual(actor["train"]["metrics"]["player_top1"], 0.7)
-        self.assertEqual(entry["train_loss"], 2.0)
-        self.assertEqual(entry["val_loss"], 3.0)
-        self.assertEqual(entry["val_mAP"], 0)
-
     def test_predict_contract_no_longer_accepts_a_linear_checkpoint(self) -> None:
         adapter = TypeAdapter(router.PredictRequest)
         with self.assertRaises(ValueError):

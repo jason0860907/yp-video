@@ -7,6 +7,7 @@ from yp_video.action.spot_runs import (
     best_epochs_per_task,
     checkpoint_package_options,
     export_checkpoint_package,
+    performance_payload,
 )
 from yp_video.web.spot_runs import (
     TrainProgress,
@@ -46,6 +47,11 @@ class SpotTaskMetricsProgressTest(unittest.TestCase):
                     "loss": 0.8,
                     "metrics": {"player_top1": 0.75},
                     "counts": {"player_events": 20},
+                    "breakdown": {
+                        "kinds": [
+                            {"kind": "track", "events": 20, "correct": 15, "rate": 0.75}
+                        ]
+                    },
                 },
             }
         }
@@ -58,6 +64,11 @@ class SpotTaskMetricsProgressTest(unittest.TestCase):
         _feed(parsers, "Val mAP: 80.0%")
         _feed(parsers, "New best epoch!")
         self.assertEqual(ctx.best_task_metrics, tasks)
+        # The breakdown rides inside the task payload — no second protocol line.
+        self.assertEqual(
+            ctx.best_task_metrics["actor"]["validation"]["breakdown"]["kinds"][0]["kind"],
+            "track",
+        )
 
     def test_loss_parser_accepts_legacy_and_task_aware_tables(self):
         ctx = TrainProgress(epochs=10)
@@ -103,6 +114,46 @@ FUSION_TASKS = {
     "action": {"primary_metric": "harmonic_mAP"},
     "actor": {"primary_metric": "player_top1"},
 }
+
+
+class PerformancePayloadTest(unittest.TestCase):
+    def test_epoch_records_pass_through_with_breakdowns(self):
+        breakdown = {
+            "tolerances": [1, 2, 4],
+            "classes": {"spike": [0.8, 0.9, 0.95]},
+            "overall": [0.8, 0.9, 0.95],
+            "per_video": [{"video": "a", "temporal": 0.9, "events": 12}],
+        }
+        record = {
+            "epoch": 0,
+            "lr": 3e-5,
+            "loss": {"train": 0.5, "val": 0.6},
+            "tasks": {
+                "action": {
+                    "primary_metric": "harmonic_mAP",
+                    "train": {"loss": 0.5, "metrics": {}, "counts": {}, "breakdown": None},
+                    "validation": {
+                        "loss": 0.6,
+                        "metrics": {"harmonic_mAP": 0.7, "temporal_mAP": 0.9},
+                        "counts": {"events": 12},
+                        "breakdown": breakdown,
+                    },
+                }
+            },
+            "selection": {"task": "model", "metric": "mean_spotting_mAP", "mode": "max", "value": 0.7},
+            "best": True,
+        }
+        with tempfile.TemporaryDirectory() as raw_dir:
+            root = Path(raw_dir)
+            _write_run(root, [record], FUSION_TASKS)
+            payload = performance_payload(root)
+
+        self.assertEqual(payload["run"], "run")
+        self.assertEqual(payload["meta"]["task_definitions"], FUSION_TASKS)
+        [entry] = payload["entries"]
+        self.assertEqual(entry, record)
+        self.assertEqual(entry["tasks"]["action"]["validation"]["breakdown"], breakdown)
+        self.assertNotIn("val_mAP", entry)
 
 
 class BestEpochsPerTaskTest(unittest.TestCase):

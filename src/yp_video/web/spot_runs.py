@@ -22,7 +22,6 @@ from fastapi import HTTPException
 
 from yp_video.action import spot_runs as _runs
 from yp_video.action.spot_runs import (  # noqa: F401 — re-exported for routers
-    actor_task_metrics,
     checkpoint_package_options,
     dedupe_run_name,
     export_checkpoint_package,
@@ -54,11 +53,9 @@ class TrainProgress:
     latest_train_loss: float | None = None
     latest_val_loss: float | None = None
     latest_val_map: float | None = None
-    latest_val_breakdown: dict | None = None
     latest_task_metrics: dict | None = None
     best_epoch: int | None = None
     best_value: float | None = None
-    best_breakdown: dict | None = None
     best_task_metrics: dict | None = None
 
 
@@ -91,11 +88,9 @@ def make_train_parsers(
                 "latest_train_loss": ctx.latest_train_loss,
                 "latest_val_loss": ctx.latest_val_loss,
                 "latest_val_map": ctx.latest_val_map,
-                "latest_val_breakdown": ctx.latest_val_breakdown,
                 "latest_task_metrics": ctx.latest_task_metrics,
                 "best_epoch": ctx.best_epoch,
                 "best_value": ctx.best_value,
-                "best_breakdown": ctx.best_breakdown,
                 "best_task_metrics": ctx.best_task_metrics,
                 **extra,
             }
@@ -179,13 +174,6 @@ def make_train_parsers(
         ctx.latest_val_map = float(match.group(1)) / 100.0
         return {"params": training_params()}
 
-    def on_val_metrics(match: re.Match) -> dict | None:
-        try:
-            ctx.latest_val_breakdown = json.loads(match.group(1))
-        except json.JSONDecodeError:
-            return None
-        return {"params": training_params()}
-
     def on_task_metrics(match: re.Match) -> dict | None:
         try:
             payload = json.loads(match.group(1))
@@ -201,7 +189,6 @@ def make_train_parsers(
         ctx.best_value = (
             ctx.latest_val_map if criterion == "map" else ctx.latest_val_loss
         )
-        ctx.best_breakdown = ctx.latest_val_breakdown
         ctx.best_task_metrics = ctx.latest_task_metrics
         if on_new_best is not None:
             on_new_best()
@@ -223,7 +210,6 @@ def make_train_parsers(
             on_val_loss,
         ),
         ProgressParser(headline_pattern, on_val_map),
-        ProgressParser(r"SPOT_METRICS (\{.*\})", on_val_metrics),
         ProgressParser(r"SPOT_TASK_METRICS (\{.*\})", on_task_metrics),
         ProgressParser(r"New best epoch!", on_new_best_line),
     ]
@@ -236,7 +222,6 @@ def make_train_parsers(
             or "Harmonic mean" in line
             or "Segment mAP" in line
             or "Mean spotting mAP" in line
-            or "SPOT_METRICS" in line
             or "SPOT_TASK_METRICS" in line
             or "Train loss" in line
             or "Val loss" in line

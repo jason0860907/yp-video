@@ -1,13 +1,5 @@
-import { METRIC_LABELS } from '@/components/train/metricLabels';
+import { METRIC_LABELS, TASK_LABELS } from '@/components/train/metricLabels';
 import type { TaskMetricPhase, TaskMetrics } from '@/types/api';
-
-export const TASK_LABELS: Record<string, string> = {
-  rally: 'Rally',
-  winner: 'Winner',
-  action: 'Action',
-  location: 'Location',
-  actor: 'Actor',
-};
 
 function primaryValue(
   phase: TaskMetricPhase,

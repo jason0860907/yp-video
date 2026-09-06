@@ -52,7 +52,6 @@ CHECKPOINT_PACKAGE_FILES = {
     "checkpoint_best.pt",
     "checkpoint_best.json",
     "config.json",
-    "loss.json",
     "manifest.json",
     "metrics.jsonl",
 }

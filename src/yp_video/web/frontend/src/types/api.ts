@@ -201,26 +201,45 @@ export interface FusionModelStatus {
   active_job: Job | null;
 }
 
-export interface ActionVideoMap {
-  video: string;
-  harmonic: number;
-  temporal: number;
-  spatial: number;
-  events: number;
+/** Point-spotting (action) and segment (rally) detail: AP per class per
+ *  temporal tolerance (frames, or tIoU for segments), the overall row, and
+ *  per-video temporal mAP. */
+export interface SpottingBreakdown {
+  tolerances: number[];
+  classes: Record<string, number[]>;
+  overall: number[];
+  per_video: Array<{ video: string; temporal: number; events: number }>;
 }
 
-export interface ActionMapBreakdown {
-  temporal: { tolerances: number[]; classes: Record<string, number[]>; overall: number[] };
-  spatial: { pixel_tolerances: number[]; overall_by_px: number[]; overall: number };
-  per_video?: ActionVideoMap[];
+/** Contact-point detail: mAP per pixel tolerance and per-video spatial mAP. */
+export interface LocationBreakdown {
+  pixel_tolerances: number[];
+  overall_by_px: number[];
+  per_video: Array<{ video: string; spatial: number; events: number }>;
 }
 
-export type TaskMetricValue = number | null | Record<string, number>;
+/** Court-side confusion: rows are ground truth, columns predictions, both in
+ *  `classes` order; `recall` is the diagonal over the row total. */
+export interface WinnerBreakdown {
+  classes: string[];
+  confusion: number[][];
+  recall: Record<string, number | null>;
+}
+
+/** Actor selection per target kind (tracked player / occluded / untracked). */
+export interface ActorBreakdown {
+  kinds: Array<{ kind: string; events: number; correct: number; rate: number | null }>;
+}
+
+export type TaskBreakdown = SpottingBreakdown | LocationBreakdown | WinnerBreakdown | ActorBreakdown;
 
 export interface TaskMetricPhase {
   loss: number | null;
-  metrics: Record<string, TaskMetricValue>;
+  /** Scalar quality measures only; structured detail lives in `breakdown`. */
+  metrics: Record<string, number | null>;
   counts: Record<string, number>;
+  /** Task-specific detail, null when the phase was not evaluated. */
+  breakdown: TaskBreakdown | null;
 }
 
 /** Common contract emitted by every enabled head in a SPOT training run. */
@@ -232,35 +251,24 @@ export interface TaskMetricSnapshot {
 
 export type TaskMetrics = Record<string, TaskMetricSnapshot>;
 
-export interface ActionPerfEntry {
+/** One epoch line of yp-spot's metrics.jsonl. */
+export interface TrainEpochRecord {
   epoch: number;
-  lr?: number | null;
-  val_mAP?: number;
-  val_mAP_temporal?: number;
-  val_mAP_spatial?: number;
-  train_loss?: number | null;
-  val_loss?: number | null;
-  per_class?: Record<string, number>;
-  val_per_video?: ActionVideoMap[] | null;
-  tasks?: TaskMetrics;
-  selection?: {
-    task?: string;
-    metric?: string;
-    mode?: 'min' | 'max';
-    value?: number;
-  };
+  lr: number | null;
+  loss: { train: number | null; val: number | null };
+  tasks: TaskMetrics;
+  /** The checkpoint criterion this epoch was ranked by. */
+  selection: { task: string; metric: string; mode: 'min' | 'max'; value: number };
+  best: boolean;
 }
 
-export interface ActionPerfData {
+export interface TrainPerfData {
   run?: string;
   meta?: Record<string, unknown> | null;
   best?: { epoch?: number; value?: number } | null;
-  entries: ActionPerfEntry[];
+  entries: TrainEpochRecord[];
   runs?: string[];
 }
-
-/** Either breakdown flavour; discriminate with `'spatial' in bd`. */
-export type MapBreakdown = ActionMapBreakdown | RallyMapBreakdown;
 
 /** Live training progress — job.params.{action,rally,association}_train_progress. */
 export interface TrainProgress {
@@ -276,18 +284,10 @@ export interface TrainProgress {
   latest_train_loss?: number;
   latest_val_loss?: number;
   latest_val_map?: number;
-  latest_val_breakdown?: MapBreakdown;
   latest_task_metrics?: TaskMetrics;
   best_value?: number;
   best_epoch?: number;
-  best_breakdown?: MapBreakdown;
   best_task_metrics?: TaskMetrics;
-}
-
-/** Segment-mAP breakdown (per class per tIoU); no spatial component. */
-export interface RallyMapBreakdown {
-  temporal: { tolerances: number[]; classes: Record<string, number[]>; overall: number[] };
-  per_video?: ActionVideoMap[];
 }
 
 /** Video record from the SPOT rally predict listing. */

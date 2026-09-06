@@ -1,20 +1,18 @@
-import { BreakdownTable } from '@/components/train/BreakdownTable';
+import { TaskBreakdownPanel } from '@/components/train/TaskBreakdown';
 import { TaskMetricsTable } from '@/components/train/TaskMetricsTable';
 import type { TrainProgress } from '@/types/api';
 
 const fmtMetric = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v).toFixed(4) : '');
 
-/** Live metric tiles + mAP breakdown for a running training job. */
+/** Live metric tiles, the task table and each head's breakdown for a running training job. */
 export function TrainDetail({
   progress: p,
   epochsFallback,
   mapLabel = 'Last mAP',
-  eventNoun = 'events',
 }: {
   progress?: TrainProgress;
   epochsFallback: number;
   mapLabel?: string;
-  eventNoun?: string;
 }) {
   if (!p) return null;
   const phaseProgress = Number.isFinite(Number(p.phase_progress)) ? `${Math.round(Number(p.phase_progress) * 100)}%` : '';
@@ -55,21 +53,10 @@ export function TrainDetail({
         latest={p.latest_task_metrics}
         best={p.best_task_metrics}
       />
-      {(p.latest_val_breakdown || p.best_breakdown) && (
-        <div className="mt-2">
-          <div className="text-[10px] text-text-muted">mAP breakdown</div>
-          {p.latest_val_breakdown && (
-            <BreakdownTable title={`Latest — Epoch ${p.epoch_display ?? 1}`} bd={p.latest_val_breakdown} eventNoun={eventNoun} />
-          )}
-          {p.best_breakdown && (
-            <BreakdownTable
-              title={`Best${p.best_epoch != null ? ` — Epoch ${p.best_epoch + 1}` : ''}`}
-              bd={p.best_breakdown}
-              eventNoun={eventNoun}
-            />
-          )}
-        </div>
-      )}
+      <TaskBreakdownPanel
+        best={p.best_task_metrics && p.best_epoch != null ? { epoch: p.best_epoch, tasks: p.best_task_metrics } : undefined}
+        latest={p.latest_task_metrics && p.epoch != null ? { epoch: p.epoch, tasks: p.latest_task_metrics } : undefined}
+      />
     </>
   );
 }

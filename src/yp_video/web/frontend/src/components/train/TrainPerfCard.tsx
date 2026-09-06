@@ -2,35 +2,15 @@ import { useMemo } from 'react';
 import { cn } from '@/lib/cn';
 import { Card } from '@/components/ui/Card';
 import { SectionLabel } from '@/components/ui/SectionLabel';
-import { METRIC_LABELS } from '@/components/train/metricLabels';
-import { TASK_LABELS } from '@/components/train/TaskMetricsTable';
+import { METRIC_LABELS, TASK_LABELS, TASK_ORDER } from '@/components/train/metricLabels';
+import { TaskBreakdownPanel } from '@/components/train/TaskBreakdown';
 import { TaskMetricsTable } from '@/components/train/TaskMetricsTable';
-import type { ActionPerfData, ActionPerfEntry, ActionVideoMap } from '@/types/api';
+import type { TrainEpochRecord, TrainPerfData } from '@/types/api';
 
-// Three related metrics, not arbitrary categories: harmonic is the headline
-// (the checkpoint criterion), temporal/spatial are the two components it is the
-// harmonic mean of. Rally (segment) runs degenerate — spatial is all zero and
-// temporal equals harmonic — so those series are dropped and the single
-// remaining line is just called "mAP".
-//
 // Colors are theme tokens (applied as text-* + currentColor) so the charts
-// follow the switchable brand palette instead of clashing with it.
-const METRICS = [
-  { key: 'harmonic', label: 'Harmonic', colorClass: 'text-primary-light' },
-  { key: 'temporal', label: 'Temporal', colorClass: 'text-accent-light' },
-  { key: 'spatial', label: 'Spatial', colorClass: 'text-text-secondary' },
-] as const;
-
-type MetricKey = (typeof METRICS)[number]['key'];
-
-const FIELD: Record<MetricKey, keyof ActionPerfEntry> = {
-  harmonic: 'val_mAP',
-  temporal: 'val_mAP_temporal',
-  spatial: 'val_mAP_spatial',
-};
-
-// Palette order matches METRICS so the actor chart's primary series shares the
-// action chart's headline color — the two panels read as one family.
+// follow the switchable brand palette instead of clashing with it. The
+// overview and every per-task panel draw from the same list, in the same
+// order, so a task's primary metric keeps its color from chart to chart.
 const SERIES_COLORS = [
   'text-primary-light',
   'text-accent-light',
@@ -60,47 +40,20 @@ function toSeries(
   return { key: m.key, label: m.label, colorClass: m.colorClass, pts, best };
 }
 
-function buildSeries(entries: ActionPerfEntry[]): Series[] {
-  const all = METRICS.map((m) =>
-    toSeries(
-      m,
-      entries
-        .map((e) => ({ ep: e.epoch, v: e[FIELD[m.key]] as number | undefined }))
-        .filter((p): p is Point => typeof p.v === 'number'),
-    ),
-  );
-  let series = all.filter((s) => s.pts.some((p) => p.v > 0));
-  const harmonic = series.find((s) => s.key === 'harmonic');
-  const temporal = series.find((s) => s.key === 'temporal');
-  if (
-    harmonic &&
-    temporal &&
-    harmonic.pts.length === temporal.pts.length &&
-    harmonic.pts.every((p, i) => p.ep === temporal.pts[i]!.ep && p.v === temporal.pts[i]!.v)
-  ) {
-    series = series.filter((s) => s.key !== 'temporal');
-    harmonic.label = 'Segment mAP';
-  }
-  return series;
-}
-
-/** Per-epoch series for one auxiliary head: every numeric validation metric
- *  it reports, primary metric first so it takes the headline color. */
-function buildTaskSeries(entries: ActionPerfEntry[], task: string): Series[] {
+/** Per-epoch series for one head: every scalar validation metric it reports,
+ *  primary metric first so it takes the headline color. */
+function buildTaskSeries(entries: TrainEpochRecord[], task: string): Series[] {
   const snapshot = [...entries]
     .reverse()
-    .map((e) => e.tasks?.[task])
+    .map((e) => e.tasks[task])
     .find(Boolean);
   if (!snapshot) return [];
 
-  const metrics = Object.entries(snapshot.validation.metrics)
-    .filter(([, value]) => typeof value === 'number')
-    .map(([metric]) => metric)
-    .sort((a, b) => {
-      if (a === snapshot.primary_metric) return -1;
-      if (b === snapshot.primary_metric) return 1;
-      return a.localeCompare(b);
-    });
+  const metrics = Object.keys(snapshot.validation.metrics).sort((a, b) => {
+    if (a === snapshot.primary_metric) return -1;
+    if (b === snapshot.primary_metric) return 1;
+    return a.localeCompare(b);
+  });
 
   return metrics
     .map((metric, index) =>
@@ -111,19 +64,16 @@ function buildTaskSeries(entries: ActionPerfEntry[], task: string): Series[] {
           colorClass: SERIES_COLORS[index % SERIES_COLORS.length]!,
         },
         entries
-          .map((e) => ({ ep: e.epoch, v: e.tasks?.[task]?.validation.metrics[metric] }))
+          .map((e) => ({ ep: e.epoch, v: e.tasks[task]?.validation.metrics[metric] }))
           .filter((p): p is Point => typeof p.v === 'number' && Number.isFinite(p.v)),
       ),
     )
     .filter((s) => s.pts.length > 0);
 }
 
-/** Fixed task order so every run colors its tasks the same way. */
-const TASK_ORDER = ['action', 'rally', 'winner', 'actor', 'location'] as const;
-
 /** One series per task — its primary metric per epoch. The cross-task
  *  overview: five heads, five lines, same 0-1 axis. */
-function buildOverviewSeries(entries: ActionPerfEntry[]): Series[] {
+function buildOverviewSeries(entries: TrainEpochRecord[]): Series[] {
   const lastTasks = entries[entries.length - 1]?.tasks ?? {};
   const names = TASK_ORDER.filter((t) => t in lastTasks);
   return names
@@ -136,120 +86,67 @@ function buildOverviewSeries(entries: ActionPerfEntry[]): Series[] {
           colorClass: SERIES_COLORS[index % SERIES_COLORS.length]!,
         },
         entries
-          .map((e) => ({ ep: e.epoch, v: e.tasks?.[task]?.validation.metrics[primary] }))
+          .map((e) => ({ ep: e.epoch, v: e.tasks[task]?.validation.metrics[primary] }))
           .filter((pnt): pnt is Point => typeof pnt.v === 'number' && Number.isFinite(pnt.v)),
       );
     })
     .filter((s) => s.pts.length > 0);
 }
 
-/** Shorten a long broadcast filename to something a bar row can show.
- *  Prefer the segment naming the teams ("A vs. B") over the date/time head. */
-function shortLabel(video: string): string {
-  const setSuffix = video.match(/_set\d+$/)?.[0] ?? '';
-  const stem = video.replace(/_set\d+$/, '');
-  const parts = stem.split(/[｜|]/).map((s) => s.trim()).filter(Boolean);
-  const head = parts.find((p) => /vs/i.test(p)) ?? parts[0] ?? stem;
-  return (head.length > 42 ? head.slice(0, 41) + '…' : head) + setSuffix;
-}
-
 export function TrainPerfCard({
   data,
   onSelectRun,
 }: {
-  data: ActionPerfData;
+  data: TrainPerfData;
   onSelectRun: (run: string) => void;
 }) {
-  const entries = useMemo(() => (data.entries ?? []).filter((e) => typeof e.val_mAP === 'number'), [data.entries]);
-  const series = useMemo(() => buildSeries(entries), [entries]);
+  const entries = data.entries;
   const overview = useMemo(() => buildOverviewSeries(entries), [entries]);
-  const multiTask = overview.length >= 2;
   const taskCharts = useMemo(() => {
     const names = TASK_ORDER.filter((t) => t in (entries[entries.length - 1]?.tasks ?? {}));
-    return names
-      .filter((t) => t !== 'location') // location's spatial line lives in the overview
-      // With a headline panel (single-task runs) the spotting head is already
-      // charted; per-task panels then cover only the auxiliary heads.
-      .filter((t) => multiTask || (t !== 'action' && t !== 'rally'))
-      .map((task) => {
-        let taskSeries = buildTaskSeries(entries, task);
-        if (task === 'action') {
-          // Spatial mAP is recorded under the location head but is the other
-          // half of action's harmonic — chart them together.
-          const spatial = buildTaskSeries(entries, 'location').map((sp, i) => ({
-            ...sp,
-            colorClass: SERIES_COLORS[(taskSeries.length + i) % SERIES_COLORS.length]!,
-          }));
-          taskSeries = [...taskSeries, ...spatial];
-        }
-        return { task, series: taskSeries };
-      })
-      // A one-line panel duplicates its overview line; only multi-metric
-      // panels add information.
-      .filter((c) => c.series.length > (multiTask ? 1 : 0));
-  }, [entries, multiTask]);
-  // Association runs report no mAP (val_mAP is pinned to 0) but do carry task
-  // metrics — for them the actor chart IS the chart, and the mAP curve plus
-  // its legend would just draw a flat zero.
-  const mapless =
-    entries.length > 0 &&
-    entries.every((e) => !e.val_mAP) &&
-    entries.some((e) => e.tasks && Object.keys(e.tasks).length > 0);
+    return (
+      names
+        .filter((t) => t !== 'location') // location's spatial line rides with action below
+        .map((task) => {
+          let taskSeries = buildTaskSeries(entries, task);
+          if (task === 'action') {
+            // Spatial mAP is recorded under the location head but is the other
+            // half of action's harmonic — chart them together.
+            const spatial = buildTaskSeries(entries, 'location').map((sp, i) => ({
+              ...sp,
+              colorClass: SERIES_COLORS[(taskSeries.length + i) % SERIES_COLORS.length]!,
+            }));
+            taskSeries = [...taskSeries, ...spatial];
+          }
+          return { task, series: taskSeries };
+        })
+        // A one-line panel duplicates its overview line; only multi-metric
+        // panels add information.
+        .filter((c) => c.series.length > 1)
+    );
+  }, [entries]);
   const latestEntry = entries[entries.length - 1];
-  const bestEntry =
-    entries.find((entry) => entry.epoch === data.best?.epoch) ?? latestEntry;
+  const bestEntry = entries.find((entry) => entry.epoch === data.best?.epoch) ?? latestEntry;
 
-  // Per-video comes from the best epoch (fall back to the latest epoch that has it).
-  const perVideo = useMemo<ActionVideoMap[]>(() => {
-    const withPv = entries.filter((e) => Array.isArray(e.val_per_video) && e.val_per_video.length);
-    const bestEp = data.best?.epoch;
-    const pick = withPv.find((e) => e.epoch === bestEp) ?? withPv[withPv.length - 1];
-    if (!pick) return [];
-    return [...(pick.val_per_video ?? [])].sort((a, b) => b.harmonic - a.harmonic);
-  }, [entries, data.best?.epoch]);
+  if (!latestEntry || !overview.length) return null;
 
-  // Per-class (per-action) temporal mAP at the best epoch, strongest first.
-  const perClass = useMemo<Array<{ label: string; mAP: number }>>(() => {
-    const withPc = entries.filter((e) => e.per_class && Object.keys(e.per_class).length);
-    const bestEp = data.best?.epoch;
-    const pick = withPc.find((e) => e.epoch === bestEp) ?? withPc[withPc.length - 1];
-    if (!pick?.per_class) return [];
-    return Object.entries(pick.per_class)
-      .map(([label, mAP]) => ({ label, mAP }))
-      .sort((a, b) => b.mAP - a.mAP);
-  }, [entries, data.best?.epoch]);
-
-  const lastTasks = entries[entries.length - 1]?.tasks ?? {};
-  const rallyRun = 'rally' in lastTasks && !('action' in lastTasks);
-
-  if (!entries.length || (!series.length && !mapless && !overview.length)) return null;
-
-  // Overview first (multi-task runs), spotting head next, one panel per
-  // auxiliary head after it; a lone chart spans the full width.
-  const charts: Array<{ title: string; series: Series[]; bestEpoch?: number }> = [];
-  if (multiTask) {
-    charts.push({ title: 'All tasks · primary metric', series: overview, bestEpoch: data.best?.epoch });
-  } else if (series.length) {
-    charts.push({
-      title: rallyRun ? 'Rally · Segment mAP' : 'Action · mAP',
-      series,
-      bestEpoch: data.best?.epoch,
-    });
-  }
-  for (const { task, series: taskSeries } of taskCharts) {
-    charts.push({
+  const charts: Array<{ title: string; series: Series[]; bestEpoch?: number }> = [
+    { title: 'Primary metric by task', series: overview, bestEpoch: data.best?.epoch },
+    ...taskCharts.map(({ task, series }) => ({
       title: `${TASK_LABELS[task] ?? task} · validation`,
-      series: taskSeries,
-      bestEpoch: taskSeries[0]!.best.ep,
-    });
-  }
+      series,
+      bestEpoch: series[0]!.best.ep,
+    })),
+  ];
 
   const runs = data.runs ?? [];
-  const hasDetail = perVideo.length > 0 || perClass.length > 0;
+  const bestValue = data.best?.value;
   const subtitle = [
     data.run,
-    data.best && typeof data.best.value === 'number'
-      ? `best ${mapless ? '' : 'mAP '}${(data.best.value * 100).toFixed(1)}%${data.best.epoch != null ? ` @ ep${data.best.epoch}` : ''}`
+    typeof bestValue === 'number'
+      ? `best ${latestEntry.selection.metric.endsWith('loss') ? bestValue.toFixed(4) : `${(bestValue * 100).toFixed(1)}%`}${
+          data.best?.epoch != null ? ` @ ep${data.best.epoch}` : ''
+        }`
       : null,
   ]
     .filter(Boolean)
@@ -278,69 +175,28 @@ export function TrainPerfCard({
           })}
         </div>
       )}
-      {charts.length > 0 && (
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-          {charts.map((chart) => (
-            <EpochChartPanel
-              key={chart.title}
-              title={chart.title}
-              series={chart.series}
-              entries={entries}
-              bestEpoch={chart.bestEpoch}
-              className={charts.length === 1 ? 'xl:col-span-2' : undefined}
-            />
-          ))}
-        </div>
-      )}
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        {charts.map((chart) => (
+          <EpochChartPanel
+            key={chart.title}
+            title={chart.title}
+            series={chart.series}
+            entries={entries}
+            bestEpoch={chart.bestEpoch}
+            className={charts.length === 1 ? 'xl:col-span-2' : undefined}
+          />
+        ))}
+      </div>
       <TaskMetricsTable
-        latest={latestEntry?.tasks}
+        latest={latestEntry.tasks}
         best={bestEntry?.tasks}
         title="Task validation metrics"
       />
-      {/* A single class (rally runs) carries no comparison — the headline line already shows it. */}
-      {perClass.length > 1 && <PerClassChart rows={perClass} bestEpoch={data.best?.epoch} />}
-      {perVideo.length > 0 && (
-        <PerVideoChart rows={perVideo} bestEpoch={data.best?.epoch} metricLabel={rallyRun ? 'segment mAP' : 'harmonic mAP'} />
-      )}
-      {!hasDetail && (
-        <p className="mt-4 text-[11px] text-text-muted">
-          Per-action and per-video mAP appear here for runs trained after this feature landed (older runs don't record it).
-        </p>
-      )}
+      <TaskBreakdownPanel
+        best={bestEntry ? { epoch: bestEntry.epoch, tasks: bestEntry.tasks } : undefined}
+        latest={{ epoch: latestEntry.epoch, tasks: latestEntry.tasks }}
+      />
     </Card>
-  );
-}
-
-// Matches components/job/ProgressBar.tsx so metric bars read as the same
-// element family as every other progress bar in the app.
-function Bar({ frac, colorClass }: { frac: number; colorClass: string }) {
-  return (
-    <div className="relative h-1.5 flex-1 overflow-hidden rounded-full bg-ink/[0.06]">
-      <div className={cn('absolute inset-y-0 left-0 rounded-full bg-current opacity-85', colorClass)} style={{ width: `${Math.max(frac * 100, 1.5)}%` }} />
-    </div>
-  );
-}
-
-function PerClassChart({ rows, bestEpoch }: { rows: Array<{ label: string; mAP: number }>; bestEpoch?: number }) {
-  const max = Math.max(0.001, ...rows.map((r) => r.mAP));
-  return (
-    <div className="mt-4">
-      <div className="mb-1.5 text-xs font-semibold text-text-primary">
-        Per-action temporal mAP{typeof bestEpoch === 'number' ? ` · best epoch ${bestEpoch}` : ''}
-      </div>
-      <div className="space-y-1.5">
-        {rows.map((r) => {
-          const pct = r.mAP * 100;
-          return (
-            <div key={r.label} className="flex items-center gap-2" title={`${r.label} · temporal mAP ${pct.toFixed(1)}%`}>
-              <span className="w-72 flex-shrink-0 truncate font-mono text-[11px] capitalize text-text-secondary">{r.label}</span>
-              <Bar frac={r.mAP / max} colorClass="text-accent-light" />
-              <span className="w-12 flex-shrink-0 text-right font-mono text-[11px] tabular-nums text-text-primary">{pct.toFixed(1)}%</span>
-            </div>
-          );
-        })}
-      </div>
-    </div>
   );
 }
 
@@ -355,7 +211,7 @@ function EpochChartPanel({
 }: {
   title: string;
   series: Series[];
-  entries: ActionPerfEntry[];
+  entries: TrainEpochRecord[];
   bestEpoch?: number;
   className?: string;
 }) {
@@ -379,7 +235,7 @@ function EpochChartPanel({
   );
 }
 
-function EpochChart({ series, entries, bestEpoch }: { series: Series[]; entries: ActionPerfEntry[]; bestEpoch?: number }) {
+function EpochChart({ series, entries, bestEpoch }: { series: Series[]; entries: TrainEpochRecord[]; bestEpoch?: number }) {
   const lrByEpoch = new Map(entries.map((e) => [e.epoch, typeof e.lr === 'number' ? e.lr : null]));
   const W = 720;
   const H = 260;
@@ -430,28 +286,5 @@ function EpochChart({ series, entries, bestEpoch }: { series: Series[]; entries:
         );
       })}
     </svg>
-  );
-}
-
-function PerVideoChart({ rows, bestEpoch, metricLabel }: { rows: ActionVideoMap[]; bestEpoch?: number; metricLabel: string }) {
-  const max = Math.max(0.001, ...rows.map((r) => r.harmonic));
-  return (
-    <div className="mt-4">
-      <div className="mb-1.5 text-xs font-semibold text-text-primary">
-        Per-video {metricLabel}{typeof bestEpoch === 'number' ? ` · best epoch ${bestEpoch}` : ''}
-      </div>
-      <div className="space-y-1.5">
-        {rows.map((r) => {
-          const pct = r.harmonic * 100;
-          return (
-            <div key={r.video} className="flex items-center gap-2" title={`${r.video}\nharmonic ${pct.toFixed(1)}% · temporal ${(r.temporal * 100).toFixed(1)}% · spatial ${(r.spatial * 100).toFixed(1)}% · ${r.events} events`}>
-              <span className="w-72 flex-shrink-0 truncate font-mono text-[10.5px] text-text-secondary">{shortLabel(r.video)}</span>
-              <Bar frac={r.harmonic / max} colorClass="text-primary-light" />
-              <span className="w-12 flex-shrink-0 text-right font-mono text-[11px] tabular-nums text-text-primary">{pct.toFixed(1)}%</span>
-            </div>
-          );
-        })}
-      </div>
-    </div>
   );
 }

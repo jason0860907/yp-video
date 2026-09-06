@@ -13,13 +13,12 @@ interface TrainJobCardProps {
   epochsFallback: number;
   onCancel?: () => void;
   mapLabel?: string;
-  eventNoun?: string;
 }
 
 /** The "Training job" card every train page renders: live progress, the
  *  per-epoch detail strip, and a Cancel button while the job is running.
  *  Renders nothing until a job exists. */
-export function TrainJobCard({ job, progressKey, epochsFallback, onCancel, mapLabel, eventNoun }: TrainJobCardProps) {
+export function TrainJobCard({ job, progressKey, epochsFallback, onCancel, mapLabel }: TrainJobCardProps) {
   if (!job) return null;
   return (
     <Card>
@@ -36,7 +35,6 @@ export function TrainJobCard({ job, progressKey, epochsFallback, onCancel, mapLa
         progress={job.params?.[progressKey] as TrainProgress | undefined}
         epochsFallback={epochsFallback}
         mapLabel={mapLabel}
-        eventNoun={eventNoun}
       />
     </Card>
   );

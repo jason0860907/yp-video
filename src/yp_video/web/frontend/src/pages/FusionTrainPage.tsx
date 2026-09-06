@@ -445,7 +445,6 @@ export function FusionTrainPage() {
         epochsFallback={values.num_epochs}
         onCancel={() => void cancelTrain()}
         mapLabel={isRally ? 'Seg mAP' : 'Last mAP'}
-        eventNoun={isRally ? 'rallies' : 'events'}
       />
       {perf && perf.entries.length > 0 ? <TrainPerfCard data={perf} onSelectRun={setPerfRun} /> : null}
     </div>

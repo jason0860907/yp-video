@@ -2,7 +2,7 @@
 
 Every Fusion Train recipe shells out to ``yp_spot.train`` and writes the
 same run layout under ``yp-spot/exp/`` —
-optimizer snapshots, ``metrics.jsonl`` / ``loss.json``, ``checkpoint_best.*``
+optimizer snapshots, ``metrics.jsonl``, ``checkpoint_best.*``
 — and finished runs are exported as checkpoint packages. This module owns
 that on-disk knowledge once: run discovery, package export, per-epoch metric
 reading. The live stdout protocol and job plumbing stay in
@@ -251,7 +251,6 @@ def export_checkpoint_package(
         "checkpoint_best.json",
         "config.json",
         "metrics.jsonl",
-        "loss.json",
         "terminal.log",
     ):
         src = run_dir / name
@@ -340,116 +339,31 @@ def export_checkpoint_package(
 
 # ── Per-epoch metrics for the performance charts ──────────────────
 
-# The independent association trainer reports each phase as one flat dict;
-# these keys are tallies, everything else is a rate. The task-metrics
-# contract keeps them apart (``counts`` vs ``metrics``), so split here —
-# the one place that reshapes trainer records for the UI.
-_ACTOR_COUNT_KEYS = ("events", "player_events", "player_correct")
-
-
-def actor_task_metrics(record: dict) -> dict:
-    """Task-metrics contract for one independent-association epoch record."""
-    loss = record.get("loss") or {}
-
-    def phase(loss_value: float | None, flat: dict | None) -> dict:
-        flat = flat or {}
-        return {
-            "loss": loss_value,
-            "metrics": {k: v for k, v in flat.items() if k not in _ACTOR_COUNT_KEYS},
-            "counts": {k: flat[k] for k in _ACTOR_COUNT_KEYS if k in flat},
-        }
-
-    return {
-        "actor": {
-            "primary_metric": "player_top1",
-            "train": phase(loss.get("train"), record.get("train")),
-            "validation": phase(loss.get("val"), record.get("val")),
-        }
-    }
-
-
-def _normalize_metrics_entry(rec: dict) -> dict:
-    """Flatten one epoch record into the flat shape the UI reads.
-
-    Handles both the new ``metrics.jsonl`` schema (nested ``mAP``/``loss`` +
-    ``lr``/``per_class``) and the legacy ``loss.json`` schema (flat ``val_mAP*``).
-    """
-    if isinstance(rec.get("val"), dict) or isinstance(rec.get("train"), dict):
-        # Independent association trainer schema: per-epoch train/val metric
-        # dicts, no mAP. Reshaped into the task-metrics contract so the same
-        # performance card renders actor curves without a bespoke chart.
-        loss = rec.get("loss") or {}
-        return {
-            "epoch": rec.get("epoch"),
-            "lr": rec.get("lr"),
-            "val_mAP": 0,
-            "val_mAP_temporal": 0,
-            "val_mAP_spatial": 0,
-            "train_loss": loss.get("train"),
-            "val_loss": loss.get("val"),
-            "per_class": {},
-            "val_per_video": [],
-            "tasks": actor_task_metrics(rec),
-            "selection": {"task": "actor", "metric": "player_top1", "mode": "max"},
-        }
-    if "mAP" in rec:  # new metrics.jsonl schema
-        m = rec.get("mAP") or {}
-        loss = rec.get("loss") or {}
-        return {
-            "epoch": rec.get("epoch"),
-            "lr": rec.get("lr"),
-            "val_mAP": m.get("harmonic", 0),
-            "val_mAP_temporal": m.get("temporal", 0),
-            "val_mAP_spatial": m.get("spatial", 0),
-            "train_loss": loss.get("train"),
-            "val_loss": loss.get("val"),
-            "per_class": rec.get("per_class") or {},
-            "val_per_video": rec.get("per_video") or [],
-            "tasks": rec.get("tasks") or {},
-            "selection": rec.get("selection") or {},
-        }
-    return {  # legacy loss.json schema
-        "epoch": rec.get("epoch"),
-        "lr": rec.get("lr"),
-        "val_mAP": rec.get("val_mAP", 0),
-        "val_mAP_temporal": rec.get("val_mAP_temporal", 0),
-        "val_mAP_spatial": rec.get("val_mAP_spatial", 0),
-        "train_loss": rec.get("train"),
-        "val_loss": rec.get("val"),
-        "per_class": rec.get("per_class") or {},
-        "val_per_video": rec.get("val_per_video") or [],
-        "tasks": rec.get("tasks") or {},
-        "selection": rec.get("selection") or {},
-    }
-
 
 def _read_run_metrics(run_dir: Path) -> tuple[dict | None, list[dict]]:
-    """Read a run's per-epoch metrics, preferring metrics.jsonl over loss.json.
-
-    Returns ``(meta, entries)`` where entries are normalized to the flat UI shape.
+    """A run's ``metrics.jsonl``: the ``{"_meta": true}`` header and every
+    epoch record, verbatim. The record shape is yp-spot's task-metrics
+    contract (``tasks.<task>.{train,validation}.{loss,metrics,counts,
+    breakdown}`` plus ``selection``), which the UI reads directly.
     """
     jsonl = run_dir / "metrics.jsonl"
-    if jsonl.exists():
-        meta: dict | None = None
-        entries: list[dict] = []
-        for line in jsonl.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                rec = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if rec.get("_meta"):
-                meta = rec
-            else:
-                entries.append(_normalize_metrics_entry(rec))
+    meta: dict | None = None
+    entries: list[dict] = []
+    if not jsonl.exists():
         return meta, entries
-
-    loss = load_json_file(run_dir / "loss.json")
-    if isinstance(loss, list):
-        return None, [_normalize_metrics_entry(r) for r in loss]
-    return None, []
+    for line in jsonl.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if rec.get("_meta"):
+            meta = rec
+        elif isinstance(rec.get("epoch"), int):
+            entries.append(rec)
+    return meta, entries
 
 
 def _freshest_metrics_dir(package_dir: Path) -> Path:
@@ -480,17 +394,17 @@ def performance_payload(
     checkpoints_dir: Path,
     run: str | None = None,
 ) -> dict:
-    """Per-epoch validation metrics (lr, mAP, per-class, per-video) for a run.
+    """Per-epoch task metrics (with each head's breakdown) for a run.
 
-    Reads ``metrics.jsonl`` (falling back to the legacy ``loss.json``) from a
-    checkpoint package. Defaults to the most recently modified run; pass
+    Reads ``metrics.jsonl`` from a checkpoint package (or the live run dir
+    while training). Defaults to the most recently modified run; pass
     ``run`` to select one by name. ``runs`` lists the runs (newest first).
     """
     if not checkpoints_dir.exists():
         return {"entries": [], "runs": []}
 
     def has_metrics(d: Path) -> bool:
-        return (d / "metrics.jsonl").exists() or (d / "loss.json").exists()
+        return (d / "metrics.jsonl").exists()
 
     runs = sorted(
         (d for d in checkpoints_dir.iterdir() if d.is_dir() and has_metrics(d)),
