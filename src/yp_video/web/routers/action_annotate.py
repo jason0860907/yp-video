@@ -70,11 +70,7 @@ log = logging.getLogger(__name__)
 router = APIRouter()
 
 ACTION_LABELS = ACTION_LABELS_ORDERED
-SPOT_DEFAULT_DECODER: Literal["opencv", "nvdec"] = "opencv"
-SPOT_DEFAULT_DECODE_PRODUCERS = 2
 SPOT_DEFAULT_PREFETCH_FACTOR = 2
-SPOT_DEFAULT_DECODE_CHUNK_FRAMES = 256
-SPOT_DEFAULT_NVIDIA_VIDEO_LIB_DIR = Path.home() / ".local/lib/nvidia-video"
 
 
 class ActionEvent(StrictModel):
@@ -113,12 +109,10 @@ class SaveActionAnnotationsRequest(StrictModel):
 class SpotPrelabelOptions(StrictModel):
     checkpoint: str | None = None
     batch_size: int = Field(default=16, ge=1, le=128)
-    num_workers: int = Field(default=2, ge=0, le=16)
+    #: ffmpeg decode threads; 0 lets ffmpeg pick.
+    num_workers: int = Field(default=0, ge=0, le=32)
     clip_len: int = Field(default=64, ge=8, le=256)
-    decoder: Literal["opencv", "nvdec"] = SPOT_DEFAULT_DECODER
-    decode_producers: int = Field(default=SPOT_DEFAULT_DECODE_PRODUCERS, ge=1, le=8)
     prefetch_factor: int = Field(default=SPOT_DEFAULT_PREFETCH_FACTOR, ge=1, le=8)
-    decode_chunk_frames: int = Field(default=SPOT_DEFAULT_DECODE_CHUNK_FRAMES, ge=1, le=512)
     min_score: float = Field(default=0.15, ge=0, le=1)
     overwrite: bool = False
     stop_vllm: bool = False
@@ -227,37 +221,16 @@ def _spot_app_log_line(prefix: str, line: str) -> str | None:
     return None
 
 
-def _spot_subprocess_env(req: SpotPrelabelOptions) -> dict[str, str]:
-    env = {
+def _spot_subprocess_env() -> dict[str, str]:
+    return {
         **os.environ,
         "PYTHONUNBUFFERED": "1",
-        "SPOT_DECODER": req.decoder,
-        "SPOT_NUM_PRODUCERS": str(req.decode_producers),
-        "SPOT_DECODE_CHUNK_FRAMES": str(req.decode_chunk_frames),
         ACTION_CONTRACT_VERSION_ENV: ACTION_CONTRACT_VERSION,
     }
-    if req.decoder == "nvdec":
-        env["SPOT_ENABLE_EXPERIMENTAL_NVDEC"] = "1"
-        env["SPOT_NVDEC_GPU_PREPROCESS"] = "1"
-    env.setdefault("MALLOC_ARENA_MAX", "2")
-    video_lib_dir = os.environ.get("SPOT_NVIDIA_VIDEO_LIB_DIR")
-    if not video_lib_dir and SPOT_DEFAULT_NVIDIA_VIDEO_LIB_DIR.exists():
-        video_lib_dir = str(SPOT_DEFAULT_NVIDIA_VIDEO_LIB_DIR)
-    if video_lib_dir:
-        current = env.get("LD_LIBRARY_PATH")
-        env["LD_LIBRARY_PATH"] = (
-            f"{video_lib_dir}:{current}" if current else video_lib_dir
-        )
-    return env
 
 
 def _spot_decode_settings_text(req: SpotPrelabelOptions) -> str:
-    return (
-        f"decoder={req.decoder} "
-        f"prefetch={req.prefetch_factor} "
-        f"producers={req.decode_producers} "
-        f"chunk={req.decode_chunk_frames}"
-    )
+    return f"prefetch={req.prefetch_factor} decode_threads={req.num_workers or 'auto'}"
 
 
 @router.get("/labels")
@@ -663,7 +636,7 @@ async def _run_prelabel_batch_subprocess(
                     job_id,
                     cmd,
                     SPOT_DIR,
-                    env=_spot_subprocess_env(req),
+                    env=_spot_subprocess_env(),
                     parsers=[
                         ProgressParser(r"Starting inference (\d+)/(\d+): (.+)", start_handler),
                         ProgressParser(SPOT_PROGRESS_PREFIX + r"(.+)", progress_handler),

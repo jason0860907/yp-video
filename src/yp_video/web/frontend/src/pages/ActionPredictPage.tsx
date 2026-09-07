@@ -3,7 +3,6 @@ import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { API, apiFetch, errMsg } from '@/lib/api';
 import { cn } from '@/lib/cn';
-import { fieldCls } from '@/components/form/Field';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -28,10 +27,7 @@ interface PredSettings {
   min_score: number;
   batch_size: number;
   clip_len: number;
-  decoder: 'opencv' | 'nvdec';
-  decode_producers: number;
   prefetch_factor: number;
-  decode_chunk_frames: number;
   overwrite: boolean;
   stop_vllm: boolean;
 }
@@ -40,10 +36,7 @@ const DEFAULTS: PredSettings = {
   min_score: 0.15,
   batch_size: 16,
   clip_len: 64,
-  decoder: 'opencv',
-  decode_producers: 2,
   prefetch_factor: 2,
-  decode_chunk_frames: 256,
   overwrite: false,
   stop_vllm: false,
 };
@@ -52,9 +45,7 @@ const NUM_FIELDS: Array<NumField<PredSettings>> = [
   { key: 'min_score', label: 'Min score', min: 0, max: 1, step: 0.05 },
   { key: 'batch_size', label: 'Batch', min: 1, max: 128, step: 1 },
   { key: 'clip_len', label: 'Clip len', min: 8, max: 256, step: 8 },
-  { key: 'decode_producers', label: 'Producers', min: 1, max: 8, step: 1 },
   { key: 'prefetch_factor', label: 'Prefetch', min: 1, max: 8, step: 1 },
-  { key: 'decode_chunk_frames', label: 'Chunk', min: 1, max: 512, step: 16 },
 ];
 
 const hasLabels = (v: ActionVideo) => Boolean(v.has_action_annotation);
@@ -109,11 +100,7 @@ export function ActionPredictPage() {
           min_score: settings.min_score,
           batch_size: settings.batch_size,
           clip_len: settings.clip_len,
-          num_workers: settings.decode_producers,
-          decoder: settings.decoder,
-          decode_producers: settings.decode_producers,
           prefetch_factor: settings.prefetch_factor,
-          decode_chunk_frames: settings.decode_chunk_frames,
           use_amp: true,
           overwrite: settings.overwrite,
           stop_vllm: settings.stop_vllm,
@@ -166,19 +153,7 @@ export function ActionPredictPage() {
           overwriteLabel="Overwrite existing action pre-annotations"
           runDisabled={!spotReady}
           onRun={run}
-        >
-          <div>
-            <label className="mb-1 block text-[10px] uppercase tracking-wide text-text-muted">Decoder</label>
-            <select
-              value={settings.decoder}
-              onChange={(e) => setSettings((s) => ({ ...s, decoder: e.target.value as PredSettings['decoder'] }))}
-              className={cn(fieldCls, 'cursor-pointer appearance-none')}
-            >
-              <option value="opencv">OpenCV (CPU)</option>
-              <option value="nvdec">NVDEC (GPU)</option>
-            </select>
-          </div>
-        </PredictConfigCard>
+        />
 
         <Card>
           <VideoMultiSelectList
