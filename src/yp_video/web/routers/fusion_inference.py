@@ -14,6 +14,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import Field
 
 from yp_video.action import prelabel
+from yp_video.action.spot_pass import RallyOptions, SpotOptions
 from yp_video.config import SPOT_CHECKPOINTS_DIR, SPOT_DIR, cut_kind_of
 from yp_video.extraction.prerequisites import prerequisites
 from yp_video.web import fusion_inference
@@ -41,7 +42,8 @@ class InferenceRequest(StrictModel):
     action_min_score: float = Field(default=0.15, ge=0.0, le=1.0)
     batch_size: int = Field(default=16, ge=1, le=128)
     clip_len: int = Field(default=64, ge=8, le=256)
-    num_workers: int = Field(default=4, ge=1, le=32)
+    #: ffmpeg decode threads; 0 lets ffmpeg pick.
+    num_workers: int = Field(default=0, ge=0, le=32)
     use_amp: bool = True
     #: Redo stages whose machine output already exists. Human labels are
     #: never touched either way.
@@ -106,12 +108,12 @@ async def start(req: InferenceRequest) -> dict:
         video_paths.append(path)
         sources[path.name] = source
 
-    rally = fusion_inference.RallyOptions(
+    rally = RallyOptions(
         min_score=req.rally_min_score,
         max_gap_s=req.max_gap_s,
         min_duration_s=req.min_duration_s,
     )
-    spot = fusion_inference.SpotOptions(
+    spot = SpotOptions(
         batch_size=req.batch_size,
         num_workers=req.num_workers,
         clip_len=req.clip_len,

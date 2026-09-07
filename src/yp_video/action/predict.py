@@ -1,13 +1,12 @@
-"""Run yp-spot action spotting and write an action pre-annotation JSONL.
+"""The yp-spot inference subprocess: one decode pass over a video, every
+requested spotting head, streamed progress and partial events.
 
-Router-free entry point shared by the web dashboard and the selfhost GPU
-worker. Given a video it shells out to the yp-spot model — which lives in its
-own repo + venv and is reached across a subprocess boundary (see
-``contracts/action.py``) — and writes a ``*_actions.jsonl`` file: a ``_meta``
-header line (carrying ``fps``) followed by one action event per line.
-
-This keeps the SPOT→JSONL orchestration in one place so the worker does not
-duplicate (and drift from) the web router's flow.
+yp-spot lives in its own repo + venv and is reached across a subprocess
+boundary (see ``contracts/action.py``). This module owns that boundary and
+nothing else: building the command, reading its stdout protocol, loading the
+per-head ``predictions.json`` files. What to do with the predictions — merge
+rallies, cut actions to rally spans, write annotation files — is
+``yp_video.action.spot_pass``.
 """
 
 from __future__ import annotations
@@ -28,8 +27,6 @@ from yp_video.contracts.action import (
     SPOT_PARTIAL_PREFIX,
     SPOT_PROGRESS_PREFIX,
 )
-from yp_video.core.ffmpeg import FFmpegError, probe_video_metadata
-from yp_video.core.jsonl import write_jsonl
 
 
 class SpotInferenceError(RuntimeError):
@@ -56,60 +53,55 @@ def _spot_progress_ratio(line: str) -> float | None:
     return prelabel.spot_progress_fraction(data) if data is not None else None
 
 
-def _spot_partial_payload(line: str) -> tuple[bool, list[dict]] | None:
-    """Parse a yp-spot ``SPOT_PARTIAL`` stdout line to ``(cumulative, events)``.
+def _spot_partial_payload(line: str) -> tuple[str, bool, list[dict]] | None:
+    """Parse a yp-spot ``SPOT_PARTIAL`` stdout line to ``(task, cumulative, events)``.
 
-    ``cumulative=True`` (postprocessed/action runs) means ``events`` is the
-    full settled prefix and replaces everything streamed before;
-    ``cumulative=False`` (dense/rally runs) means it is that batch's delta.
-    Returns ``None`` for any non-partial line. Defensive: a malformed payload
-    is treated as an empty delta rather than crashing the reader — the
-    authoritative event set still arrives via ``predictions.json`` at the end.
+    ``task`` names the head the events belong to — a joint pass interleaves
+    the heads' lines on one stream. ``cumulative=True`` (postprocessed point
+    heads such as action) means ``events`` is the head's full settled prefix
+    and replaces everything streamed before for it; ``cumulative=False``
+    (dense segment heads such as rally) means it is that batch's delta.
+    Returns ``None`` for any non-partial line and for a malformed payload —
+    the authoritative event set still arrives via ``predictions.json``.
     """
     at = line.find(SPOT_PARTIAL_PREFIX)
     if at < 0:
         return None
     try:
         payload = json.loads(line[at + len(SPOT_PARTIAL_PREFIX):])
-        events = payload.get("events")
-        cumulative = bool(payload.get("cumulative"))
-        return cumulative, (events if isinstance(events, list) else [])
-    except (ValueError, AttributeError):
-        return False, []
-
-
-def _probe_fps_frames(video_path: Path) -> tuple[float, int]:
-    """Return ``(fps, num_frames)`` for ``video_path`` via ffprobe."""
-    try:
-        meta = probe_video_metadata(video_path)
-    except FFmpegError as exc:
-        raise SpotInferenceError(str(exc)) from exc
-    return meta["fps"], meta["num_frames"]
+    except ValueError:
+        return None
+    if not isinstance(payload, dict) or not isinstance(payload.get("task"), str):
+        return None
+    events = payload.get("events")
+    return payload["task"], bool(payload.get("cumulative")), (events if isinstance(events, list) else [])
 
 
 def run_spot_inference(
-    video_path: Path,
+    video_path: Path | str,
     *,
     checkpoint: Path,
     tasks: Sequence[str],
     batch_size: int = 8,
-    num_workers: int = 4,
+    num_workers: int = 0,
     clip_len: int = 64,
     use_amp: bool = True,
     segments: Sequence[tuple[float, float]] | None = None,
     on_progress: Callable[[float], None] | None = None,
-    on_events: Callable[[list[dict]], None] | None = None,
+    on_events: Callable[[str, list[dict]], None] | None = None,
 ) -> dict[str, list[dict]]:
     """Run one yp-spot inference subprocess — one decode pass over the video
     for every head in ``tasks`` — and return ``{task: predictions}``.
 
-    Shared by the action (``predict_actions_to_jsonl``) and rally
-    (``yp_video.action.rally.predict_rally_segments``) entry points and the
-    fusion Inference job, which asks for rally and action together. Streams
-    stdout so progress ticks surface live; merges stderr in so a single
-    reader can't deadlock and the error tail is captured too. yp-spot
+    Streams stdout so progress ticks surface live; merges stderr in so a
+    single reader can't deadlock and the error tail is captured too. yp-spot
     postprocesses point heads (score filter + NMS) and leaves segment heads
-    dense, so callers never say which.
+    dense, so callers never say which. ``num_workers`` is the decode thread
+    count handed to ffmpeg (0 = auto).
+
+    ``on_events(task, events)`` is progressive delivery: fired per settled
+    batch with that head's cumulative event list so far (deltas accumulate,
+    cumulative payloads replace) — one list per head, never merged.
 
     Raises:
         SpotInferenceError: yp-spot is not installed, or its inference
@@ -155,7 +147,7 @@ def run_spot_inference(
             bufsize=1,
         )
         tail: deque[str] = deque(maxlen=20)
-        partial_events: list[dict] = []
+        partial: dict[str, list[dict]] = {}
         assert proc.stdout is not None
         for raw in proc.stdout:
             # tqdm redraws end in \r without a newline; merged into stdout they
@@ -170,21 +162,15 @@ def run_spot_inference(
                     if on_progress:
                         on_progress(ratio)
                     continue
-                # Progressive foreground events (optional, only when a consumer
-                # asked for them). The callback always receives the cumulative
-                # event list: deltas (rally runs) accumulate, cumulative
-                # payloads (action runs) replace wholesale. A yp-spot build
-                # that never emits SPOT_PARTIAL simply never triggers this and
-                # the final predictions.json is unchanged.
                 if on_events is not None:
                     parsed = _spot_partial_payload(line)
                     if parsed is not None:
-                        cumulative, batch = parsed
+                        task, cumulative, batch = parsed
                         if cumulative:
-                            partial_events = batch
+                            partial[task] = batch
                         else:
-                            partial_events.extend(batch)
-                        on_events(partial_events)
+                            partial.setdefault(task, []).extend(batch)
+                        on_events(task, partial[task])
                         continue
                 tail.append(line)
         rc = proc.wait()
@@ -198,101 +184,3 @@ def run_spot_inference(
                 f"yp-spot produced no predictions for {missing} under {save_dir}"
             )
         return {task: prelabel.load_predictions(path) for task, path in pred_files.items()}
-
-
-def predict_actions_to_jsonl(
-    video_path: Path,
-    output_path: Path,
-    *,
-    checkpoint_path: Path | None = None,
-    batch_size: int = 8,
-    num_workers: int = 4,
-    clip_len: int = 64,
-    use_amp: bool = True,
-    min_score: float = 0.0,
-    segments: Sequence[tuple[float, float]] | None = None,
-    on_message: Callable[[str], None] | None = None,
-    on_progress: Callable[[float], None] | None = None,
-    on_events: Callable[[list[dict]], None] | None = None,
-) -> Path:
-    """Run yp-spot action spotting on ``video_path`` and write the action JSONL.
-
-    Args:
-        video_path: Input video.
-        output_path: Destination ``*_actions.jsonl`` (``_meta`` line + events).
-        checkpoint_path: Explicit SPOT ``.pt`` checkpoint. When ``None`` the
-            newest checkpoint under ``~/videos/action-checkpoints`` is used.
-        min_score: Drop predicted events below this confidence.
-        segments: Optional ``(start_s, end_s)`` spans; inference only scans
-            clip windows inside them (e.g. rally spans from a prior rally
-            pass). Events keep native frame numbers.
-        on_message: Optional status callback for step-level progress.
-        on_progress: Optional ``(fraction) -> None`` callback fired per SPOT
-            progress tick (0..1 of inference). Lets long-running callers push
-            live sub-progress while the subprocess streams.
-        on_events: Optional progressive-delivery callback. Fired per settled
-            batch with the *cumulative* postprocessed events of the settled
-            prefix, normalized exactly like the final JSONL (label whitelist,
-            ``min_score``, frame clamp, xy/visible defaults) plus a ``time``
-            field in seconds, so callers need no fps plumbing. The final JSONL
-            stays authoritative.
-
-    Returns:
-        ``output_path``.
-
-    Raises:
-        SpotInferenceError: yp-spot is not installed, has no checkpoint, or its
-            inference subprocess failed / produced no output.
-    """
-    def _msg(text: str) -> None:
-        if on_message:
-            on_message(text)
-
-    try:
-        # resolve_checkpoint handles VIDEOS_DIR-relative refs, existence, and the
-        # ~/videos/action-checkpoints containment check for both the explicit and
-        # default (None) cases.
-        checkpoint = prelabel.resolve_checkpoint(checkpoint_path)
-    except (FileNotFoundError, ValueError) as exc:
-        raise SpotInferenceError(f"SPOT checkpoint unavailable: {exc}") from exc
-
-    _msg("Reading video metadata...")
-    fps, num_frames = _probe_fps_frames(video_path)
-
-    def _on_partial(events: list[dict]) -> None:
-        normalized = []
-        for event in events:
-            item = prelabel.normalize_event(
-                event, num_frames=num_frames, min_score=min_score
-            )
-            if item is not None:
-                item["time"] = item["frame"] / fps if fps > 0 else 0.0
-                normalized.append(item)
-        on_events(normalized)
-
-    _msg("Running SPOT action inference...")
-    predictions = run_spot_inference(
-        video_path,
-        checkpoint=checkpoint,
-        tasks=("action",),
-        batch_size=batch_size,
-        num_workers=num_workers,
-        clip_len=clip_len,
-        use_amp=use_amp,
-        segments=segments,
-        on_progress=on_progress,
-        on_events=_on_partial if on_events is not None else None,
-    )["action"]
-
-    data = prelabel.predictions_to_annotation(
-        predictions,
-        video_path=video_path,
-        metadata={"fps": fps, "num_frames": num_frames},
-        checkpoint_path=checkpoint,
-        min_score=min_score,
-    )
-
-    meta = {k: v for k, v in data.items() if k != "events"}
-    write_jsonl(output_path, meta, data.get("events", []))
-    _msg(f"Wrote {data.get('num_events', 0)} action events to {output_path.name}")
-    return output_path

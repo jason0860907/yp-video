@@ -1,5 +1,6 @@
-"""Progressive SPOT_PARTIAL streaming: payload parsing, reader semantics,
-and normalization parity between the partial path and the final JSONL."""
+"""Progressive SPOT_PARTIAL streaming: payload parsing, the per-task reader
+semantics, and normalization parity between the partial path and the final
+annotation."""
 
 import sys
 import unittest
@@ -10,50 +11,58 @@ from yp_video.action import predict, prelabel
 from yp_video.action.predict import _spot_partial_payload
 
 
-def _stub_command(lines: list[str], save_dir: Path) -> list[str]:
+def _stub_command(lines: list[str], save_dir: Path, tasks: tuple[str, ...]) -> list[str]:
     """A subprocess that prints the given stdout lines and writes an empty
-    predictions.json where run_spot_inference expects it."""
-    pred_file = Path(save_dir) / "action" / "predictions.json"
-    body = "\n".join(
-        ["import pathlib", f"pathlib.Path({str(pred_file.parent)!r}).mkdir(parents=True, exist_ok=True)"]
-        + [f"print({line!r})" for line in lines]
-        + [f"pathlib.Path({str(pred_file)!r}).write_text('[]')"]
-    )
-    return [sys.executable, "-c", body]
+    predictions.json per task where run_spot_inference expects them."""
+    body = ["import pathlib"]
+    for task in tasks:
+        pred_file = Path(save_dir) / task / "predictions.json"
+        body.append(f"pathlib.Path({str(pred_file.parent)!r}).mkdir(parents=True, exist_ok=True)")
+    body += [f"print({line!r})" for line in lines]
+    for task in tasks:
+        pred_file = Path(save_dir) / task / "predictions.json"
+        body.append(f"pathlib.Path({str(pred_file)!r}).write_text('[]')")
+    return [sys.executable, "-c", "\n".join(body)]
 
 
 class SpotPartialPayloadTests(unittest.TestCase):
     def test_delta_line_parses(self):
-        line = 'SPOT_PARTIAL {"cumulative":false,"events":[{"frame":3,"score":0.9}]}'
+        line = 'SPOT_PARTIAL {"task":"rally","cumulative":false,"events":[{"frame":3,"score":0.9}]}'
         self.assertEqual(
-            _spot_partial_payload(line), (False, [{"frame": 3, "score": 0.9}])
+            _spot_partial_payload(line), ("rally", False, [{"frame": 3, "score": 0.9}])
         )
 
     def test_cumulative_line_parses(self):
         line = (
-            'SPOT_PARTIAL {"cumulative":true,'
+            'SPOT_PARTIAL {"task":"action","cumulative":true,'
             '"events":[{"frame":3,"label":"spike","score":0.9}]}'
         )
-        cumulative, events = _spot_partial_payload(line)
+        task, cumulative, events = _spot_partial_payload(line)
+        self.assertEqual(task, "action")
         self.assertTrue(cumulative)
         self.assertEqual(events, [{"frame": 3, "label": "spike", "score": 0.9}])
+
+    def test_prefix_glued_to_a_tqdm_fragment_still_parses(self):
+        line = ' 25%|██ | 1/4 [00:09<00:27]SPOT_PARTIAL {"task":"rally","cumulative":false,"events":[]}'
+        self.assertEqual(_spot_partial_payload(line), ("rally", False, []))
 
     def test_non_partial_line_is_none(self):
         self.assertIsNone(_spot_partial_payload("Timing video=x frames=1"))
 
-    def test_malformed_payload_is_empty_delta(self):
-        self.assertEqual(_spot_partial_payload("SPOT_PARTIAL {oops"), (False, []))
+    def test_malformed_or_taskless_payload_is_none(self):
+        self.assertIsNone(_spot_partial_payload("SPOT_PARTIAL {oops"))
+        self.assertIsNone(_spot_partial_payload('SPOT_PARTIAL {"cumulative":false,"events":[]}'))
 
 
 class SpotPartialReaderTests(unittest.TestCase):
-    """run_spot_inference's stdout reader: deltas accumulate, cumulative
-    payloads replace wholesale — always handing the callback the full list."""
+    """run_spot_inference's stdout reader keeps one cumulative list per head:
+    deltas accumulate, cumulative payloads replace, and heads never mix."""
 
-    def _run(self, lines: list[str]) -> list[list[dict]]:
-        seen: list[list[dict]] = []
+    def _run(self, lines: list[str], tasks=("action",)) -> list[tuple[str, list[dict]]]:
+        seen: list[tuple[str, list[dict]]] = []
 
         def fake_build_command(**kwargs):
-            return _stub_command(lines, kwargs["save_dir"])
+            return _stub_command(lines, kwargs["save_dir"], tuple(kwargs["tasks"]))
 
         with (
             mock.patch.object(prelabel, "spot_available", return_value=True),
@@ -63,27 +72,39 @@ class SpotPartialReaderTests(unittest.TestCase):
             predict.run_spot_inference(
                 Path("video.mp4"),
                 checkpoint=Path("ckpt.pt"),
-                tasks=("action",),
-                on_events=lambda events: seen.append(list(events)),
+                tasks=tasks,
+                on_events=lambda task, events: seen.append((task, list(events))),
             )
         return seen
 
     def test_delta_lines_accumulate(self):
         seen = self._run([
-            'SPOT_PARTIAL {"cumulative":false,"events":[{"frame":1,"score":0.9}]}',
-            'SPOT_PARTIAL {"cumulative":false,"events":[{"frame":2,"score":0.8}]}',
-        ])
-        self.assertEqual([[e["frame"] for e in s] for s in seen], [[1], [1, 2]])
+            'SPOT_PARTIAL {"task":"rally","cumulative":false,"events":[{"frame":1,"score":0.9}]}',
+            'SPOT_PARTIAL {"task":"rally","cumulative":false,"events":[{"frame":2,"score":0.8}]}',
+        ], tasks=("rally",))
+        self.assertEqual([(t, [e["frame"] for e in s]) for t, s in seen], [("rally", [1]), ("rally", [1, 2])])
 
     def test_cumulative_lines_replace(self):
         seen = self._run([
-            'SPOT_PARTIAL {"cumulative":true,'
+            'SPOT_PARTIAL {"task":"action","cumulative":true,'
             '"events":[{"frame":1,"label":"spike","score":0.9}]}',
-            'SPOT_PARTIAL {"cumulative":true,'
+            'SPOT_PARTIAL {"task":"action","cumulative":true,'
             '"events":[{"frame":1,"label":"spike","score":0.9},'
             '{"frame":9,"label":"score","score":0.7}]}',
         ])
-        self.assertEqual([[e["frame"] for e in s] for s in seen], [[1], [1, 9]])
+        self.assertEqual([[e["frame"] for e in s] for _, s in seen], [[1], [1, 9]])
+
+    def test_joint_pass_keeps_heads_apart(self):
+        seen = self._run([
+            'SPOT_PARTIAL {"task":"rally","cumulative":false,"events":[{"frame":6,"score":0.9}]}',
+            'SPOT_PARTIAL {"task":"action","cumulative":true,"events":[{"frame":4,"label":"serve","score":0.9}]}',
+            'SPOT_PARTIAL {"task":"rally","cumulative":false,"events":[{"frame":12,"score":0.9}]}',
+            'SPOT_PARTIAL {"task":"action","cumulative":true,"events":[{"frame":4,"label":"serve","score":0.9},{"frame":40,"label":"receive","score":0.8}]}',
+        ], tasks=("rally", "action"))
+        self.assertEqual(
+            [(t, [e["frame"] for e in s]) for t, s in seen],
+            [("rally", [6]), ("action", [4]), ("rally", [6, 12]), ("action", [4, 40])],
+        )
 
 
 class NormalizeEventParityTests(unittest.TestCase):

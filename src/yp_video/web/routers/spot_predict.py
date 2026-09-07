@@ -19,6 +19,8 @@ from fastapi import APIRouter, HTTPException
 from pydantic import Field
 
 from yp_video.action import prelabel
+from yp_video.action.rally import events_to_rally_segments
+from yp_video.action.spot_pass import RallyOptions
 from yp_video.config import (
     RALLY_ANNOTATIONS_DIR,
     RALLY_PRE_ANNOTATIONS_DIR,
@@ -30,10 +32,10 @@ from yp_video.contracts.action import (
     ACTION_CONTRACT_VERSION,
     ACTION_CONTRACT_VERSION_ENV,
 )
+from yp_video.core.ffmpeg import probe_video_metadata
 from yp_video.core.rallies import annotation_name
 from yp_video.web import worklists
 from yp_video.web.fusion_inference import (
-    RallyOptions,
     rally_spot_pre_annotation_path,
     save_rally_pre_annotation,
 )
@@ -132,16 +134,23 @@ def _save_rally_pre_annotation(
 ) -> dict:
     predictions = prelabel.load_predictions(predictions_file)
     events = (predictions[0].get("events") or []) if predictions else []
+    metadata = probe_video_metadata(source)
+    options = RallyOptions(
+        min_score=req.min_score, max_gap_s=req.max_gap_s, min_duration_s=req.min_duration_s,
+    )
+    segments = events_to_rally_segments(
+        events,
+        native_fps=float(metadata["fps"]),
+        min_score=options.min_score,
+        max_gap_s=options.max_gap_s,
+        min_duration_s=options.min_duration_s,
+    )
     _path, count = save_rally_pre_annotation(
         video=video_path,
-        source=source,
-        events=events,
+        duration_s=float(metadata["duration"]),
+        segments=segments,
         checkpoint=checkpoint,
-        options=RallyOptions(
-            min_score=req.min_score,
-            max_gap_s=req.max_gap_s,
-            min_duration_s=req.min_duration_s,
-        ),
+        options=options,
     )
     return {"video": video_path.stem, "rallies": count}
 

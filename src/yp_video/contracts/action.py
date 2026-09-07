@@ -494,7 +494,8 @@ SPOT_PROGRESS_PREFIX = "SPOT_PROGRESS "
 # consumer can surface results progressively instead of waiting for the final
 # ``predictions.json``. One line per inference batch (native frame numbers):
 #   ``SPOT_PARTIAL {"task":<head>,"cumulative":<bool>,"events":[...]}``
-# ``task`` names the head the events belong to — one run may carry several.
+# ``task`` names the head the events belong to — one run may carry several,
+# and the reader keeps one cumulative list per task; heads are never merged.
 # Dense (rally) runs stream deltas — that batch's newly-settled per-frame
 # events, ``{"frame","score"}`` plus ``winner_probs`` on winner-head checkpoints —
 # with ``cumulative=false``: the reader accumulates them. Postprocessed

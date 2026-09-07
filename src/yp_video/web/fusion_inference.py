@@ -20,13 +20,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from yp_video.action import prelabel
-from yp_video.action.predict import run_spot_inference
-from yp_video.action.rally import events_to_rally_segments
-from yp_video.action.segments import filter_events_to_spans, pad_and_merge_spans
+from yp_video.action.spot_pass import RallyOptions, SpotOptions, run_spot_pass
 from yp_video.actor import policy as actor_policy
 from yp_video.actor import spot_associate
 from yp_video.config import RALLY_SPOT_PRE_ANNOTATIONS_DIR, SPOT_CHECKPOINTS_DIR
-from yp_video.core.ffmpeg import probe_video_metadata
 from yp_video.core.jsonl import write_jsonl
 from yp_video.core.rallies import annotation_name, load_rallies, number_rallies
 from yp_video.extraction import reassociate
@@ -51,21 +48,6 @@ _UNITS_PER_STAGE = 100
 BatchProgress = Callable[[int, int, str], None]
 #: ``(fraction, message)`` within one stage.
 StageProgress = Callable[[float, str], None]
-
-
-@dataclass(frozen=True)
-class RallyOptions:
-    min_score: float
-    max_gap_s: float
-    min_duration_s: float
-
-
-@dataclass(frozen=True)
-class SpotOptions:
-    batch_size: int
-    num_workers: int
-    clip_len: int
-    use_amp: bool = True
 
 
 # ---------------------------------------------------------------- checkpoints
@@ -126,30 +108,20 @@ def rally_spot_pre_annotation_path(stem: str) -> Path:
 def save_rally_pre_annotation(
     *,
     video: Path,
-    source: str,
-    events: list[dict],
+    duration_s: float,
+    segments: list[dict],
     checkpoint: Path,
     options: RallyOptions,
 ) -> tuple[Path, int]:
-    """Merge yp-spot's per-frame rally events into numbered spans and write
-    them as the video's SPOT rally pre-annotation. Returns the file and the
-    number of rallies."""
-    metadata = probe_video_metadata(source)
-    segments, max_rally_id = number_rallies(
-        events_to_rally_segments(
-            events,
-            native_fps=float(metadata["fps"]),
-            min_score=options.min_score,
-            max_gap_s=options.max_gap_s,
-            min_duration_s=options.min_duration_s,
-        )
-    )
+    """Number the merged rally segments and write them as the video's SPOT
+    rally pre-annotation. Returns the file and the number of rallies."""
+    segments, max_rally_id = number_rallies(segments)
     path = rally_spot_pre_annotation_path(video.stem)
     write_jsonl(
         path,
         {
             "video": str(video),
-            "duration": float(metadata["duration"]),
+            "duration": duration_s,
             "max_rally_id": max_rally_id,
             "source": {
                 "type": "rally-spot",
@@ -164,16 +136,6 @@ def save_rally_pre_annotation(
     return path, len(segments)
 
 
-def _action_scan_spans(stem: str, duration_s: float) -> list[tuple[float, float]] | None:
-    """Where the action scan looks: the padded rally spans — dead time only
-    contributes false positives. None when the video has no rally source, in
-    which case the whole video counts."""
-    rallies = load_rallies(stem)
-    if not rallies:
-        return None
-    return pad_and_merge_spans(rallies, pad_s=RALLY_PAD_S, duration_s=duration_s)
-
-
 def run_spot_stages(
     *,
     video: Path,
@@ -185,49 +147,43 @@ def run_spot_stages(
     spot: SpotOptions,
     on_progress: StageProgress,
 ) -> dict:
-    """The rally and/or action head, in ONE decode pass of the video.
+    """The rally and/or action head, in ONE decode pass of the video
+    (``spot_pass.run_spot_pass``), each written to its machine store.
 
-    Both heads read the same frames, so asking yp-spot for them together
-    decodes the video once instead of once per head — and decoding, not the
-    model, is where the time goes. When rally runs in this pass the action
-    scan covers the whole video and its events are cut to the padded rally
-    spans afterwards; when only action runs, the existing rallies restrict
-    the decode up front.
+    When only action runs, the video's existing rallies (any source) bound
+    the scan — dead time only contributes false positives; a video without
+    any rally source scans in full.
     """
     tasks = tuple(tasks)
-    meta = probe_video_metadata(source)
-    duration_s = float(meta["duration"])
-    segments = _action_scan_spans(video.stem, duration_s) if tasks == ("action",) else None
-    predictions = run_spot_inference(
+    known_rallies = load_rallies(video.stem) if "rally" not in tasks else None
+    result = run_spot_pass(
         source,
         checkpoint=checkpoint,
         tasks=tasks,
-        batch_size=spot.batch_size,
-        num_workers=spot.num_workers,
-        clip_len=spot.clip_len,
-        use_amp=spot.use_amp,
-        segments=segments,
+        rally=rally,
+        spot=spot,
+        rally_pad_s=RALLY_PAD_S,
+        action_min_score=action_min_score,
+        rallies=known_rallies or None,
         on_progress=lambda fraction: on_progress(fraction, "inference"),
     )
     out: dict = {"written": []}
-    if "rally" in tasks:
-        on_progress(1.0, "merging rallies")
-        records = predictions["rally"]
-        events = (records[0].get("events") or []) if records else []
+    if result.rallies is not None:
+        on_progress(1.0, "saving rallies")
         path, count = save_rally_pre_annotation(
-            video=video, source=source, events=events, checkpoint=checkpoint, options=rally,
+            video=video, duration_s=result.duration_s, segments=result.rallies,
+            checkpoint=checkpoint, options=rally,
         )
         out["rallies"] = count
         out["written"].append((path, "rally-spot/pre-annotations"))
-    if "action" in tasks:
+    if result.actions is not None:
         on_progress(1.0, "saving events")
-        records = predictions["action"]
-        if segments is None:
-            spans = _action_scan_spans(video.stem, duration_s)
-            if spans is not None:
-                records = filter_events_to_spans(records, spans, fps=float(meta["fps"]))
         data = save_spot_pre_annotation(
-            video=video, meta=meta, predictions=records, checkpoint=checkpoint, min_score=action_min_score,
+            video=video,
+            meta={"fps": result.fps, "num_frames": result.num_frames},
+            predictions=result.actions,
+            checkpoint=checkpoint,
+            min_score=action_min_score,
         )
         out["events"] = data["num_events"]
         out["written"].append((pre_annotation_path(video.name), "action/pre-annotations"))

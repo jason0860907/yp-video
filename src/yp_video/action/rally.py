@@ -16,12 +16,9 @@ from __future__ import annotations
 import json
 import logging
 import random
-from collections.abc import Callable
 from pathlib import Path
 
-from yp_video.action import prelabel
 from yp_video.action.frames import inspect_action_frame_cache
-from yp_video.action.predict import SpotInferenceError, run_spot_inference
 from yp_video.action.training import CutResolver
 from yp_video.config import ACTION_FRAMES_DIR, RALLY_ANNOTATIONS_DIR, cut_kind_of
 from yp_video.contracts.action import (
@@ -30,9 +27,8 @@ from yp_video.contracts.action import (
     RALLY_LABEL_FILE_SUFFIX,
     WINNER_TAIL_S,
 )
-from yp_video.core.ffmpeg import FFmpegError, probe_video_metadata
-from yp_video.core.rallies import ANNOTATION_SUFFIX
 from yp_video.core.jsonl import read_jsonl, write_jsonl
+from yp_video.core.rallies import ANNOTATION_SUFFIX
 
 log = logging.getLogger(__name__)
 
@@ -262,97 +258,3 @@ def events_to_rally_segments(
             out["winner_score"] = round(means[best], 3)
         merged.append(out)
     return merged
-
-
-def predict_rally_segments(
-    video_path: Path,
-    *,
-    checkpoint_path: str | Path,
-    min_score: float = 0.5,
-    max_gap_s: float = 2.0,
-    min_duration_s: float = 4.0,
-    batch_size: int = 8,
-    num_workers: int = 4,
-    clip_len: int = 64,
-    use_amp: bool = True,
-    on_message: Callable[[str], None] | None = None,
-    on_progress: Callable[[float], None] | None = None,
-    on_rallies: Callable[[list[dict]], None] | None = None,
-) -> list[dict]:
-    """Run SPOT rally inference on one video and return merged rally segments.
-
-    Router-free entry point shared by the web dashboard flow and the selfhost
-    GPU worker, symmetric to ``yp_video.action.predict.predict_actions_to_jsonl``.
-
-    ``checkpoint_path`` must live under ``rally-spot-checkpoints`` and may name
-    either a run directory (its ``checkpoint_best.pt`` is used) or a ``.pt``
-    file directly. Returns ``{start, end, label, score}`` dicts in seconds,
-    timeline order.
-
-    Raises:
-        SpotInferenceError: yp-spot is unavailable, the checkpoint does not
-            resolve, the video cannot be probed, or inference failed.
-    """
-    def _msg(text: str) -> None:
-        if on_message:
-            on_message(text)
-
-    checkpoint = Path(checkpoint_path).expanduser()
-    if checkpoint.is_dir():
-        checkpoint = checkpoint / "checkpoint_best.pt"
-    try:
-        checkpoint = prelabel.resolve_checkpoint(checkpoint, task="rally")
-    except (FileNotFoundError, ValueError) as exc:
-        raise SpotInferenceError(f"Rally checkpoint unavailable: {exc}") from exc
-
-    _msg("Reading video metadata...")
-    try:
-        metadata = probe_video_metadata(video_path)
-    except FFmpegError as exc:
-        raise SpotInferenceError(str(exc)) from exc
-
-    _msg("Running SPOT rally inference...")
-
-    # Progressive delivery: re-derive rally segments from the events seen so
-    # far each time yp-spot streams a batch, and hand the settled ones up.
-    # `events_to_rally_segments` is pure and idempotent, so re-running it on the
-    # growing event list is cheap and always consistent with the final result.
-    def _on_events(events_so_far: list[dict]) -> None:
-        if not on_rallies:
-            return
-        segments = events_to_rally_segments(
-            events_so_far,
-            native_fps=float(metadata["fps"]),
-            min_score=min_score,
-            max_gap_s=max_gap_s,
-            min_duration_s=min_duration_s,
-        )
-        # Hold back the last segment: inference hasn't passed its end yet, so
-        # its end/score would keep changing and (worse) it could still merge
-        # with the next event. Only emit segments the stream has moved beyond,
-        # which keeps their chronological 1-based indexing stable — the client
-        # merges rallies by index, so an index must never renumber.
-        if len(segments) > 1:
-            on_rallies(segments[:-1])
-
-    predictions = run_spot_inference(
-        video_path,
-        checkpoint=checkpoint,
-        tasks=("rally",),
-        batch_size=batch_size,
-        num_workers=num_workers,
-        clip_len=clip_len,
-        use_amp=use_amp,
-        on_progress=on_progress,
-        on_events=_on_events if on_rallies else None,
-    )["rally"]
-    events = (predictions[0].get("events") or []) if predictions else []
-    segments = events_to_rally_segments(
-        events,
-        native_fps=float(metadata["fps"]),
-        min_score=min_score,
-        max_gap_s=max_gap_s,
-        min_duration_s=min_duration_s,
-    )
-    _msg(f"Merged {len(events)} rally frames into {len(segments)} rallies")
-    return segments
