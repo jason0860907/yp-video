@@ -4,7 +4,8 @@ import asyncio
 import logging
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 
 from yp_video.config import CUT_KINDS, CutKind, find_cut, iter_all_cuts, load_env
@@ -344,6 +345,42 @@ def cut_media_source(path: Path) -> str | None:
     return r2_client.generate_presigned_url(
         f"{entry[0].r2_category}/{path.name}", expires=24 * 3600
     )
+
+
+@contextmanager
+def materialized_cut(
+    path: Path, on_progress: Callable[[int, int], None] | None = None
+) -> Iterator[Path]:
+    """The cut's bytes at their canonical path for the duration of the block.
+
+    Every frame-reading stage (tracking, detection, the association re-crop,
+    the frame and audio caches) opens the mp4 from the VIDEOS_DIR layout, and
+    the bytes now live in R2. Streaming them per stage is the wrong shape:
+    a random seek over HTTP costs ~325 ms against ~55 ms from disk, and the
+    sparse stages seek once per event. So the object is fetched once into
+    the layout — ~6 s for a typical cut — and removed again afterwards, so a
+    machine holding no videos keeps holding none. A cut that is local already
+    is left exactly as found.
+
+    Downloads land under a ``.part`` name first: ``find_cut`` must never see
+    a half-written file as the local copy.
+    """
+    if path.exists():
+        yield path
+        return
+    entry = _remote_cut_entry(path.name)
+    if entry is None:
+        raise FileNotFoundError(f"{path.name} is neither local nor in R2")
+    part = path.with_name(path.name + ".part")
+    try:
+        r2_client.download_file(
+            f"{entry[0].r2_category}/{path.name}", part, on_progress=on_progress
+        )
+        part.replace(path)
+        yield path
+    finally:
+        part.unlink(missing_ok=True)
+        path.unlink(missing_ok=True)
 
 
 def serve_video_or_r2_redirect(

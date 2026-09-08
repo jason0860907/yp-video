@@ -69,7 +69,6 @@ from yp_video.person.detector import (
     PersonBox,
     person_detector,
 )
-from yp_video.tracklets.store import load_span_detections
 from yp_video.reid.embedder import base_embedder_name, build_embedders
 from yp_video.reid.store import (
     clear_embedding_refreshes,
@@ -81,6 +80,7 @@ from yp_video.reid.store import (
     mark_actor_embedding_stale,
     save_embedding_matrix,
 )
+from yp_video.tracklets.store import load_span_detections
 
 
 def load_events(stem: str) -> list[dict]:
@@ -105,6 +105,17 @@ def load_events(stem: str) -> list[dict]:
     ]
     events.sort(key=lambda e: e["frame"])
     return events
+
+
+def detections_current(stem: str) -> bool:
+    """Whether the video's records were produced by the detector this build
+    expects. Output of a retired detector is deliberately pending: the
+    default job migrates it without anyone asking for Overwrite."""
+    path = records_path(stem)
+    if not path.exists():
+        return False
+    header, _ = read_jsonl_cached(path)
+    return (header.get("source") or {}).get("detector") == DETECTOR_NAME
 
 
 def _serialize_detections(boxes, w: int, h: int) -> list[dict]:

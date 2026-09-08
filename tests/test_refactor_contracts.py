@@ -21,7 +21,6 @@ from yp_video.contracts.reid import (
 from yp_video.extraction import actor_fix, cropping, pipeline
 from yp_video.reid import checkpoints, store
 from yp_video.web.jobs import MAX_LOG_LINES, Job, JobManager, JobStatus, JobType
-from yp_video.web.routers import extraction as extraction_router
 from yp_video.web.routers.actor_association import (
     ActorFixRequest,
     AutoActorRequest,
@@ -477,13 +476,14 @@ class StagesStopWhereTheyShouldTests(unittest.TestCase):
                 json.dumps({"source": {"detector": "retired-detector"}}) + "\n"
             )
             current.write_text(
-                json.dumps(
-                    {"source": {"detector": extraction_router.DETECTOR_NAME}}
-                )
-                + "\n"
+                json.dumps({"source": {"detector": pipeline.DETECTOR_NAME}}) + "\n"
             )
-            self.assertFalse(extraction_router._has_current_detections(old))
-            self.assertTrue(extraction_router._has_current_detections(current))
+            with patch.object(pipeline, "records_path", return_value=old):
+                self.assertFalse(pipeline.detections_current("old"))
+            with patch.object(pipeline, "records_path", return_value=current):
+                self.assertTrue(pipeline.detections_current("current"))
+            with patch.object(pipeline, "records_path", return_value=root / "none.jsonl"):
+                self.assertFalse(pipeline.detections_current("none"))
 
     def test_a_re_detect_keeps_the_association_already_made(self) -> None:
         """Refreshing the candidate list is not an opinion about the answer —

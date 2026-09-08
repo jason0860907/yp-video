@@ -24,6 +24,7 @@ import numpy as np
 from yp_video.config import TRACKS_DIR
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import atomic_binary, read_jsonl, read_jsonl_header
+from yp_video.core.rallies import rally_fingerprint
 from yp_video.tracklets.geometry import TrackletIndex
 
 
@@ -51,6 +52,20 @@ def tracks_stride(stem: str) -> int:
 
 def tracks_masks_path(stem: str) -> Path:
     return TRACKS_DIR / f"{stem}_masks.npz"
+
+
+def tracks_current(stem: str) -> bool:
+    """Whether the stored tracklets still serve — the one definition every
+    page and job shares. Cut by the segmenting tracker (masks beside them;
+    the earlier detector left none) and against the rallies the video has
+    NOW: a track key is ``"{rally_id}:{track_id}"``, so tracklets from
+    another rally file point somewhere else. Tracks written before the
+    fingerprint existed cannot prove anything and count as stale."""
+    path = tracks_path(stem)
+    if not path.exists() or not tracks_masks_path(stem).exists():
+        return False
+    stored = (read_jsonl_header(path).get("rallies") or {}).get("fingerprint")
+    return bool(stored) and stored == rally_fingerprint(stem)
 
 
 @dataclass(frozen=True)

@@ -42,14 +42,14 @@ export function TrackingPage() {
     queryFn: () => apiFetch<ExtractionVideo[]>(API.extraction.videos),
   });
   const videos = videosQuery.data ?? [];
-  const tracked = videos.filter((v) => v.pipeline.has_tracks);
+  const tracked = videos.filter((v) => v.tracks_current);
 
   const chosen = videos.filter((v) => selected.has(v.name));
   const blocked = chosen.some((v) => v.pipeline.rally_sources.length === 0)
     ? STAGE_HINT.rallies
     : null;
   // Videos in the selection that would actually gain something.
-  const missing = chosen.filter((v) => !v.pipeline.has_tracks).length;
+  const missing = chosen.filter((v) => !v.tracks_current).length;
 
   const run = async () => {
     const names = [...selected];
@@ -151,9 +151,9 @@ export function TrackingPage() {
             selected={selected}
             onSelectedChange={setSelected}
             statusOptions={[
-              { value: 'pending', label: 'Untracked', predicate: (v) => !v.pipeline.has_tracks },
+              { value: 'pending', label: 'Needs tracking', predicate: (v) => !v.tracks_current },
               { value: 'all', label: 'All', predicate: () => true },
-              { value: 'tracked', label: 'Tracked', predicate: (v) => v.pipeline.has_tracks },
+              { value: 'tracked', label: 'Tracked', predicate: (v) => v.tracks_current },
             ]}
             renderMeta={(v) => <PipelineChips pipeline={v.pipeline} />}
             emptySubtitle="Label some rallies first — tracking runs on rally spans"

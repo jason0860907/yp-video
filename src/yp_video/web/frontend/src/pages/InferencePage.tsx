@@ -56,13 +56,15 @@ const NUM_FIELDS: Array<NumField<PredSettings>> = [
   { key: 'num_workers', label: 'Workers', min: 1, max: 32, step: 1 },
 ];
 
-const associationReady = (v: InferenceVideo) => v.association_blocker === null;
-const complete = (v: InferenceVideo) => v.has_rally_spot && v.has_action_pre && associationReady(v);
+const hasDetections = (v: InferenceVideo) => v.pipeline.has_records;
+const complete = (v: InferenceVideo) =>
+  v.has_rally_spot && v.has_action_pre && v.tracks_current && hasDetections(v);
 
 /** Every answer the fusion model gives, in one run per video: rally spans
- *  and winners, action events inside them, and who acted. Association also
- *  needs tracking and player detection, which keep their own pages — a
- *  video missing either still gets its rallies and actions here. */
+ *  and winners, action events inside them, and who acted. Tracking and
+ *  player detection run in between — the actor head picks among tracklets
+ *  and writes into the detection records — so one run leaves nothing for
+ *  the single-stage pages to do. */
 export function InferencePage() {
   const navigate = useNavigate();
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -79,7 +81,7 @@ export function InferencePage() {
   );
 
   const videos = videosQuery.data ?? [];
-  const readyCount = videos.filter(associationReady).length;
+  const completeCount = videos.filter(complete).length;
   const runningCount = jobs.filter((j) => j.status === 'running').length;
 
   const run = async () => {
@@ -91,11 +93,11 @@ export function InferencePage() {
     const existing = names
       .map((n) => videos.find((v) => v.name === n))
       .filter((v): v is InferenceVideo => Boolean(v))
-      .filter((v) => v.has_rally_spot || v.has_action_pre);
+      .filter((v) => v.has_rally_spot || v.has_action_pre || v.pipeline.has_tracks || hasDetections(v));
     if (existing.length && settings.overwrite) {
       const ok = await confirm({
         title: 'Redo existing stages?',
-        body: `This regenerates the machine rally and action output for ${existing.length} video(s). Human labels are never touched.`,
+        body: `This regenerates the machine rally, action, tracking and detection output for ${existing.length} video(s). Human labels are never touched.`,
         confirmText: 'Redo',
         variant: 'danger',
       });
@@ -132,7 +134,6 @@ export function InferencePage() {
           <Prereqs
             extras={[
               { label: 'Fusion Checkpoint', hint: 'Train an Action + Rally + Winner recipe on the Train page' },
-              { label: 'Track + Extract for association', hint: 'Run Rally Tracking and Player Detection; rallies and actions run without them' },
             ]}
           />
         }
@@ -151,7 +152,7 @@ export function InferencePage() {
       <div className="grid grid-cols-2 gap-3.5 lg:grid-cols-4">
         <StatTile label="Videos" value={videos.length} tintClass="text-primary-light" />
         <StatTile label="Selected" value={selected.size} tintClass="text-primary-light" />
-        <StatTile label="Association ready" value={readyCount} tintClass="text-primary-light" />
+        <StatTile label="Complete" value={completeCount} tintClass="text-primary-light" />
         <StatTile label="Running" value={runningCount} tintClass={runningCount ? 'text-primary-light' : 'text-text-muted'} />
       </div>
 
@@ -180,22 +181,24 @@ export function InferencePage() {
               { value: 'all', label: 'All', predicate: () => true },
               { value: 'no-rally', label: 'No rally output', predicate: (v) => !v.has_rally_spot },
               { value: 'no-action', label: 'No action output', predicate: (v) => !v.has_action_pre },
-              { value: 'assoc-ready', label: 'Association ready', predicate: associationReady },
-              { value: 'assoc-blocked', label: 'Association blocked', predicate: (v) => !associationReady(v) },
+              { value: 'no-tracks', label: 'No current tracks', predicate: (v) => !v.tracks_current },
+              { value: 'no-detections', label: 'No detections', predicate: (v) => !hasDetections(v) },
               { value: 'complete', label: 'Complete', predicate: complete },
             ]}
             quickSelects={[
-              { label: 'Missing output', predicate: (v) => !v.has_rally_spot || !v.has_action_pre },
+              { label: 'Missing output', predicate: (v) => !complete(v) },
             ]}
             renderMeta={(v) => (
               <>
                 {v.has_rally_spot && <Badge tone="accent">rally</Badge>}
                 {v.has_action_pre && <Badge tone="accent">action</Badge>}
-                {associationReady(v) ? (
-                  <Badge tone="success">assoc ready</Badge>
+                {v.tracks_current ? (
+                  <Badge tone="accent">tracks</Badge>
                 ) : (
-                  <Badge tone="neutral">{v.pipeline.has_tracks ? 'no detections' : 'no tracks'}</Badge>
+                  v.pipeline.has_tracks && <Badge tone="neutral">tracks outdated</Badge>
                 )}
+                {hasDetections(v) && <Badge tone="accent">detections</Badge>}
+                {complete(v) && <Badge tone="success">complete</Badge>}
               </>
             )}
           />

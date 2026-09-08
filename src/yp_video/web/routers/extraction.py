@@ -28,16 +28,17 @@ from fastapi.responses import FileResponse
 from pydantic import Field
 
 from yp_video.actor import labels as actor_labels
-from yp_video.config import cut_kind_of, find_cut, iter_all_cuts
+from yp_video.config import cut_kind_of
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import read_jsonl, read_jsonl_cached
 from yp_video.core.rallies import load_rallies
 from yp_video.extraction import links, pipeline
 from yp_video.extraction import store as extraction_store
 from yp_video.extraction.prerequisites import prerequisites
-from yp_video.person.detector import DETECTOR_NAME
+from yp_video.tracklets import store as tracks_store
 from yp_video.web.job_helpers import init_batch_items, spawn_batch_video_job
 from yp_video.web.jobs import JobSummary, JobType, job_manager
+from yp_video.web.r2_client import all_cut_paths, materialized_cut, resolve_cut
 from yp_video.web.schemas import StrictModel
 
 log = logging.getLogger(__name__)
@@ -50,25 +51,19 @@ router = APIRouter()
 _slim_records_cache: StatCache = StatCache()
 
 
-def _has_current_detections(path: Path) -> bool:
-    """Whether records were produced by the detector this build expects."""
-    if not path.exists():
-        return False
-    header, _ = read_jsonl_cached(path)
-    return (header.get("source") or {}).get("detector") == DETECTOR_NAME
-
-
 @router.get("/videos")
 def list_videos() -> list[dict]:
-    """Cut videos that have action events — the detection work list."""
+    """Cut videos that have action events — the detection work list (and
+    the tracking page's): local and R2-only cuts alike, since either job
+    fetches the bytes it needs (``r2_client.materialized_cut``)."""
     results = []
-    for f in sorted(iter_all_cuts(), key=lambda p: p.name):
+    for f in sorted(all_cut_paths(), key=lambda p: p.name):
         events = pipeline.load_events(f.stem)
         if not events:
             continue
         path = extraction_store.records_path(f.stem)
         header = read_jsonl_cached(path)[0] if path.exists() else None
-        current = _has_current_detections(path)
+        current = pipeline.detections_current(f.stem)
         results.append({
             "name": f.name,
             "kind": cut_kind_of(f),
@@ -80,6 +75,9 @@ def list_videos() -> list[dict]:
             # is the association listing's to report.
             "detections": int(header.get("detections") or 0) if header else None,
             "detector": (header.get("source") or {}).get("detector") if header else None,
+            # What the tracking page keys on: tracklets that still serve
+            # (see tracklets/store.tracks_current), not merely a file.
+            "tracks_current": tracks_store.tracks_current(f.stem),
             "pipeline": prerequisites(f.stem).payload(),
         })
     return results
@@ -93,12 +91,17 @@ class DetectRequest(StrictModel):
     stop_vllm: bool = False
 
 
+def _detect(path: Path, on_progress) -> dict:
+    with materialized_cut(path):
+        return pipeline.detect_video(path, on_progress=on_progress)
+
+
 @router.post("/detect", response_model=JobSummary)
 async def detect(req: DetectRequest) -> dict:
     video_paths: list[Path] = []
     skipped: list[str] = []
     for name in req.videos:
-        path = find_cut(name)
+        path = resolve_cut(name)
         if path is None:
             raise HTTPException(404, f"Video not found: {name}")
         # The action labels say WHICH frames to look at. Nothing else is a
@@ -110,7 +113,7 @@ async def detect(req: DetectRequest) -> dict:
             raise HTTPException(400, f"No action annotations for: {name}")
         if (
             not req.overwrite
-            and _has_current_detections(extraction_store.records_path(path.stem))
+            and pipeline.detections_current(path.stem)
         ):
             skipped.append(path.stem)
             continue
@@ -132,7 +135,7 @@ async def detect(req: DetectRequest) -> dict:
         job,
         video_paths,
         stop_vllm=req.stop_vllm,
-        work=lambda p, cb: pipeline.detect_video(p, on_progress=cb),
+        work=lambda p, cb: _detect(p, cb),
         done_message=lambda c: (
             f"{c['detections']} people over {c['events']} events"
             + (f" · {c['undecodable']} frames undecodable" if c["undecodable"] else "")

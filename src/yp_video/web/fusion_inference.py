@@ -1,15 +1,26 @@
 """One fusion checkpoint, every answer it gives for a video.
 
 Stages per video, in pipeline order: rally (the spans, and who won each)
-→ action (events, kept inside those spans) → association (who acted,
-chosen among the tracklets). Rally and action share one decode pass of the
-video (``run_spot_stages``). Each stage writes the same machine store the
-single-stage predict page writes, so the label editors, the work lists and
-the pipeline chips see no difference between the two routes.
+→ action (events, kept inside those spans) → tracking (who is on court over
+each rally) → detection (everyone on each event frame) → association (who
+acted, chosen among the tracklets). Rally and action share one decode pass
+of the video (``run_spot_stages``). Tracking and detection are not the
+fusion model's — the person detector is — but the actor head answers by
+naming a tracklet and writes its pick into the detection records, so
+without them the checkpoint's third head has nothing to choose from and
+nowhere to put its answer. Running them here, in this order, is also what
+makes detection nearly free: the dense tracking pass keeps its raw
+detections for the event frames it just learned about.
+
+Each stage writes the same machine store the single-stage page writes, so
+the label editors, the work lists and the pipeline chips see no difference
+between the two routes.
 
 Router-free and synchronous: the job runs one video's stages in an executor
-thread (``job_helpers.spawn_batch_video_job``). Mirroring to R2 needs the
-event loop, so a stage reports what it wrote and the router mirrors it.
+thread (``job_helpers.spawn_batch_video_job``). The cut's bytes are fetched
+into the layout for the duration of the video (``r2_client.materialized_cut``).
+Mirroring to R2 needs the event loop, so a stage reports what it wrote and
+the router mirrors it.
 """
 
 from __future__ import annotations
@@ -27,12 +38,15 @@ from yp_video.config import RALLY_SPOT_PRE_ANNOTATIONS_DIR, SPOT_CHECKPOINTS_DIR
 from yp_video.core.jsonl import write_jsonl
 from yp_video.core.rallies import annotation_name, load_rallies, number_rallies
 from yp_video.extraction import reassociate
+from yp_video.extraction.pipeline import detect_video, detections_current, load_events
 from yp_video.extraction.store import records_path
-from yp_video.tracklets.store import tracks_path
+from yp_video.tracklets import tracking
+from yp_video.tracklets.store import tracks_current, tracks_path
 from yp_video.web.action_annotations import (
     pre_annotation_path,
     save_spot_pre_annotation,
 )
+from yp_video.web.r2_client import materialized_cut
 
 #: The heads one checkpoint must carry to answer every stage.
 REQUIRED_TASKS = ("rally", "action", "actor")
@@ -41,7 +55,7 @@ REQUIRED_TASKS = ("rally", "action", "actor")
 #: sides — the same cascade Action Predict and the selfhost worker run.
 RALLY_PAD_S = 2.0
 
-STAGES = ("rally", "action", "association")
+STAGES = ("rally", "action", "tracking", "detection", "association")
 _UNITS_PER_STAGE = 100
 
 #: ``(done, total, message)`` — the batch job's per-item progress.
@@ -190,69 +204,104 @@ def run_spot_stages(
     return out
 
 
-# ---------------------------------------------------------- association stage
+# ----------------------------------------------------- perception stages
 
 
-def association_blocker(stem: str) -> str | None:
-    """Why association cannot run for this video yet, or None.
-
-    The actor head picks among tracklets and writes its pick into the
-    extraction records, so both upstream stages must exist. Neither is this
-    job's to produce: tracking and player detection have their own pages.
-    """
-    if not tracks_path(stem).exists():
-        return "run Rally Tracking first"
-    if not records_path(stem).exists():
-        return "run Player Detection first"
+def tracking_skip(stem: str, *, overwrite: bool, rallies: bool) -> str | None:
+    """Why tracking does not run for this video, or None to run it."""
+    if not rallies:
+        return "no rallies"
+    if not overwrite and tracks_current(stem):
+        return "kept existing tracks"
     return None
+
+
+def detection_skip(
+    stem: str, *, overwrite: bool, events: bool, action_ran: bool
+) -> str | None:
+    """Why detection does not run, or None. Records list one row per event,
+    so a fresh action output always refreshes them; picks already made
+    survive that (see pipeline.detect_video)."""
+    if not events:
+        return "no action events"
+    if not overwrite and not action_ran and detections_current(stem):
+        return "kept existing detections"
+    return None
+
+
+def association_skip(stem: str, *, events: bool) -> str | None:
+    """Why association cannot run, or None. Association always re-decides
+    when it can: it only touches automatic picks and keeps every verdict."""
+    if not events:
+        return "no action events"
+    if not tracks_path(stem).exists():
+        return "no tracks"
+    if not records_path(stem).exists():
+        return "no detections"
+    return None
+
+
+def run_tracking_stage(
+    *, video: Path, events: Sequence[dict], on_progress: StageProgress
+) -> dict:
+    """Dense per-rally detection + ByteTrack. The event frames ride along so
+    their raw detections persist for the detection stage right after."""
+    return tracking.track_video(
+        video,
+        stride=1,
+        event_frames={int(event["frame"]) for event in events},
+        on_progress=_fractional(on_progress),
+    )
+
+
+def run_detection_stage(*, video: Path, on_progress: StageProgress) -> dict:
+    return detect_video(video, on_progress=_fractional(on_progress))
 
 
 def run_association_stage(
     *, video: Path, checkpoint: Path, on_progress: StageProgress
 ) -> dict:
+    progress = _fractional(on_progress)
+    plan = actor_policy.SpotPlan(checkpoint)
+    return reassociate.reassociate_video(
+        video, plan.build(video, progress), on_progress=progress
+    )
+
+
+def _fractional(on_progress: StageProgress):
+    """A stage's ``(done, total, message)`` as this module's ``(fraction, message)``."""
+
     def progress(done: int, total: int, message: str) -> None:
         on_progress(done / total if total else 0.0, message)
 
-    plan = actor_policy.SpotPlan(checkpoint)
-    counts = reassociate.reassociate_video(
-        video, plan.build(video, progress), on_progress=progress
-    )
-    return {"counts": counts, "written": []}
+    return progress
 
 
 # ------------------------------------------------------------------ per video
 
 
-@dataclass(frozen=True)
-class StagePlan:
-    """Per stage: None to run it, else why it is skipped."""
-
-    rally: str | None
-    action: str | None
-    association: str | None
-
-
-def plan_stages(stem: str, *, overwrite: bool) -> StagePlan:
-    """Without ``overwrite`` a stage whose machine output already exists is
-    kept, so a run fills the gaps; association runs whenever it can, since
-    it only re-decides automatic picks and keeps every human verdict."""
-    return StagePlan(
-        rally=(
+def plan_spot_stages(stem: str, *, overwrite: bool) -> dict[str, str | None]:
+    """Per SPOT stage: None to run it, else why it is kept. Without
+    ``overwrite`` a stage whose machine output exists is kept, so a run fills
+    the gaps."""
+    return {
+        "rally": (
             None if overwrite or not rally_spot_pre_annotation_path(stem).exists()
             else "kept existing rallies"
         ),
-        action=(
+        "action": (
             None if overwrite or not pre_annotation_path(stem).exists()
             else "kept existing actions"
         ),
-        association=association_blocker(stem),
-    )
+    }
 
 
 @dataclass
 class VideoResult:
     rallies: int | None = None
     events: int | None = None
+    tracklets: int | None = None
+    detections: int | None = None
     association: dict | None = None
     skipped: dict[str, str] = field(default_factory=dict)
     #: ``(path, r2_category)`` pairs the caller mirrors from the event loop.
@@ -262,7 +311,6 @@ class VideoResult:
 def run_video(
     *,
     video: Path,
-    source: str,
     checkpoint: Path,
     rally: RallyOptions,
     action_min_score: float,
@@ -270,9 +318,8 @@ def run_video(
     overwrite: bool,
     on_progress: BatchProgress,
 ) -> VideoResult:
-    """Every stage for one video, in order. ``source`` is what yp-spot decodes
-    — the local file or a presigned R2 URL — while ``video`` is the cut's
-    canonical path that names every output."""
+    """Every stage for one video, in order. ``video`` is the cut's canonical
+    path; its bytes are materialized there for the duration."""
     total = _UNITS_PER_STAGE * len(STAGES)
 
     def stage_progress(first: int, count: int = 1) -> StageProgress:
@@ -284,35 +331,61 @@ def run_video(
             on_progress(done, total, f"{label}: {message}")
         return report
 
+    def fetch_progress(done: int, size: int) -> None:
+        # One unit in, not zero: the batch job lets every done=0 report
+        # through unthrottled, and boto3 calls this per 8 MB chunk.
+        on_progress(1, total, f"fetching video: {done / size:.0%}" if size else "fetching video")
+
+    stem = video.stem
     result = VideoResult()
-    plan = plan_stages(video.stem, overwrite=overwrite)
+    on_progress(0, total, "fetching video")
+    with materialized_cut(video, on_progress=fetch_progress):
+        spot_plan = plan_spot_stages(stem, overwrite=overwrite)
+        result.skipped.update({task: why for task, why in spot_plan.items() if why})
+        spot_tasks = tuple(task for task, why in spot_plan.items() if why is None)
+        if spot_tasks:
+            out = run_spot_stages(
+                video=video, source=str(video), checkpoint=checkpoint,
+                tasks=spot_tasks, rally=rally, action_min_score=action_min_score,
+                spot=spot,
+                on_progress=stage_progress(STAGES.index(spot_tasks[0]), len(spot_tasks)),
+            )
+            result.rallies = out.get("rallies")
+            result.events = out.get("events")
+            result.written += out["written"]
 
-    on_progress(0, total, "rally: starting")
-    spot_plan = (("rally", plan.rally), ("action", plan.action))
-    for task, skip in spot_plan:
+        rallies = load_rallies(stem)
+        events = load_events(stem)
+
+        stage_progress(2)(0.0, "starting")
+        skip = tracking_skip(stem, overwrite=overwrite, rallies=bool(rallies))
         if skip is not None:
-            result.skipped[task] = skip
-    spot_tasks = tuple(task for task, skip in spot_plan if skip is None)
-    if spot_tasks:
-        out = run_spot_stages(
-            video=video, source=source, checkpoint=checkpoint, tasks=spot_tasks,
-            rally=rally, action_min_score=action_min_score, spot=spot,
-            on_progress=stage_progress(STAGES.index(spot_tasks[0]), len(spot_tasks)),
-        )
-        if "rallies" in out:
-            result.rallies = out["rallies"]
-        if "events" in out:
-            result.events = out["events"]
-        result.written += out["written"]
+            result.skipped["tracking"] = skip
+        else:
+            counts = run_tracking_stage(
+                video=video, events=events, on_progress=stage_progress(2),
+            )
+            result.tracklets = counts["tracklets"]
 
-    stage_progress(2)(0.0, "starting")
-    if plan.association is not None:
-        result.skipped["association"] = plan.association
-    else:
-        out = run_association_stage(
-            video=video, checkpoint=checkpoint, on_progress=stage_progress(2),
+        stage_progress(3)(0.0, "starting")
+        skip = detection_skip(
+            stem, overwrite=overwrite, events=bool(events),
+            action_ran="action" in spot_tasks,
         )
-        result.association = out["counts"]
+        if skip is not None:
+            result.skipped["detection"] = skip
+        else:
+            counts = run_detection_stage(video=video, on_progress=stage_progress(3))
+            result.detections = counts["detections"]
+
+        stage_progress(4)(0.0, "starting")
+        skip = association_skip(stem, events=bool(events))
+        if skip is not None:
+            result.skipped["association"] = skip
+        else:
+            result.association = run_association_stage(
+                video=video, checkpoint=checkpoint, on_progress=stage_progress(4),
+            )
 
     on_progress(total, total, "done")
     return result
@@ -320,15 +393,17 @@ def run_video(
 
 def summarize(result: VideoResult) -> str:
     """The one line the job card shows per video."""
-    parts = []
-    parts.append(
+    skipped = result.skipped
+    parts = [
         f"{result.rallies} rallies" if result.rallies is not None
-        else f"rally: {result.skipped.get('rally', 'skipped')}"
-    )
-    parts.append(
+        else f"rally: {skipped.get('rally', 'skipped')}",
         f"{result.events} actions" if result.events is not None
-        else f"action: {result.skipped.get('action', 'skipped')}"
-    )
+        else f"action: {skipped.get('action', 'skipped')}",
+        f"{result.tracklets} tracklets" if result.tracklets is not None
+        else f"tracking: {skipped.get('tracking', 'skipped')}",
+        f"{result.detections} people detected" if result.detections is not None
+        else f"detection: {skipped.get('detection', 'skipped')}",
+    ]
     counts = result.association
     if counts is not None:
         parts.append(
@@ -336,5 +411,5 @@ def summarize(result: VideoResult) -> str:
             f"{counts.get('unchanged', 0)} unchanged · {counts.get('labeled', 0)} labeled kept"
         )
     else:
-        parts.append(f"association: {result.skipped.get('association', 'skipped')}")
+        parts.append(f"association: {skipped.get('association', 'skipped')}")
     return " · ".join(parts)

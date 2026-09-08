@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from yp_video.contracts.action import SPOT_PACKAGE_TYPE
+from yp_video.tracklets import store as tracks_store
 from yp_video.web import fusion_inference as fi
 
 
@@ -61,58 +62,123 @@ class CheckpointTests(unittest.TestCase):
 
 
 class StagePlanTests(unittest.TestCase):
-    def _plan(self, *, rally_exists, action_exists, tracks, records, overwrite):
+    def _paths(self, *, rally_exists, action_exists):
+        present = Path(tempfile.mkdtemp()) / "present"
+        present.touch()
+        absent = present.parent / "absent"
+        return (
+            patch.object(fi, "rally_spot_pre_annotation_path", return_value=present if rally_exists else absent),
+            patch.object(fi, "pre_annotation_path", return_value=present if action_exists else absent),
+        )
+
+    def test_fresh_video_runs_both_spot_heads(self):
+        a, b = self._paths(rally_exists=False, action_exists=False)
+        with a, b:
+            plan = fi.plan_spot_stages("match", overwrite=False)
+        self.assertEqual(plan, {"rally": None, "action": None})
+
+    def test_existing_spot_outputs_are_kept_unless_overwriting(self):
+        a, b = self._paths(rally_exists=True, action_exists=True)
+        with a, b:
+            kept = fi.plan_spot_stages("match", overwrite=False)
+            redo = fi.plan_spot_stages("match", overwrite=True)
+        self.assertEqual(kept, {"rally": "kept existing rallies", "action": "kept existing actions"})
+        self.assertEqual(redo, {"rally": None, "action": None})
+
+
+class PerceptionPlanTests(unittest.TestCase):
+    """Tracking only survives when it provably matches today's rallies;
+    detection follows the action output; association runs whenever both
+    inputs exist."""
+
+    def test_tracking_needs_rallies_and_keeps_only_matching_tracks(self):
+        self.assertEqual(fi.tracking_skip("m", overwrite=False, rallies=False), "no rallies")
+        with patch.object(fi, "tracks_current", return_value=True):
+            self.assertEqual(fi.tracking_skip("m", overwrite=False, rallies=True), "kept existing tracks")
+            self.assertIsNone(fi.tracking_skip("m", overwrite=True, rallies=True))
+        with patch.object(fi, "tracks_current", return_value=False):
+            self.assertIsNone(fi.tracking_skip("m", overwrite=False, rallies=True))
+
+    def test_tracks_are_current_only_with_masks_and_a_matching_fingerprint(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            present = root / "present"
+            tracks = Path(tmp) / "m.jsonl"
+            masks = Path(tmp) / "m_masks.npz"
+            masks.touch()
+
+            def check(header: dict, *, fingerprint: str, masks_path=masks) -> bool:
+                tracks.write_text(json.dumps({"video": "m", **header}) + "\n", encoding="utf-8")
+                with (
+                    patch.object(tracks_store, "tracks_path", return_value=tracks),
+                    patch.object(tracks_store, "tracks_masks_path", return_value=masks_path),
+                    patch.object(tracks_store, "rally_fingerprint", return_value=fingerprint),
+                ):
+                    return tracks_store.tracks_current("m")
+
+            self.assertFalse(check({"rallies": {"count": 3}}, fingerprint="abc"))
+            self.assertTrue(check({"rallies": {"fingerprint": "abc"}}, fingerprint="abc"))
+            self.assertFalse(check({"rallies": {"fingerprint": "abc"}}, fingerprint="moved"))
+            self.assertFalse(
+                check({"rallies": {"fingerprint": "abc"}}, fingerprint="abc", masks_path=Path(tmp) / "none.npz")
+            )
+
+    def test_detection_refreshes_after_a_new_action_output(self):
+        self.assertEqual(fi.detection_skip("m", overwrite=False, events=False, action_ran=True), "no action events")
+        with patch.object(fi, "detections_current", return_value=True):
+            self.assertEqual(
+                fi.detection_skip("m", overwrite=False, events=True, action_ran=False),
+                "kept existing detections",
+            )
+            self.assertIsNone(fi.detection_skip("m", overwrite=False, events=True, action_ran=True))
+            self.assertIsNone(fi.detection_skip("m", overwrite=True, events=True, action_ran=False))
+        with patch.object(fi, "detections_current", return_value=False):
+            self.assertIsNone(fi.detection_skip("m", overwrite=False, events=True, action_ran=False))
+
+    def test_association_names_the_missing_input(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            present = Path(tmp) / "present"
             present.touch()
-            absent = root / "absent"
+            absent = Path(tmp) / "absent"
+            self.assertEqual(fi.association_skip("m", events=False), "no action events")
             with (
-                patch.object(fi, "rally_spot_pre_annotation_path", return_value=present if rally_exists else absent),
-                patch.object(fi, "pre_annotation_path", return_value=present if action_exists else absent),
-                patch.object(fi, "tracks_path", return_value=present if tracks else absent),
-                patch.object(fi, "records_path", return_value=present if records else absent),
+                patch.object(fi, "tracks_path", return_value=absent),
+                patch.object(fi, "records_path", return_value=present),
             ):
-                return fi.plan_stages("match", overwrite=overwrite)
-
-    def test_fresh_video_runs_rally_and_action_and_waits_for_tracking(self):
-        plan = self._plan(rally_exists=False, action_exists=False, tracks=False, records=False, overwrite=False)
-        self.assertIsNone(plan.rally)
-        self.assertIsNone(plan.action)
-        self.assertEqual(plan.association, "run Rally Tracking first")
-
-    def test_existing_outputs_are_kept_unless_overwriting(self):
-        kept = self._plan(rally_exists=True, action_exists=True, tracks=True, records=True, overwrite=False)
-        self.assertEqual(kept.rally, "kept existing rallies")
-        self.assertEqual(kept.action, "kept existing actions")
-        self.assertIsNone(kept.association)
-        redo = self._plan(rally_exists=True, action_exists=True, tracks=True, records=True, overwrite=True)
-        self.assertIsNone(redo.rally)
-        self.assertIsNone(redo.action)
-
-    def test_tracked_but_undetected_video_names_player_detection(self):
-        plan = self._plan(rally_exists=False, action_exists=False, tracks=True, records=False, overwrite=False)
-        self.assertEqual(plan.association, "run Player Detection first")
+                self.assertEqual(fi.association_skip("m", events=True), "no tracks")
+            with (
+                patch.object(fi, "tracks_path", return_value=present),
+                patch.object(fi, "records_path", return_value=absent),
+            ):
+                self.assertEqual(fi.association_skip("m", events=True), "no detections")
+            with (
+                patch.object(fi, "tracks_path", return_value=present),
+                patch.object(fi, "records_path", return_value=present),
+            ):
+                self.assertIsNone(fi.association_skip("m", events=True))
 
 
 class SummaryTests(unittest.TestCase):
     def test_counts_and_skip_reasons_read_as_one_line(self):
         result = fi.VideoResult(
-            rallies=12, events=340,
+            rallies=12, events=340, tracklets=800, detections=2100,
             association={"changed": 3, "unchanged": 300, "labeled": 7},
         )
         self.assertEqual(
             fi.summarize(result),
-            "12 rallies · 340 actions · association: 3 moved · 300 unchanged · 7 labeled kept",
+            "12 rallies · 340 actions · 800 tracklets · 2100 people detected · "
+            "association: 3 moved · 300 unchanged · 7 labeled kept",
         )
         skipped = fi.VideoResult(skipped={
             "rally": "kept existing rallies",
             "action": "kept existing actions",
-            "association": "run Rally Tracking first",
+            "tracking": "kept existing tracks",
+            "detection": "no action events",
+            "association": "no action events",
         })
         self.assertEqual(
             fi.summarize(skipped),
-            "rally: kept existing rallies · action: kept existing actions · association: run Rally Tracking first",
+            "rally: kept existing rallies · action: kept existing actions · "
+            "tracking: kept existing tracks · detection: no action events · "
+            "association: no action events",
         )
 
 

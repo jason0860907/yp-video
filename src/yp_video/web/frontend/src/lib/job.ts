@@ -77,6 +77,7 @@ const STALE_QUERIES: Record<string, string[][]> = {
   fusion_inference: [
     ['inference-videos'], ['spot-predict-videos'], ['annotate-results'], ['action-videos'],
     ['extraction-videos'], ['association-videos'], ['extraction-records'], ['reid-videos'],
+    ['tracklets'], ['tracklet-masks'],
   ],
   player_tracking: [['extraction-videos'], ['reid-videos'], ['tracklets'], ['tracklet-masks']],
   player_embed: [['reid-videos'], ['reid-clusters'], ['reid-players']],

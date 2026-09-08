@@ -46,7 +46,7 @@ from yp_video.web.job_helpers import (
     spawn_batch_video_job,
 )
 from yp_video.web.jobs import JobSummary, JobType, job_manager
-from yp_video.web.r2_client import sync_to_r2
+from yp_video.web.r2_client import materialized_cut, resolve_cut, sync_to_r2
 from yp_video.web.schemas import StrictModel
 
 log = logging.getLogger(__name__)
@@ -73,7 +73,7 @@ def set_done(name: str, req: DoneRequest) -> dict:
     flag afterwards — a predict re-run confirms the answers it invents
     instead of un-reviewing a finished video (extraction/done.py).
     """
-    video = find_cut(Path(unquote(name)).name)
+    video = resolve_cut(Path(unquote(name)).name)
     if video is None:
         raise HTTPException(404, "Video not found")
     flags = label_done.set_done(video.stem, "association", req.done)
@@ -154,6 +154,15 @@ class PredictRequest(StrictModel):
     stop_vllm: bool = False
 
 
+def _associate(path: Path, plan: actor_policy.PolicyPlan, on_progress) -> dict:
+    # The spot head reads the frame cache and the re-crop reads the video;
+    # both want the cut's bytes in the layout.
+    with materialized_cut(path):
+        return reassociate.reassociate_video(
+            path, plan.build(path, on_progress), on_progress=on_progress
+        )
+
+
 @router.post("/predict", response_model=JobSummary)
 async def predict(req: PredictRequest) -> dict:
     """Re-decide the automatic actor picks, without re-detecting anybody.
@@ -178,7 +187,7 @@ async def predict(req: PredictRequest) -> dict:
 
     video_paths: list[Path] = []
     for name in req.videos:
-        path = find_cut(name)
+        path = resolve_cut(name)
         if path is None:
             raise HTTPException(404, f"Video not found: {name}")
         if not extraction_store.records_path(path.stem).exists():
@@ -211,9 +220,7 @@ async def predict(req: PredictRequest) -> dict:
         # Whether the policy exists yet is the plan's business: the rule and
         # the ranker hand back themselves, the spot head scores the video
         # first (see actor/policy.SpotPlan).
-        work=lambda path, cb: reassociate.reassociate_video(
-            path, plan.build(path, cb), on_progress=cb
-        ),
+        work=lambda path, cb: _associate(path, plan, cb),
         done_message=lambda c: (
             f"{c['changed']} moved · {c['unchanged']} unchanged · "
             f"{c['labeled']} labeled kept"

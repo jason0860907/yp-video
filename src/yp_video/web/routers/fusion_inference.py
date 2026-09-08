@@ -17,16 +17,12 @@ from yp_video.action import prelabel
 from yp_video.action.spot_pass import RallyOptions, SpotOptions
 from yp_video.config import SPOT_CHECKPOINTS_DIR, SPOT_DIR, cut_kind_of
 from yp_video.extraction.prerequisites import prerequisites
+from yp_video.tracklets.store import tracks_current
 from yp_video.web import fusion_inference
 from yp_video.web.action_annotations import pre_annotation_path
 from yp_video.web.job_helpers import init_batch_items, spawn_batch_video_job
 from yp_video.web.jobs import JobSummary, JobType, job_manager
-from yp_video.web.r2_client import (
-    all_cut_paths,
-    cut_media_source,
-    resolve_cut,
-    sync_to_r2,
-)
+from yp_video.web.r2_client import all_cut_paths, resolve_cut, sync_to_r2
 from yp_video.web.schemas import StrictModel
 
 log = logging.getLogger(__name__)
@@ -62,7 +58,7 @@ def list_videos() -> list[dict]:
             "kind": cut_kind_of(path),
             "has_rally_spot": fusion_inference.rally_spot_pre_annotation_path(stem).exists(),
             "has_action_pre": pre_annotation_path(stem).exists(),
-            "association_blocker": fusion_inference.association_blocker(stem),
+            "tracks_current": tracks_current(stem),
             "pipeline": prerequisites(stem).payload(),
         })
     return rows
@@ -96,17 +92,12 @@ async def start(req: InferenceRequest) -> dict:
         raise HTTPException(400, str(exc)) from exc
 
     video_paths: list[Path] = []
-    sources: dict[str, str] = {}
     for name in req.videos:
         path = resolve_cut(Path(name).name)
-        # The local file or a presigned R2 URL — yp-spot decodes either.
-        source = cut_media_source(path) if path is not None else None
-        if path is None or source is None:
+        if path is None:
             raise HTTPException(404, f"Video not found: {name}")
-        if path.name in sources:
-            continue
-        video_paths.append(path)
-        sources[path.name] = source
+        if path not in video_paths:
+            video_paths.append(path)
 
     rally = RallyOptions(
         min_score=req.rally_min_score,
@@ -140,7 +131,6 @@ async def start(req: InferenceRequest) -> dict:
         stop_vllm=req.stop_vllm,
         work=lambda path, cb: fusion_inference.run_video(
             video=path,
-            source=sources[path.name],
             checkpoint=checkpoint,
             rally=rally,
             action_min_score=req.action_min_score,
@@ -149,7 +139,7 @@ async def start(req: InferenceRequest) -> dict:
             on_progress=cb,
         ),
         done_message=fusion_inference.summarize,
-        start_message="rally: starting",
+        start_message="fetching video",
         on_done=mirror,
     )
     return job.to_dict()

@@ -310,8 +310,9 @@ export interface InferenceVideo {
   has_rally_spot: boolean;
   /** Machine action pre-annotation exists (action/pre-annotations). */
   has_action_pre: boolean;
-  /** Why association cannot run yet — tracking or player detection missing — or null. */
-  association_blocker: string | null;
+  /** Tracklets exist AND were cut against the video's current rallies; an
+   *  Inference run keeps tracking only when this holds. */
+  tracks_current: boolean;
   pipeline: PipelineState;
 }
 
@@ -445,6 +446,9 @@ export interface ExtractionVideo {
   detections?: number | null;
   /** Detector identifier persisted in the record header. */
   detector?: string | null;
+  /** Tracklets exist, carry masks, and were cut against the video's current
+   *  rallies. Tracking without Overwrite redoes everything else. */
+  tracks_current: boolean;
   pipeline: PipelineState;
 }
 

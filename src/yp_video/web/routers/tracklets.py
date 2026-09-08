@@ -20,7 +20,6 @@ from urllib.parse import unquote
 from fastapi import APIRouter, HTTPException
 from pydantic import Field
 
-from yp_video.config import find_cut
 from yp_video.core.rallies import rally_sources
 from yp_video.extraction import links
 from yp_video.extraction import store as extraction_store
@@ -29,6 +28,7 @@ from yp_video.tracklets import store as tracks_store
 from yp_video.tracklets import tracking
 from yp_video.web.job_helpers import init_batch_items, spawn_batch_video_job
 from yp_video.web.jobs import JobSummary, JobType, job_manager
+from yp_video.web.r2_client import materialized_cut, resolve_cut
 from yp_video.web.schemas import StrictModel
 
 log = logging.getLogger(__name__)
@@ -49,7 +49,7 @@ async def run(req: TrackRequest) -> dict:
     video_paths: list[Path] = []
     skipped: list[str] = []
     for name in req.videos:
-        path = find_cut(name)
+        path = resolve_cut(name)
         if path is None:
             raise HTTPException(404, f"Video not found: {name}")
         # Tracking needs rally spans and nothing else — deliberately NOT the
@@ -59,13 +59,15 @@ async def run(req: TrackRequest) -> dict:
                 400,
                 f"No rally spans for: {name} — label rallies or run Rally SPOT Predict",
             )
-        if not req.overwrite and tracks_store.tracks_path(path.stem).exists():
+        # Tracks that no longer serve — cut against rallies that have since
+        # moved, or by the pre-mask detector — are redone without asking.
+        if not req.overwrite and tracks_store.tracks_current(path.stem):
             skipped.append(path.stem)
             continue
         video_paths.append(path)
 
     if not video_paths:
-        raise HTTPException(400, "All selected videos already have tracking (enable overwrite)")
+        raise HTTPException(400, "All selected videos already have current tracking (enable overwrite)")
 
     job = job_manager.create_job(
         JobType.PLAYER_TRACKING,
@@ -83,16 +85,21 @@ async def run(req: TrackRequest) -> dict:
         # Event frames ride along (this layer may join action + tracking;
         # the tracking stage itself stays action-free): their raw detections
         # persist as a sidecar so the sparse detect stage skips re-decoding.
-        work=lambda p, cb: tracking.track_video(
-            p,
-            stride=req.stride,
-            event_frames={e["frame"] for e in load_events(p.stem)},
-            on_progress=cb,
-        ),
+        work=lambda p, cb: _track(p, req.stride, cb),
         done_message=lambda c: f"{c['tracklets']} tracklets over {c['frames']} frames",
         start_message="tracking rallies...",
     )
     return job.to_dict()
+
+
+def _track(path: Path, stride: int, on_progress) -> dict:
+    with materialized_cut(path):
+        return tracking.track_video(
+            path,
+            stride=stride,
+            event_frames={e["frame"] for e in load_events(path.stem)},
+            on_progress=on_progress,
+        )
 
 
 @router.get("/masks/{name}")

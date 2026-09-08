@@ -134,11 +134,11 @@ def _ensure_action_frame_cache_locked(
         shutil.rmtree(tmp_dir, ignore_errors=True)
         raise ActionFrameCacheError(f"No frames extracted from {video_path}")
 
-    source_stat = video_path.stat()
     metadata = {
         "source": str(video_path),
-        "source_size": source_stat.st_size,
-        "source_mtime_ns": source_stat.st_mtime_ns,
+        # Size is the cut's identity across copies: the bytes live in R2 and
+        # are materialized per job, so an mtime would describe the download.
+        "source_size": video_path.stat().st_size,
         "height": height,
         "frame_count": frame_count,
         "expected_frames": expected_frames,
@@ -196,7 +196,6 @@ def inspect_action_frame_cache(
     if ready and metadata and source_stat:
         ready = (
             metadata.get("source_size") == source_stat.st_size
-            and metadata.get("source_mtime_ns") == source_stat.st_mtime_ns
             and metadata.get("height") == height
             and metadata.get("frame_count") == frame_count
         )
