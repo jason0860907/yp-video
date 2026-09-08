@@ -33,7 +33,6 @@ from pathlib import Path
 from yp_video.action import prelabel
 from yp_video.action.spot_pass import RallyOptions, SpotOptions, run_spot_pass
 from yp_video.actor import policy as actor_policy
-from yp_video.actor import spot_associate
 from yp_video.config import RALLY_SPOT_PRE_ANNOTATIONS_DIR, SPOT_CHECKPOINTS_DIR
 from yp_video.core.jsonl import write_jsonl
 from yp_video.core.rallies import annotation_name, load_rallies, number_rallies
@@ -48,8 +47,9 @@ from yp_video.web.action_annotations import (
 )
 from yp_video.web.r2_client import materialized_cut
 
-#: The heads one checkpoint must carry to answer every stage.
-REQUIRED_TASKS = ("rally", "action", "actor")
+#: The heads the fusion checkpoint must carry. Association is the clip
+#: classifier's (a second checkpoint), not the fusion actor head's.
+REQUIRED_TASKS = ("rally", "action")
 
 #: Action inference scans each rally span with this much slack on both
 #: sides — the same cascade Action Predict and the selfhost worker run.
@@ -91,11 +91,11 @@ def default_checkpoint(root: Path = SPOT_CHECKPOINTS_DIR) -> str:
 
 def resolve_checkpoint(value: str) -> Path:
     """The checkpoint file behind ``value`` (the newest fusion package when
-    empty), verified to carry every head the stages need."""
+    empty), verified to carry every head the SPOT stages need."""
     ref = value or default_checkpoint()
     if not ref:
         raise FileNotFoundError(
-            "No SPOT package serves rally, action and actor together; "
+            "No SPOT package serves rally and action together; "
             "train an Action + Rally + Winner recipe on the Train page first"
         )
     checkpoint = prelabel.resolve_checkpoint(ref)
@@ -106,9 +106,6 @@ def resolve_checkpoint(value: str) -> Path:
             f"{checkpoint.parent.name} serves {tasks or 'no tasks'}; "
             f"Inference needs {', '.join(missing)} as well"
         )
-    reason = spot_associate.rejection(checkpoint)
-    if reason is not None:
-        raise ValueError(reason)
     return checkpoint
 
 
@@ -259,10 +256,13 @@ def run_detection_stage(*, video: Path, on_progress: StageProgress) -> dict:
 
 
 def run_association_stage(
-    *, video: Path, checkpoint: Path, on_progress: StageProgress
+    *, video: Path, clip_checkpoint: Path, on_progress: StageProgress
 ) -> dict:
+    """Who acted, by the per-player clip classifier: every candidate on the
+    event frame is cropped and scored, and the one most likely to have done
+    the event's action is written into the records."""
     progress = _fractional(on_progress)
-    plan = actor_policy.SpotPlan(checkpoint)
+    plan = actor_policy.ClipPlan(clip_checkpoint)
     return reassociate.reassociate_video(
         video, plan.build(video, progress), on_progress=progress
     )
@@ -312,6 +312,7 @@ def run_video(
     *,
     video: Path,
     checkpoint: Path,
+    clip_checkpoint: Path,
     rally: RallyOptions,
     action_min_score: float,
     spot: SpotOptions,
@@ -384,7 +385,7 @@ def run_video(
             result.skipped["association"] = skip
         else:
             result.association = run_association_stage(
-                video=video, checkpoint=checkpoint, on_progress=stage_progress(4),
+                video=video, clip_checkpoint=clip_checkpoint, on_progress=stage_progress(4),
             )
 
     on_progress(total, total, "done")

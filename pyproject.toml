@@ -48,6 +48,8 @@ yp-vlm-segment = "yp_video.core.vlm_segment:main"
 yp-vlm-to-rally = "yp_video.core.vlm_to_rally:main"
 # Per-player action clips for a person-centric classifier (actor/clips.py)
 yp-action-clips = "yp_video.web.action_clips:main"
+# Package a yp_spot.clips.train run for the Inference page's association stage
+yp-clip-package = "yp_video.actor.clip_associate:main"
 
 [build-system]
 requires = ["hatchling"]

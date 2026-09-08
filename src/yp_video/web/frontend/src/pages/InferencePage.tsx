@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { API, apiFetch, errMsg } from '@/lib/api';
+import { cn } from '@/lib/cn';
+import { fieldCls } from '@/components/form/Field';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -23,6 +25,7 @@ import type { InferenceVideo, Job } from '@/types/api';
 
 interface PredSettings {
   checkpoint: string;
+  clip_checkpoint: string;
   rally_min_score: number;
   max_gap_s: number;
   min_duration_s: number;
@@ -35,6 +38,7 @@ interface PredSettings {
 }
 const DEFAULTS: PredSettings = {
   checkpoint: '',
+  clip_checkpoint: '',
   rally_min_score: 0.5,
   max_gap_s: 2.0,
   min_duration_s: 4,
@@ -80,6 +84,15 @@ export function InferencePage() {
     API.inference.spot,
   );
 
+  const clipCheckpoints = spot?.clip_checkpoints ?? [];
+  useEffect(() => {
+    if (spot?.default_clip_checkpoint && !settings.clip_checkpoint) {
+      setSettings((s) => ({ ...s, clip_checkpoint: spot.default_clip_checkpoint ?? '' }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [spot?.default_clip_checkpoint, settings.clip_checkpoint]);
+
+  const ready = spotReady && clipCheckpoints.length > 0;
   const videos = videosQuery.data ?? [];
   const completeCount = videos.filter(complete).length;
   const runningCount = jobs.filter((j) => j.status === 'running').length;
@@ -109,6 +122,7 @@ export function InferencePage() {
         body: {
           videos: names,
           checkpoint: settings.checkpoint,
+          clip_checkpoint: settings.clip_checkpoint,
           rally_min_score: settings.rally_min_score,
           max_gap_s: settings.max_gap_s,
           min_duration_s: settings.min_duration_s,
@@ -134,6 +148,7 @@ export function InferencePage() {
           <Prereqs
             extras={[
               { label: 'Fusion Checkpoint', hint: 'Train an Action + Rally + Winner recipe on the Train page' },
+              { label: 'Clip Classifier', hint: 'Train yp_spot.clips and package it with yp-clip-package' },
             ]}
           />
         }
@@ -142,7 +157,7 @@ export function InferencePage() {
             <Button size="sm" onClick={() => navigate('/label?mode=rally')}>
               Open Label
             </Button>
-            <Button intent="primary" onClick={run} disabled={!spotReady}>
+            <Button intent="primary" onClick={run} disabled={!ready}>
               Run Inference
             </Button>
           </>
@@ -166,10 +181,28 @@ export function InferencePage() {
           defaultCheckpoint={spot?.default_checkpoint}
           numFields={NUM_FIELDS}
           overwriteLabel="Redo stages that already have output"
-          runDisabled={!spotReady}
+          runDisabled={!ready}
           onRun={run}
           runLabel="Run Inference"
-        />
+        >
+          <div className="col-span-2">
+            <label className="mb-1 block text-[10px] uppercase tracking-wide text-text-muted">
+              Clip Classifier (association)
+            </label>
+            <select
+              value={settings.clip_checkpoint}
+              onChange={(e) => setSettings((s) => ({ ...s, clip_checkpoint: e.target.value }))}
+              className={cn(fieldCls, 'cursor-pointer appearance-none')}
+            >
+              {clipCheckpoints.length === 0 && <option value="">No clip classifier</option>}
+              {clipCheckpoints.map((c) => (
+                <option key={c.path} value={c.path}>
+                  {c.name} · epoch {c.epoch}
+                </option>
+              ))}
+            </select>
+          </div>
+        </PredictConfigCard>
 
         <Card>
           <VideoMultiSelectList

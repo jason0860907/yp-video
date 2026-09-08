@@ -276,3 +276,67 @@ class SpotPlan:
             video, self._checkpoint, on_progress=on_progress
         )
         return SpotActorPolicy(answers, name=self._checkpoint.parent.name)
+
+
+class ClipActorPolicy(ImmediatePolicy):
+    """The per-player clip classifier's choice, read back per event.
+
+    Like ``SpotActorPolicy`` it names a tracklet and ignores
+    ``contact_usable`` — the classifier looked at the player's own crops.
+    It also brings the contact point it saw, in source-frame pixels, which
+    rides along in the diagnostic.
+    """
+
+    needs_tracklets = True
+
+    def __init__(self, answers, name: str):
+        self._answers = answers
+        self._name = name
+
+    @property
+    def name(self) -> str:
+        return f"clips:{self._name}"
+
+    def decide(self, context: EventContext) -> ActorPick:
+        if context.event_id is None:
+            return ActorPick()
+        answer = self._answers.get(context.event_id)
+        candidates = len(context.tracks) if context.tracks is not None else 0
+        if answer is None:
+            return ActorPick(
+                candidates=candidates,
+                diagnostic={"version": self.name, "decision": DecisionReason.ABSTAINED.value},
+            )
+        return ActorPick(
+            track=answer.track,
+            candidates=candidates,
+            diagnostic={
+                "version": self.name,
+                "decision": DecisionReason.SELECTED.value,
+                "confidence": round(answer.confidence, 4),
+                "contact_px": answer.contact_px,
+            },
+        )
+
+
+class ClipPlan:
+    """The clip classifier: crops every candidate of every event from the
+    video and scores them in one subprocess, so the per-event policy exists
+    only after ``build``. Names a tracklet, hence ``needs_tracklets``."""
+
+    needs_tracklets = True
+
+    def __init__(self, checkpoint: Path):
+        self._checkpoint = checkpoint
+
+    @property
+    def name(self) -> str:
+        return f"clips:{self._checkpoint.parent.name}"
+
+    def build(
+        self, video: Path, on_progress: ProgressFn | None = None
+    ) -> ActorPolicy:
+        from yp_video.actor import clip_associate  # noqa: PLC0415
+
+        answers = clip_associate.run(video, self._checkpoint, on_progress=on_progress)
+        return ClipActorPolicy(answers, name=self._checkpoint.parent.name)

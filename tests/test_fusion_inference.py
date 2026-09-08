@@ -31,7 +31,7 @@ class CheckpointTests(unittest.TestCase):
             root = Path(tmp)
             _make_package(root, "fusion", ["action", "location", "actor", "rally", "winner"])
             _make_package(root, "rally_only", ["rally", "winner"])
-            _make_package(root, "assoc_only", ["action", "location", "actor"])
+            _make_package(root, "action_only", ["action", "location"])
             rows = fi.list_checkpoints(root)
             self.assertEqual([row["experiment"] for row in rows], ["fusion"])
             self.assertTrue(fi.default_checkpoint(root).endswith("fusion/checkpoint_best.pt"))
@@ -51,7 +51,7 @@ class CheckpointTests(unittest.TestCase):
             ):
                 fi.resolve_checkpoint("rally_only/checkpoint_best.pt")
             self.assertIn("action", str(ctx.exception))
-            self.assertIn("actor", str(ctx.exception))
+            self.assertNotIn("actor", str(ctx.exception))
 
     def test_resolve_without_any_fusion_package_is_not_found(self):
         with (

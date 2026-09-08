@@ -409,6 +409,9 @@ ACTOR_WINDOW_OFFSETS = tuple(
 # ``manifest["tasks"]``, and every reader — init-checkpoint pickers, predict
 # surfaces — asks for the task it needs.
 SPOT_PACKAGE_TYPE = "yp-video-spot-checkpoint"
+# The per-player clip classifier (yp_spot.clips): one action + contact
+# point per (event, tracklet). Packaged by ``actor/clip_associate.py``.
+CLIP_PACKAGE_TYPE = "yp-video-clip-checkpoint"
 
 
 class ActorTargetKind(str, Enum):

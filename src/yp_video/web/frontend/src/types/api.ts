@@ -415,6 +415,9 @@ export interface SpotInfo {
   spot_dir?: string;
   checkpoints?: SpotCheckpoint[];
   default_checkpoint?: string;
+  /** Per-player clip classifier packages (Inference's association stage). */
+  clip_checkpoints?: SpotCheckpoint[];
+  default_clip_checkpoint?: string;
   error?: string;
 }
 
