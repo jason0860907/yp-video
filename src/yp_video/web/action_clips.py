@@ -54,8 +54,12 @@ def main() -> None:
             print(f"[{n}/{len(videos)}] {stem}: kept existing clips", flush=True)
             continue
         started = time.monotonic()
+        samples, tally = clips.plan_samples(stem, clips.load_events(stem))
         with materialized_cut(cut) as local:
-            counts = clips.export_video(stem, local, args.out)
+            counts = clips.export_video(
+                stem, local, args.out, samples,
+                counts={f"target_{k}": v for k, v in tally.items()},
+            )
         for key, value in counts.items():
             totals[key] = totals.get(key, 0) + value
         print(

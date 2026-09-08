@@ -56,10 +56,13 @@ class Sample:
     event_id: str
     frame: int
     track: str
-    label: str
-    #: ``positive`` (the named actor) or ``negative`` (another player).
+    #: An action, ``none`` for a negative, None for an unlabelled candidate.
+    label: str | None
+    #: ``positive`` (the named actor), ``negative`` (another player) or
+    #: ``candidate`` (inference: every player, no answer yet).
     role: str
     contact: list[float] | None
+    contact_visible: bool
     #: Normalized box per offset; None where the tracklet had no box there.
     boxes: tuple[Box | None, ...]
 
@@ -93,11 +96,10 @@ def load_events(stem: str) -> list[dict]:
 
 
 def plan_samples(stem: str, events: Sequence[dict]) -> tuple[list[Sample], dict]:
-    """Every sample this video yields, and ``candidates.build``'s tally.
-
-    Only events whose actor resolved to a tracklet produce samples: an
-    occluded verdict has no player to crop, and an untracked one has no box.
-    """
+    """Every training sample this video yields, and ``candidates.build``'s
+    tally. Only events whose actor resolved to a tracklet produce samples:
+    an occluded verdict has no player to crop, and an untracked one has no
+    box."""
     rows, tally = candidates.build(stem, events)
     labels = {event_id(e): str(e["label"]) for e in events}
     samples: list[Sample] = []
@@ -106,24 +108,32 @@ def plan_samples(stem: str, events: Sequence[dict]) -> tuple[list[Sample], dict]
             continue
         target = int(row["target"])
         cands = row["candidates"]
-        contact = row.get("contact")
-        samples.append(
-            Sample(
-                event_id=row["id"], frame=int(row["frame"]),
-                track=cands[target]["track"], label=labels[row["id"]],
-                role="positive", contact=contact,
-                boxes=_boxes(cands[target]["boxes"]),
-            )
-        )
-        for other in pick_negatives(row["id"], [c for i, c in enumerate(cands) if i != target]):
-            samples.append(
-                Sample(
-                    event_id=row["id"], frame=int(row["frame"]),
-                    track=other["track"], label=NONE_LABEL, role="negative",
-                    contact=contact, boxes=_boxes(other["boxes"]),
-                )
-            )
+        samples.append(_sample(row, cands[target], labels[row["id"]], "positive"))
+        others = [c for i, c in enumerate(cands) if i != target]
+        samples += [
+            _sample(row, other, NONE_LABEL, "negative")
+            for other in pick_negatives(row["id"], others)
+        ]
     return samples, tally
+
+
+def plan_candidates(stem: str, events: Sequence[dict]) -> list[Sample]:
+    """Every candidate of every event, unlabelled — what inference scores.
+    Built by the same code training's positives came from."""
+    return [
+        _sample(row, cand, None, "candidate")
+        for row in candidates.candidates_only(stem, events)
+        for cand in row["candidates"]
+    ]
+
+
+def _sample(row: dict, cand: dict, label: str | None, role: str) -> Sample:
+    return Sample(
+        event_id=row["id"], frame=int(row["frame"]), track=cand["track"],
+        label=label, role=role, contact=row.get("contact"),
+        contact_visible=bool(row.get("contact_visible", True)),
+        boxes=_boxes(cand["boxes"]),
+    )
 
 
 def pick_negatives(seed: str, others: Sequence[dict]) -> list[dict]:
@@ -239,13 +249,15 @@ def export_video(
     stem: str,
     video_path: Path,
     clips_dir: Path,
+    samples: Sequence[Sample],
+    *,
+    counts: dict | None = None,
     on_progress: ProgressFn | None = None,
 ) -> dict:
-    """Write every sample of one video: mosaics under ``clips_dir/<stem>/``
-    and the index at ``clips_dir/<stem>_clips.jsonl``. Returns the counts
-    the index header carries."""
-    events = load_events(stem)
-    samples, tally = plan_samples(stem, events)
+    """Write the samples of one video: mosaics under ``clips_dir/<stem>/``
+    and the index at ``clips_dir/<stem>_clips.jsonl``. ``counts`` is
+    whatever the planner tallied; the export's own counts join it and the
+    total is returned as written into the index header."""
 
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
@@ -293,12 +305,12 @@ def export_video(
             on_progress(done, len(wanted), f"{written} clips written")
 
     counts = {
+        **(counts or {}),
         "samples": len(samples),
         "positives": sum(s.role == "positive" for s in samples),
         "negatives": sum(s.role == "negative" for s in samples),
-        "events": len(events),
+        "candidates": sum(s.role == "candidate" for s in samples),
         "missing_frames": missing_frames,
-        **{f"target_{k}": v for k, v in tally.items()},
     }
     write_jsonl(
         index_path(clips_dir, stem),
@@ -321,8 +333,12 @@ def export_video(
                 "label": s.label,
                 "role": s.role,
                 "contact": s.contact,
+                "contact_visible": s.contact_visible,
                 "boxes": [None if b is None else list(b) for b in s.boxes],
                 "present": present[i],
+                # Pixel (x, y, side) of each crop in the source frame: what
+                # maps a point between crop and frame coordinates.
+                "squares": [list(sq) for sq in squares[i]],
                 "file": f"{stem}/{s.file}",
             }
             for i, s in enumerate(samples)
