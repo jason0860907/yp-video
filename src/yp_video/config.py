@@ -91,6 +91,11 @@ ACTION_FRAMES_DIR = VIDEOS_DIR / "action" / "frames"
 # ("none" backend) needs nothing here.
 ACTION_AUDIO_DIR = VIDEOS_DIR / "action" / "audio"
 ACTION_WAVEFORMS_DIR = VIDEOS_DIR / "action" / "waveforms"
+# Per-player action clips (actor/clips.py): the native-resolution crops of
+# one tracked player around one event, the unit a person-centric action
+# classifier trains on. Derived — rebuildable from action + actor
+# annotations, tracks and the cut — so deliberately absent from R2_CATEGORIES.
+ACTION_CLIPS_DIR = VIDEOS_DIR / "action" / "clips"
 # Every SPOT checkpoint package (any recipe: rally, action, fusion) and the
 # independent association packages, in one place; readers pick by the task a
 # package's manifest declares, not by directory.

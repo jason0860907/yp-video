@@ -46,6 +46,8 @@ yp-app = "yp_video.web.app:run_server"
 yp-download = "yp_video.youtube.download:main"
 yp-vlm-segment = "yp_video.core.vlm_segment:main"
 yp-vlm-to-rally = "yp_video.core.vlm_to_rally:main"
+# Per-player action clips for a person-centric classifier (actor/clips.py)
+yp-action-clips = "yp_video.web.action_clips:main"
 
 [build-system]
 requires = ["hatchling"]
