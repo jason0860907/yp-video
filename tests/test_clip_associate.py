@@ -33,12 +33,21 @@ class DecisionTests(unittest.TestCase):
         self.assertEqual(answer.contact_px, (10.0, 20.0))
         self.assertEqual(ca.decide_event("block", rows).track.key, "1:2")
 
-    def test_abstains_when_the_best_candidate_disagrees_with_the_label(self) -> None:
+    def test_abstains_when_nobody_beats_their_own_none(self) -> None:
         rows = [
             _scored("1:1", none=0.6, spike=0.3, block=0.1),
             _scored("1:2", none=0.7, spike=0.2, block=0.1),
         ]
         self.assertIsNone(ca.decide_event("spike", rows))
+
+    def test_label_need_not_be_the_candidates_top_class(self) -> None:
+        # The leading candidate reads mostly as a setter, but "spike" still
+        # beats "none" for them and nobody else comes close: they are named.
+        rows = [
+            _scored("1:1", none=0.2, spike=0.35, set=0.45),
+            _scored("1:2", none=0.8, spike=0.1, set=0.1),
+        ]
+        self.assertEqual(ca.decide_event("spike", rows).track.key, "1:1")
 
     def test_unknown_label_is_nobody(self) -> None:
         self.assertIsNone(ca.decide_event("score", [_scored("1:1", none=0.5, spike=0.5)]))

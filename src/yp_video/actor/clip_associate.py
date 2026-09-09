@@ -8,8 +8,10 @@ candidate the class probabilities plus a contact point coming back.
 
 Deciding is then a comparison, not a threshold: the event's label says
 what happened, so the actor is the candidate the classifier rates most
-likely to have done THAT — and only if it is also that candidate's own
-best answer. If nobody on the frame reads as a spiker, nobody is named.
+likely to have done THAT — provided the classifier finds that reading more
+likely than "this player did nothing". Requiring the label to be the
+candidate's single best class was measured too strict: set and spike went
+unnamed a tenth of the time while the right player still led the field.
 """
 
 from __future__ import annotations
@@ -157,8 +159,9 @@ def resolve_checkpoint(value: str, root: Path = SPOT_CHECKPOINTS_DIR) -> Path:
 
 
 def decide_event(label: str, scored: Sequence[dict]) -> ClipAnswer | None:
-    """The candidate most likely to have performed ``label``, if that is also
-    its own top class; None when nobody on the frame reads as doing it."""
+    """The candidate most likely to have performed ``label``, if the
+    classifier rates that above the candidate having done nothing; None
+    when nobody on the frame reads as doing it."""
     best = None
     for row in scored:
         probs = row["probs"]
@@ -169,7 +172,7 @@ def decide_event(label: str, scored: Sequence[dict]) -> ClipAnswer | None:
     if best is None:
         return None
     probs = best["probs"]
-    if max(probs, key=probs.get) != label:
+    if probs[label] <= probs[clips.NONE_LABEL]:
         return None
     contact = best.get("contact_px")
     return ClipAnswer(
