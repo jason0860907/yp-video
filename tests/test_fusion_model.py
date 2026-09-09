@@ -49,7 +49,7 @@ class FusionModelStatusTests(unittest.TestCase):
         self.assertEqual(recipes["rally_winner"]["defaults"]["sample_fps"], 5.0)
         self.assertEqual(
             recipes["action_rally_winner"]["tasks"],
-            ["action", "location", "actor", "rally", "winner"],
+            ["action", "location", "actor", "rally", "winner", "person"],
         )
         self.assertEqual(
             recipes["action_rally_winner"]["defaults"]["action_sample_fps"],
@@ -149,7 +149,7 @@ class BuildCommandTests(unittest.TestCase):
             audio_dir=None,
         )
         joined = " ".join(cmd)
-        self.assertIn("--tasks action,location,actor,rally,winner", joined)
+        self.assertIn("--tasks action,location,actor,rally,winner,person", joined)
         self.assertIn("--task_sample_fps action=30.0", joined)
         self.assertIn("--task_sample_fps rally=5.0", joined)
         self.assertIn("--task_sample_fps winner=5.0", joined)

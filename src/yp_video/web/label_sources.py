@@ -1,9 +1,10 @@
 """How each recipe family turns its annotation corpus into a run's label snapshot.
 
 A SPOT stream reads one label directory plus optional task sidecars. Rally recipes draw from the
-rally annotations at a reduced extraction fps; action recipes from the action
-annotations at native fps, plus the actor-candidate sidecar when the actor
-head is trained. A mixed recipe carries both directories explicitly.
+rally annotations at a reduced extraction fps, plus the person-box sidecar
+(the tracker's boxes) when the person head is trained; action recipes from
+the action annotations at native fps, plus the actor-candidate sidecar when
+the actor head is trained. A mixed recipe carries both directories explicitly.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from yp_video.action import rally as rally_spot
 from yp_video.action import training
 from yp_video.action.frames import ensure_action_frame_caches
 from yp_video.actor import labels as association_labels
+from yp_video.actor.person_labels import write_person_labels
 from yp_video.actor.training_labels import prepare_action_training_labels
 from yp_video.config import ACTION_FRAMES_DIR
 from yp_video.core.rallies import ANNOTATION_SUFFIX
@@ -76,11 +78,17 @@ class RallySource:
         )
         label_dir = save_dir / "labels" / TASKS["rally"].label_subdir
         summary = rally_spot.write_training_labels(items, label_dir=label_dir)
+        extra_args: list[str] = []
+        if "person" in recipe.tasks:
+            person_dir = save_dir / "labels" / TASKS["person"].label_subdir
+            summary["person"] = write_person_labels(items, label_dir=person_dir)
+            extra_args = ["--person_dir", str(person_dir)]
         return PreparedLabels(
             label_dirs={"rally": label_dir},
             label_subdirs=label_subdirs(recipe.tasks),
             frame_dir=ACTION_FRAMES_DIR,
             dataset="yp_rally",
+            extra_args=extra_args,
             summary={**summary, "missing_videos": missing},
             all_stems={video_path.stem for _ann, video_path in items},
         )
@@ -159,7 +167,7 @@ class MultiSource:
             label_subdirs=label_subdirs(recipe.tasks),
             frame_dir=action.frame_dir,
             dataset="yp_action_rally",
-            extra_args=action.extra_args,
+            extra_args=[*action.extra_args, *rally.extra_args],
             summary={
                 "action": action.summary,
                 "rally": rally.summary,
@@ -187,13 +195,16 @@ def check_task_supervision(recipe: Recipe, prepared: PreparedLabels) -> None:
     """
     summary = prepared.summary
     action_summary = summary.get("action", summary)
+    rally_summary = summary.get("rally", summary)
     present = {
         "winner": bool(summary.get("rallies_with_winner")),
         "actor": bool((action_summary.get("actor_targets") or {}).get("track")),
+        "person": bool((rally_summary.get("person") or {}).get("boxes")),
     }
     hints = {
         "winner": "annotate the winning side in the rally editor first",
         "actor": "review actors in Association Label first",
+        "person": "run Rally Tracking on the rally-annotated videos first",
     }
     for task in recipe.tasks:
         if task in present and not present[task]:

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "YP Action-Spotting Label Contract",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "Source of truth for the *_actions.jsonl label records and frame cache layout exchanged between yp-video (producer) and yp-spot (consumer). Generated from yp_video/contracts/action.py via make_schema.py \u2014 do not edit by hand. yp-spot mirrors these constants in yp_spot/contract.py under the same version.",
   "x-frame-layout": {
     "height": 224,
@@ -87,6 +87,20 @@
       ],
       "primary_metric": "player_top1",
       "serveable": true,
+      "loss_weight": 1.0
+    },
+    "person": {
+      "name": "person",
+      "label": "Person",
+      "kind": "aux",
+      "label_subdir": "person-boxes",
+      "label_glob": "*_person.npz",
+      "event_fields": [],
+      "requires": [
+        "rally"
+      ],
+      "primary_metric": "person_ap50",
+      "serveable": false,
       "loss_weight": 1.0
     }
   },
@@ -190,15 +204,16 @@
     },
     "action_rally_winner": {
       "id": "action_rally_winner",
-      "name": "Association + Action + Rally + Winner",
+      "name": "Association + Action + Rally + Winner + Person",
       "tasks": [
         "action",
         "location",
         "actor",
         "rally",
-        "winner"
+        "winner",
+        "person"
       ],
-      "description": "One backbone; Action uses audio and geometry supervision, Rally/Winner are visual-only.",
+      "description": "One backbone; Action uses audio and geometry supervision, Rally/Winner are visual-only, Person distils the tracker's boxes on the rally stream.",
       "fields": [
         "action_sample_fps",
         "rally_sample_fps",

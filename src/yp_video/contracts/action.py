@@ -25,7 +25,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 # Bump on ANY breaking change to the label record, frame layout, or label set.
-ACTION_CONTRACT_VERSION = "3.0.0"
+ACTION_CONTRACT_VERSION = "3.1.0"
 
 # Env var carrying ACTION_CONTRACT_VERSION from producer to consumer.
 ACTION_CONTRACT_VERSION_ENV = "YP_ACTION_CONTRACT_VERSION"
@@ -129,6 +129,14 @@ TASKS: dict[str, TaskSpec] = {
         TaskSpec(
             "actor", "Actor", "aux", "actor-candidates", "*_actor_candidates.jsonl",
             (), ("action", "location"), "player_top1", True,
+        ),
+        # Where the people are, per frame: the model's own boxes, distilled
+        # from the tracker (actor/person_labels.py writes the sidecar from
+        # tracks). Rides the rally stream — rally spans are where tracking
+        # ran — so every tracked video supervises it, action labels or not.
+        TaskSpec(
+            "person", "Person", "aux", "person-boxes", "*_person.npz",
+            (), ("rally",), "person_ap50", False,
         ),
     )
 }
@@ -281,9 +289,10 @@ RECIPES: dict[str, Recipe] = {
         ),
         Recipe(
             "action_rally_winner",
-            "Association + Action + Rally + Winner",
-            ("action", "location", "actor", "rally", "winner"),
-            "One backbone; Action uses audio and geometry supervision, Rally/Winner are visual-only.",
+            "Association + Action + Rally + Winner + Person",
+            ("action", "location", "actor", "rally", "winner", "person"),
+            "One backbone; Action uses audio and geometry supervision, Rally/Winner are "
+            "visual-only, Person distils the tracker's boxes on the rally stream.",
             _MULTI_FPS_FIELDS,
             _MULTI_FPS_DEFAULTS,
         ),
