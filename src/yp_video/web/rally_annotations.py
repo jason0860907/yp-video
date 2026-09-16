@@ -1,8 +1,7 @@
 """The rally editor's save: one row schema, one atomic writer.
 
-Shared by the annotate router (the editor's save endpoint) and
-scripts/anchor_rally_edges.py, which rewrites annotation files outside the
-server. Both must mint ids the same way, or the ledger stops being one.
+Used by the annotate router to mint stable ids for editor saves. Offline
+boundary adjustment preserves existing ids and fields through core.jsonl.
 """
 
 from __future__ import annotations

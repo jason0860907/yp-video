@@ -195,15 +195,6 @@ export function AssociationPanel({ video, clock }: { video: string; clock?: Play
           </p>
         </Card>
       )}
-      {pickedVideo && !pickedVideo.pipeline.has_masks && pickedVideo.pipeline.has_tracks && (
-        <Card>
-          <p className="text-xs text-text-muted">
-            Tracking for this video predates instance masks — the picker falls back to
-            box overlap when resolving who you clicked. Re-run Rally Tracking to restore it.
-          </p>
-        </Card>
-      )}
-
       {video && meta.fps && meta.frame_size && (
         <EventVideoPlayer
           ref={playerRef}

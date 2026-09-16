@@ -64,11 +64,8 @@ const hasDetections = (v: InferenceVideo) => v.pipeline.has_records;
 const complete = (v: InferenceVideo) =>
   v.has_rally_spot && v.has_action_pre && v.tracks_current && hasDetections(v);
 
-/** Every answer the fusion model gives, in one run per video: rally spans
- *  and winners, action events inside them, and who acted. Tracking and
- *  player detection run in between — the actor head picks among tracklets
- *  and writes into the detection records — so one run leaves nothing for
- *  the single-stage pages to do. */
+/** Fusion supplies rallies, actions and person boxes in one decode.
+ *  ByteTrack links the boxes; a player clip classifier chooses who acted. */
 export function InferencePage() {
   const navigate = useNavigate();
   const [selected, setSelected] = useState<Set<string>>(new Set());

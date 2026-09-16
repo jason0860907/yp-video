@@ -1,16 +1,8 @@
-"""One fusion checkpoint, every answer it gives for a video.
+"""Fusion rally/action/person inference → ByteTrack → clip association.
 
-Stages per video, in pipeline order: rally (the spans, and who won each)
-→ action (events, kept inside those spans) → tracking (who is on court over
-each rally) → detection (everyone on each event frame) → association (who
-acted, chosen among the tracklets). Rally and action share one decode pass
-of the video (``run_spot_stages``). Tracking and detection are not the
-fusion model's — the person detector is — but the actor head answers by
-naming a tracklet and writes its pick into the detection records, so
-without them the checkpoint's third head has nothing to choose from and
-nowhere to put its answer. Running them here, in this order, is also what
-makes detection nearly free: the dense tracking pass keeps its raw
-detections for the event frames it just learned about.
+One SPOT decode supplies both temporal predictions and person boxes.
+Tracking and event detection consume those boxes without another detector
+or image decode. The separate clip classifier chooses who acted.
 
 Each stage writes the same machine store the single-stage page writes, so
 the label editors, the work lists and the pipeline chips see no difference
@@ -39,8 +31,13 @@ from yp_video.core.rallies import annotation_name, load_rallies, number_rallies
 from yp_video.extraction import reassociate
 from yp_video.extraction.pipeline import detect_video, detections_current, load_events
 from yp_video.extraction.store import records_path
-from yp_video.tracklets import tracking
-from yp_video.tracklets.store import tracks_current, tracks_path
+from yp_video.person.boxes import (
+    DETECTOR_NAME,
+    person_boxes_current,
+    person_boxes_path,
+)
+from yp_video.tracklets.fusion import fusion_tracks_current, track_person_boxes
+from yp_video.tracklets.store import tracks_path
 from yp_video.web.action_annotations import (
     pre_annotation_path,
     save_spot_pre_annotation,
@@ -49,7 +46,7 @@ from yp_video.web.r2_client import materialized_cut
 
 #: The heads the fusion checkpoint must carry. Association is the clip
 #: classifier's (a second checkpoint), not the fusion actor head's.
-REQUIRED_TASKS = ("rally", "action")
+REQUIRED_TASKS = ("rally", "action", "person")
 
 #: Action inference scans each rally span with this much slack on both
 #: sides — the same cascade Action Predict and the selfhost worker run.
@@ -95,8 +92,8 @@ def resolve_checkpoint(value: str) -> Path:
     ref = value or default_checkpoint()
     if not ref:
         raise FileNotFoundError(
-            "No SPOT package serves rally and action together; "
-            "train an Action + Rally + Winner recipe on the Train page first"
+            "No SPOT package serves rally, action and person together; "
+            "train and package a fusion model with a person head first"
         )
     checkpoint = prelabel.resolve_checkpoint(ref)
     tasks = package_tasks(checkpoint)
@@ -158,28 +155,25 @@ def run_spot_stages(
     spot: SpotOptions,
     on_progress: StageProgress,
 ) -> dict:
-    """The rally and/or action head, in ONE decode pass of the video
-    (``spot_pass.run_spot_pass``), each written to its machine store.
+    """Run a whole-video fusion pass; retain person boxes and requested labels.
 
-    When only action runs, the video's existing rallies (any source) bound
-    the scan — dead time only contributes false positives; a video without
-    any rally source scans in full.
+    Even if existing temporal labels are kept, person boxes need the whole
+    video and the dense action stream. Never seed this pass with rally spans.
     """
     tasks = tuple(tasks)
-    known_rallies = load_rallies(video.stem) if "rally" not in tasks else None
     result = run_spot_pass(
         source,
         checkpoint=checkpoint,
-        tasks=tasks,
+        tasks=("rally", "action"),
         rally=rally,
         spot=spot,
         rally_pad_s=RALLY_PAD_S,
         action_min_score=action_min_score,
-        rallies=known_rallies or None,
+        person_output=person_boxes_path(video.stem),
         on_progress=lambda fraction: on_progress(fraction, "inference"),
     )
     out: dict = {"written": []}
-    if result.rallies is not None:
+    if "rally" in tasks and result.rallies is not None:
         on_progress(1.0, "saving rallies")
         path, count = save_rally_pre_annotation(
             video=video, duration_s=result.duration_s, segments=result.rallies,
@@ -187,7 +181,7 @@ def run_spot_stages(
         )
         out["rallies"] = count
         out["written"].append((path, "rally-spot/pre-annotations"))
-    if result.actions is not None:
+    if "action" in tasks and result.actions is not None:
         on_progress(1.0, "saving events")
         data = save_spot_pre_annotation(
             video=video,
@@ -208,7 +202,7 @@ def tracking_skip(stem: str, *, overwrite: bool, rallies: bool) -> str | None:
     """Why tracking does not run for this video, or None to run it."""
     if not rallies:
         return "no rallies"
-    if not overwrite and tracks_current(stem):
+    if not overwrite and fusion_tracks_current(stem):
         return "kept existing tracks"
     return None
 
@@ -221,7 +215,7 @@ def detection_skip(
     survive that (see pipeline.detect_video)."""
     if not events:
         return "no action events"
-    if not overwrite and not action_ran and detections_current(stem):
+    if not overwrite and not action_ran and detections_current(stem, detector=DETECTOR_NAME):
         return "kept existing detections"
     return None
 
@@ -239,20 +233,15 @@ def association_skip(stem: str, *, events: bool) -> str | None:
 
 
 def run_tracking_stage(
-    *, video: Path, events: Sequence[dict], on_progress: StageProgress
+    *, video: Path, on_progress: StageProgress
 ) -> dict:
-    """Dense per-rally detection + ByteTrack. The event frames ride along so
-    their raw detections persist for the detection stage right after."""
-    return tracking.track_video(
-        video,
-        stride=1,
-        event_frames={int(event["frame"]) for event in events},
-        on_progress=_fractional(on_progress),
-    )
+    return track_person_boxes(video, on_progress=_fractional(on_progress))
 
 
 def run_detection_stage(*, video: Path, on_progress: StageProgress) -> dict:
-    return detect_video(video, on_progress=_fractional(on_progress))
+    return detect_video(
+        video, person_boxes=person_boxes_path(video.stem), on_progress=_fractional(on_progress)
+    )
 
 
 def run_association_stage(
@@ -344,12 +333,13 @@ def run_video(
         spot_plan = plan_spot_stages(stem, overwrite=overwrite)
         result.skipped.update({task: why for task, why in spot_plan.items() if why})
         spot_tasks = tuple(task for task, why in spot_plan.items() if why is None)
-        if spot_tasks:
+        person_ran = bool(spot_tasks) or not person_boxes_current(stem, checkpoint)
+        if person_ran:
             out = run_spot_stages(
                 video=video, source=str(video), checkpoint=checkpoint,
                 tasks=spot_tasks, rally=rally, action_min_score=action_min_score,
                 spot=spot,
-                on_progress=stage_progress(STAGES.index(spot_tasks[0]), len(spot_tasks)),
+                on_progress=stage_progress(0, 2),
             )
             result.rallies = out.get("rallies")
             result.events = out.get("events")
@@ -364,13 +354,13 @@ def run_video(
             result.skipped["tracking"] = skip
         else:
             counts = run_tracking_stage(
-                video=video, events=events, on_progress=stage_progress(2),
+                video=video, on_progress=stage_progress(2),
             )
             result.tracklets = counts["tracklets"]
 
         stage_progress(3)(0.0, "starting")
         skip = detection_skip(
-            stem, overwrite=overwrite, events=bool(events),
+            stem, overwrite=overwrite or person_ran or result.tracklets is not None, events=bool(events),
             action_ran="action" in spot_tasks,
         )
         if skip is not None:

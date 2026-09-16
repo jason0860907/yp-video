@@ -27,6 +27,7 @@ from yp_video.contracts.action import (
     SPOT_PARTIAL_PREFIX,
     SPOT_PROGRESS_PREFIX,
 )
+from yp_video.person.boxes import save_person_boxes
 
 
 class SpotInferenceError(RuntimeError):
@@ -89,6 +90,7 @@ def run_spot_inference(
     segments: Sequence[tuple[float, float]] | None = None,
     on_progress: Callable[[float], None] | None = None,
     on_events: Callable[[str, list[dict]], None] | None = None,
+    person_output: Path | None = None,
 ) -> dict[str, list[dict]]:
     """Run one yp-spot inference subprocess — one decode pass over the video
     for every head in ``tasks`` — and return ``{task: predictions}``.
@@ -102,6 +104,9 @@ def run_spot_inference(
     ``on_events(task, events)`` is progressive delivery: fired per settled
     batch with that head's cumulative event list so far (deltas accumulate,
     cumulative payloads replace) — one list per head, never merged.
+
+    ``person_output`` retains the fusion person's whole-video boxes. A
+    missing head or incomplete archive fails instead of running another detector.
 
     Raises:
         SpotInferenceError: yp-spot is not installed, or its inference
@@ -183,4 +188,12 @@ def run_spot_inference(
             raise SpotInferenceError(
                 f"yp-spot produced no predictions for {missing} under {save_dir}"
             )
+        if person_output is not None:
+            person_file = save_dir / "person" / "boxes.npz"
+            if not person_file.exists():
+                raise SpotInferenceError("Fusion checkpoint produced no person boxes; a person head is required")
+            try:
+                save_person_boxes(person_file, person_output, checkpoint)
+            except (KeyError, ValueError) as exc:
+                raise SpotInferenceError(f"Invalid fusion person output: {exc}") from exc
         return {task: prelabel.load_predictions(path) for task, path in pred_files.items()}

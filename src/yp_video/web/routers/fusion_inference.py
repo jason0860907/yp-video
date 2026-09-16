@@ -18,7 +18,7 @@ from yp_video.action.spot_pass import RallyOptions, SpotOptions
 from yp_video.actor import clip_associate
 from yp_video.config import SPOT_CHECKPOINTS_DIR, SPOT_DIR, cut_kind_of
 from yp_video.extraction.prerequisites import prerequisites
-from yp_video.tracklets.store import tracks_current
+from yp_video.tracklets.fusion import fusion_tracks_current
 from yp_video.web import fusion_inference
 from yp_video.web.action_annotations import pre_annotation_path
 from yp_video.web.job_helpers import init_batch_items, spawn_batch_video_job
@@ -32,7 +32,7 @@ router = APIRouter()
 
 class InferenceRequest(StrictModel):
     videos: list[str] = Field(min_length=1)
-    #: Fusion package for rally + action; empty = newest.
+    #: Fusion package for rally + action + person; empty = newest.
     checkpoint: str = ""
     #: Clip classifier package for association; empty = newest.
     clip_checkpoint: str = ""
@@ -62,7 +62,7 @@ def list_videos() -> list[dict]:
             "kind": cut_kind_of(path),
             "has_rally_spot": fusion_inference.rally_spot_pre_annotation_path(stem).exists(),
             "has_action_pre": pre_annotation_path(stem).exists(),
-            "tracks_current": tracks_current(stem),
+            "tracks_current": fusion_tracks_current(stem),
             "pipeline": prerequisites(stem).payload(),
         })
     return rows
@@ -83,8 +83,8 @@ def spot_info() -> dict:
     info["default_clip_checkpoint"] = clip_associate.default_checkpoint()
     if not checkpoints:
         info["error"] = (
-            f"No package under {SPOT_CHECKPOINTS_DIR} serves rally and action "
-            "together; train an Action + Rally + Winner recipe first."
+            f"No package under {SPOT_CHECKPOINTS_DIR} serves rally, action and person "
+            "together; train and package a fusion model with a person head first."
         )
     elif not clip_checkpoints:
         info["error"] = (

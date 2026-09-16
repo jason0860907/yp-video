@@ -64,6 +64,8 @@ from yp_video.extraction.store import (
     crop_dir,
     records_path,
 )
+from yp_video.person.boxes import DETECTOR_NAME as FUSION_DETECTOR_NAME
+from yp_video.person.boxes import PersonBoxes, person_boxes_path
 from yp_video.person.detector import (
     DETECTOR_NAME,
     PersonBox,
@@ -107,15 +109,22 @@ def load_events(stem: str) -> list[dict]:
     return events
 
 
-def detections_current(stem: str) -> bool:
-    """Whether the video's records were produced by the detector this build
-    expects. Output of a retired detector is deliberately pending: the
-    default job migrates it without anyone asking for Overwrite."""
+def detections_current(stem: str, *, detector: str = DETECTOR_NAME) -> bool:
+    """Whether the video's records came from the requested detector."""
     path = records_path(stem)
     if not path.exists():
         return False
     header, _ = read_jsonl_cached(path)
-    return (header.get("source") or {}).get("detector") == DETECTOR_NAME
+    source = header.get("source") or {}
+    if source.get("detector") != detector:
+        return False
+    if detector == FUSION_DETECTOR_NAME:
+        boxes_path = person_boxes_path(stem)
+        return (
+            boxes_path.exists()
+            and source.get("person_boxes_mtime_ns") == boxes_path.stat().st_mtime_ns
+        )
+    return True
 
 
 def _serialize_detections(boxes, w: int, h: int) -> list[dict]:
@@ -131,6 +140,7 @@ def detect_video(
     video_path: Path,
     *,
     on_progress: ProgressFn | None = None,
+    person_boxes: Path | None = None,
 ) -> dict:
     """Find every person on each annotated action frame. Decides nothing.
 
@@ -148,6 +158,10 @@ def detect_video(
     Records already on disk keep their association: a re-detect refreshes the
     candidate list, and re-deciding among the new one is the next stage's job.
     Returns the summary counts also written to the jsonl header.
+
+    ``person_boxes`` explicitly selects fusion's whole-video archive. Every
+    event reads its nearest sampled frame, with no image decode or RF-DETR.
+    Missing/invalid fusion output fails instead of switching detectors.
     """
     import cv2
 
@@ -172,10 +186,20 @@ def detect_video(
     # (same model, same resolution — see tracklets/tracking.py); every frame
     # it covered needs neither a seek nor a forward here. Frames it did not
     # cover (tracking not run yet, or the event moved since) decode as before.
-    cached = load_span_detections(stem, DETECTOR_NAME)
+    if person_boxes is not None:
+        people = PersonBoxes.load(person_boxes)
+        cached = {
+            e["frame"]: people.for_frame(int(e["frame"]), frame_w, frame_h)
+            for e in events
+        }
+        source = {"detector": FUSION_DETECTOR_NAME, "stride": people.stride,
+                  "person_boxes_mtime_ns": person_boxes.stat().st_mtime_ns}
+    else:
+        cached = load_span_detections(stem, DETECTOR_NAME)
+        source = {"detector": DETECTOR_NAME}
     to_decode = [e for e in events if e["frame"] not in cached]
 
-    detector = person_detector()
+    detector = person_detector() if person_boxes is None else None
     records: list[dict] = []
     total = len(events)
     if on_progress and to_decode:
@@ -216,7 +240,7 @@ def detect_video(
     def _cached_detections(rows) -> list[dict]:
         """Sidecar (n, 5) x0,y0,x1,y1,score rows → the serialized shape,
         detection-threshold filtered (the dense pass keeps a lower floor)."""
-        kept = rows[rows[:, 4] >= detector.score_threshold]
+        kept = rows if detector is None else rows[rows[:, 4] >= detector.score_threshold]
         return _serialize_detections(
             [PersonBox(tuple(map(float, row[:4])), float(row[4])) for row in kept],
             frame_w,
@@ -261,6 +285,7 @@ def detect_video(
             if from_cache:
                 record["detections"] = _cached_detections(cached[event["frame"]])
             elif ok:
+                assert detector is not None
                 pt = contact_point(xy, frame_w, frame_h)
                 # ALL person boxes, unfiltered — the actor picker and the
                 # association training set both need the ones a policy would
@@ -283,7 +308,7 @@ def detect_video(
     }
     header = {
         "video": stem,
-        "source": {"detector": DETECTOR_NAME},
+        "source": source,
         "frame_size": [frame_w, frame_h],
         "fps": fps,
         "created_at": time.time(),

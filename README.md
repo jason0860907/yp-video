@@ -16,6 +16,17 @@
 
 SPOT 模型本體住在獨立的 `~/yp-spot` repo（自己的 venv），yp-video 透過 subprocess + JSON 檔案跨進程呼叫它——這裡只負責組指令、解析 checkpoint、轉換輸出格式。
 
+Dashboard 的完整 **Inference** 使用含 `rally`、`action`、`person` 的 fusion
+checkpoint：一次解碼產生回合、事件與人物框，再以 ByteTrack 串成回合內的
+tracklet，最後由獨立的球員 clip classifier 選 actor。人物框保留在
+`tracks/<stem>_persons.npz`，tracking 與事件候選都讀同一份框，不會另跑
+RF-DETR。框保留原始 frame 編號與取樣 stride；這條路徑沒有 instance mask。
+RF-DETR 的獨立 tracking／detection 工具仍供離線標註使用。
+
+完整 Inference 若缺少人物框，會跑全片 fusion pass；已有的回合／動作預標註
+在未選 Overwrite 時保留。人物框會比對 checkpoint，新的框會使下游 tracking
+與事件候選重建。缺少 person head 或輸出不完整會直接報錯。
+
 ## 安裝
 
 ```bash

@@ -29,7 +29,8 @@ class CheckpointTests(unittest.TestCase):
     def test_only_packages_with_every_required_head_list(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            _make_package(root, "fusion", ["action", "location", "actor", "rally", "winner"])
+            _make_package(root, "fusion", ["action", "location", "actor", "rally", "winner", "person"])
+            _make_package(root, "without_people", ["action", "rally", "winner"])
             _make_package(root, "rally_only", ["rally", "winner"])
             _make_package(root, "action_only", ["action", "location"])
             rows = fi.list_checkpoints(root)
@@ -93,13 +94,13 @@ class PerceptionPlanTests(unittest.TestCase):
 
     def test_tracking_needs_rallies_and_keeps_only_matching_tracks(self):
         self.assertEqual(fi.tracking_skip("m", overwrite=False, rallies=False), "no rallies")
-        with patch.object(fi, "tracks_current", return_value=True):
+        with patch.object(fi, "fusion_tracks_current", return_value=True):
             self.assertEqual(fi.tracking_skip("m", overwrite=False, rallies=True), "kept existing tracks")
             self.assertIsNone(fi.tracking_skip("m", overwrite=True, rallies=True))
-        with patch.object(fi, "tracks_current", return_value=False):
+        with patch.object(fi, "fusion_tracks_current", return_value=False):
             self.assertIsNone(fi.tracking_skip("m", overwrite=False, rallies=True))
 
-    def test_tracks_are_current_only_with_masks_and_a_matching_fingerprint(self):
+    def test_maskless_tracks_are_current_but_segmented_tracks_require_masks(self):
         with tempfile.TemporaryDirectory() as tmp:
             tracks = Path(tmp) / "m.jsonl"
             masks = Path(tmp) / "m_masks.npz"
@@ -118,6 +119,10 @@ class PerceptionPlanTests(unittest.TestCase):
             self.assertTrue(check({"rallies": {"fingerprint": "abc"}}, fingerprint="abc"))
             self.assertFalse(check({"rallies": {"fingerprint": "abc"}}, fingerprint="moved"))
             self.assertFalse(
+                check({"rallies": {"fingerprint": "abc"}, "mask_res": [96, 48]},
+                      fingerprint="abc", masks_path=Path(tmp) / "none.npz")
+            )
+            self.assertTrue(
                 check({"rallies": {"fingerprint": "abc"}}, fingerprint="abc", masks_path=Path(tmp) / "none.npz")
             )
 
