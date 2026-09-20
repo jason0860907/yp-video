@@ -37,7 +37,8 @@ from yp_video.reid.embedder import DEFAULT_EMBEDDER, threshold_calibration
 _BANDS = {
     "tracking": (0, 62),
     "detecting": (62, 68),
-    "associating": (68, 80),
+    "associating": (68, 76),
+    "cropping": (76, 80),
     "embedding": (80, 94),
     "clustering": (94, 99),
 }
@@ -90,8 +91,7 @@ def identify_players(
     video_path: Path,
     *,
     embedder: str = DEFAULT_EMBEDDER,
-    association_checkpoint: Path | None = None,
-    tracking_stride: int = 1,
+    fusion_checkpoint: Path,
     reps_per_unit: int = 3,
     on_progress: ProgressFn | None = None,
 ) -> IdentifyResult:
@@ -101,36 +101,58 @@ def identify_players(
     spans (core/rallies.py) and an action annotation file
     (extraction/store.action_annotation_path). Raises when either is missing.
 
-    ``association_checkpoint`` selects the yp-spot actor head; ``None`` falls
-    back to the geometric rule policy, which needs no model but picks the
-    wrong player more often.
+    ``fusion_checkpoint`` pins one package: the temporal/person base weights
+    and its companion ``person_action.pt`` joint checkpoint.
     """
     # Deferred imports: this module is also imported for its dataclasses by
     # code that must not pull the GPU stack in.
-    from yp_video.actor.policy import RulePolicy, SpotPlan
+    import cv2
+
+    from yp_video.action.spot_pass import RallyOptions, SpotOptions, run_spot_pass
+    from yp_video.actor.person_action import build_policy
+    from yp_video.core.person_boxes import person_boxes_path
     from yp_video.extraction import links
     from yp_video.extraction.pipeline import detect_video, embed_video, load_events
     from yp_video.extraction.reassociate import reassociate_video
     from yp_video.reid import identity
-    from yp_video.tracklets.tracking import track_video
+    from yp_video.tracklets.fusion import track_person_boxes
 
     stem = video_path.stem
     events = load_events(stem)
     if not events:
         raise ValueError(f"No action events for {stem} — run Action Predict first")
 
-    track_video(
-        video_path,
-        stride=tracking_stride,
-        event_frames={int(e["frame"]) for e in events},
-        on_progress=_banded(on_progress, "tracking"),
+    person_action_checkpoint = fusion_checkpoint.with_name("person_action.pt")
+    if not person_action_checkpoint.is_file():
+        raise FileNotFoundError(f"Missing joint person/action weights: {person_action_checkpoint}")
+    tracking_cb = _banded(on_progress, "tracking")
+    run_spot_pass(
+        video_path, checkpoint=fusion_checkpoint, tasks=("rally", "action"),
+        rally=RallyOptions(min_score=0.5, max_gap_s=2.0, min_duration_s=4.0),
+        spot=SpotOptions(batch_size=1, num_workers=0, clip_len=64), rally_pad_s=2.0,
+        person_output=person_boxes_path(stem),
+        on_progress=(lambda fraction: tracking_cb(int(fraction * 80), 100, "fusion person boxes"))
+        if tracking_cb else None,
     )
-    detect_video(video_path, on_progress=_banded(on_progress, "detecting"))
-
-    plan = SpotPlan(association_checkpoint) if association_checkpoint else RulePolicy()
+    track_person_boxes(
+        video_path,
+        on_progress=(lambda done, total, msg: tracking_cb(80 + int(20 * done / max(total, 1)), 100, msg))
+        if tracking_cb else None,
+    )
+    detect_video(video_path, person_boxes=person_boxes_path(stem),
+                 on_progress=_banded(on_progress, "detecting"))
+    cap = cv2.VideoCapture(str(video_path))
+    try:
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    finally:
+        cap.release()
+    if width <= 0 or height <= 0:
+        raise ValueError(f"Invalid video geometry: {video_path}")
     associate_cb = _banded(on_progress, "associating")
-    policy = plan.build(video_path, on_progress=associate_cb)
-    reassociate_video(video_path, policy, on_progress=associate_cb)
+    policy = build_policy(video_path, person_action_checkpoint, events,
+                          width=width, height=height, on_progress=associate_cb)
+    reassociate_video(video_path, policy, on_progress=_banded(on_progress, "cropping"))
 
     embed_video(stem, models=[embedder], on_progress=_banded(on_progress, "embedding"))
 
@@ -331,9 +353,8 @@ def _main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--video", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--assoc-checkpoint", type=Path, default=None)
+    parser.add_argument("--fusion-checkpoint", type=Path, required=True)
     parser.add_argument("--embedder", default=DEFAULT_EMBEDDER)
-    parser.add_argument("--stride", type=int, default=1)
     parser.add_argument("--reps-per-unit", type=int, default=3)
     args = parser.parse_args()
 
@@ -343,8 +364,7 @@ def _main() -> None:
     result = identify_players(
         args.video,
         embedder=args.embedder,
-        association_checkpoint=args.assoc_checkpoint,
-        tracking_stride=args.stride,
+        fusion_checkpoint=args.fusion_checkpoint,
         reps_per_unit=args.reps_per_unit,
         on_progress=report,
     )
