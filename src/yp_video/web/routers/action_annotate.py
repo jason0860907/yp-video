@@ -108,11 +108,13 @@ class SaveActionAnnotationsRequest(StrictModel):
 
 class SpotPrelabelOptions(StrictModel):
     checkpoint: str | None = None
-    batch_size: int = Field(default=16, ge=1, le=128)
+    # 448x448 letterbox inference keeps one clip on the GPU. Larger batches
+    # can exceed the 24 GiB worker even with AMP enabled.
+    batch_size: int = Field(default=1, ge=1, le=128)
     #: ffmpeg decode threads; 0 lets ffmpeg pick.
     num_workers: int = Field(default=0, ge=0, le=32)
     clip_len: int = Field(default=64, ge=8, le=256)
-    prefetch_factor: int = Field(default=SPOT_DEFAULT_PREFETCH_FACTOR, ge=1, le=8)
+    prefetch_factor: int = Field(default=1, ge=1, le=8)
     min_score: float = Field(default=0.15, ge=0, le=1)
     overwrite: bool = False
     stop_vllm: bool = False

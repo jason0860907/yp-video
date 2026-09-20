@@ -43,9 +43,9 @@ const DEFAULTS: PredSettings = {
   max_gap_s: 2.0,
   min_duration_s: 4,
   action_min_score: 0.15,
-  batch_size: 16,
+  batch_size: 1,
   clip_len: 64,
-  num_workers: 4,
+  num_workers: 1,
   overwrite: false,
   stop_vllm: false,
 };

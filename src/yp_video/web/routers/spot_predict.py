@@ -75,9 +75,9 @@ class RallyPredictRequest(StrictModel):
     # Frames closer than this join one rally; also bridges the sampling stride.
     max_gap_s: float = Field(default=2.0, ge=0.0, le=30.0)
     min_duration_s: float = Field(default=4.0, ge=0.0, le=60.0)
-    batch_size: int = Field(default=8, ge=1, le=64)
+    batch_size: int = Field(default=1, ge=1, le=64)
     clip_len: int = Field(default=64, ge=8, le=256)
-    num_workers: int = Field(default=4, ge=1, le=32)
+    num_workers: int = Field(default=1, ge=1, le=32)
     prefetch_factor: int | None = Field(default=None, ge=1, le=16)
     use_amp: bool = True
     overwrite: bool = False

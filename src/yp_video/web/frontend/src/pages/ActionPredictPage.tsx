@@ -34,9 +34,9 @@ interface PredSettings {
 const DEFAULTS: PredSettings = {
   checkpoint: '',
   min_score: 0.15,
-  batch_size: 16,
+  batch_size: 1,
   clip_len: 64,
-  prefetch_factor: 2,
+  prefetch_factor: 1,
   overwrite: false,
   stop_vllm: false,
 };

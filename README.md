@@ -135,6 +135,10 @@ Download → Cut → Detect → VLM→Rally → Annotate → Train → Predict
 
 ## 專案結構
 
+### 設計與研究文件
+
+- [Jev 式決策模型與 VolleyIQ 整合構想](docs/decision-models-volleyiq.md)：模型原理、開放方案、context 篩選，以及五球複盤與後續評估提案。
+
 ```
 yp-video/
 ├── src/yp_video/               # 主要程式碼
