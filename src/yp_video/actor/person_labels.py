@@ -1,4 +1,7 @@
-"""The tracker's boxes, written as the person head's training labels.
+"""Tracker pseudo labels plus reviewed human corrections for the person head.
+
+Reviewed frames replace pseudo labels (including confirmed empty frames).
+Saved drafts have no supervision. Human labels also work without tracks.
 
 One ``<stem>_person.npz`` per video in the run's ``labels/person-boxes``:
 every frame inside a rally span (where tracking ran) with the boxes of
@@ -22,6 +25,7 @@ from yp_video.action.frames import inspect_action_frame_cache
 from yp_video.config import ACTION_FRAMES_DIR
 from yp_video.contracts.action import TASKS
 from yp_video.core.jsonl import read_jsonl
+from yp_video.person.annotations import apply_annotations, load
 from yp_video.tracklets.store import load_tracklets, tracks_path
 
 PERSON_FILE_SUFFIX = TASKS["person"].label_glob.removeprefix("*")
@@ -37,34 +41,49 @@ def write_person_labels(
     cache_root: Path = ACTION_FRAMES_DIR,
 ) -> dict:
     """``items`` are the rally source's ``(annotation, video)`` pairs — the
-    videos the rally stream samples. Videos without tracks contribute
-    nothing (and train nothing); misaligned ones are skipped."""
+    videos the rally stream samples. Aligned tracks supply pseudo labels;
+    human review overrides them and also works on videos without tracks."""
     label_dir.mkdir(parents=True, exist_ok=True)
     for stale in label_dir.glob(f"*{PERSON_FILE_SUFFIX}"):
         stale.unlink()
 
-    counts = {"videos": 0, "without_tracks": 0, "misaligned": 0, "frames": 0, "boxes": 0}
+    counts = {"videos": 0, "without_tracks": 0, "misaligned": 0, "frames": 0, "boxes": 0, "reviewed_frames": 0}
     for ann_path, video_path in items:
         stem = video_path.stem
-        path = tracks_path(stem)
-        if not path.exists():
+        if not tracks_path(stem).exists() and load(stem) is None:
             counts["without_tracks"] += 1
             continue
         cache = inspect_action_frame_cache(video_path, cache_root=cache_root)
         cache_frames = int(cache.get("frame_count") or 0)
-        meta, _rows = read_jsonl(ann_path)
-        duration = float(meta.get("duration") or 0)
-        data = load_tracklets(path)
-        if not cache.get("ready") or cache_frames <= 0 or duration <= 0:
-            raise RuntimeError(f"Missing frame cache or duration for {stem}")
-        cache_fps = cache_frames / duration
-        tracks_fps = float(data.meta.get("fps") or 0)
-        last_frame = max((max(t["frames"]) for t in data.records if t["frames"]), default=-1)
-        if abs(cache_fps - tracks_fps) > FPS_TOLERANCE or last_frame >= cache_frames:
-            counts["misaligned"] += 1
+        if not cache.get("ready") or cache_frames <= 0:
+            raise RuntimeError(f"Missing frame cache for {stem}")
+        per_frame: dict[int, list] = {}
+        path = tracks_path(stem)
+        if path.exists():
+            meta, rows = read_jsonl(ann_path)
+            duration = float(meta.get("duration") or 0)
+            if duration <= 0:
+                raise RuntimeError(f"Missing annotation duration for {stem}")
+            data = load_tracklets(path)
+            cache_fps = cache_frames / duration
+            tracks_fps = float(data.meta.get("fps") or 0)
+            last_frame = max((max(t["frames"]) for t in data.records if t["frames"]), default=-1)
+            if abs(cache_fps - tracks_fps) > FPS_TOLERANCE or last_frame >= cache_frames:
+                counts["misaligned"] += 1
+            else:
+                frames, sizes, boxes = _frame_boxes(data, ann_path_rows=rows, fps=cache_fps, num_frames=cache_frames)
+                offset = 0
+                for frame, size in zip(frames, sizes):
+                    per_frame[int(frame)] = boxes[offset:offset + size].tolist()
+                    offset += size
+        else:
+            counts["without_tracks"] += 1
+        counts["reviewed_frames"] += apply_annotations(stem, cache_frames, per_frame)
+        if not per_frame:
             continue
-
-        frames, box_counts, boxes = _frame_boxes(data, ann_path_rows=_rows, fps=cache_fps, num_frames=cache_frames)
+        frames = np.array(sorted(per_frame), dtype=np.int32)
+        box_counts = np.array([len(per_frame[int(f)]) for f in frames], dtype=np.int32)
+        boxes = np.asarray([b for f in frames for b in per_frame[int(f)]], dtype=np.float16).reshape(-1, 4)
         np.savez_compressed(
             label_dir / f"{stem}{PERSON_FILE_SUFFIX}",
             frames=frames, counts=box_counts, boxes=boxes,

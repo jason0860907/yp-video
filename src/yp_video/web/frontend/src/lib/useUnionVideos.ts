@@ -18,13 +18,34 @@ const stem = (name: string) => name.replace(/\.[^.]+$/, '');
 const rallyStem = (resultName: string) => resultName.replace(/_annotations\.jsonl$/, '');
 
 export function useUnionVideos() {
-  const rallyQuery = useQuery({ queryKey: ['annotate-results'], queryFn: () => apiFetch<RallyResult[]>(API.annotate.results) });
-  const actionQuery = useQuery({ queryKey: ['action-videos'], queryFn: () => apiFetch<ActionVideo[]>(API.actionAnnotate.videos) });
-  const assocQuery = useQuery({ queryKey: ['association-videos'], queryFn: () => apiFetch<AssociationVideo[]>(API.association.videos) });
-  const reidQuery = useQuery({ queryKey: ['reid-videos'], queryFn: () => apiFetch<ReidVideo[]>(API.reid.videos) });
+  const rallyQuery = useQuery({
+    queryKey: ['annotate-results'],
+    queryFn: () => apiFetch<RallyResult[]>(API.annotate.results),
+  });
+  const actionQuery = useQuery({
+    queryKey: ['action-videos'],
+    queryFn: () => apiFetch<ActionVideo[]>(API.actionAnnotate.videos),
+  });
+  const assocQuery = useQuery({
+    queryKey: ['association-videos'],
+    queryFn: () => apiFetch<AssociationVideo[]>(API.association.videos),
+  });
+  const reidQuery = useQuery({
+    queryKey: ['reid-videos'],
+    queryFn: () => apiFetch<ReidVideo[]>(API.reid.videos),
+  });
+
+  const detectionQuery = useQuery({
+    queryKey: ['detection-videos'],
+    queryFn: () => apiFetch<NonNullable<UnionVideo['detection']>[]>(API.detectionLabel.videos),
+  });
 
   const videos = useMemo<UnionVideo[]>(() => {
-    const rows: UnionVideo[] = (actionQuery.data ?? []).map((v) => ({ name: v.name, kind: v.kind, action: v }));
+    const rows: UnionVideo[] = (actionQuery.data ?? []).map((v) => ({
+      name: v.name,
+      kind: v.kind,
+      action: v,
+    }));
     const byStem = new Map(rows.map((row) => [stem(row.name), row]));
     for (const v of assocQuery.data ?? []) {
       const row = byStem.get(stem(v.name));
@@ -34,20 +55,30 @@ export function useUnionVideos() {
       const row = byStem.get(stem(v.name));
       if (row) row.reid = v;
     }
+    for (const v of detectionQuery.data ?? []) {
+      const row = byStem.get(stem(v.name));
+      if (row) row.detection = v;
+    }
     for (const r of rallyQuery.data ?? []) {
       const s = rallyStem(r.name);
       const row = byStem.get(s);
       if (row) row.rally = r;
-      else rows.push({ name: `${s}.mp4`, kind: r.kind === 'sideline' ? 'sideline' : 'broadcast', rallyOnly: true, rally: r });
+      else
+        rows.push({
+          name: `${s}.mp4`,
+          kind: r.kind === 'sideline' ? 'sideline' : 'broadcast',
+          rallyOnly: true,
+          rally: r,
+        });
     }
     return rows;
-  }, [rallyQuery.data, actionQuery.data, assocQuery.data, reidQuery.data]);
+  }, [rallyQuery.data, actionQuery.data, assocQuery.data, reidQuery.data, detectionQuery.data]);
 
   // Rows come from action + rally only (assoc/reid enrich existing rows), so
   // pending tracks just those two — partial data should show, not wait for
   // the slowest list. Errors surface from all four: a failed enrichment
   // silently marks rows "not ready" otherwise.
-  const all = [actionQuery, rallyQuery, assocQuery, reidQuery];
+  const all = [actionQuery, rallyQuery, assocQuery, reidQuery, detectionQuery];
   const failed = all.filter((q) => q.isError);
   const query: ListQuery = {
     isPending: actionQuery.isPending || rallyQuery.isPending,

@@ -31,6 +31,7 @@ import { VideoCombobox } from '@/components/video/VideoCombobox';
 import { RALLY_MODE, RallyPanel } from './RallyPanel';
 import { ACTION_MODE, ActionPanel } from './ActionPanel';
 import { ASSOCIATION_MODE, AssociationPanel } from './AssociationPanel';
+import { DETECTION_MODE, DetectionPanel } from './DetectionPanel';
 import { REID_MODE, ReidPanel } from './ReidPanel';
 import { SourceSelect } from './SourceSelect';
 import { StatusChip } from './StatusChip';
@@ -43,7 +44,7 @@ import type {
   PlaybackClock,
 } from './mode';
 
-const MODES: ModeDescriptor[] = [RALLY_MODE, ACTION_MODE, ASSOCIATION_MODE, REID_MODE];
+const MODES: ModeDescriptor[] = [RALLY_MODE, ACTION_MODE, DETECTION_MODE, ASSOCIATION_MODE, REID_MODE];
 
 type KindFilter = 'all' | 'broadcast' | 'sideline';
 
@@ -324,7 +325,7 @@ export function LabelPage() {
               </svg>
             }
             title="Pick a video"
-            subtitle="One pick works across all four labeling modes"
+            subtitle="One pick works across all labeling modes"
           />
         </Card>
       ) : unavailable ? (
@@ -351,6 +352,8 @@ export function LabelPage() {
           registerGuard={registerGuard}
           clock={clock}
         />
+      ) : mode === 'detection' ? (
+        <DetectionPanel key={video} video={video} registerGuard={registerGuard} clock={clock} />
       ) : mode === 'association' ? (
         <AssociationPanel video={video} clock={clock} />
       ) : (

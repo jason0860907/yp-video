@@ -11,7 +11,7 @@ import { useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { LabelMode } from '@/lib/labelStatus';
 
-const MODES: readonly string[] = ['rally', 'action', 'association', 'reid'];
+const MODES: readonly string[] = ['rally', 'action', 'association', 'reid', 'detection'];
 const parseMode = (raw: string | null): LabelMode => (raw && MODES.includes(raw) ? (raw as LabelMode) : 'rally');
 
 export function useLabelUrlState() {

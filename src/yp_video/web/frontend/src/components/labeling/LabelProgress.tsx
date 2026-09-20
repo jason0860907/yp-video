@@ -19,6 +19,7 @@ import type { LabelStats } from '@/types/api';
 const ROWS: Array<[label: string, mode: LabelMode]> = [
   ['Rally', 'rally'],
   ['Action', 'action'],
+  ['Detection', 'detection'],
   ['Assoc', 'association'],
   ['ReID', 'reid'],
 ];

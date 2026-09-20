@@ -15,6 +15,7 @@ const ACTION_LABELS: Record<string, string> = {
   'POST /api/annotate/annotations': '儲存 Rally 標註',
   'POST /api/action-annotate/annotations': '儲存 Action 標註',
   'POST /api/actor-association/fix/{name}': '儲存 Association 標註',
+  'PUT /api/detection-label/frame/{name}': '儲存 Detection 標註',
   'PUT /api/reid/players/{name}': '儲存 ReID 標註',
   'PUT /api/annotate/done/{name}': 'Rally 標註完成',
   'PUT /api/action-annotate/done/{name:path}': 'Action 標註完成',

@@ -101,6 +101,12 @@ export async function apiPostBlob(path: string, body: unknown): Promise<Blob> {
 // Leaves are literal paths or functions returning paths (relative to /api).
 // SSE URLs are passed through apiUrl() by callers via the SSEClient.
 export const API = {
+  detectionLabel: {
+    videos: '/detection-label/videos',
+    video: (name: string) => `/detection-label/video/${encodeURIComponent(name)}`,
+    frame: (name: string, frame: number) => `/detection-label/frame/${encodeURIComponent(name)}?frame=${frame}`,
+    image: (name: string, frame: number) => `/detection-label/image/${encodeURIComponent(name)}?frame=${frame}`,
+  },
   jobs: {
     list: '/jobs',
     activeCount: '/jobs/active-count',

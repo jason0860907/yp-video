@@ -60,6 +60,7 @@ _COALESCING = frozenset({
     "POST /api/action-annotate/annotations",
     "POST /api/actor-association/fix/{name}",
     "PUT /api/reid/players/{name}",
+    "PUT /api/detection-label/frame/{name}",
 })
 
 #: The same set, as the answer to "which rows are labeling work". These are the
