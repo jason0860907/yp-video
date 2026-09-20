@@ -24,6 +24,7 @@ from yp_video.core.annotation_ids import action_id
 from yp_video.core.cache import StatCache
 from yp_video.core.ffmpeg import parse_optional_float
 from yp_video.core.jsonl import read_jsonl
+from yp_video.web.annotation_lock import annotation_write_lock
 
 
 def annotation_path(video_name: str) -> Path:
@@ -171,16 +172,17 @@ def truthy_event_visible(value: object) -> bool:
 
 
 def write_annotation_atomic(output_path: Path, data: dict) -> None:
-    tmp_path = output_path.with_suffix(output_path.suffix + f".tmp.{os.getpid()}")
-    meta = {k: v for k, v in data.items() if k != "events"}
-    meta["_meta"] = True
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        f.write(json.dumps(meta, ensure_ascii=False) + "\n")
-        for event in data.get("events", []):
-            f.write(json.dumps(event, ensure_ascii=False) + "\n")
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp_path, output_path)
+    with annotation_write_lock:
+        tmp_path = output_path.with_suffix(output_path.suffix + f".tmp.{os.getpid()}")
+        meta = {k: v for k, v in data.items() if k != "events"}
+        meta["_meta"] = True
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            f.write(json.dumps(meta, ensure_ascii=False) + "\n")
+            for event in data.get("events", []):
+                f.write(json.dumps(event, ensure_ascii=False) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, output_path)
 
 
 def save_spot_pre_annotation(

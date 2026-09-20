@@ -48,6 +48,7 @@ export const NAV: NavSection[] = [
       // Every human labeling surface behind one door: /label picks the video
       // once and tabs across Rally / Action / Association / ReID.
       { path: '/label', label: 'Label', icon: ICON.annotate },
+      { path: '/app-review', label: 'App Review', icon: ICON.detect },
       // The one SPOT trainer for every recipe (rally / rally+winner / action /
       // association+action) sits right after the labels it consumes.
       { path: '/fusion-train', label: 'Train', icon: ICON.train },

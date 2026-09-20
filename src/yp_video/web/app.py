@@ -21,6 +21,7 @@ from yp_video.web.routers import (
     action_annotate,
     actor_association,
     annotate,
+    app_review,
     audit_log,
     cut,
     detect,
@@ -219,6 +220,7 @@ app.add_middleware(audit.AuditTrail)
 app.add_middleware(AccessAuth)
 
 # Mount API routers
+app.include_router(app_review.router, prefix="/api/app-review", tags=["app-review"])
 app.include_router(download.router, prefix="/api/download", tags=["download"])
 app.include_router(cut.router, prefix="/api/cut", tags=["cut"])
 app.include_router(action_annotate.router, prefix="/api/action-annotate", tags=["action-annotate"])

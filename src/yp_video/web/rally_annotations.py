@@ -14,6 +14,7 @@ from typing import Literal
 from pydantic import Field
 
 from yp_video.core.jsonl import read_jsonl, read_jsonl_header
+from yp_video.web.annotation_lock import annotation_write_lock
 from yp_video.web.schemas import StrictModel
 
 
@@ -72,40 +73,41 @@ def write_annotations_atomic(
     identity follows the row, sorting is presentation order — and new (None)
     rows are minted ids above the high-water mark, in start order.
     """
-    before = _prior_rows(output_path)
-    high = max(
-        _prior_max_rally_id(output_path),
-        *(a.rally_id for a in annotations if a.rally_id is not None),
-        0,
-    )
-    ordered = sorted(annotations, key=lambda ann: (ann.start, ann.end, ann.label))
-    rows: list[dict] = []
-    for a in ordered:
-        assigned = a.rally_id
-        if assigned is None:
-            high += 1
-            assigned = high
-        row = {
-            "start": a.start,
-            "end": a.end,
-            "label": a.label,
-            "rally_id": assigned,
-        }
-        if a.winner is not None:
-            row["winner"] = a.winner
-        rows.append(row)
-    tmp_path = output_path.with_suffix(output_path.suffix + f".tmp.{os.getpid()}")
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        meta = {
-            "_meta": True,
-            "video": video,
-            "duration": duration,
-            "max_rally_id": high,
-        }
-        f.write(json.dumps(meta, ensure_ascii=False) + "\n")
-        for row in rows:
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp_path, output_path)
-    return rows, before
+    with annotation_write_lock:
+        before = _prior_rows(output_path)
+        high = max(
+            _prior_max_rally_id(output_path),
+            *(a.rally_id for a in annotations if a.rally_id is not None),
+            0,
+        )
+        ordered = sorted(annotations, key=lambda ann: (ann.start, ann.end, ann.label))
+        rows: list[dict] = []
+        for a in ordered:
+            assigned = a.rally_id
+            if assigned is None:
+                high += 1
+                assigned = high
+            row = {
+                "start": a.start,
+                "end": a.end,
+                "label": a.label,
+                "rally_id": assigned,
+            }
+            if a.winner is not None:
+                row["winner"] = a.winner
+            rows.append(row)
+        tmp_path = output_path.with_suffix(output_path.suffix + f".tmp.{os.getpid()}")
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            meta = {
+                "_meta": True,
+                "video": video,
+                "duration": duration,
+                "max_rally_id": high,
+            }
+            f.write(json.dumps(meta, ensure_ascii=False) + "\n")
+            for row in rows:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, output_path)
+        return rows, before

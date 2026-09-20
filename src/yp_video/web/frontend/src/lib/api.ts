@@ -107,6 +107,17 @@ export const API = {
     frame: (name: string, frame: number) => `/detection-label/frame/${encodeURIComponent(name)}?frame=${frame}`,
     image: (name: string, frame: number) => `/detection-label/image/${encodeURIComponent(name)}?frame=${frame}`,
   },
+  appReview: {
+    videos: "/app-review/videos", local: (video: string, mode: string) => `/app-review/local${q({ video, mode })}`,
+    preview: "/app-review/preview", reviews: "/app-review/reviews",
+    review: (id: string) => `/app-review/reviews/${id}`,
+    media: (id: string) => `/app-review/reviews/${id}/video`,
+    decisions: (id: string) => `/app-review/reviews/${id}/decisions`,
+    recover: (id: string) => `/app-review/reviews/${id}/recover`,
+    target: (video: string) => `/app-review/target${q({ video })}`,
+    cloud: "/app-review/cloud", cloudImport: "/app-review/cloud/import",
+    cloudResults: (user: string, match: string) => `/app-review/cloud/results${q({ user, match })}`,
+  },
   jobs: {
     list: '/jobs',
     activeCount: '/jobs/active-count',
