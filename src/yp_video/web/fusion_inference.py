@@ -27,15 +27,15 @@ from yp_video.action.spot_pass import RallyOptions, SpotOptions, run_spot_pass
 from yp_video.actor import policy as actor_policy
 from yp_video.config import RALLY_SPOT_PRE_ANNOTATIONS_DIR, SPOT_CHECKPOINTS_DIR
 from yp_video.core.jsonl import write_jsonl
-from yp_video.core.rallies import annotation_name, load_rallies, number_rallies
-from yp_video.extraction import reassociate
-from yp_video.extraction.pipeline import detect_video, detections_current, load_events
-from yp_video.extraction.store import records_path
-from yp_video.person.boxes import (
+from yp_video.core.person_boxes import (
     DETECTOR_NAME,
     person_boxes_current,
     person_boxes_path,
 )
+from yp_video.core.rallies import annotation_name, load_rallies, number_rallies
+from yp_video.extraction import reassociate
+from yp_video.extraction.pipeline import detect_video, detections_current, load_events
+from yp_video.extraction.store import records_path
 from yp_video.tracklets.fusion import fusion_tracks_current, track_person_boxes
 from yp_video.tracklets.store import tracks_path
 from yp_video.web.action_annotations import (

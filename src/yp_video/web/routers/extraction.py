@@ -210,10 +210,6 @@ def _slim_records(path: Path, stem: str) -> list[dict]:
     # player, and nobody is tracked between rallies (extraction/store.py).
     for r in extraction_store.labelable(records, stem, float(meta.get("fps") or 0)):
         r = dict(r)
-        # Exclude legacy pose fields from records created before their removal.
-        r.pop("keypoints", None)
-        if r.get("detections"):
-            r["detections"] = [{k: v for k, v in d.items() if k != "keypoints"} for d in r["detections"]]
         out.append(r)
     return out
 

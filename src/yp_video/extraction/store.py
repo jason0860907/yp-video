@@ -26,8 +26,8 @@ from yp_video.config import (
     ACTION_PRE_ANNOTATIONS_DIR,
     EXTRACTION_DIR,
 )
-from yp_video.core.jsonl import read_jsonl_cached
 from yp_video.contracts.action import LABEL_FILE_SUFFIX
+from yp_video.core.jsonl import read_jsonl_cached
 from yp_video.core.rallies import (
     load_rallies,
     rally_annotation_path,
@@ -51,11 +51,6 @@ SKIP_LABELS = frozenset({"score"})
 # pass merely to make every downstream reader see the edit.
 ACTION_FIELDS = frozenset({"frame", "label", "xy", "visible"})
 
-# Rally-derived copies that annotation files and old records used to carry;
-# the live rally store owns them now. Stripped on read, never re-applied.
-# Still load-bearing: 17 of the extraction record files under
-# extraction/records/ predate the rule and carry a stale ``time``.
-LEGACY_ACTION_FIELDS = frozenset({"time", "rally_id", "relative_frame"})
 
 
 def action_source_paths(stem: str) -> list[Path]:
@@ -124,7 +119,7 @@ def with_current_actions(records: Iterable[dict], stem: str) -> list[dict]:
         # source. Absence in the source is meaningful too (e.g. no xy).
         record = {
             key: value for key, value in stored.items()
-            if key not in ACTION_FIELDS and key not in LEGACY_ACTION_FIELDS
+            if key not in ACTION_FIELDS
         }
         record.update({
             key: event[key] for key in ACTION_FIELDS

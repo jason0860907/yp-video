@@ -455,12 +455,12 @@ class StagesStopWhereTheyShouldTests(unittest.TestCase):
     """
 
     def test_detection_neither_associates_nor_embeds(self) -> None:
-        """The signature is the contract: it takes no policy and no weights."""
+        """Detection accepts a box archive, never association policy or embedding weights."""
         import inspect
 
         params = inspect.signature(pipeline.detect_video).parameters
         self.assertEqual(
-            sorted(params), ["on_progress", "video_path"]
+            sorted(params), ["on_progress", "person_boxes", "video_path"]
         )
         source = inspect.getsource(pipeline.detect_video)
         for forbidden in ("cut(", "RulePolicy", "rule_decision", "embed_video"):

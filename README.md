@@ -148,7 +148,8 @@ yp-video/
 │   │   ├── vlm_segment.py      # VLM 排球偵測
 │   │   ├── vlm_to_rally.py     # VLM 片段 → rally 標註合併
 │   │   ├── jsonl.py            # JSONL 讀寫
-│   │   └── sampling.py         # 影片取樣工具
+│   │   ├── sampling.py         # 影片取樣工具
+│   │   └── person_boxes.py     # Fusion 人物框檔案格式，供推論、追蹤、偵測共用
 │   ├── action/                 # SPOT 流程編排：frame 快取、預標、推論輸出轉換
 │   ├── contracts/              # 跨 repo 資料格式（yp-video ↔ yp-spot / yp-reid / selfhost-worker）
 │   ├── person/                 # 感知基元：人物偵測與 instance mask

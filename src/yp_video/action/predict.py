@@ -27,7 +27,7 @@ from yp_video.contracts.action import (
     SPOT_PARTIAL_PREFIX,
     SPOT_PROGRESS_PREFIX,
 )
-from yp_video.person.boxes import save_person_boxes
+from yp_video.core.person_boxes import save_person_boxes
 
 
 class SpotInferenceError(RuntimeError):

@@ -47,7 +47,6 @@ class CurrentActionJoinTests(unittest.TestCase):
                 {
                     "id": "keep",
                     "frame": 30,
-                    "time": 0.9,
                     "label": "spike",
                     "xy": [0.1, 0.1],
                     "visible": True,
@@ -73,8 +72,7 @@ class CurrentActionJoinTests(unittest.TestCase):
 
         self.assertEqual([record["id"] for record in records], ["keep"])
         self.assertEqual(records[0]["label"], "set")
-        # Rally-derived fields are live-computed, never part of the join —
-        # the stale stored copy must be stripped, not carried forward.
+        # Rally-derived fields belong to the live rally store, not extraction.
         self.assertNotIn("time", records[0])
         self.assertEqual(records[0]["xy"], [0.2, 0.3])
         self.assertFalse(records[0]["visible"])

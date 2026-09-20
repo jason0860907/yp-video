@@ -9,10 +9,10 @@ import pytest
 
 from yp_video.action import predict
 from yp_video.action.spot_pass import RallyOptions, SpotOptions, SpotPassResult
+from yp_video.core import person_boxes as boxes
 from yp_video.core.jsonl import read_jsonl, write_jsonl
 from yp_video.extraction import pipeline
 from yp_video.extraction import store as extraction_store
-from yp_video.person import boxes
 from yp_video.tracklets import fusion
 from yp_video.tracklets import store as tracks_store
 from yp_video.web import fusion_inference as fi

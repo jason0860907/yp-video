@@ -49,6 +49,8 @@ from yp_video.actor.policy import EventContext, RulePolicy, contact_point
 from yp_video.actor.resolution import ActorResolution, actor_resolution
 from yp_video.contracts.action import event_id as action_event_id
 from yp_video.core.jsonl import read_jsonl, read_jsonl_cached, write_jsonl
+from yp_video.core.person_boxes import DETECTOR_NAME as FUSION_DETECTOR_NAME
+from yp_video.core.person_boxes import PersonBoxes, person_boxes_path
 from yp_video.core.progress import ProgressFn
 from yp_video.extraction.cropping import (
     CropTarget,
@@ -64,8 +66,6 @@ from yp_video.extraction.store import (
     crop_dir,
     records_path,
 )
-from yp_video.person.boxes import DETECTOR_NAME as FUSION_DETECTOR_NAME
-from yp_video.person.boxes import PersonBoxes, person_boxes_path
 from yp_video.person.detector import (
     DETECTOR_NAME,
     PersonBox,

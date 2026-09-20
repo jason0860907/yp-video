@@ -10,9 +10,9 @@ from pathlib import Path
 import numpy as np
 
 from yp_video.core.jsonl import read_jsonl_header, write_jsonl
+from yp_video.core.person_boxes import DETECTOR_NAME, PersonBoxes, person_boxes_path
 from yp_video.core.progress import ProgressFn
 from yp_video.core.rallies import load_rallies, rally_fingerprint
-from yp_video.person.boxes import DETECTOR_NAME, PersonBoxes, person_boxes_path
 from yp_video.tracklets.store import tracks_current, tracks_masks_path, tracks_path
 from yp_video.tracklets.tracking import MIN_TRACK_FRAMES
 
