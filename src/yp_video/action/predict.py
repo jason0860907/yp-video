@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
 import tempfile
 from collections import deque
@@ -28,6 +29,9 @@ from yp_video.contracts.action import (
     SPOT_PROGRESS_PREFIX,
 )
 from yp_video.core.person_boxes import save_person_boxes
+
+
+_STOP_TIMEOUT_SECONDS = 10
 
 
 class SpotInferenceError(RuntimeError):
@@ -150,35 +154,60 @@ def run_spot_inference(
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
+            start_new_session=True,
         )
         tail: deque[str] = deque(maxlen=20)
         partial: dict[str, list[dict]] = {}
-        assert proc.stdout is not None
-        for raw in proc.stdout:
-            # tqdm redraws end in \r without a newline; merged into stdout they
-            # glue onto the next SPOT_PROGRESS print. Split on \r as well so
-            # the progress prefix always sits at the start of its segment
-            # (stream_subprocess does the same for the web jobs).
-            for line in raw.rstrip("\n").split("\r"):
-                if not line:
-                    continue
-                ratio = _spot_progress_ratio(line)
-                if ratio is not None:
-                    if on_progress:
-                        on_progress(ratio)
-                    continue
-                if on_events is not None:
-                    parsed = _spot_partial_payload(line)
-                    if parsed is not None:
-                        task, cumulative, batch = parsed
-                        if cumulative:
-                            partial[task] = batch
-                        else:
-                            partial.setdefault(task, []).extend(batch)
-                        on_events(task, partial[task])
+        try:
+            assert proc.stdout is not None
+            for raw in proc.stdout:
+                # tqdm redraws end in \r without a newline; merged into stdout they
+                # glue onto the next SPOT_PROGRESS print. Split on \r as well so
+                # the progress prefix always sits at the start of its segment
+                # (stream_subprocess does the same for the web jobs).
+                for line in raw.rstrip("\n").split("\r"):
+                    if not line:
                         continue
-                tail.append(line)
-        rc = proc.wait()
+                    ratio = _spot_progress_ratio(line)
+                    if ratio is not None:
+                        if on_progress:
+                            on_progress(ratio)
+                        continue
+                    if on_events is not None:
+                        parsed = _spot_partial_payload(line)
+                        if parsed is not None:
+                            task, cumulative, batch = parsed
+                            if cumulative:
+                                partial[task] = batch
+                            else:
+                                partial.setdefault(task, []).extend(batch)
+                            on_events(task, partial[task])
+                            continue
+                    tail.append(line)
+            rc = proc.wait()
+        except BaseException:
+            # Reporting/cancellation callbacks can fail while CUDA inference
+            # and its ffmpeg children are still running. Stop the whole group
+            # before temporary inputs disappear and the next job is claimed.
+            try:
+                os.killpg(proc.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                proc.wait(timeout=_STOP_TIMEOUT_SECONDS)
+            except subprocess.TimeoutExpired:
+                pass
+            finally:
+                # Also stop descendants that ignored TERM after the parent exited.
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                proc.wait()
+            raise
+        finally:
+            if proc.stdout is not None:
+                proc.stdout.close()
         if rc != 0:
             raise SpotInferenceError(
                 f"yp-spot inference failed (rc={rc}): " + " | ".join(list(tail)[-5:])
