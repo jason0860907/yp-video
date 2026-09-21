@@ -94,3 +94,15 @@ def test_client_side_slider_cut_matches_scipy():
             assert _partition(_cut_like_the_app(unit_count, tree, threshold)) == _partition(
                 fcluster(tree, t=threshold, criterion="distance")
             )
+
+
+def test_no_action_events_returns_completed_empty_identification():
+    from pathlib import Path
+    from unittest.mock import patch
+    from yp_video.extraction.identify import identify_players
+    with patch('yp_video.extraction.pipeline.load_events',return_value=[]), \
+         patch('yp_video.action.spot_pass.run_spot_pass') as inference, \
+         patch('yp_video.extraction.identify.threshold_calibration',return_value={'min':.2,'max':.8,'default':.5,'step':.01}):
+        result=identify_players(Path('/tmp/empty.mp4'),fusion_checkpoint=Path('/tmp/model.pt'))
+    assert not result.units and not result.linkage
+    inference.assert_not_called()

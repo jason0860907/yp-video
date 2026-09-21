@@ -92,6 +92,7 @@ def identify_players(
     *,
     embedder: str = DEFAULT_EMBEDDER,
     fusion_checkpoint: Path,
+    person_boxes: Path | None = None,
     reps_per_unit: int = 3,
     on_progress: ProgressFn | None = None,
 ) -> IdentifyResult:
@@ -110,7 +111,7 @@ def identify_players(
 
     from yp_video.action.spot_pass import RallyOptions, SpotOptions, run_spot_pass
     from yp_video.actor.person_action import build_policy
-    from yp_video.core.person_boxes import person_boxes_path
+    from yp_video.core.person_boxes import person_boxes_path, save_person_boxes
     from yp_video.extraction import links
     from yp_video.extraction.pipeline import detect_video, embed_video, load_events
     from yp_video.extraction.reassociate import reassociate_video
@@ -120,20 +121,23 @@ def identify_players(
     stem = video_path.stem
     events = load_events(stem)
     if not events:
-        raise ValueError(f"No action events for {stem} — run Action Predict first")
+        return IdentifyResult(embedder=embedder, units=(), linkage=(), threshold=threshold_calibration(embedder))
 
     person_action_checkpoint = fusion_checkpoint.with_name("person_action.pt")
     if not person_action_checkpoint.is_file():
         raise FileNotFoundError(f"Missing joint person/action weights: {person_action_checkpoint}")
     tracking_cb = _banded(on_progress, "tracking")
-    run_spot_pass(
-        video_path, checkpoint=fusion_checkpoint, tasks=("rally", "action"),
-        rally=RallyOptions(min_score=0.5, max_gap_s=2.0, min_duration_s=4.0),
-        spot=SpotOptions(batch_size=1, num_workers=0, clip_len=64), rally_pad_s=2.0,
-        person_output=person_boxes_path(stem),
-        on_progress=(lambda fraction: tracking_cb(int(fraction * 80), 100, "fusion person boxes"))
-        if tracking_cb else None,
-    )
+    if person_boxes is not None:
+        save_person_boxes(person_boxes, person_boxes_path(stem), fusion_checkpoint)
+    else:
+        run_spot_pass(
+            video_path, checkpoint=fusion_checkpoint, tasks=("rally", "action"),
+            rally=RallyOptions(min_score=0.5, max_gap_s=2.0, min_duration_s=4.0),
+            spot=SpotOptions(batch_size=1, num_workers=0, clip_len=64), rally_pad_s=2.0,
+            person_output=person_boxes_path(stem),
+            on_progress=(lambda fraction: tracking_cb(int(fraction * 80), 100, "fusion person boxes"))
+            if tracking_cb else None,
+        )
     track_person_boxes(
         video_path,
         on_progress=(lambda done, total, msg: tracking_cb(80 + int(20 * done / max(total, 1)), 100, msg))
@@ -354,6 +358,7 @@ def _main() -> None:
     parser.add_argument("--video", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--fusion-checkpoint", type=Path, required=True)
+    parser.add_argument("--person-boxes", type=Path, help="Reuse whole-video Fusion boxes from this analysis")
     parser.add_argument("--embedder", default=DEFAULT_EMBEDDER)
     parser.add_argument("--reps-per-unit", type=int, default=3)
     args = parser.parse_args()
@@ -365,6 +370,7 @@ def _main() -> None:
         args.video,
         embedder=args.embedder,
         fusion_checkpoint=args.fusion_checkpoint,
+        person_boxes=args.person_boxes,
         reps_per_unit=args.reps_per_unit,
         on_progress=report,
     )
