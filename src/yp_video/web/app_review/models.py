@@ -35,6 +35,18 @@ class Rally(Artifact):
         return self
 
 
+class Attack(Artifact):
+    rally_index: int = Field(ge=1)
+    event_indices: list[int] = Field(min_length=1)
+
+
+class RallyOutcome(Artifact):
+    rally_index: int = Field(ge=1)
+    serve_point: bool | None
+    score_event_index: int | None
+    deciding_event_indices: list[int]
+
+
 class Result(Artifact):
     job_id: str
     user_id: str
@@ -43,6 +55,8 @@ class Result(Artifact):
     total_duration: float = Field(gt=0)
     rallies: list[Rally]
     action_events: list[Event]
+    attacks: list[Attack]
+    rally_outcomes: list[RallyOutcome]
     partial: bool = False
 
     @model_validator(mode="after")
@@ -58,6 +72,14 @@ class Result(Artifact):
             raise ValueError("Rally exceeds video duration")
         if any(e.time > self.total_duration + 0.1 for e in self.action_events):
             raise ValueError("Event exceeds video duration")
+        positions = [i for a in self.attacks for i in a.event_indices] + [
+            i
+            for o in self.rally_outcomes
+            for i in [*o.deciding_event_indices, o.score_event_index]
+            if i is not None
+        ]
+        if any(not 0 <= i < len(self.action_events) for i in positions):
+            raise ValueError("Rule output points past action_events")
         return self
 
 

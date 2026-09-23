@@ -3,6 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
+from yp_video.action import rules
 from yp_video.core.jsonl import read_jsonl, write_jsonl
 from yp_video.web.app_review import feedback
 from yp_video.web.app_review.models import Bundle
@@ -24,6 +25,13 @@ def bundle(events=(), rallies=((1, 9, 20),), **changes):
         "deleted_rally_indices": [],
         **changes.pop("corrections", {}),
     }
+    action_events = [
+        {"id": f"f{round(t * 30)}", "label": label, "time": t, "frame": round(t * 30)}
+        for label, t in events
+    ]
+    result_rallies = [
+        {"index": i, "set": 1, "start": lo, "end": hi} for i, lo, hi in rallies
+    ]
     return Bundle.model_validate(
         {
             "result": {
@@ -32,19 +40,11 @@ def bundle(events=(), rallies=((1, 9, 20),), **changes):
                 "match_id": "match",
                 "video_r2_key": "videos/user/source.mp4",
                 "total_duration": 100,
-                "action_events": [
-                    {
-                        "id": f"f{round(t * 30)}",
-                        "label": label,
-                        "time": t,
-                        "frame": round(t * 30),
-                    }
-                    for label, t in events
-                ],
-                "rallies": [
-                    {"index": i, "set": 1, "start": lo, "end": hi}
-                    for i, lo, hi in rallies
-                ],
+                "action_events": action_events,
+                "rallies": result_rallies,
+                # What the worker ships: the rules run on the result itself.
+                "attacks": rules.attacks(result_rallies, action_events),
+                "rally_outcomes": rules.rally_outcomes(result_rallies, action_events),
             },
             "corrections": corr,
             **changes,

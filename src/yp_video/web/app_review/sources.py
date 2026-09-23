@@ -2,6 +2,7 @@
 
 import json
 
+from yp_video.action import rules
 from yp_video.contracts.action import event_id
 from yp_video.core.rallies import load_rallies
 from yp_video.extraction import links
@@ -119,6 +120,18 @@ def local_bundle(name: str) -> Bundle:
         num_frames=frames,
         rallies=rallies,
     )
+    result_rallies = [
+        {
+            "index": r["rally_id"],
+            "set": 1,
+            "start": r["start"],
+            "end": r["end"],
+            "winner": r["winner"],
+        }
+        for r in rallies
+        if r["label"] == "rally"
+    ]
+    action_events = [{**e, "id": event_id(e)} for e in events]
     named = load_assignments(video.stem, links.track_keys(video.stem))
     names = {name: i for i, name in enumerate(sorted(set(named.values())), 1)}
     return Bundle.model_validate(
@@ -148,18 +161,10 @@ def local_bundle(name: str) -> Bundle:
                 "match_id": video.stem,
                 "video_r2_key": "",
                 "total_duration": duration,
-                "rallies": [
-                    {
-                        "index": r["rally_id"],
-                        "set": 1,
-                        "start": r["start"],
-                        "end": r["end"],
-                        "winner": r["winner"],
-                    }
-                    for r in rallies
-                    if r["label"] == "rally"
-                ],
-                "action_events": [{**e, "id": event_id(e)} for e in events],
+                "rallies": result_rallies,
+                "action_events": action_events,
+                "attacks": rules.attacks(result_rallies, action_events),
+                "rally_outcomes": rules.rally_outcomes(result_rallies, action_events),
             },
         }
     )

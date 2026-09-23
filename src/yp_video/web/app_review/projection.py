@@ -1,22 +1,16 @@
-"""Pure port of iOS TouchIndex/TouchContext, Match+Actions and CourtScoreTimeline.
+"""App-shaped projection of a customer result, mirroring iOS Match+Actions.
 
-Keep parity cases in tests/test_app_review_projection.py when changing these
-rules. Source: VolleyIQ/Models/{ActionEvent,Match+Actions,CourtScore}.swift.
+Volleyball rules (attacks, how a point was decided) are not derived here: they
+arrive in the result as ``attacks`` / ``rally_outcomes``, computed once by
+``yp_video.action.rules``. This module only frames clips around them and
+applies the customer's corrections, as the App does.
 """
 
 from collections import Counter
 
-from .models import Bundle, Event, Rally, Window
+from yp_video.action.rules import KINDS
 
-KINDS = {
-    **dict.fromkeys(["發", "發球", "serve"], "serve"),
-    **dict.fromkeys(["接", "receive", "reception", "dig", "pass"], "receive"),
-    **dict.fromkeys(["舉", "set", "setting"], "set"),
-    **dict.fromkeys(["打", "扣", "扣球", "spike", "attack", "hit"], "spike"),
-    **dict.fromkeys(["攔", "攔網", "block"], "block"),
-    **dict.fromkeys(["分", "得分", "score", "point"], "score"),
-}
-STAGE = {"receive": 0, "set": 1, "spike": 2}
+from .models import Bundle, Event, Rally, Window
 
 
 def kind(event: Event) -> str:
@@ -25,24 +19,6 @@ def kind(event: Event) -> str:
 
 def clip_key(event: Event) -> str:
     return f"{event.time:.3f}"
-
-
-def build_up(before: list[Event], anchor: Event) -> list[Event]:
-    chain = []
-    cutoff = anchor.time
-    for stage in reversed(range(STAGE.get(kind(anchor), 0))):
-        found = next(
-            (
-                e
-                for e in reversed(before)
-                if STAGE.get(kind(e)) == stage and e.time < cutoff
-            ),
-            None,
-        )
-        if found:
-            chain.append(found)
-            cutoff = found.time
-    return list(reversed(chain))
 
 
 def player_numbers(bundle: Bundle) -> dict[str, int]:
@@ -64,7 +40,8 @@ def project(
     bundle: Bundle, *, mode: Window = "full_play", corrected: bool = True
 ) -> dict:
     correction = bundle.corrections if corrected else None
-    events = sorted(bundle.result.action_events, key=lambda e: e.time)
+    shipped = bundle.result.action_events
+    events = sorted(shipped, key=lambda e: e.time)
     source_rallies = bundle.result.rallies
     if corrected and bundle.library_rallies is not None:
         source_rallies = [r for r in bundle.library_rallies if r.deleted_at is None]
@@ -97,9 +74,14 @@ def project(
             if cursor < len(rallies) and event.time >= rallies[cursor].start
             else None
         )
-    by_rally = {
-        r.index: [e for e, m in zip(events, memberships) if m == r] for r in rallies
-    }
+    # Event → its attack as ordered touches, keyed by identity: the rules name
+    # touches by position because two touches on one frame share an id.
+    attack_of: dict[int, list[Event]] = {}
+    for attack in bundle.result.attacks:
+        touches = [shipped[i] for i in attack.event_indices]
+        for touch in touches:
+            attack_of[id(touch)] = touches
+    outcomes = {o.rally_index: o for o in bundle.result.rally_outcomes}
     warnings = []
     if bundle.result.user_id != "local" and bundle.library_rallies is None:
         warnings.append(
@@ -172,36 +154,33 @@ def project(
         }
 
     actions = []
-    last_scores = {}
     standalone = []
-    for event, rally in zip(events, memberships):
-        scope = by_rally[rally.index] if rally else events
+    for position, (event, rally) in enumerate(zip(events, memberships)):
         if kind(event) == "score":
-            if rally:
-                # Swift keeps the first on equal timestamps.
-                if (
-                    rally.index not in last_scores
-                    or last_scores[rally.index].time < event.time
-                ):
-                    last_scores[rally.index] = event
-            else:
+            if not rally:
                 standalone.append((event, None))
             continue
-        before = [e for e in scope if e.time < event.time]
-        after = next((e for e in scope if e.time > event.time), None)
+        attack = attack_of.get(id(event), [event])
+        chain = attack[: next(k for k, t in enumerate(attack) if t is event) + 1]
+        after = next(
+            (
+                e
+                for e, m in zip(events[position + 1 :], memberships[position + 1 :])
+                if (rally is None or m == rally) and e.time > event.time
+            ),
+            None,
+        )
         if clip_key(event) not in hidden_actions:
-            actions.append(
-                make(
-                    event,
-                    build_up(before, event) + [event],
-                    rally,
-                    clip_key(event),
-                    after,
-                )
-            )
+            actions.append(make(event, chain, rally, clip_key(event), after))
 
     scores = []
-    endings = [(last_scores.get(r.index), r) for r in rallies] + standalone
+    def whistle(rally: Rally) -> Event | None:
+        outcome = outcomes.get(rally.index)
+        if outcome is None or outcome.score_event_index is None:
+            return None
+        return shipped[outcome.score_event_index]
+
+    endings = [(whistle(r), r) for r in rallies] + standalone
     for event, rally in endings:
         key = (
             clip_key(event)
@@ -214,16 +193,10 @@ def project(
         )
         if event is None:
             event = Event(id=key, label="score", time=rally.end, frame=0)
-        scope = by_rally[rally.index] if rally else events
-        before = [e for e in scope if e.time < event.time and kind(e) != "score"]
-        deciding = next(
-            (e for e in reversed(before) if kind(e) == "spike"),
-            before[-1] if before else None,
+        outcome = outcomes.get(rally.index) if rally else None
+        chain = (
+            [shipped[i] for i in outcome.deciding_event_indices] if outcome else []
         )
-        chain = (build_up(before, deciding) + [deciding]) if deciding else []
-        # A non-spike ending has only its deciding touch, no build-up.
-        if deciding and kind(deciding) != "spike":
-            chain = [deciding]
         if key not in hidden_scores:
             scores.append(make(event, chain, rally, key, score=True))
     scores.sort(key=lambda c: c["anchor_time"])
