@@ -620,7 +620,7 @@ async def _run_prelabel_batch_subprocess(
                     video_source=source,
                     checkpoint_path=checkpoint,
                     tasks=("action",),
-                    save_dir=pred_file.parent,
+                    save_dir=pred_file.parent.parent,
                     batch_size=req.batch_size,
                     num_workers=req.num_workers,
                     clip_len=req.clip_len,
