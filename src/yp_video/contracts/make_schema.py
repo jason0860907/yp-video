@@ -38,7 +38,7 @@ from .detector import (
     SuccessResult,
 )
 
-SCHEMA_VERSION = "1.0.0"
+SCHEMA_VERSION = "2.0.0"
 
 # Only BaseModel classes — the referenced enums (CameraAngle, VideoQuality,
 # ErrorCode) and the nested SegmentEvent land in $defs automatically once a

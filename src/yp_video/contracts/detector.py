@@ -95,6 +95,50 @@ class SegmentEvent(BaseModel):
     )
 
 
+class Attack(BaseModel):
+    """組織進攻: one spike plus whatever 接舉 build-up was spotted before it.
+
+    Derived by ``yp_video.action.rules.attacks`` — the rule lives there, not
+    in any client."""
+
+    rally_index: int = Field(ge=1, description="Rally the attack happened in")
+    event_indices: list[int] = Field(
+        min_length=1,
+        description=(
+            "Positions in `action_events`, in time order: [receive?, set?, "
+            "spike]. Missing receive / set are simply absent; the spike is "
+            "always last. Positions, not ids: two touches on one frame share "
+            "an id."
+        ),
+    )
+
+
+class RallyOutcome(BaseModel):
+    """How a rally's point was decided. Derived by
+    ``yp_video.action.rules.rally_outcomes``."""
+
+    rally_index: int = Field(ge=1)
+    serve_point: bool | None = Field(
+        description=(
+            "The serve decided the point (ace or service error): touches but "
+            "no set / spike / block. Null when the rally holds no touch."
+        ),
+    )
+    score_event_index: int | None = Field(
+        description=(
+            "Position in `action_events` of the rally's final spotted "
+            "whistle; null when none was spotted."
+        ),
+    )
+    deciding_event_indices: list[int] = Field(
+        description=(
+            "Positions in `action_events` of the play that decided the point: "
+            "the last attack before the whistle, else the last touch. Empty "
+            "when the rally holds none."
+        ),
+    )
+
+
 class DetectorInput(BaseModel):
     """Detection request posted by the iOS client."""
 
@@ -132,6 +176,12 @@ class SuccessResult(BaseModel):
             "identification to it by event `id`. Empty when SPOT action "
             "spotting did not run (a rally-only result)."
         ),
+    )
+    attacks: list[Attack] = Field(
+        description="Every 組織進攻 in the match, timeline order.",
+    )
+    rally_outcomes: list[RallyOutcome] = Field(
+        description="One per rally, timeline order.",
     )
     locale_echo: str | None = Field(
         default=None, description="Echoes back DetectorInput.locale if provided"
