@@ -164,6 +164,9 @@ def test_player_run_scope_override_and_removed_units():
         ]
 
     assert numbers() == [7, 8, None]
+    # A null override is the user's "nobody" mark and outranks the unit.
+    b.corrections.player_identification.event_overrides["f360"] = None
+    assert numbers() == [None, 8, None]
     b.identification.job_id = "new"
     assert numbers() == [None, 8, None]
     assert any("result_id" in w for w in project(b)["warnings"])

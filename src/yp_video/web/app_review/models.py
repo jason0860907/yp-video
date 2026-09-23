@@ -117,7 +117,8 @@ class IdentificationCorrection(Artifact):
     result_id: str | None = None
     threshold: float | None = None
     unit_roster: dict[str, int]
-    event_overrides: dict[str, int]
+    # None is the user's "nobody" mark on a touch, outranking its unit.
+    event_overrides: dict[str, int | None]
     removed_units: list[str]
 
 

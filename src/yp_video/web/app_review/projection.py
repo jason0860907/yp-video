@@ -33,7 +33,7 @@ def player_numbers(bundle: Bundle) -> dict[str, int]:
             if unit.key not in pi.removed_units and unit.key in pi.unit_roster:
                 players.update(dict.fromkeys(unit.events, pi.unit_roster[unit.key]))
     players.update(pi.event_overrides)
-    return players
+    return {event: number for event, number in players.items() if number is not None}
 
 
 def project(
