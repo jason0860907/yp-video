@@ -151,7 +151,6 @@ def run_spot_stages(
     checkpoint: Path,
     tasks: Sequence[str],
     rally: RallyOptions,
-    action_min_score: float,
     spot: SpotOptions,
     on_progress: StageProgress,
 ) -> dict:
@@ -168,7 +167,6 @@ def run_spot_stages(
         rally=rally,
         spot=spot,
         rally_pad_s=RALLY_PAD_S,
-        action_min_score=action_min_score,
         person_output=person_boxes_path(video.stem),
         on_progress=lambda fraction: on_progress(fraction, "inference"),
     )
@@ -188,7 +186,6 @@ def run_spot_stages(
             meta={"fps": result.fps, "num_frames": result.num_frames},
             predictions=result.actions,
             checkpoint=checkpoint,
-            min_score=action_min_score,
         )
         out["events"] = data["num_events"]
         out["written"].append((pre_annotation_path(video.name), "action/pre-annotations"))
@@ -303,7 +300,6 @@ def run_video(
     checkpoint: Path,
     clip_checkpoint: Path,
     rally: RallyOptions,
-    action_min_score: float,
     spot: SpotOptions,
     overwrite: bool,
     on_progress: BatchProgress,
@@ -337,7 +333,7 @@ def run_video(
         if person_ran:
             out = run_spot_stages(
                 video=video, source=str(video), checkpoint=checkpoint,
-                tasks=spot_tasks, rally=rally, action_min_score=action_min_score,
+                tasks=spot_tasks, rally=rally,
                 spot=spot,
                 on_progress=stage_progress(0, 2),
             )

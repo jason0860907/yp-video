@@ -287,6 +287,21 @@
           "description": "Whether the action is visible on screen",
           "title": "Visible",
           "type": "boolean"
+        },
+        "score": {
+          "anyOf": [
+            {
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Model confidence; present on machine pre-annotations only",
+          "title": "Score"
         }
       },
       "required": [

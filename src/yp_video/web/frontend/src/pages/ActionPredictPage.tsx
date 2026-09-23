@@ -24,7 +24,6 @@ import type { ActionVideo, Job } from '@/types/api';
 
 interface PredSettings {
   checkpoint: string;
-  min_score: number;
   batch_size: number;
   clip_len: number;
   prefetch_factor: number;
@@ -33,7 +32,6 @@ interface PredSettings {
 }
 const DEFAULTS: PredSettings = {
   checkpoint: '',
-  min_score: 0.15,
   batch_size: 1,
   clip_len: 64,
   prefetch_factor: 1,
@@ -42,7 +40,6 @@ const DEFAULTS: PredSettings = {
 };
 
 const NUM_FIELDS: Array<NumField<PredSettings>> = [
-  { key: 'min_score', label: 'Min score', min: 0, max: 1, step: 0.05 },
   { key: 'batch_size', label: 'Batch', min: 1, max: 128, step: 1 },
   { key: 'clip_len', label: 'Clip len', min: 8, max: 256, step: 8 },
   { key: 'prefetch_factor', label: 'Prefetch', min: 1, max: 8, step: 1 },
@@ -97,7 +94,6 @@ export function ActionPredictPage() {
         body: {
           videos: names,
           checkpoint: settings.checkpoint,
-          min_score: settings.min_score,
           batch_size: settings.batch_size,
           clip_len: settings.clip_len,
           prefetch_factor: settings.prefetch_factor,

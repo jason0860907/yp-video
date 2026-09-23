@@ -6,6 +6,8 @@
    fields derived from them (rally_id / relative_frame / time) are joined
    from the live rally store on every read — a stored copy is exactly the
    stale data that once left the Association board navigating by old spans.
+3. A machine pre-annotation additionally keeps each event's model ``score``;
+   the human store never does.
 """
 
 from __future__ import annotations
@@ -73,6 +75,30 @@ class PersistedShapeTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(event["frame"], 10)
             self.assertEqual(event["label"], "spike")
+
+
+class PreAnnotationScoreTests(unittest.TestCase):
+    def test_pre_annotation_keeps_every_event_with_its_score(self) -> None:
+        with scratch_stores() as (_, pre_dir):
+            data = action_annotations.save_spot_pre_annotation(
+                video=Path("match.mp4"),
+                meta={"fps": 30.0, "num_frames": 100},
+                predictions=[{"video": "match", "events": [
+                    {"frame": 10, "label": "spike", "score": 0.91234, "xy": [0.2, 0.3]},
+                    {"frame": 40, "label": "block", "score": 0.02},
+                ]}],
+                checkpoint=Path("ckpt.pt"),
+            )
+            lines = (pre_dir / "match_actions.jsonl").read_text().splitlines()
+            meta = json.loads(lines[0])
+            events = [json.loads(line) for line in lines[1:]]
+
+            self.assertNotIn("min_score", meta["source"])
+            self.assertEqual(data["num_events"], 2)
+            self.assertEqual([e["score"] for e in events], [0.9123, 0.02])
+            self.assertEqual(
+                set(events[0]), {"id", "frame", "label", "xy", "visible", "score"}
+            )
 
 
 class PrelabelHumanStoreTests(unittest.TestCase):

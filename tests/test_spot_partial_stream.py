@@ -120,17 +120,15 @@ class NormalizeEventParityTests(unittest.TestCase):
             video_path=Path("v.mp4"),
             metadata={"fps": 30.0, "num_frames": 100},
             checkpoint_path=Path("ckpt.pt"),
-            min_score=0.1,
         )["events"]
         partial = [
             item
-            for item in (
-                prelabel.normalize_event(ev, num_frames=100, min_score=0.1)
-                for ev in raw
-            )
+            for item in (prelabel.normalize_event(ev, num_frames=100) for ev in raw)
             if item is not None
         ]
         self.assertEqual(final, sorted(partial, key=lambda e: (e["frame"], e["label"])))
+        # No confidence cut: only the unknown label drops, and scores survive.
+        self.assertEqual([e["score"] for e in final], [0.9, 0.05, 0.8])
 
 
 if __name__ == "__main__":

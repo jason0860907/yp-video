@@ -364,6 +364,12 @@ class ActionEvent(BaseModel):
         description="Normalized [x, y] court location, each in [0, 1]",
     )
     visible: bool = Field(default=True, description="Whether the action is visible on screen")
+    score: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Model confidence; present on machine pre-annotations only",
+    )
 
 
 class SegmentLabelEvent(BaseModel):

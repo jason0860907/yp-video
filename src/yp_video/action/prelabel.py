@@ -232,19 +232,22 @@ def spot_progress_message(data: dict) -> str:
     return "SPOT inference " + " · ".join(parts)
 
 
-def normalize_event(event: dict, *, num_frames: int, min_score: float) -> dict | None:
+def normalize_event(event: dict, *, num_frames: int) -> dict | None:
     """Validate + normalize one raw SPOT event into the annotation shape.
 
-    Returns ``None`` when the event fails the label whitelist or ``min_score``.
+    Returns ``None`` when the event fails the label whitelist. Every event
+    yp-spot emits is kept with its ``score``: yp-spot already gates on its own
+    foreground threshold and NMS, and a second cut here would only hide the
+    confidence that downstream selection and training need.
     Shared by ``predictions_to_annotation`` (final path) and the progressive
     partial-event path so both normalize identically.
     """
     label = str(event.get("label", "")).lower()
     if label not in ACTION_LABELS:
         return None
-    score = _finite_float(event.get("score"), default=1.0)
-    if score < min_score:
-        return None
+    score = float(event["score"])
+    if not math.isfinite(score):
+        raise ValueError(f"Non-finite action score at frame {event.get('frame')}: {score}")
     frame = int(round(_finite_float(event.get("frame"), default=0)))
     if num_frames > 0:
         frame = max(0, min(frame, num_frames - 1))
@@ -260,6 +263,7 @@ def normalize_event(event: dict, *, num_frames: int, min_score: float) -> dict |
         # Visibility-head checkpoints predict the flag; older ones emit
         # events without it, and an unannotated contact defaults visible.
         "visible": bool(event.get("visible", True)),
+        "score": round(score, 4),
     }
 
 
@@ -269,7 +273,6 @@ def predictions_to_annotation(
     video_path: Path,
     metadata: dict,
     checkpoint_path: Path,
-    min_score: float,
 ) -> dict:
     record = predictions[0] if predictions else {}
     raw_events = record.get("events") or []
@@ -278,7 +281,7 @@ def predictions_to_annotation(
 
     events = []
     for event in raw_events:
-        normalized = normalize_event(event, num_frames=num_frames, min_score=min_score)
+        normalized = normalize_event(event, num_frames=num_frames)
         if normalized is not None:
             events.append(normalized)
 
@@ -291,7 +294,6 @@ def predictions_to_annotation(
         "source": {
             "type": "spot",
             "checkpoint": checkpoint_ref(checkpoint_path),
-            "min_score": min_score,
             "prediction_video": record.get("video"),
         },
         "events": events,

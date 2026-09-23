@@ -39,7 +39,6 @@ class InferenceRequest(StrictModel):
     rally_min_score: float = Field(default=0.5, ge=0.0, le=1.0)
     max_gap_s: float = Field(default=2.0, ge=0.0, le=30.0)
     min_duration_s: float = Field(default=4.0, ge=0.0, le=60.0)
-    action_min_score: float = Field(default=0.15, ge=0.0, le=1.0)
     batch_size: int = Field(default=1, ge=1, le=128)
     clip_len: int = Field(default=64, ge=8, le=256)
     #: ffmpeg decode threads; 0 lets ffmpeg pick.
@@ -148,7 +147,6 @@ async def start(req: InferenceRequest) -> dict:
             checkpoint=checkpoint,
             clip_checkpoint=clip_checkpoint,
             rally=rally,
-            action_min_score=req.action_min_score,
             spot=spot,
             overwrite=req.overwrite,
             on_progress=cb,

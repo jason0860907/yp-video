@@ -169,7 +169,7 @@ def test_full_pipeline_uses_one_spot_pass_and_new_boxes_even_when_labels_exist(l
         assert kwargs["tasks"] == ("rally", "action")
         assert kwargs.get("rallies") is None
         write_boxes(kwargs["person_output"], checkpoint=boxes.checkpoint_identity(checkpoint))
-        return SpotPassResult(30, 90, 3, checkpoint, 0.15, rallies, [])
+        return SpotPassResult(30, 90, 3, checkpoint, rallies, [])
 
     run_spot = Mock(side_effect=spot)
     monkeypatch.setattr(fi, "run_spot_pass", run_spot)
@@ -183,7 +183,7 @@ def test_full_pipeline_uses_one_spot_pass_and_new_boxes_even_when_labels_exist(l
     monkeypatch.setattr(fi, "run_association_stage", associate)
     options = dict(
         video=video, checkpoint=checkpoint, clip_checkpoint=checkpoint,
-        rally=RallyOptions(0.5, 2, 4), action_min_score=0.15,
+        rally=RallyOptions(0.5, 2, 4),
         spot=SpotOptions(4, 0, 64), overwrite=False, on_progress=lambda *args: None,
     )
     result = fi.run_video(**options)

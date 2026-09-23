@@ -115,7 +115,6 @@ class SpotPrelabelOptions(StrictModel):
     num_workers: int = Field(default=0, ge=0, le=32)
     clip_len: int = Field(default=64, ge=8, le=256)
     prefetch_factor: int = Field(default=1, ge=1, le=8)
-    min_score: float = Field(default=0.15, ge=0, le=1)
     overwrite: bool = False
     stop_vllm: bool = False
     use_amp: bool = True
@@ -151,7 +150,6 @@ async def _save_spot_action_annotation(
     meta: dict,
     pred_file: Path,
     checkpoint: Path,
-    min_score: float,
 ) -> dict:
     predictions = await asyncio.to_thread(prelabel.load_predictions, pred_file)
     data = await asyncio.to_thread(
@@ -160,7 +158,6 @@ async def _save_spot_action_annotation(
         meta=meta,
         predictions=predictions,
         checkpoint=checkpoint,
-        min_score=min_score,
     )
     sync_to_r2(ann_path, "action/pre-annotations")
     return data
@@ -402,7 +399,6 @@ async def start_spot_prelabel_batch(req: SpotPrelabelBatchRequest) -> dict:
         {
             "videos": [video.name for video, _ann_path in entries],
             "checkpoint": prelabel.checkpoint_ref(checkpoint),
-            "min_score": req.min_score,
             "total": total,
             "completed": 0,
             "failed": 0,
@@ -490,7 +486,6 @@ async def _run_prelabel_batch_subprocess(
                     meta=meta,
                     pred_file=pred_file,
                     checkpoint=checkpoint,
-                    min_score=req.min_score,
                 )
                 log.info("%ssaved %s (%d event(s))", prefix, ann_path.name, data["num_events"])
                 await update_batch_item(

@@ -52,7 +52,6 @@ class SpotPassResult:
     num_frames: int
     duration_s: float
     checkpoint: Path
-    action_min_score: float
     #: Merged ``{start, end, label, score[, winner, winner_score]}`` in
     #: seconds, timeline order; None when the pass had no rally head.
     rallies: list[dict] | None
@@ -69,7 +68,6 @@ def run_spot_pass(
     rally: RallyOptions,
     spot: SpotOptions,
     rally_pad_s: float,
-    action_min_score: float = 0.0,
     rallies: Sequence[dict] | None = None,
     on_progress: Callable[[float], None] | None = None,
     on_rallies: Callable[[list[dict]], None] | None = None,
@@ -90,7 +88,7 @@ def run_spot_pass(
         chronological indexing therefore never renumbers.
       * ``on_action_events(events)`` — the cumulative action events so far,
         cut to the rally spans known at that moment and normalized exactly
-        like the final annotation (label whitelist, ``min_score``, frame
+        like the final annotation (label whitelist, ``score``, frame
         clamp) plus ``time`` in seconds.
 
     Raises ``SpotInferenceError`` when the video cannot be probed or yp-spot
@@ -145,7 +143,7 @@ def run_spot_pass(
                 events = filter_events_to_spans([{"events": events}], spans, fps=fps)[0]["events"]
             normalized = []
             for event in events:
-                item = prelabel.normalize_event(event, num_frames=num_frames, min_score=action_min_score)
+                item = prelabel.normalize_event(event, num_frames=num_frames)
                 if item is not None:
                     item["time"] = item["frame"] / fps if fps > 0 else 0.0
                     normalized.append(item)
@@ -181,7 +179,6 @@ def run_spot_pass(
         num_frames=num_frames,
         duration_s=duration_s,
         checkpoint=checkpoint,
-        action_min_score=action_min_score,
         rallies=merged,
         actions=actions,
     )
@@ -198,7 +195,6 @@ def write_actions_jsonl(result: SpotPassResult, output_path: Path, *, video_path
         video_path=video_path,
         metadata={"fps": result.fps, "num_frames": result.num_frames},
         checkpoint_path=result.checkpoint,
-        min_score=result.action_min_score,
     )
     meta = {k: v for k, v in data.items() if k != "events"}
     write_jsonl(output_path, meta, data.get("events", []))

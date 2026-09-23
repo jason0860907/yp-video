@@ -159,10 +159,15 @@ def normalize_events(video_stem: str, events: list[dict], *, fps: float, num_fra
 #: rallies are re-edited, which is exactly how the Association board once
 #: ended up navigating by outdated spans.
 PERSISTED_EVENT_FIELDS = ("id", "frame", "label", "xy", "visible")
+#: A machine pre-annotation also keeps the model's confidence, so later
+#: selection, review triage and pseudo-label training can use it.
+PREDICTED_EVENT_FIELDS = (*PERSISTED_EVENT_FIELDS, "score")
 
 
-def persistable_events(events: list[dict]) -> list[dict]:
-    return [{key: event[key] for key in PERSISTED_EVENT_FIELDS} for event in events]
+def persistable_events(
+    events: list[dict], fields: tuple[str, ...] = PERSISTED_EVENT_FIELDS
+) -> list[dict]:
+    return [{key: event[key] for key in fields} for event in events]
 
 
 def truthy_event_visible(value: object) -> bool:
@@ -191,7 +196,6 @@ def save_spot_pre_annotation(
     meta: dict,
     predictions: list[dict],
     checkpoint: Path,
-    min_score: float,
 ) -> dict:
     """Write yp-spot action predictions as this video's machine pre-annotation.
 
@@ -205,7 +209,6 @@ def save_spot_pre_annotation(
         video_path=video,
         metadata=meta,
         checkpoint_path=checkpoint,
-        min_score=min_score,
     )
     data["events"] = persistable_events(normalize_events(
         video.stem,
@@ -213,7 +216,7 @@ def save_spot_pre_annotation(
         fps=float(data.get("fps") or meta["fps"]),
         num_frames=int(data.get("num_frames") or meta["num_frames"]),
         rallies=[],
-    ))
+    ), PREDICTED_EVENT_FIELDS)
     data["num_events"] = len(data["events"])
     ann_path = pre_annotation_path(video.name)
     ann_path.parent.mkdir(parents=True, exist_ok=True)
