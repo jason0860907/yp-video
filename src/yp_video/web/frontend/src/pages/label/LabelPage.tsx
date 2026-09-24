@@ -55,10 +55,8 @@ export function LabelPage() {
   const [statusFilter, setStatusFilter] = useState('all');
   // The "which store to read" choice — a per-load setting, not a list
   // filter, so it renders beside the mode tabs instead of in the picker row.
-  // Shared between rally and action (the two multi-store modes); the VLM
-  // checkbox is rally's third store, exposed only there.
+  // Shared between rally and action (the two multi-store modes).
   const [source, setSource] = useState<LabelSource>('annotation');
-  const [vlm, setVlm] = useState(false);
   // What the panel's last load actually resolved to — 'none' means the
   // selected store has no file for this video yet (an empty editor).
   const [loadedSource, setLoadedSource] = useState<LoadedSource | null>(null);
@@ -69,7 +67,7 @@ export function LabelPage() {
   useEffect(() => {
     setLoadedSource(null);
     setClipsOpen(false);
-  }, [video, mode, source, vlm]);
+  }, [video, mode, source]);
 
   const active = MODES.find((m) => m.key === mode) ?? RALLY_MODE;
   // A status the current mode doesn't offer (left over from another tab)
@@ -221,9 +219,6 @@ export function LabelPage() {
             <SourceSelect
               source={source}
               onSource={setSource}
-              vlm={vlm}
-              onVlm={setVlm}
-              showVlm={active.key === 'rally'}
               loaded={loadedSource}
             />
           )}
@@ -338,7 +333,6 @@ export function LabelPage() {
         <RallyPanel
           video={video}
           source={source}
-          vlm={vlm}
           onLoaded={setLoadedSource}
           clock={clock}
           clipsOpen={clipsOpen}

@@ -32,7 +32,7 @@ type StageKey = (typeof STAGES)[number]['key'];
 /** What a predict page needs before Run does anything, said before the click:
  *  "Prerequisites: Rally + Action". Same stage words as the chips below —
  *  declared once per page, not derived per video. `extras` carries the
- *  non-stage requirements (a checkpoint, the vLLM server). */
+ *  non-stage requirements (e.g. a checkpoint). */
 export function Prereqs({ stages = [], extras = [] }: {
   stages?: StageKey[];
   extras?: Array<{ label: string; hint: string }>;

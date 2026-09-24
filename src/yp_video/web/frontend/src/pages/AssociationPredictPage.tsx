@@ -44,7 +44,6 @@ export function AssociationPredictPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [policy, setPolicy] = useState(RULE);
   const touchedPolicy = useRef(false);
-  const [stopVllm, setStopVllm] = useState(false);
   const { jobs, upsertJob } = useTypedJobs(PAGE_JOB_TYPES);
 
   const videosQuery = useQuery({
@@ -116,7 +115,6 @@ export function AssociationPredictPage() {
         body: {
           videos: names,
           association_checkpoint: chosenAssociation?.path ?? null,
-          stop_vllm: stopVllm,
         },
       });
       upsertJob(job);
@@ -212,16 +210,6 @@ export function AssociationPredictPage() {
               </p>
             </dl>
           )}
-
-          <label className="mt-3 flex cursor-pointer items-center gap-2 text-xs text-text-secondary">
-            <input
-              type="checkbox"
-              checked={stopVllm}
-              onChange={(e) => setStopVllm(e.target.checked)}
-              className="h-3.5 w-3.5 accent-primary"
-            />
-            Stop vLLM first
-          </label>
 
           <Button
             intent="primary"

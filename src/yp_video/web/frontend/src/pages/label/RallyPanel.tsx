@@ -41,21 +41,19 @@ export const RALLY_MODE: ModeDescriptor = {
 // Stable reference so the editor's load effect doesn't re-run each render.
 const streamPath = (vp: string) => apiUrl(API.annotate.video(vp));
 
-/** The shared (source, vlm) choice → this store's tag — exactly one store,
- *  no fallback. Rally keeps three stores; the backend tags are annotation /
- *  spot-pre-annotation (SPOT) / pre-annotation (VLM), and the VLM checkbox
- *  redirects Pre-Annotation to the VLM pass. */
-const loadRally = (name: string, source: LabelSource, vlm: boolean): Promise<EditorData> =>
+/** The shared source choice → this store's tag — exactly one store, no
+ *  fallback. Rally's pre-annotation store is the SPOT pass, tagged
+ *  'spot-pre-annotation' by the backend. */
+const loadRally = (name: string, source: LabelSource): Promise<EditorData> =>
   apiFetch(API.annotate.result(name, {
-    source: source === 'annotation' ? 'annotation' : vlm ? 'pre-annotation' : 'spot-pre-annotation',
+    source: source === 'annotation' ? 'annotation' : 'spot-pre-annotation',
   }));
 
-/** Backend store tag → the shared LoadedSource vocabulary. The rally tag
- *  'pre-annotation' is the VLM pass; SPOT wears 'spot-pre-annotation'. */
+/** Backend store tag → the shared LoadedSource vocabulary. */
 const loadedFromTag = (tag: unknown): LoadedSource =>
-  tag === 'annotation' ? 'annotation' : tag === 'spot-pre-annotation' ? 'pre-annotation' : tag === 'pre-annotation' ? 'vlm' : 'none';
+  tag === 'annotation' ? 'annotation' : tag === 'spot-pre-annotation' ? 'pre-annotation' : 'none';
 
-export function RallyPanel({ video, source, vlm, onLoaded, clock, clipsOpen, onClipsClose }: { video: string; source: LabelSource; vlm: boolean; onLoaded?: (s: LoadedSource) => void; clock?: PlaybackClock; clipsOpen: boolean; onClipsClose: () => void }) {
+export function RallyPanel({ video, source, onLoaded, clock, clipsOpen, onClipsClose }: { video: string; source: LabelSource; onLoaded?: (s: LoadedSource) => void; clock?: PlaybackClock; clipsOpen: boolean; onClipsClose: () => void }) {
   const [data, setData] = useState<EditorData | null>(null);
 
   // Load on video pick and on Source change — the picked file is already
@@ -68,7 +66,7 @@ export function RallyPanel({ video, source, vlm, onLoaded, clock, clipsOpen, onC
     let stale = false;
     void (async () => {
       try {
-        const d = await loadRally(rallyResultName(video), source, vlm);
+        const d = await loadRally(rallyResultName(video), source);
         if (stale) return;
         setData(d);
         onLoaded?.(loadedFromTag(d.source));
@@ -89,7 +87,7 @@ export function RallyPanel({ video, source, vlm, onLoaded, clock, clipsOpen, onC
       stale = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [video, source, vlm]);
+  }, [video, source]);
 
   // The save just wrote the annotation store — whatever was loaded before,
   // that is what the editor is showing now. Only the badge moves.

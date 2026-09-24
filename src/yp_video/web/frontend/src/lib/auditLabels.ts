@@ -29,8 +29,6 @@ const ACTION_LABELS: Record<string, string> = {
   'POST /api/download/{session_id}/cancel': '取消下載',
   'POST /api/cut/export': '切分 set',
   'DELETE /api/cut/video/{name}': '刪除原始影片',
-  'POST /api/detect/start': '啟動 VLM 偵測',
-  'POST /api/detect/convert': 'VLM 片段轉 Rally',
   'POST /api/annotate/clip': '下載單一片段',
   'POST /api/annotate/clip-zip': '下載片段壓縮檔',
 
@@ -52,8 +50,6 @@ const ACTION_LABELS: Record<string, string> = {
   'POST /api/upload/delete-local': '刪除本機檔案',
   'POST /api/upload/delete-r2': '刪除 R2 物件',
   'POST /api/jobs/{job_id}/cancel': '取消工作',
-  'POST /api/system/vllm/start': '啟動 vLLM',
-  'POST /api/system/vllm/stop': '關閉 vLLM',
 
   // Background job lifecycle.
   'job.running': '工作開始執行',

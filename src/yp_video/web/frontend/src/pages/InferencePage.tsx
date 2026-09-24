@@ -33,7 +33,6 @@ interface PredSettings {
   clip_len: number;
   num_workers: number;
   overwrite: boolean;
-  stop_vllm: boolean;
 }
 const DEFAULTS: PredSettings = {
   checkpoint: '',
@@ -45,7 +44,6 @@ const DEFAULTS: PredSettings = {
   clip_len: 64,
   num_workers: 1,
   overwrite: false,
-  stop_vllm: false,
 };
 
 const NUM_FIELDS: Array<NumField<PredSettings>> = [
@@ -124,7 +122,6 @@ export function InferencePage() {
           clip_len: settings.clip_len,
           num_workers: settings.num_workers,
           overwrite: settings.overwrite,
-          stop_vllm: settings.stop_vllm,
         },
       });
       upsertJob(job);

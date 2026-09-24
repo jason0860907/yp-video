@@ -17,7 +17,6 @@ export interface NumField<S> {
 interface BaseSettings {
   checkpoint: string;
   overwrite: boolean;
-  stop_vllm: boolean;
 }
 
 interface PredictConfigCardProps<S extends BaseSettings> {
@@ -101,15 +100,6 @@ export function PredictConfigCard<S extends BaseSettings>({
             className="h-3.5 w-3.5 accent-primary"
           />
           {overwriteLabel}
-        </label>
-        <label className="flex cursor-pointer items-center gap-2 text-xs text-text-secondary">
-          <input
-            type="checkbox"
-            checked={settings.stop_vllm}
-            onChange={(e) => onChange({ stop_vllm: e.target.checked } as Partial<S>)}
-            className="h-3.5 w-3.5 accent-primary"
-          />
-          Stop vLLM first
         </label>
       </div>
 

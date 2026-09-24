@@ -127,12 +127,8 @@ export const API = {
     eventsSSE: (id: string) => `/jobs/${id}/events`,
   },
   system: {
-    videos: '/system/videos',
     me: '/system/me',
     presence: '/system/presence',
-    vllmStart: '/system/vllm/start',
-    vllmStop: '/system/vllm/stop',
-    vllmStatus: '/system/vllm/status',
   },
   upload: {
     start: '/upload/start',
@@ -154,10 +150,6 @@ export const API = {
     videos: '/cut/videos',
     export: '/cut/export',
     video: (name: string) => `/cut/video/${encodeURIComponent(name)}`,
-  },
-  detect: {
-    start: '/detect/start',
-    convert: '/detect/convert',
   },
   label: {
     stats: '/label/stats',

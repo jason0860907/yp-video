@@ -7,14 +7,13 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { StatTile } from '@/components/ui/StatTile';
-import { StatusBadge } from '@/components/job/StatusBadge';
 import { ProgressBar } from '@/components/job/ProgressBar';
 import { JobItems } from '@/components/job/JobItems';
 import { formatClock } from '@/lib/format';
 import { statusLabel, statusTheme } from '@/lib/job';
 import { LabelProgress } from '@/components/labeling/LabelProgress';
 import { toast } from '@/components/feedback/toast';
-import type { Job, VllmStatus } from '@/types/api';
+import type { Job } from '@/types/api';
 
 const POLL_MS = 15_000;
 
@@ -22,39 +21,14 @@ const POLL_MS = 15_000;
 export function JobsPage() {
   const qc = useQueryClient();
 
-  const vllm = useQuery({
-    queryKey: ['vllm-status'],
-    queryFn: () => apiFetch<VllmStatus>(API.system.vllmStatus),
-    refetchInterval: POLL_MS,
-  });
   const jobs = useQuery({
     queryKey: ['jobs-list'],
     queryFn: () => apiFetch<Job[]>(API.jobs.list),
     refetchInterval: POLL_MS,
   });
 
-  const refetchVllm = () => qc.invalidateQueries({ queryKey: ['vllm-status'] });
   const refetchJobs = () => qc.invalidateQueries({ queryKey: ['jobs-list'] });
 
-  const startVllm = async () => {
-    try {
-      toast.info('Starting vLLM server…');
-      await apiFetch(API.system.vllmStart, { method: 'POST' });
-      toast.success('vLLM starting');
-      setTimeout(refetchVllm, 3000);
-    } catch (e) {
-      toast.error(`Failed: ${errMsg(e)}`);
-    }
-  };
-  const stopVllm = async () => {
-    try {
-      await apiFetch(API.system.vllmStop, { method: 'POST' });
-      toast.success('vLLM stopped');
-      refetchVllm();
-    } catch (e) {
-      toast.error(`Failed: ${errMsg(e)}`);
-    }
-  };
   const cancelJob = async (id: string) => {
     try {
       await apiFetch(API.jobs.cancel(id), { method: 'POST' });
@@ -76,9 +50,6 @@ export function JobsPage() {
     return (b.id || '').localeCompare(a.id || '');
   });
 
-  const vllmStatus = vllm.data?.status ?? 'stopped';
-  const vllmRunning = vllmStatus === 'running';
-
   return (
     <div className="mx-auto max-w-screen-2xl space-y-5">
       <PageHeader
@@ -89,16 +60,10 @@ export function JobsPage() {
         }
       />
 
-      <div className="grid grid-cols-2 gap-3.5 lg:grid-cols-4">
+      <div className="grid grid-cols-3 gap-3.5">
         <StatTile label="Active jobs" value={running.length} tintClass="text-primary-light" sub="running now" />
         <StatTile label="Completed" value={completed} tintClass="text-primary-light" />
         <StatTile label="Failed" value={failed} tintClass={failed ? 'text-red-400' : 'text-text-muted'} />
-        <StatTile
-          label="vLLM"
-          value={vllmStatus}
-          tintClass={vllmRunning ? 'text-primary-light' : 'text-text-muted'}
-          sub={vllm.data?.model}
-        />
       </div>
 
       <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
@@ -124,42 +89,10 @@ export function JobsPage() {
           )}
         </Card>
 
-        {/* System panel */}
-        <div className="space-y-4">
-          <Card>
-            <SectionLabel>vLLM server</SectionLabel>
-            <div className="mb-3 flex items-center gap-2.5">
-              <StatusBadge status={vllmStatus} />
-              <span className="font-mono text-[11px] text-text-muted">
-                {vllm.data?.model ? `${vllm.data.model}` : 'no model'}
-              </span>
-            </div>
-            <div className="mb-4 grid grid-cols-2 gap-2 text-[11px]">
-              <div className="rounded-lg border border-border bg-surface-50 px-3 py-2">
-                <div className="text-text-muted">Port</div>
-                <div className="font-mono tabular-nums text-text-secondary">{vllm.data?.port ?? '—'}</div>
-              </div>
-              <div className="rounded-lg border border-border bg-surface-50 px-3 py-2">
-                <div className="text-text-muted">Max seqs</div>
-                <div className="font-mono tabular-nums text-text-secondary">{vllm.data?.max_num_seqs ?? '—'}</div>
-              </div>
-            </div>
-            {vllmRunning ? (
-              <Button intent="danger" size="sm" onClick={stopVllm} className="w-full">
-                Stop server
-              </Button>
-            ) : (
-              <Button intent="primary" size="sm" onClick={startVllm} className="w-full">
-                Start server
-              </Button>
-            )}
-          </Card>
-
-          <Card>
-            <SectionLabel>Label progress</SectionLabel>
-            <LabelProgress />
-          </Card>
-        </div>
+        <Card>
+          <SectionLabel>Label progress</SectionLabel>
+          <LabelProgress />
+        </Card>
       </div>
     </div>
   );

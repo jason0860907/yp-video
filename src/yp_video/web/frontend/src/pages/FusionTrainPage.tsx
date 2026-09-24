@@ -379,13 +379,12 @@ export function FusionTrainPage() {
               </p>
             )}
 
-            <div className="mt-4 flex flex-wrap items-center gap-3">
-              {visible.has('include_predictions') &&
-                (!visible.has('dataset_scope') || values.dataset_scope === 'partial_labels') && (
+            {visible.has('include_predictions') &&
+              (!visible.has('dataset_scope') || values.dataset_scope === 'partial_labels') && (
+                <div className="mt-4">
                   <SchemaCheckboxField name="include_predictions" label="Include predictions" />
-                )}
-              <SchemaCheckboxField name="stop_vllm" label="Stop vLLM first" />
-            </div>
+                </div>
+              )}
           </SchemaForm>
           <div className="mt-4 flex items-center gap-2">
             <Button intent="primary" onClick={() => void startTrain()} disabled={!canTrain} className="flex-1">

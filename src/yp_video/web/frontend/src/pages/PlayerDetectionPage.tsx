@@ -34,7 +34,6 @@ export function PlayerDetectionPage() {
   const navigate = useNavigate();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [overwrite, setOverwrite] = useState(false);
-  const [stopVllm, setStopVllm] = useState(false);
   const { jobs, upsertJob } = useTypedJobs([DETECT_JOB_TYPE]);
 
   const videosQuery = useQuery({
@@ -65,7 +64,7 @@ export function PlayerDetectionPage() {
     try {
       const job = await apiFetch<Job>(API.extraction.detect, {
         method: 'POST',
-        body: { videos: names, overwrite, stop_vllm: stopVllm },
+        body: { videos: names, overwrite },
       });
       upsertJob(job);
       toast.success(`Started Player Detection for ${names.length} video(s)`);
@@ -113,10 +112,6 @@ export function PlayerDetectionPage() {
             <label className="flex cursor-pointer items-center gap-2 text-xs text-text-secondary">
               <input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} className="h-3.5 w-3.5 accent-primary" />
               Re-detect videos that already have detections
-            </label>
-            <label className="flex cursor-pointer items-center gap-2 text-xs text-text-secondary">
-              <input type="checkbox" checked={stopVllm} onChange={(e) => setStopVllm(e.target.checked)} className="h-3.5 w-3.5 accent-primary" />
-              Stop vLLM first
             </label>
           </div>
           <Button

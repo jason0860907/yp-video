@@ -31,7 +31,6 @@ export function TrackingPage() {
   const navigate = useNavigate();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [overwrite, setOverwrite] = useState(false);
-  const [stopVllm, setStopVllm] = useState(false);
   const [stride, setStride] = useState(1);
   const { jobs, upsertJob } = useTypedJobs([TRACKING_JOB_TYPE]);
 
@@ -60,7 +59,7 @@ export function TrackingPage() {
     try {
       const job = await apiFetch<Job>(API.tracklets.run, {
         method: 'POST',
-        body: { videos: names, overwrite, stop_vllm: stopVllm, stride },
+        body: { videos: names, overwrite, stride },
       });
       upsertJob(job);
       toast.success(`Started Rally Tracking for ${names.length} video(s)`);
@@ -116,10 +115,6 @@ export function TrackingPage() {
             <label className="flex cursor-pointer items-center gap-2 text-xs text-text-secondary">
               <input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} className="h-3.5 w-3.5 accent-primary" />
               Overwrite existing tracklets
-            </label>
-            <label className="flex cursor-pointer items-center gap-2 text-xs text-text-secondary">
-              <input type="checkbox" checked={stopVllm} onChange={(e) => setStopVllm(e.target.checked)} className="h-3.5 w-3.5 accent-primary" />
-              Stop vLLM first
             </label>
           </div>
           <Button

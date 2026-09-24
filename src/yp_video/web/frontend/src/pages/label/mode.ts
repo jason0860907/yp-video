@@ -21,7 +21,7 @@ export type LabelSource = 'annotation' | 'pre-annotation';
 
 /** Which store actually satisfied the last load ('none' = the selected
  *  store has no file yet). Rendered as a badge beside the Source select. */
-export type LoadedSource = 'annotation' | 'pre-annotation' | 'vlm' | 'none';
+export type LoadedSource = 'annotation' | 'pre-annotation' | 'none';
 
 export interface ModeDescriptor {
   key: LabelMode;

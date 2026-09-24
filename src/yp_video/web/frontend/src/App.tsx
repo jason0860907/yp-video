@@ -5,7 +5,6 @@ import { DEFAULT_PATH, NAV_ITEMS } from '@/components/layout/nav';
 import { Placeholder } from '@/components/Placeholder';
 import { JobsPage } from '@/pages/JobsPage';
 import { DownloadPage } from '@/pages/DownloadPage';
-import { DetectPage } from '@/pages/DetectPage';
 import { ActionPredictPage } from '@/pages/ActionPredictPage';
 import { SpotPredictPage } from '@/pages/SpotPredictPage';
 import { UploadPage } from '@/pages/UploadPage';
@@ -26,7 +25,6 @@ const PAGES: Record<string, ReactElement> = {
   '/download': <DownloadPage />,
   '/cut': <CutPage />,
   '/label': <LabelPage />,
-  '/rally-vlm-predict': <DetectPage />,
   '/spot-predict': <SpotPredictPage />,
   '/action-predict': <ActionPredictPage />,
   '/tracking': <TrackingPage />,

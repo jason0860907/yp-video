@@ -110,9 +110,7 @@ export function Sidebar() {
         })}
       </nav>
 
-      {/* footer: who is here + stats. vLLM lives on the Jobs page, where it
-          can also be started — a read-only dot here was one more poll for a
-          number nobody could act on. */}
+      {/* footer: who is here + stats. */}
       <div className="mx-2 mb-3 space-y-2.5 rounded-xl border border-border bg-surface-100 p-3">
         {presence && (
           <div

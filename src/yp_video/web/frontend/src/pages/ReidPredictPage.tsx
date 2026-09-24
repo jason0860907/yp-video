@@ -36,7 +36,6 @@ export function ReidPredictPage() {
   const navigate = useNavigate();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [overwrite, setOverwrite] = useState(false);
-  const [stopVllm, setStopVllm] = useState(false);
   // '' = the fixed official checkpoint; else an explicitly selected candidate.
   const [checkpoint, setCheckpoint] = useState('');
   const { jobs, upsertJob } = useTypedJobs([EMBED_JOB_TYPE]);
@@ -70,7 +69,7 @@ export function ReidPredictPage() {
     try {
       const job = await apiFetch<Job>(API.reid.embed, {
         method: 'POST',
-        body: { videos: names, overwrite, stop_vllm: stopVllm, checkpoint: checkpoint || null },
+        body: { videos: names, overwrite, checkpoint: checkpoint || null },
       });
       upsertJob(job);
       toast.success(`Started embedding for ${names.length} video(s)`);
@@ -138,10 +137,6 @@ export function ReidPredictPage() {
             <label className="flex cursor-pointer items-center gap-2 text-xs text-text-secondary">
               <input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} className="h-3.5 w-3.5 accent-primary" />
               Overwrite — recompute every model, not just the missing ones
-            </label>
-            <label className="flex cursor-pointer items-center gap-2 text-xs text-text-secondary">
-              <input type="checkbox" checked={stopVllm} onChange={(e) => setStopVllm(e.target.checked)} className="h-3.5 w-3.5 accent-primary" />
-              Stop vLLM first
             </label>
           </div>
           <Button

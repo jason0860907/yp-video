@@ -298,8 +298,6 @@ export interface RallyPredictVideo {
   has_annotation?: boolean;
   /** SPOT prediction exists (rally-spot-pre-annotations). */
   has_pre_annotation?: boolean;
-  /** VLM prediction exists (rally-pre-annotations) — a separate file. */
-  has_vlm_pre_annotation?: boolean;
 }
 
 /** One row of the Inference page: which stage outputs the cut already has. */
@@ -316,13 +314,6 @@ export interface InferenceVideo {
   pipeline: PipelineState;
 }
 
-export interface VllmStatus {
-  status: 'running' | 'starting' | 'stopped' | 'error';
-  model?: string;
-  port?: number;
-  max_num_seqs?: number;
-}
-
 export type CutKind = 'broadcast' | 'sideline';
 
 /** A <select> option as the backend serves it (checkpoints). */
@@ -331,14 +322,7 @@ export interface SelectOption {
   label: string;
 }
 
-export interface VideoMeta {
-  name: string;
-  kind: CutKind;
-  status: LabelStatus;
-  has_detection?: boolean;
-}
-
-/** Video record from the action-annotate listing (richer than VideoMeta). */
+/** Video record from the action-annotate listing. */
 export interface ActionVideo {
   name: string;
   kind: CutKind;
@@ -424,7 +408,7 @@ export interface SpotInfo {
 /** How far a video has walked the stage chain (see extraction/prerequisites.py).
  *  `blocked_on` is the FIRST unmet stage; later gaps are its consequences. */
 export interface PipelineState {
-  /** Rally source tags present, in priority order (manual → SPOT → VLM). */
+  /** Rally source tags present, in priority order (manual → SPOT). */
   rally_sources: string[];
   has_action: boolean;
   has_tracks: boolean;

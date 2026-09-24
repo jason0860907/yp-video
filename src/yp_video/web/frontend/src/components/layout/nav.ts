@@ -61,7 +61,6 @@ export const NAV: NavSection[] = [
     title: 'Rally',
     collapsible: true,
     items: [
-      { path: '/rally-vlm-predict', label: 'Rally VLM Predict', icon: ICON.detect },
       { path: '/spot-predict', label: 'Rally SPOT Predict', icon: ICON.predict },
     ],
   },
