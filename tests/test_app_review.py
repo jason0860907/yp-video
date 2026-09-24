@@ -16,13 +16,14 @@ def correction(key, **values):
 
 def bundle(events=(), rallies=((1, 9, 20),), **changes):
     corr = {
-        "schema_version": "6.0",
+        "schema_version": "7.0",
         "match_id": "match",
         "updated_at": "now",
         "roster": [],
         "actions": [],
         "scores": [],
         "deleted_rally_indices": [],
+        "rally_winner_overrides": {},
         **changes.pop("corrections", {}),
     }
     action_events = [
@@ -56,8 +57,8 @@ def bundle(events=(), rallies=((1, 9, 20),), **changes):
     "mode,bounds,kinds",
     [
         ("full_play", (10, 15), ["receive", "set", "spike"]),
-        ("to_next", (12, 15), ["set", "spike"]),
-        ("whole_rally", (9, 20), ["receive", "set", "spike"]),
+        ("to_next", (12, 15), ["spike"]),
+        ("whole_rally", (9, 20), ["serve", "receive", "set", "spike", "receive"]),
     ],
 )
 def test_spike_build_up_three_windows(mode, bounds, kinds):
@@ -117,7 +118,7 @@ def test_trim_soft_delete_and_outcomes():
                 correction("12.000", removed=True),
                 correction("13.000", trim_start=12.5, trim_end=14),
             ],
-            "scores": [correction("15.000", result="loss", loss_reason="net")],
+            "scores": [correction("15.000", loss_reason="blocked")],
             "deleted_rally_indices": [1],
         },
     )
@@ -126,9 +127,9 @@ def test_trim_soft_delete_and_outcomes():
     assert len(changed["actions"]) == 1
     assert (changed["actions"][0]["start"], changed["actions"][0]["end"]) == (12.5, 14)
     assert changed["actions"][0]["rally_index"] is None
-    assert changed["actions"][0]["result"] is None
-    assert changed["scores"][0]["result"] == "loss"
-    assert changed["loss_reasons"] == {"net": 1}
+    assert changed["actions"][0]["loss_reason"] is None
+    assert changed["scores"][0]["loss_reason"] == "blocked"
+    assert changed["loss_reasons"] == {"blocked": 1}
 
 
 def test_player_run_scope_override_and_removed_units():
@@ -176,7 +177,7 @@ def test_library_uuid_trim_and_synthetic_score():
     uid = "11111111-1111-4111-8111-111111111111"
     b = bundle(
         [],
-        corrections={"scores": [correction(f"rally-{uid}", result="loss")]},
+        corrections={"scores": [correction(f"rally-{uid}", loss_reason="other")]},
         library_rallies=[
             {
                 "id": uid,
@@ -191,7 +192,7 @@ def test_library_uuid_trim_and_synthetic_score():
     c = project(b)["scores"][0]
     assert c["key"] == f"rally-{uid}"
     assert (c["start"], c["end"]) == (10, 19)
-    assert c["result"] == "loss"
+    assert c["loss_reason"] == "other"
     assert project(b, corrected=False)["scores"][0]["start"] == 9
 
 
@@ -200,14 +201,47 @@ def test_court_counts_all_rallies():
     b.result.rallies[0].winner = "left"
     b.result.rallies[1].winner = "near"
     r = project(b)
-    assert r["court_totals"][1] == {
-        "left": 1,
-        "right": 0,
-        "near": 1,
-        "far": 0,
-        "unknown": 1,
-    }
+    assert r["court_totals"] == [
+        {
+            "set": 1,
+            "points": {"left": 1, "right": 0, "near": 1, "far": 0},
+            "unknown": 1,
+        }
+    ]
     assert r["scores"][0]["court_score"]["unknown"] == 0
+    assert r["scores"][0]["winner"] == "left"
+
+
+def test_winner_override_rescores_the_set():
+    b = bundle(
+        [],
+        [(1, 0, 10), (2, 20, 30)],
+        corrections={"rally_winner_overrides": {"2": "left"}},
+    )
+    b.result.rallies[0].winner = "left"
+    b.result.rallies[1].winner = "right"
+    r = project(b)
+    assert [c["winner"] for c in r["scores"]] == ["left", "left"]
+    assert r["court_totals"][0]["points"] == {"left": 2, "right": 0}
+    assert project(b, corrected=False)["court_totals"][0]["points"] == {
+        "left": 1,
+        "right": 1,
+    }
+    assert [c["id"] for c in feedback.candidates(b)] == ["winner:2"]
+
+
+@pytest.mark.parametrize(
+    "events,reason",
+    [
+        ([("serve", 10)], "serve_error"),
+        ([("serve", 10), ("receive", 11)], "receive_error"),
+        ([("serve", 10), ("receive", 11), ("set", 12)], None),
+    ],
+)
+def test_inferred_loss_reason_follows_rally_shape(events, reason):
+    c = project(bundle(events))["scores"][0]
+    assert c["loss_reason"] == reason
+    assert c["loss_reason_inferred"] is (reason is not None)
 
 
 @pytest.mark.parametrize(
@@ -304,7 +338,7 @@ def test_snapshot_dedup_provenance_no_implicit_labels(store):
     )
     assert path.read_bytes() == before
     assert feedback.load(r["id"])["decisions"]["actions:10.000"]["actor"] == "reviewer"
-    assert feedback.list_reviews()[0]["reviewed"] == 1
+    assert feedback.list_reviews("match")[0]["reviewed"] == 1
 
 
 def test_false_positive_import_preserves_others_clears_done(store):
@@ -485,7 +519,58 @@ def test_library_bounds_cannot_overlap_neighbor(store):
     assert read_jsonl(path)[1] == rows
 
 
-def test_http_preview_review_apply_and_reload(store, monkeypatch):
+MATCH = "0b7e1f2a-5d7c-4a8e-9f3b-2c1d0e9f8a7b"
+
+
+def app_library(b, **keys):
+    """What the Worker's admin API returns for a user owning one match."""
+    return {
+        "matches": [
+            {
+                "id": MATCH,
+                "owner_id": "user",
+                "deleted_at": None,
+                "source_video": {
+                    "id": "s",
+                    "r2_key": "src.mp4",
+                    "public_url": "https://v/src.mp4",
+                },
+                "r2_keys": {
+                    "source": "src.mp4",
+                    "result": "results/user/match/job.json",
+                    "corrections": "corrections/user/match.json",
+                    "reid": None,
+                    **keys,
+                },
+            }
+        ],
+        "rallies": [
+            {
+                **r.model_dump(),
+                "id": f"{r.index:08d}-0000-4000-8000-000000000000",
+                "match_id": MATCH,
+            }
+            for r in b.result.rallies
+        ],
+    }
+
+
+def serve_library(monkeypatch, b, **keys):
+    from yp_video.web.app_review import sources
+
+    monkeypatch.setattr(sources, "library", lambda user: app_library(b, **keys))
+    payloads = {
+        "results/user/match/job.json": {**b.result.model_dump(), "match_id": MATCH},
+        "corrections/user/match.json": {
+            **b.corrections.model_dump(mode="json"),
+            "match_id": MATCH,
+        },
+    }
+    monkeypatch.setattr(sources.customer, "read_json", payloads.__getitem__)
+    return payloads
+
+
+def test_http_match_review_apply_and_reload(store, monkeypatch):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
@@ -500,17 +585,21 @@ def test_http_preview_review_apply_and_reload(store, monkeypatch):
     b = bundle(
         [("spike", 10)], corrections={"actions": [correction("10.000", removed=True)]}
     )
+    serve_library(monkeypatch, b)
+    base = f"/api/app-review/users/user/matches/{MATCH}"
     with TestClient(app) as client:
-        raw = client.post(
-            "/api/app-review/preview",
-            json={"bundle": b.model_dump(), "corrected": False},
-        )
-        assert raw.status_code == 200 and len(raw.json()["actions"]) == 1
-        created = client.post("/api/app-review/reviews", json=b.model_dump())
+        raw = client.get(base, params={"corrected": False})
+        assert raw.status_code == 200 and len(raw.json()["preview"]["actions"]) == 1
+        assert raw.json()["review_id"] is None
+        assert client.get("/api/app-review/users/user/matches/other").status_code == 404
+        video = client.get(f"{base}/video", follow_redirects=False)
+        assert video.headers["location"] == "https://v/src.mp4"
+        created = client.post(f"{base}/review")
         assert created.status_code == 200
         data = created.json()
         assert data["preview"]["actions"] == []
         assert data["candidates"][0]["clip"]["event_id"] == "f300"
+        assert client.get(base).json()["review_id"] == data["id"]
         target = client.get(
             "/api/app-review/target", params={"video": "game.mp4"}
         ).json()
@@ -535,34 +624,51 @@ def test_http_preview_review_apply_and_reload(store, monkeypatch):
         )
         saved = client.get(f"/api/app-review/reviews/{data['id']}").json()
         assert saved["decisions"]["actions:10.000"]["actor"] == "reviewer@example.com"
-        assert (
-            client.post(
-                "/api/app-review/reviews", json={**b.model_dump(), "typo": 1}
-            ).status_code
-            == 422
-        )
-        assert client.get("/api/app-review/reviews").json()[0]["reviewed"] == 1
+        assert client.get(base).json()["reviews"][0]["reviewed"] == 1
 
 
-def test_customer_source_joins_explicit_run_and_preserves_artifact_metadata(
-    monkeypatch,
-):
+def test_library_source_joins_synced_rallies_and_named_identification(monkeypatch):
     from yp_video.web.app_review import sources
 
     b = bundle(
-        [("spike", 10)], corrections={"actions": [correction("10.000", removed=True)]}
+        [("spike", 10)],
+        corrections={
+            "player_identification": {
+                "result_id": "identify",
+                "unit_roster": {},
+                "removed_units": [],
+                "event_overrides": {},
+            }
+        },
     )
-    result = b.result.model_dump()
-    result["actions_r2_key"] = "results/user/match/job.actions.jsonl"
-    payloads = {
-        "results/user/match/job.json": result,
-        "corrections/user/match.json": b.corrections.model_dump(),
+    payloads = serve_library(monkeypatch, b)
+    payloads[f"reid/user/{MATCH}/identify.json"] = {
+        "version": 4,
+        "job_id": "identify",
+        "user_id": "user",
+        "match_id": MATCH,
+        "units": [],
     }
-    monkeypatch.setattr(sources.customer, "read_json", payloads.__getitem__)
-    loaded = sources.cloud_bundle("user", "match", "job")
-    assert loaded.model_dump()["result"]["actions_r2_key"] == result["actions_r2_key"]
-    result["job_id"] = "other"
-    with pytest.raises(ValueError, match="identity"):
-        sources.cloud_bundle("user", "match", "job")
+    lib, row = sources.library_match("user", MATCH)
+    loaded, notes = sources.match_bundle(lib, row)
+    assert notes == []
+    assert [r.id for r in loaded.library_rallies] == [
+        "00000001-0000-4000-8000-000000000000"
+    ]
+    assert loaded.identification.job_id == "identify"
+    b.corrections.player_identification.result_id = "../x"
+    payloads["corrections/user/match.json"] = {
+        **b.corrections.model_dump(mode="json"),
+        "match_id": MATCH,
+    }
     with pytest.raises(ValueError, match="identifier"):
-        sources.cloud_bundle("../user", "match", "job")
+        sources.match_bundle(lib, row)
+    payloads["corrections/user/match.json"] = {"schema_version": "6.0"}
+    stale, notes = sources.match_bundle(lib, row)
+    assert stale.corrections is None and "6.0" in notes[0]
+    with pytest.raises(sources.NotFound):
+        sources.library_match("user", "missing")
+    lib, row = sources.library_match("user", MATCH)
+    row["r2_keys"]["result"] = None
+    with pytest.raises(ValueError, match="no analysis"):
+        sources.match_bundle(lib, row)

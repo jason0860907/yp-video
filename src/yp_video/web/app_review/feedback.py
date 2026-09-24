@@ -53,13 +53,23 @@ def load(review_id: str) -> dict:
     return json.loads(path.read_text())
 
 
+def snapshot_id(bundle: Bundle) -> str:
+    """Reviews are keyed by the exact App snapshot they judge."""
+    return fingerprint(canonical(bundle.model_dump(mode="json")))
+
+
+def existing(bundle: Bundle) -> str | None:
+    review_id = snapshot_id(bundle)
+    return review_id if path_for(review_id).exists() else None
+
+
 def create(bundle: Bundle, actor: str) -> dict:
     if not bundle.corrections and bundle.library_rallies is None:
         raise ValueError("A feedback review requires corrections or a library snapshot")
     if bundle.result.partial:
         raise ValueError("Partial analysis cannot be submitted for review")
     source = bundle.model_dump(mode="json")
-    review_id = fingerprint(canonical(source))
+    review_id = snapshot_id(bundle)
     with _lock:
         path = path_for(review_id)
         if path.exists():
@@ -76,11 +86,13 @@ def create(bundle: Bundle, actor: str) -> dict:
         return data
 
 
-def list_reviews() -> list[dict]:
+def list_reviews(match: str) -> list[dict]:
     rows = []
     for path in REVIEW_DIR.glob("*.json"):
         data = json.loads(path.read_text())
         result = data["bundle"]["result"]
+        if result["match_id"].lower() != match.lower():
+            continue
         rows.append(
             {
                 "id": data["id"],
@@ -166,6 +178,21 @@ def candidates(bundle: Bundle) -> list[dict]:
                     "end": max(original.end, edited.end),
                 },
                 "reason": "App 裁切是播放偏好；只有確認符合完整回合起訖，才能採用為標註。",
+            }
+        )
+    for index, side in sorted((c.rally_winner_overrides if c else {}).items()):
+        rally = next((r for r in bundle.result.rallies if r.index == index), None)
+        rows.append(
+            {
+                "id": f"winner:{index}",
+                "scope": "winner",
+                "value": {
+                    "rally_index": index,
+                    "before": rally.winner if rally else None,
+                    "after": side,
+                },
+                "clip": {"start": rally.start, "end": rally.end} if rally else None,
+                "reason": "得分方修正先保存審核意見；要進訓練請到 Label 的 Rally 修改 winner。",
             }
         )
     pi = c.player_identification if c else None

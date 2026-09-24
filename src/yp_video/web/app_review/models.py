@@ -20,13 +20,16 @@ class Event(Artifact):
     xy: tuple[float, float] | None = None
 
 
+Side = Literal["left", "right", "near", "far"]
+
+
 class Rally(Artifact):
     index: int = Field(ge=1)
     set: int = Field(ge=1)
     start: float = Field(ge=0)
     end: float = Field(ge=0)
     score: int = Field(default=0, ge=0, le=100)
-    winner: Literal["left", "right", "near", "far"] | None = None
+    winner: Side | None = None
 
     @model_validator(mode="after")
     def ordered(self):
@@ -93,7 +96,6 @@ class Roster(Artifact):
 
 class ClipCorrection(Artifact):
     key: str
-    result: Literal["point", "loss"] | None = None
     loss_reason: str | None = None
     removed: bool
     tag_ids: list[str]
@@ -122,14 +124,19 @@ class IdentificationCorrection(Artifact):
     removed_units: list[str]
 
 
+CORRECTIONS_VERSION = "7.0"
+
+
 class Corrections(Artifact):
-    schema_version: Literal["6.0"]
+    schema_version: Literal["7.0"]
     match_id: str
     updated_at: str
     roster: list[Roster]
     actions: list[ClipCorrection]
     scores: list[ClipCorrection]
     deleted_rally_indices: list[int]
+    # Rally index (as a JSON object key) → the court side the user says won.
+    rally_winner_overrides: dict[int, Side]
     player_identification: IdentificationCorrection | None = None
 
     @model_validator(mode="after")

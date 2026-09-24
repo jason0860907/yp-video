@@ -1,17 +1,16 @@
-"""Read-only sources for App review: pipeline annotations or customer artifacts."""
+"""Read-only view of VolleyIQ App libraries: the Worker's admin API for D1 rows,
+the customer bucket for the artifacts those rows point at."""
 
 import json
+from urllib.parse import quote
 
-from yp_video.action import rules
-from yp_video.contracts.action import event_id
-from yp_video.core.rallies import load_rallies
-from yp_video.extraction import links
-from yp_video.reid.identity import load_assignments
-from yp_video.web.action_annotations import annotation_state, normalize_events
-from yp_video.web.action_waveform import video_metadata
-from yp_video.web.r2_client import R2Client, resolve_cut
+import httpx
+from botocore.exceptions import ClientError
 
-from .models import Bundle
+from yp_video.config import load_env
+from yp_video.web.r2_client import R2Client, r2_client
+
+from .models import CORRECTIONS_VERSION, Bundle
 
 
 class CustomerArtifacts(R2Client):
@@ -41,130 +40,110 @@ class CustomerArtifacts(R2Client):
 customer = CustomerArtifacts()
 
 
+class AdminApiError(Exception):
+    """The Worker's admin API is unreachable or refused the request."""
+
+
+class NotFound(Exception):
+    """No such user, match or source video in the App library."""
+
+
+def admin_get(path: str):
+    env = load_env()
+    base, token = env.get("UPLOAD_SERVICE_URL"), env.get("AUTH_TOKEN")
+    if not base or not token:
+        raise AdminApiError("UPLOAD_SERVICE_URL and AUTH_TOKEN must be configured")
+    try:
+        response = httpx.get(
+            f"{base.rstrip('/')}/admin{path}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30,
+        )
+    except httpx.HTTPError as exc:
+        raise AdminApiError(f"VolleyIQ admin API unreachable: {exc}") from exc
+    if response.status_code == 404:
+        raise NotFound("Not found in the VolleyIQ library")
+    if response.is_error:
+        raise AdminApiError(f"VolleyIQ admin API returned {response.status_code}")
+    return response.json()
+
+
+def users() -> list[dict]:
+    return admin_get("/users")
+
+
+def library(user: str) -> dict:
+    return admin_get(f"/users/{quote(user, safe='')}/library")
+
+
+def library_match(user: str, match: str) -> tuple[dict, dict]:
+    lib = library(user)
+    row = next((m for m in lib["matches"] if m["id"] == match), None)
+    if row is None or row["deleted_at"] is not None:
+        raise NotFound("Match not in this user's library")
+    return lib, row
+
+
+def match_bundle(lib: dict, row: dict) -> tuple[Bundle, list[str]]:
+    """The App's inputs for one match: the latest analysis the App shows, the
+    user's corrections, the identification they point at, and the rallies as
+    synced — trims, UUIDs and deletions included. Also returns what the App
+    would have silently dropped."""
+    keys = row["r2_keys"]
+    if not keys["result"]:
+        raise ValueError("This match has no analysis result yet")
+    notes = []
+    corrections = (
+        customer.read_json(keys["corrections"]) if keys["corrections"] else None
+    )
+    # The App discards a blob of any other schema version (it re-uploads its
+    # own on the next edit), so the user sees this match uncorrected.
+    if corrections and corrections.get("schema_version") != CORRECTIONS_VERSION:
+        notes.append(
+            f"修正檔是 {corrections.get('schema_version')} 版，App 只讀 "
+            f"{CORRECTIONS_VERSION}：使用者目前看到的是未修正的結果。"
+        )
+        corrections = None
+    bundle = Bundle.model_validate(
+        {
+            "result": customer.read_json(keys["result"]),
+            "corrections": corrections,
+            "library_rallies": [
+                r for r in lib["rallies"] if r["match_id"] == row["id"]
+            ],
+        }
+    )
+    # The corrections name the identification run their unit mapping belongs
+    # to, which need not be the match's latest one.
+    pi = bundle.corrections.player_identification if bundle.corrections else None
+    if pi and pi.result_id:
+        run = safe_component(pi.result_id)
+        key = f"reid/{row['owner_id']}/{row['id']}/{run}.json"
+        try:
+            identification = customer.read_json(key)
+        except ClientError as exc:
+            # A pruned run: the projection says the unit mapping is missing.
+            if exc.response["Error"]["Code"] != "NoSuchKey":
+                raise
+        else:
+            bundle = Bundle.model_validate(
+                {**bundle.model_dump(), "identification": identification}
+            )
+    return bundle, notes
+
+
 def safe_component(value: str) -> str:
     if not value or any(
-        c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
-        for c in value
+        not (c.isascii() and (c.isalnum() or c in "_-")) for c in value
     ):
         raise ValueError("Invalid artifact identifier")
     return value
 
 
-def cloud_matches() -> list[dict]:
-    if not customer.configured:
-        raise ValueError("R2_BUCKET_CUSTOMER and R2 credentials must be configured")
-    entries = []
-    for obj in customer.list_objects_cached("corrections/"):
-        parts = obj["key"].split("/")
-        if len(parts) == 3 and parts[2].endswith(".json"):
-            entries.append(
-                {
-                    "user_id": parts[1],
-                    "match_id": parts[2][:-5],
-                    "updated_at": obj["last_modified"],
-                }
-            )
-    return sorted(entries, key=lambda e: e["updated_at"], reverse=True)
-
-
-def cloud_results(user: str, match: str) -> list[dict]:
-    prefix = f"results/{safe_component(user)}/{safe_component(match)}/"
-    return [
-        o for o in customer.list_objects_cached(prefix) if o["key"].endswith(".json")
-    ]
-
-
-def cloud_bundle(user: str, match: str, job: str) -> Bundle:
-    user, match, job = map(safe_component, (user, match, job))
-    result = customer.read_json(f"results/{user}/{match}/{job}.json")
-    if (result.get("user_id"), result.get("match_id"), result.get("job_id")) != (
-        user,
-        match,
-        job,
-    ):
-        raise ValueError("Result identity does not match its object key")
-    corrections = customer.read_json(f"corrections/{user}/{match}.json")
-    bundle = Bundle.model_validate({"result": result, "corrections": corrections})
-    pi = bundle.corrections.player_identification if bundle.corrections else None
-    if pi and pi.result_id:
-        identification = customer.read_json(
-            f"reid/{user}/{match}/{safe_component(pi.result_id)}.json"
-        )
-        bundle = Bundle.model_validate(
-            {**bundle.model_dump(), "identification": identification}
-        )
-    return bundle
-
-
-def local_bundle(name: str) -> Bundle:
-    video = resolve_cut(name)
-    if video is None:
-        raise ValueError("Video not found")
-    state = annotation_state(video.name)
-    if state.active_error:
-        raise ValueError(state.active_error.detail)
-    data = state.active
-    meta = (
-        data
-        if data and data.get("fps") and data.get("num_frames")
-        else video_metadata(video)
-    )
-    fps = float(meta["fps"])
-    frames = int(meta["num_frames"])
-    duration = float(meta.get("duration") or frames / fps)
-    rallies = load_rallies(video.stem)
-    events = normalize_events(
-        video.stem,
-        data["events"] if data else [],
-        fps=fps,
-        num_frames=frames,
-        rallies=rallies,
-    )
-    result_rallies = [
-        {
-            "index": r["rally_id"],
-            "set": 1,
-            "start": r["start"],
-            "end": r["end"],
-            "winner": r["winner"],
-        }
-        for r in rallies
-        if r["label"] == "rally"
-    ]
-    action_events = [{**e, "id": event_id(e)} for e in events]
-    named = load_assignments(video.stem, links.track_keys(video.stem))
-    names = {name: i for i, name in enumerate(sorted(set(named.values())), 1)}
-    return Bundle.model_validate(
-        {
-            "corrections": {
-                "schema_version": "6.0",
-                "match_id": video.stem,
-                "updated_at": "local",
-                "roster": [
-                    {"number": i, "name": name, "position": "", "hue": 0}
-                    for name, i in names.items()
-                ],
-                "actions": [],
-                "scores": [],
-                "deleted_rally_indices": [],
-                "player_identification": {
-                    "unit_roster": {},
-                    "removed_units": [],
-                    "event_overrides": {
-                        key: names[name] for key, name in named.items()
-                    },
-                },
-            },
-            "result": {
-                "job_id": "local",
-                "user_id": "local",
-                "match_id": video.stem,
-                "video_r2_key": "",
-                "total_duration": duration,
-                "rallies": result_rallies,
-                "action_events": action_events,
-                "attacks": rules.attacks(result_rallies, action_events),
-                "rally_outcomes": rules.rally_outcomes(result_rallies, action_events),
-            },
-        }
-    )
+def video_url(row: dict) -> str:
+    """Where the App would stream the source from: its public customer URL,
+    or a signed pipeline-bucket URL for operator-published cuts."""
+    source = row["source_video"]
+    if not source or not source["r2_key"]:
+        raise NotFound("This match has no source video")
+    return source["public_url"] or r2_client.generate_presigned_url(source["r2_key"])

@@ -1,4 +1,4 @@
-"""App-equivalent playback and explicit, attributable feedback review."""
+"""Browse any VolleyIQ user's App library and review their corrections."""
 
 import asyncio
 from typing import Literal
@@ -21,9 +21,13 @@ router = APIRouter()
 def checked(fn, *args, **kwargs):
     try:
         return fn(*args, **kwargs)
+    except sources.AdminApiError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    except sources.NotFound as exc:
+        raise HTTPException(404, str(exc)) from exc
     except (BotoCoreError, ClientError) as exc:
         raise HTTPException(
-            502, "無法讀取雲端資料，請確認所選分析／辨識檔案存在及 R2 讀取權限。"
+            502, "無法讀取雲端資料，請確認分析／辨識檔案存在及 R2 讀取權限。"
         ) from exc
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
@@ -38,58 +42,41 @@ def detail(data: dict, mode: Window = "full_play", corrected: bool = True) -> di
     }
 
 
-@router.get("/videos")
-def videos():
-    return [{"name": p.name} for p in sorted(all_cut_paths())]
+@router.get("/users")
+def users():
+    return checked(sources.users)
 
 
-@router.get("/local")
-def local(video: str, mode: Window = "full_play"):
-    bundle = checked(sources.local_bundle, video)
-    return {"bundle": bundle.model_dump(), "preview": project(bundle, mode=mode)}
+@router.get("/users/{user}/library")
+def library(user: str):
+    return checked(sources.library, user)
 
 
-class PreviewRequest(StrictModel):
-    bundle: Bundle
-    mode: Window = "full_play"
-    corrected: bool = True
+@router.get("/users/{user}/matches/{match}")
+def match(user: str, match: str, mode: Window = "full_play", corrected: bool = True):
+    lib, row = checked(sources.library_match, user, match)
+    bundle, notes = checked(sources.match_bundle, lib, row)
+    preview = project(bundle, mode=mode, corrected=corrected)
+    return {
+        "match": row,
+        "preview": {**preview, "warnings": notes + preview["warnings"]},
+        "candidates": feedback.candidates(bundle),
+        "review_id": feedback.existing(bundle),
+        "reviews": feedback.list_reviews(row["id"]),
+    }
 
 
-@router.post("/preview")
-def preview(req: PreviewRequest):
-    return project(req.bundle, mode=req.mode, corrected=req.corrected)
+@router.get("/users/{user}/matches/{match}/video")
+def match_video(user: str, match: str):
+    _, row = checked(sources.library_match, user, match)
+    return RedirectResponse(checked(sources.video_url, row))
 
 
-@router.get("/cloud")
-def cloud():
-    return checked(sources.cloud_matches)
-
-
-@router.get("/cloud/results")
-def cloud_results(user: str, match: str):
-    return checked(sources.cloud_results, user, match)
-
-
-class CloudRequest(StrictModel):
-    user: str
-    match: str
-    job: str
-
-
-@router.post("/cloud/import")
-def import_cloud(req: CloudRequest):
-    bundle = checked(sources.cloud_bundle, req.user, req.match, req.job)
+@router.post("/users/{user}/matches/{match}/review")
+def start_review(user: str, match: str):
+    lib, row = checked(sources.library_match, user, match)
+    bundle, _ = checked(sources.match_bundle, lib, row)
     return detail(checked(feedback.create, bundle, current_actor()))
-
-
-@router.get("/reviews")
-def reviews():
-    return feedback.list_reviews()
-
-
-@router.post("/reviews")
-def create(req: Bundle):
-    return detail(checked(feedback.create, req, current_actor()))
 
 
 @router.get("/reviews/{review_id}")
@@ -97,15 +84,9 @@ def review(review_id: str, mode: Window = "full_play", corrected: bool = True):
     return detail(checked(feedback.load, review_id), mode=mode, corrected=corrected)
 
 
-@router.get("/reviews/{review_id}/video")
-def video(review_id: str):
-    data = checked(feedback.load, review_id)
-    key = data["bundle"]["result"]["video_r2_key"]
-    if not key or not sources.customer.configured:
-        raise HTTPException(
-            404, "No customer video available; select the matching pipeline video"
-        )
-    return RedirectResponse(sources.customer.generate_presigned_url(key))
+@router.get("/videos")
+def videos():
+    return [{"name": p.name} for p in sorted(all_cut_paths())]
 
 
 @router.get("/target")
