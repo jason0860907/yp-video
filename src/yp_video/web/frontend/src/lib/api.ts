@@ -104,19 +104,25 @@ export const API = {
   detectionLabel: {
     videos: '/detection-label/videos',
     video: (name: string) => `/detection-label/video/${encodeURIComponent(name)}`,
-    frame: (name: string, frame: number) => `/detection-label/frame/${encodeURIComponent(name)}?frame=${frame}`,
-    image: (name: string, frame: number) => `/detection-label/image/${encodeURIComponent(name)}?frame=${frame}`,
+    frame: (name: string, frame: number) =>
+      `/detection-label/frame/${encodeURIComponent(name)}?frame=${frame}`,
+    image: (name: string, frame: number) =>
+      `/detection-label/image/${encodeURIComponent(name)}?frame=${frame}`,
   },
   appReview: {
-    videos: "/app-review/videos", local: (video: string, mode: string) => `/app-review/local${q({ video, mode })}`,
-    preview: "/app-review/preview", reviews: "/app-review/reviews",
+    users: '/app-review/users',
+    library: (user: string) => `/app-review/users/${encodeURIComponent(user)}/library`,
+    match: (user: string, match: string, mode: string, corrected: boolean) =>
+      `/app-review/users/${encodeURIComponent(user)}/matches/${encodeURIComponent(match)}${q({ mode, corrected })}`,
+    video: (user: string, match: string) =>
+      `/app-review/users/${encodeURIComponent(user)}/matches/${encodeURIComponent(match)}/video`,
+    startReview: (user: string, match: string) =>
+      `/app-review/users/${encodeURIComponent(user)}/matches/${encodeURIComponent(match)}/review`,
     review: (id: string) => `/app-review/reviews/${id}`,
-    media: (id: string) => `/app-review/reviews/${id}/video`,
     decisions: (id: string) => `/app-review/reviews/${id}/decisions`,
     recover: (id: string) => `/app-review/reviews/${id}/recover`,
+    videos: '/app-review/videos',
     target: (video: string) => `/app-review/target${q({ video })}`,
-    cloud: "/app-review/cloud", cloudImport: "/app-review/cloud/import",
-    cloudResults: (user: string, match: string) => `/app-review/cloud/results${q({ user, match })}`,
   },
   jobs: {
     list: '/jobs',
@@ -157,7 +163,8 @@ export const API = {
   annotate: {
     results: '/annotate/results',
     annotations: '/annotate/annotations',
-    result: (name: string, params: QueryParams = {}) => `/annotate/results/${encodeURIComponent(name)}${q(params)}`,
+    result: (name: string, params: QueryParams = {}) =>
+      `/annotate/results/${encodeURIComponent(name)}${q(params)}`,
     video: (path: string) => `/annotate/video/${encodeURIComponent(path)}`,
     clip: '/annotate/clip',
     clipZip: '/annotate/clip-zip',
@@ -169,7 +176,8 @@ export const API = {
     spot: '/action-annotate/spot',
     prelabelBatch: '/action-annotate/prelabel-batch',
     annotations: '/action-annotate/annotations',
-    annotation: (name: string, params: QueryParams = {}) => `/action-annotate/annotations/${encodeURIComponent(name)}${q(params)}`,
+    annotation: (name: string, params: QueryParams = {}) =>
+      `/action-annotate/annotations/${encodeURIComponent(name)}${q(params)}`,
     waveform: (name: string) => `/action-annotate/waveform/${encodeURIComponent(name)}`,
     export: '/action-annotate/export',
     video: (name: string) => `/action-annotate/video/${encodeURIComponent(name)}`,
@@ -194,7 +202,8 @@ export const API = {
   tracklets: {
     run: '/tracklets/run',
     get: (name: string) => `/tracklets/${encodeURIComponent(name)}`,
-    masks: (name: string, rally: number) => `/tracklets/masks/${encodeURIComponent(name)}?rally=${rally}`,
+    masks: (name: string, rally: number) =>
+      `/tracklets/masks/${encodeURIComponent(name)}?rally=${rally}`,
   },
   // Player detection — the sparse perception stage. `extraction` is where its
   // records and crops live, shared with association, which writes the pick
@@ -212,8 +221,10 @@ export const API = {
     videos: '/reid/videos',
     options: '/reid/options',
     embed: '/reid/embed',
-    clusters: (name: string, threshold: number, model = 'clip-reid') => `/reid/clusters/${encodeURIComponent(name)}?threshold=${threshold}&model=${encodeURIComponent(model)}`,
-    players: (name: string, model = 'clip-reid') => `/reid/players/${encodeURIComponent(name)}?model=${encodeURIComponent(model)}`,
+    clusters: (name: string, threshold: number, model = 'clip-reid') =>
+      `/reid/clusters/${encodeURIComponent(name)}?threshold=${threshold}&model=${encodeURIComponent(model)}`,
+    players: (name: string, model = 'clip-reid') =>
+      `/reid/players/${encodeURIComponent(name)}?model=${encodeURIComponent(model)}`,
     seedCluster: (name: string) => `/reid/seed-cluster/${encodeURIComponent(name)}`,
     done: (name: string) => `/reid/done/${encodeURIComponent(name)}`,
   },
