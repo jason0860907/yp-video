@@ -2,6 +2,8 @@
 
 整理日期：2026-09-19。
 
+狀態：擱置（2026-09-25 核對，程式中尚無任何實作）。
+
 本文件整理 Jev、Decider-2B、context 篩選與 VolleyIQ 的產品討論。外部模型資訊來自文末資料來源；VolleyIQ 現況來自整理當日的程式碼。整合方案、產品效果與實驗設計皆為提案，尚未實作或驗證，不代表模型已具備排球分析能力。
 
 ## 1. 核心判斷
@@ -103,10 +105,10 @@ Decider-2B 的模型卡描述：以 Qwen3.5-2B-Base 為基底，把分類、相�
 
 程式來源：
 
-- [Detector contract](../src/yp_video/contracts/detector.py)
-- [ActionAnnotation](../../VolleyIQ/VolleyIQ/Models/ActionAnnotation.swift)
-- [MatchCorrections](../../VolleyIQ/VolleyIQ/Models/MatchCorrections.swift)
-- [現有 app 流程](../../VolleyIQ/README.md)
+- [Detector contract](../../src/yp_video/contracts/detector.py)
+- [ActionAnnotation](../../../VolleyIQ/VolleyIQ/Models/ActionAnnotation.swift)
+- [MatchCorrections](../../../VolleyIQ/VolleyIQ/Models/MatchCorrections.swift)
+- [現有 app 流程](../../../VolleyIQ/README.md)
 
 目前的公開事件 contract 不包含完整的動作品質、球路、姿勢、戰術情境或事件置信度。人工失分原因欄位存在，也不表示每個片段都有標註。
 

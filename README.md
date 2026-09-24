@@ -139,7 +139,9 @@ Download → Cut → Detect → VLM→Rally → Annotate → Train → Predict
 
 - [VolleyIQ iOS App 使用者功能整理](docs/ios-user-features.md)：目前的匯入、回看、球員配對、收藏、匯出與分享功能，以及使用上的限制。
 - [App 結果預覽與修正審核](docs/app-review.md) — 操作流程、來源格式與標註匯入規則。
-- [Jev 式決策模型與 VolleyIQ 整合構想](docs/decision-models-volleyiq.md)：模型原理、開放方案、context 篩選，以及五球複盤與後續評估提案。
+- [Person 偵測標註](docs/detection-label.md)：逐幀人物框的來源、審核狀態與訓練標籤規則。
+- [Web 功能開發準則](docs/feature-development.md)：前端頁面骨架、共用元件與資料規則。
+- [提案筆記](docs/proposals/)：尚未實作的產品與模型構想，例如 [Jev 式決策模型與 VolleyIQ 整合構想](docs/proposals/decision-models-volleyiq.md)。
 
 ```
 yp-video/
