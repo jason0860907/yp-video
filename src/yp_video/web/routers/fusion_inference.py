@@ -47,7 +47,6 @@ class InferenceRequest(StrictModel):
     #: Redo stages whose machine output already exists. Human labels are
     #: never touched either way.
     overwrite: bool = False
-    stop_vllm: bool = False
 
 
 @router.get("/videos")
@@ -141,7 +140,6 @@ async def start(req: InferenceRequest) -> dict:
     spawn_batch_video_job(
         job,
         video_paths,
-        stop_vllm=req.stop_vllm,
         work=lambda path, cb: fusion_inference.run_video(
             video=path,
             checkpoint=checkpoint,

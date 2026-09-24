@@ -46,13 +46,12 @@ REID_PKG_DIR = _env_path("YP_REID_DIR", PROJECT_ROOT.parent / "yp-reid")
 REID_PYTHON = _env_path("YP_REID_PYTHON", REID_PKG_DIR / ".venv" / "bin" / "python")
 REID_EMBED_MODULE = "yp_reid.embed"
 REID_TRAIN_MODULE = "yp_reid.train"
-PROMPTS_DIR = PROJECT_ROOT / "prompts"
 # One env file for the whole workspace, at PROJECT_ROOT.parent — R2 keys,
-# service tokens, Cloudflare Access, the audit database, vLLM settings. It
-# used to be five files (r2.env, vllm.env, tokens.env, plus a second r2.env at
-# the workspace root that a sync script kept updating and nothing read), which
-# is how yp-video ended up signing R2 with a different key pair than every
-# other component.
+# service tokens, Cloudflare Access, the audit database. It used to be
+# several files (r2.env, tokens.env, plus a second r2.env at the workspace
+# root that a sync script kept updating and nothing read), which is how
+# yp-video ended up signing R2 with a different key pair than every other
+# component.
 ENV_PATH = PROJECT_ROOT.parent / ".env"
 # Applied at startup by web.db; NNNN_snake_case.sql, same convention the
 # sibling upload-service worker uses.
@@ -77,11 +76,6 @@ CUTS_DIRS = (CUTS_BROADCAST_DIR, CUTS_SIDELINE_DIR)
 # the hand-made, irreplaceable part; rally spans land under rally-spot/
 # because they are its training labels. R2 category names mirror this layout
 # 1:1 (the category IS the bucket key prefix AND the dir relative to videos/).
-#
-# seg-annotations: the VLM detect flow's raw per-clip verdicts (in_rally /
-# shot_type), which vlm_to_rally consolidates into rally/pre-annotations.
-SEG_ANNOTATIONS_DIR = VIDEOS_DIR / "rally" / "seg-annotations"
-RALLY_PRE_ANNOTATIONS_DIR = VIDEOS_DIR / "rally" / "pre-annotations"
 RALLY_ANNOTATIONS_DIR = VIDEOS_DIR / "rally-spot" / "annotations"
 ACTION_ANNOTATIONS_DIR = VIDEOS_DIR / "action" / "annotations"
 ACTION_PRE_ANNOTATIONS_DIR = VIDEOS_DIR / "action" / "pre-annotations"
@@ -106,8 +100,8 @@ SPOT_CHECKPOINTS_DIR = VIDEOS_DIR / "spot" / "checkpoints"
 # blank lines and lines starting with "#" are ignored).
 ACTION_VAL_SET_FILE = VIDEOS_DIR / "action-val-set.txt"
 # SPOT rally (segment) training. Frame caches are extracted at a reduced fps —
-# SPOT rally predictions live apart from the VLM pre-annotations so the two
-# model families never overwrite each other; Rally Label can load either.
+# SPOT rally predictions: the pre-annotation source Rally Label loads when no
+# reviewed annotation exists.
 RALLY_SPOT_PRE_ANNOTATIONS_DIR = VIDEOS_DIR / "rally-spot" / "pre-annotations"
 # One directory per STAGE, named after the question that stage answers.
 # Everything below used to live under reid/ — records, crops, tracklets,
@@ -163,8 +157,6 @@ R2_CATEGORIES: dict[str, R2Category] = {
     "videos": R2Category(RAW_VIDEOS_DIR, "*.mp4", "Raw Videos", local_only=True),
     "cuts-broadcast": R2Category(CUTS_BROADCAST_DIR, "*.mp4", "Cuts (Broadcast)"),
     "cuts-sideline": R2Category(CUTS_SIDELINE_DIR, "*.mp4", "Cuts (Sideline)"),
-    "rally/seg-annotations": R2Category(SEG_ANNOTATIONS_DIR, "*.jsonl", "Rally Clip Verdicts (VLM)"),
-    "rally/pre-annotations": R2Category(RALLY_PRE_ANNOTATIONS_DIR, "*.jsonl", "Rally Predictions (VLM)"),
     "rally-spot/annotations": R2Category(RALLY_ANNOTATIONS_DIR, "*.jsonl", "Rally Annotations"),
     "rally-spot/pre-annotations": R2Category(RALLY_SPOT_PRE_ANNOTATIONS_DIR, "*.jsonl", "Rally Predictions (SPOT)"),
     "person/annotations": R2Category(PERSON_ANNOTATIONS_DIR, "*.json", "Person Detection Annotations"),
@@ -253,12 +245,5 @@ def load_env() -> dict[str, str]:
     (r2_client.reload()) picks the change up without a restart.
     """
     return _load_env_file(ENV_PATH)
-
-
-def load_prompt(filename: str) -> str:
-    """Load a prompt template from the prompts/ directory."""
-    path = PROMPTS_DIR / filename
-    with open(path) as f:
-        return f.read()
 
 

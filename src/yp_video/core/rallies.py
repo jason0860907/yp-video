@@ -1,20 +1,15 @@
-"""Where a video's rally spans come from — one answer, three possible files.
+"""Where a video's rally spans come from — one answer, two possible files.
 
 A rally span is upstream of almost everything: action events are stamped with
 the rally they fall in, tracking scans rallies and nothing else, and a
-tracklet's identity key is ``"{rally_id}:{track_id}"``. Three producers can
-write those spans (a human, the SPOT model, the VLM bootstrap), so "which
-file counts" has to have exactly one answer.
+tracklet's identity key is ``"{rally_id}:{track_id}"``. Two producers write
+those spans (a human and the SPOT model), so "which file counts" has to have
+exactly one answer — a consumer that knew only one location would give a
+video ``rallies: []`` and surface the failure stages later in tracking. This
+module is that answer, in one place, for every consumer.
 
-It did not. The Rally Label editor knew all three locations; the action
-annotator knew only two, and silently missed the SPOT predictor's output —
-so a video whose only rally source was SPOT got ``rallies: []``, every action
-event got ``rally_id: None``, and the failure surfaced two stages later in
-tracking as "no rally spans annotated". This module is that answer, in one
-place, for every consumer.
-
-Priority is reviewed truth, then the trained model, then the bootstrap:
-``rally-spot/annotations`` → ``rally-spot/pre-annotations`` → ``rally/pre-annotations``.
+Priority is reviewed truth, then the trained model:
+``rally-spot/annotations`` → ``rally-spot/pre-annotations``.
 """
 
 from __future__ import annotations
@@ -25,7 +20,6 @@ from typing import NamedTuple
 
 from yp_video.config import (
     RALLY_ANNOTATIONS_DIR,
-    RALLY_PRE_ANNOTATIONS_DIR,
     RALLY_SPOT_PRE_ANNOTATIONS_DIR,
 )
 from yp_video.core.annotation_ids import stable_id
@@ -42,7 +36,6 @@ class RallySource(NamedTuple):
 RALLY_SOURCES = (
     RallySource("annotation", RALLY_ANNOTATIONS_DIR, "rally-spot/annotations"),
     RallySource("spot-pre-annotation", RALLY_SPOT_PRE_ANNOTATIONS_DIR, "rally-spot/pre-annotations"),
-    RallySource("pre-annotation", RALLY_PRE_ANNOTATIONS_DIR, "rally/pre-annotations"),
 )
 SOURCE_BY_TAG = {source.tag: source for source in RALLY_SOURCES}
 

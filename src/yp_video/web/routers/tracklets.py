@@ -38,7 +38,6 @@ router = APIRouter()
 class TrackRequest(StrictModel):
     videos: list[str] = Field(min_length=1)
     overwrite: bool = False
-    stop_vllm: bool = False
     # Detect every Nth rally frame; ByteTrack is told the effective rate.
     stride: int = Field(1, ge=1, le=10)
 
@@ -81,7 +80,6 @@ async def run(req: TrackRequest) -> dict:
     spawn_batch_video_job(
         job,
         video_paths,
-        stop_vllm=req.stop_vllm,
         # Event frames ride along (this layer may join action + tracking;
         # the tracking stage itself stays action-free): their raw detections
         # persist as a sidecar so the sparse detect stage skips re-decoding.

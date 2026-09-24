@@ -101,40 +101,6 @@ def probe_video_metadata(path: Path | str) -> dict:
     }
 
 
-def extract_clip(video_path: str, start_time: float, duration: float, output_path: str) -> bool:
-    """Extract a clip from video using ffmpeg.
-
-    Args:
-        video_path: Source video path
-        start_time: Start time in seconds
-        duration: Clip duration in seconds
-        output_path: Output file path
-
-    Returns:
-        True if extraction succeeded, False otherwise
-
-    Raises:
-        FFmpegTimeoutError: If FFmpeg operation times out
-        FFmpegError: If FFmpeg returns non-zero exit code
-    """
-    cmd = [
-        "ffmpeg", "-y",
-        "-ss", str(start_time),
-        "-i", video_path,
-        "-t", str(duration),
-        "-c:v", "copy",
-        "-an",  # No audio
-        output_path
-    ]
-    try:
-        result = subprocess.run(cmd, capture_output=True, timeout=FFMPEG_TIMEOUT)
-        if result.returncode != 0:
-            raise FFmpegError(f"FFmpeg failed with code {result.returncode}: {result.stderr.decode()[:200]}")
-        return True
-    except subprocess.TimeoutExpired as e:
-        raise FFmpegTimeoutError(output_path, FFMPEG_TIMEOUT) from e
-
-
 async def export_segment(source: Path | str, start: float, end: float, output: Path | str, *, copy: bool = False) -> bool:
     """Export a single video segment. Does not block the event loop.
 

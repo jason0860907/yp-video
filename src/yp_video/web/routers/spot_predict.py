@@ -1,9 +1,8 @@
 """SPOT rally prediction router.
 
 Runs a trained rally segment model (``rally-spot-checkpoints``) over cut videos
-and writes the merged rally spans to ``rally-spot-pre-annotations`` — same file
-format as the VLM detect flow but a separate directory, so the two model
-families never overwrite each other. Rally Label loads either source.
+and writes the merged rally spans to ``rally-spot-pre-annotations``, which
+Rally Label loads as its pre-annotation source.
 """
 
 from __future__ import annotations
@@ -23,7 +22,6 @@ from yp_video.action.rally import events_to_rally_segments
 from yp_video.action.spot_pass import RallyOptions
 from yp_video.config import (
     RALLY_ANNOTATIONS_DIR,
-    RALLY_PRE_ANNOTATIONS_DIR,
     SPOT_CHECKPOINTS_DIR,
     SPOT_DIR,
     cut_kind_of,
@@ -48,7 +46,6 @@ from yp_video.web.job_helpers import (
     finalize_batch_job,
     init_batch_items,
     mark_batch_item,
-    stop_vllm_for_job,
     stream_subprocess,
     subprocess_failure,
     update_batch_item,
@@ -81,7 +78,6 @@ class RallyPredictRequest(StrictModel):
     prefetch_factor: int | None = Field(default=None, ge=1, le=16)
     use_amp: bool = True
     overwrite: bool = False
-    stop_vllm: bool = False
 
 
 def _pre_annotation_path(stem: str) -> Path:
@@ -98,9 +94,6 @@ def list_videos() -> list[dict]:
             "status": worklists.rally_status(f.stem),
             "has_annotation": (RALLY_ANNOTATIONS_DIR / annotation_name(f.stem)).exists(),
             "has_pre_annotation": _pre_annotation_path(f.stem).exists(),
-            "has_vlm_pre_annotation": (
-                RALLY_PRE_ANNOTATIONS_DIR / annotation_name(f.stem)
-            ).exists(),
         })
     return results
 
@@ -331,25 +324,24 @@ async def start(req: RallyPredictRequest) -> dict:
                 }
                 convert_task = asyncio.create_task(convert_worker())
                 try:
-                    async with stop_vllm_for_job(job.id, when=req.stop_vllm):
-                        async with job_manager.inference_lock:
-                            rc, last_line = await stream_subprocess(
-                                job.id,
-                                cmd,
-                                cwd=SPOT_DIR,
-                                env=env,
-                                parsers=[
-                                    ProgressParser(
-                                        r"Starting inference (\d+)/(\d+): (.+)",
-                                        on_video_start,
-                                    ),
-                                    ProgressParser(
-                                        r"^SPOT_PROGRESS (\{.*\})", on_spot_progress
-                                    ),
-                                ],
-                                is_key_line=lambda line: "Starting inference" in line,
-                                tee_to_terminal=True,
-                            )
+                    async with job_manager.inference_lock:
+                        rc, last_line = await stream_subprocess(
+                            job.id,
+                            cmd,
+                            cwd=SPOT_DIR,
+                            env=env,
+                            parsers=[
+                                ProgressParser(
+                                    r"Starting inference (\d+)/(\d+): (.+)",
+                                    on_video_start,
+                                ),
+                                ProgressParser(
+                                    r"^SPOT_PROGRESS (\{.*\})", on_spot_progress
+                                ),
+                            ],
+                            is_key_line=lambda line: "Starting inference" in line,
+                            tee_to_terminal=True,
+                        )
                     # The last video has no "Starting inference" successor;
                     # flush it (and anything lost to a mid-batch crash).
                     enqueue_finished(total)

@@ -151,7 +151,6 @@ class PredictRequest(StrictModel):
     videos: list[str]
     #: A fusion actor-head checkpoint package. None selects the rule.
     association_checkpoint: str | None = None
-    stop_vllm: bool = False
 
 
 def _associate(path: Path, plan: actor_policy.PolicyPlan, on_progress) -> dict:
@@ -216,7 +215,6 @@ async def predict(req: PredictRequest) -> dict:
     spawn_batch_video_job(
         job,
         video_paths,
-        stop_vllm=req.stop_vllm,
         # Whether the policy exists yet is the plan's business: the rule and
         # the ranker hand back themselves, the spot head scores the video
         # first (see actor/policy.SpotPlan).

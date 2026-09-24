@@ -373,12 +373,6 @@
       "minimum": 0,
       "title": "Gpu",
       "type": "integer"
-    },
-    "stop_vllm": {
-      "default": false,
-      "description": "Stop the vLLM server first to free its GPU memory for training.",
-      "title": "Stop Vllm",
-      "type": "boolean"
     }
   },
   "title": "FusionTrainRequest",

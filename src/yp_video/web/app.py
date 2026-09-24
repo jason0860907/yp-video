@@ -24,7 +24,6 @@ from yp_video.web.routers import (
     app_review,
     audit_log,
     cut,
-    detect,
     detection_label,
     download,
     extraction,
@@ -39,7 +38,6 @@ from yp_video.web.routers import (
     tracklets,
     upload,
 )
-from yp_video.web.vllm_manager import vllm_manager
 
 
 class _QuietPollFilter(logging.Filter):
@@ -47,7 +45,6 @@ class _QuietPollFilter(logging.Filter):
 
     _QUIET_PATHS = (
         "/api/jobs/active-count",
-        "/api/system/vllm/status",
         "/api/system/presence",
         # The sidebar's LabelProgress polls the four label work lists.
         "/api/annotate/results",
@@ -137,9 +134,6 @@ async def lifespan(app: FastAPI):
     # Every Done click lands in R2 too; the ledger is human work no rerun rebuilds.
     label_done.ledger.on_write = lambda path: mirror_file(path, f"label-done/{path.name}")
 
-    # Detect existing vLLM server
-    await vllm_manager.initial_check()
-
     threading.Thread(target=_warm_worklists, name="warm-worklists", daemon=True).start()
 
     yield
@@ -226,7 +220,6 @@ app.include_router(cut.router, prefix="/api/cut", tags=["cut"])
 app.include_router(action_annotate.router, prefix="/api/action-annotate", tags=["action-annotate"])
 app.include_router(annotate.router, prefix="/api/annotate", tags=["annotate"])
 app.include_router(detection_label.router, prefix="/api/detection-label", tags=["detection-label"])
-app.include_router(detect.router, prefix="/api/detect", tags=["detect"])
 app.include_router(spot_predict.router, prefix="/api/spot-predict", tags=["spot-predict"])
 app.include_router(tracklets.router, prefix="/api/tracklets", tags=["tracklets"])
 app.include_router(extraction.router, prefix="/api/extraction", tags=["extraction"])

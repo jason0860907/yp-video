@@ -251,10 +251,6 @@ class FusionTrainRequest(StrictModel):
         description="Frames sampled per epoch; empty uses the trainer's default budget.",
     )
     gpu: int = Field(default=0, ge=0, le=7, description="CUDA device index.")
-    stop_vllm: bool = Field(
-        default=False,
-        description="Stop the vLLM server first to free its GPU memory for training.",
-    )
 
     @model_validator(mode="after")
     def _consistent(self) -> "FusionTrainRequest":

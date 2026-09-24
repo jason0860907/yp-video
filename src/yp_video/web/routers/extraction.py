@@ -88,7 +88,6 @@ class DetectRequest(StrictModel):
     #: Re-detect videos that already have detections. Off = skip them; the
     #: candidate list only changes when the detector does.
     overwrite: bool = False
-    stop_vllm: bool = False
 
 
 def _detect(path: Path, on_progress) -> dict:
@@ -134,7 +133,6 @@ async def detect(req: DetectRequest) -> dict:
     spawn_batch_video_job(
         job,
         video_paths,
-        stop_vllm=req.stop_vllm,
         work=lambda p, cb: _detect(p, cb),
         done_message=lambda c: (
             f"{c['detections']} people over {c['events']} events"

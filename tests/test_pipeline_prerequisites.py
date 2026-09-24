@@ -38,11 +38,10 @@ def _write_rallies(directory: Path, stem: str, spans: list[tuple[float, float]])
 
 @contextmanager
 def _sources(root: Path):
-    """Point the three rally locations at scratch directories."""
+    """Point the rally locations at scratch directories."""
     dirs = {
         "annotation": root / "manual",
         "spot-pre-annotation": root / "spot",
-        "pre-annotation": root / "vlm",
     }
     table = tuple(
         core_rallies.RallySource(tag, dirs[tag], src.r2_category)
@@ -53,24 +52,24 @@ def _sources(root: Path):
 
 
 class RallySourceTests(unittest.TestCase):
-    def test_priority_is_human_then_spot_then_vlm(self) -> None:
+    def test_priority_is_human_then_spot(self) -> None:
         with tempfile.TemporaryDirectory() as raw_dir:
             root = Path(raw_dir)
             with _sources(root) as dirs:
-                _write_rallies(dirs["pre-annotation"], "m", [(0.0, 1.0)])
-                self.assertEqual(core_rallies.rally_sources("m"), ["pre-annotation"])
+                self.assertEqual(core_rallies.rally_sources("m"), [])
 
-                # The trained model outranks the VLM bootstrap. This is the
+                # The trained model's spans count on their own. This is the
                 # source that used to be invisible to the action annotator.
                 _write_rallies(dirs["spot-pre-annotation"], "m", [(2.0, 3.0)])
+                self.assertEqual(core_rallies.rally_sources("m"), ["spot-pre-annotation"])
                 self.assertEqual(core_rallies.load_rallies("m")[0]["start"], 2.0)
 
-                # A human outranks both.
+                # A human outranks the model.
                 _write_rallies(dirs["annotation"], "m", [(4.0, 5.0)])
                 self.assertEqual(core_rallies.load_rallies("m")[0]["start"], 4.0)
                 self.assertEqual(
                     core_rallies.rally_sources("m"),
-                    ["annotation", "spot-pre-annotation", "pre-annotation"],
+                    ["annotation", "spot-pre-annotation"],
                 )
 
     def test_stored_ids_survive_the_start_sort(self) -> None:

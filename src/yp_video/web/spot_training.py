@@ -39,7 +39,6 @@ from yp_video.contracts.action import (
 )
 from yp_video.web.job_helpers import (
     fail_job_from_exc,
-    stop_vllm_for_job,
     stream_subprocess,
     subprocess_failure,
     terminal_prefix,
@@ -411,61 +410,60 @@ async def start_training_job(req: FusionTrainRequest) -> dict:
                 params={**job.params, "command": cmd, "frame_dir": str(prepared.frame_dir)},
                 message="Waiting for GPU...",
             )
-            async with stop_vllm_for_job(job.id, when=req.stop_vllm):
-                async with job_manager.gpu_lock:
-                    await job_manager.update_job(
-                        job.id, message=f"Starting SPOT {recipe.name} training..."
-                    )
-                    ctx = TrainProgress(epochs=req.num_epochs)
-                    exporter = PackageExporter(
-                        job.id,
-                        save_dir,
-                        lambda: _export_package(
-                            run_dir=save_dir,
-                            package_dir=checkpoint_dir,
-                            req=req,
-                            recipe=recipe,
-                            prepared=prepared,
-                            cmd=cmd,
-                        ),
-                    )
-                    parsers, is_key_line = make_train_parsers(
-                        ctx,
-                        params_key=PROGRESS_KEY,
-                        criterion=req.criterion,
-                        headline_pattern=(
-                            r"Mean spotting mAP:\s*([0-9.]+)%"
-                            if len(spotting_tasks(recipe.tasks)) > 1
-                            else HEADLINE_PATTERNS[spotting_task(recipe.tasks)]
-                        ),
-                        on_new_best=lambda: exporter.schedule(ctx.best_epoch, "new_best"),
-                    )
-                    env = {
-                        **os.environ,
-                        "PYTHONUNBUFFERED": "1",
-                        "PYTHONPATH": (
-                            f"{SPOT_DIR}{os.pathsep}{os.environ['PYTHONPATH']}"
-                            if os.environ.get("PYTHONPATH")
-                            else str(SPOT_DIR)
-                        ),
-                        "CUDA_VISIBLE_DEVICES": str(req.gpu),
-                        # The actor head allocates a different amount per
-                        # batch (event count varies), which fragments the
-                        # caching allocator: the 2026-09-02 ass_act run died
-                        # at epoch 24 with 12 GiB reserved-but-unallocated.
-                        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
-                        ACTION_CONTRACT_VERSION_ENV: ACTION_CONTRACT_VERSION,
-                    }
-                    rc, last_line = await stream_subprocess(
-                        job.id,
-                        cmd,
-                        cwd=SPOT_DIR,
-                        env=env,
-                        parsers=parsers,
-                        is_key_line=is_key_line,
-                        tee_to_terminal=True,
-                        log_path=save_dir / "terminal.log",
-                    )
+            async with job_manager.gpu_lock:
+                await job_manager.update_job(
+                    job.id, message=f"Starting SPOT {recipe.name} training..."
+                )
+                ctx = TrainProgress(epochs=req.num_epochs)
+                exporter = PackageExporter(
+                    job.id,
+                    save_dir,
+                    lambda: _export_package(
+                        run_dir=save_dir,
+                        package_dir=checkpoint_dir,
+                        req=req,
+                        recipe=recipe,
+                        prepared=prepared,
+                        cmd=cmd,
+                    ),
+                )
+                parsers, is_key_line = make_train_parsers(
+                    ctx,
+                    params_key=PROGRESS_KEY,
+                    criterion=req.criterion,
+                    headline_pattern=(
+                        r"Mean spotting mAP:\s*([0-9.]+)%"
+                        if len(spotting_tasks(recipe.tasks)) > 1
+                        else HEADLINE_PATTERNS[spotting_task(recipe.tasks)]
+                    ),
+                    on_new_best=lambda: exporter.schedule(ctx.best_epoch, "new_best"),
+                )
+                env = {
+                    **os.environ,
+                    "PYTHONUNBUFFERED": "1",
+                    "PYTHONPATH": (
+                        f"{SPOT_DIR}{os.pathsep}{os.environ['PYTHONPATH']}"
+                        if os.environ.get("PYTHONPATH")
+                        else str(SPOT_DIR)
+                    ),
+                    "CUDA_VISIBLE_DEVICES": str(req.gpu),
+                    # The actor head allocates a different amount per
+                    # batch (event count varies), which fragments the
+                    # caching allocator: the 2026-09-02 ass_act run died
+                    # at epoch 24 with 12 GiB reserved-but-unallocated.
+                    "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+                    ACTION_CONTRACT_VERSION_ENV: ACTION_CONTRACT_VERSION,
+                }
+                rc, last_line = await stream_subprocess(
+                    job.id,
+                    cmd,
+                    cwd=SPOT_DIR,
+                    env=env,
+                    parsers=parsers,
+                    is_key_line=is_key_line,
+                    tee_to_terminal=True,
+                    log_path=save_dir / "terminal.log",
+                )
             if rc != 0:
                 raise RuntimeError(subprocess_failure("SPOT training", rc, last_line))
             checkpoint_summary = await exporter.export_once(

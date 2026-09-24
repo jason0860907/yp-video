@@ -51,7 +51,6 @@ from yp_video.web.job_helpers import (
     fail_job_from_exc,
     finalize_batch_job,
     init_batch_items,
-    stop_vllm_for_job,
     stream_subprocess,
     subprocess_failure,
     terminal_prefix,
@@ -116,7 +115,6 @@ class SpotPrelabelOptions(StrictModel):
     clip_len: int = Field(default=64, ge=8, le=256)
     prefetch_factor: int = Field(default=1, ge=1, le=8)
     overwrite: bool = False
-    stop_vllm: bool = False
     use_amp: bool = True
 
 
@@ -417,14 +415,13 @@ async def start_spot_prelabel_batch(req: SpotPrelabelBatchRequest) -> dict:
                 progress=0.0,
                 message=f"Queued {total} video(s)",
             )
-            async with stop_vllm_for_job(job.id, when=req.stop_vllm):
-                failed = await _run_prelabel_batch_subprocess(
-                    job.id,
-                    items,
-                    entries,
-                    checkpoint=checkpoint,
-                    req=req,
-                )
+            failed = await _run_prelabel_batch_subprocess(
+                job.id,
+                items,
+                entries,
+                checkpoint=checkpoint,
+                req=req,
+            )
             await finalize_batch_job(job.id, total, failed)
         except asyncio.CancelledError:
             await cancel_batch_items(job.id, items)

@@ -36,7 +36,6 @@ class JobType(str, Enum):
     fails at the call site instead of becoming a silent no-op in the UI.
     """
 
-    VLM_DETECT = "vlm_detect"
     PLAYER_DETECTION = "player_detection"
     PLAYER_TRACKING = "player_tracking"
     PLAYER_EMBED = "player_embed"
@@ -149,7 +148,6 @@ class JobManager:
         # run while a training job is in progress. Inference runs in a subprocess,
         # so the OS reclaims its VRAM on exit — no in-process cache flush needed.
         self.inference_lock = asyncio.Lock()
-        self._vllm_using_gpu = False
 
     def create_job(
         self, job_type: "JobType | str", params: dict | None = None, name: str = ""
@@ -315,14 +313,6 @@ class JobManager:
             job.set_task(task)
             if job.status is JobStatus.CANCELLED:
                 task.cancel()
-
-    @property
-    def vllm_using_gpu(self) -> bool:
-        return self._vllm_using_gpu
-
-    @vllm_using_gpu.setter
-    def vllm_using_gpu(self, value: bool):
-        self._vllm_using_gpu = value
 
 
 def threadsafe_update(

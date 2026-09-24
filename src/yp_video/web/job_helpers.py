@@ -15,8 +15,6 @@ The duplicated patterns factored out here:
    final status for a job that processed N items with K failures.
 3. ``fail_job_from_exc`` — the standard failure epilogue (traceback into
    logs, ``error`` set, last progress message preserved).
-4. ``stop_vllm_for_job`` — async context manager that releases vLLM's GPU
-   for the duration of a job and restarts it in the background after.
 
 Cancel semantics across all GPU-using jobs:
 
@@ -24,11 +22,6 @@ Cancel semantics across all GPU-using jobs:
       stream_subprocess catches CancelledError, calls process.terminate().
       OS reclaims subprocess VRAM. gpu_lock.__aexit__ then runs gc.collect
       + torch.cuda.empty_cache() in the parent.
-
-  External vLLM detect:
-      The vLLM server is a separate process and intentionally keeps
-      its VRAM across job cancels — pass stop_vllm=True at the API
-      layer if you actually want it stopped.
 """
 
 from __future__ import annotations
@@ -42,7 +35,6 @@ import signal
 import time
 import traceback
 from collections.abc import Callable
-from contextlib import asynccontextmanager
 from pathlib import Path
 
 from yp_video.web.jobs import job_manager
@@ -423,30 +415,6 @@ async def fail_job_from_exc(job_id: str, exc: BaseException) -> None:
     )
 
 
-# ── vLLM GPU yielding ─────────────────────────────────────────────────
-
-
-@asynccontextmanager
-async def stop_vllm_for_job(job_id: str, *, when: bool):
-    """Release vLLM's GPU for the duration of a job, restart on exit.
-
-    No-op when ``when`` is False or vLLM isn't currently using the GPU. The
-    restart is fire-and-forget so the job can return to the user immediately
-    without waiting for vLLM to be ready again.
-    """
-    if not when or not job_manager.vllm_using_gpu:
-        yield
-        return
-    from yp_video.web.vllm_manager import vllm_manager
-    await job_manager.update_job(job_id, message="Stopping vLLM to free VRAM...")
-    await vllm_manager.stop()
-    try:
-        yield
-    finally:
-        log.info("Auto-restarting vLLM after job %s", job_id)
-        asyncio.create_task(vllm_manager.start())
-
-
 async def cancel_batch_items(job_id: str, items: list[dict]) -> None:
     """Mark every unfinished batch item cancelled and persist the list.
 
@@ -469,7 +437,6 @@ def spawn_batch_video_job(
     job,
     video_paths: list[Path],
     *,
-    stop_vllm: bool,
     work,
     done_message,
     start_message: str,
@@ -494,58 +461,57 @@ def spawn_batch_video_job(
             await job_manager.update_job(
                 job.id, status="running", message="Waiting for inference slot..."
             )
-            async with stop_vllm_for_job(job.id, when=stop_vllm):
-                async with job_manager.inference_lock:
-                    for i, video_path in enumerate(video_paths):
-                        await update_batch_item(
-                            job.id, items, i, status="running", message=start_message,
-                            overall_progress=batch_progress(i, 0.0, total),
-                            overall_message=batch_message(i, total, video_path.name, start_message),
+            async with job_manager.inference_lock:
+                for i, video_path in enumerate(video_paths):
+                    await update_batch_item(
+                        job.id, items, i, status="running", message=start_message,
+                        overall_progress=batch_progress(i, 0.0, total),
+                        overall_message=batch_message(i, total, video_path.name, start_message),
+                    )
+
+                    last_push = {"t": 0.0}
+
+                    def on_progress(done, total_units, msg, *, index=i, name=video_path.name):
+                        # Executor thread → schedule onto the loop; throttle
+                        # to ~1/s. done=0 (phase start — often followed by a
+                        # long silent model load) and the final unit always
+                        # go through.
+                        now = time.monotonic()
+                        if done not in (0, total_units) and now - last_push["t"] < 1.0:
+                            return
+                        last_push["t"] = now
+                        frac = done / total_units if total_units else 0.0
+                        detail = msg or f"{done}/{total_units}"
+                        loop.call_soon_threadsafe(
+                            asyncio.ensure_future,
+                            update_batch_item(
+                                job.id, items, index, progress=frac, message=detail,
+                                overall_progress=batch_progress(index, frac, total),
+                                overall_message=batch_message(index, total, name, detail),
+                            ),
                         )
 
-                        last_push = {"t": 0.0}
-
-                        def on_progress(done, total_units, msg, *, index=i, name=video_path.name):
-                            # Executor thread → schedule onto the loop; throttle
-                            # to ~1/s. done=0 (phase start — often followed by a
-                            # long silent model load) and the final unit always
-                            # go through.
-                            now = time.monotonic()
-                            if done not in (0, total_units) and now - last_push["t"] < 1.0:
-                                return
-                            last_push["t"] = now
-                            frac = done / total_units if total_units else 0.0
-                            detail = msg or f"{done}/{total_units}"
-                            loop.call_soon_threadsafe(
-                                asyncio.ensure_future,
-                                update_batch_item(
-                                    job.id, items, index, progress=frac, message=detail,
-                                    overall_progress=batch_progress(index, frac, total),
-                                    overall_message=batch_message(index, total, name, detail),
-                                ),
-                            )
-
-                        try:
-                            counts = await loop.run_in_executor(
-                                None,
-                                lambda p=video_path, cb=on_progress: work(p, cb),
-                            )
-                            if on_done is not None:
-                                on_done(video_path, counts)
-                            await update_batch_item(
-                                job.id, items, i, status="completed", progress=1.0,
-                                message=done_message(counts),
-                                overall_progress=batch_progress(i, 1.0, total),
-                                overall_message=batch_message(i, total, video_path.name, "done"),
-                            )
-                        except Exception as exc:  # noqa: BLE001
-                            failed += 1
-                            log.exception("%s failed for %s", job.name, video_path.name)
-                            await update_batch_item(
-                                job.id, items, i, status="failed",
-                                message=f"{type(exc).__name__}: {exc}", error=str(exc),
-                                overall_message=batch_message(i, total, video_path.name, f"failed — {exc}"),
-                            )
+                    try:
+                        counts = await loop.run_in_executor(
+                            None,
+                            lambda p=video_path, cb=on_progress: work(p, cb),
+                        )
+                        if on_done is not None:
+                            on_done(video_path, counts)
+                        await update_batch_item(
+                            job.id, items, i, status="completed", progress=1.0,
+                            message=done_message(counts),
+                            overall_progress=batch_progress(i, 1.0, total),
+                            overall_message=batch_message(i, total, video_path.name, "done"),
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        failed += 1
+                        log.exception("%s failed for %s", job.name, video_path.name)
+                        await update_batch_item(
+                            job.id, items, i, status="failed",
+                            message=f"{type(exc).__name__}: {exc}", error=str(exc),
+                            overall_message=batch_message(i, total, video_path.name, f"failed — {exc}"),
+                        )
             await finalize_batch_job(job.id, total, failed)
         except asyncio.CancelledError:
             await cancel_batch_items(job.id, items)

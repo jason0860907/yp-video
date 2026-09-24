@@ -76,7 +76,6 @@ class EmbedRequest(StrictModel):
     # None = every registered embedder; missing matrices only unless overwrite.
     models: list[str] | None = None
     overwrite: bool = False
-    stop_vllm: bool = False
     # Checkpoint package ref for the clip-reident embedder; None = official
     # default. Only affects the clip-reident family.
     checkpoint: str | None = None
@@ -116,7 +115,6 @@ async def embed(req: EmbedRequest) -> dict:
     spawn_batch_video_job(
         job,
         video_paths,
-        stop_vllm=req.stop_vllm,
         work=lambda p, cb: pipeline.embed_video(p.stem, models=req.models, overwrite=req.overwrite, checkpoint=checkpoint, on_progress=cb),
         done_message=lambda c: (
             f"{', '.join(c['models'])} over {c['crops']} crops" if c["models"] else "already embedded"
