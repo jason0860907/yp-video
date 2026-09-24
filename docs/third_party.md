@@ -58,13 +58,13 @@ package）；哪組權重產生了哪個矩陣，看 extraction 時 `embedder.we
 
 ## pip 層級的外部模型（不需 checkout）
 
-- **RF-DETR Seg Medium**（`rfdetr` 套件）：action frame 的人物框、crop masking 與 rally tracking 的密集偵測；權重自動下載到 `~/.roboflow/`
+- **RF-DETR Seg Medium**（`rfdetr` 套件）：action frame 的人物框、crop masking，以及離線 rally tracking 的密集偵測（`tracklets/tracking.py`，產生 Fusion person head 的 pseudo labels）；Inference 的 tracking 改吃 SPOT fusion 人物框（`tracklets/fusion.py`），不另跑 RF-DETR。權重自動下載到 `~/.roboflow/`
 - **CLIP-ReID**（`clip-reid` embedder）：HF `occurra/person_vit_clip_reid` 的 ONNX，onnxruntime CPU 推論，首次使用自動下載
-- **ByteTrack**：來自 `supervision` 套件
+- **ByteTrack**：來自 `supervision` 套件，`tracklets/tracking.py` 與 `tracklets/fusion.py` 共用
 
 ## 升級注意事項
 
-- `supervision` 0.28 起 `ByteTrack` 標為 deprecated、**0.30 移除**（遷去獨立的 `trackers` 套件）—— 升級前先遷移 `reid/tracking.py`
-- `rfdetr` 的 `optimize_for_inference()` 會把 batch 維度烙死在 traced graph 裡；`>1.8.3` 另有分數尺度正規化，升級要重新校準 `person/detector.py` 的 0.1 與 Association 的 0.5 門檻
+- `supervision` 0.28 起 `ByteTrack` 標為 deprecated、**0.30 移除**（遷去獨立的 `trackers` 套件）—— 升級前先遷移 `tracklets/tracking.py` 與 `tracklets/fusion.py`
+- `rfdetr` 的 `optimize_for_inference()` 會把 batch 維度烙死在 traced graph 裡；`>1.8.3` 另有分數尺度正規化，升級要重新校準 `person/detector.py` 的 `PERSON_SCORE_THRESHOLD`（0.1）與 `actor/ranking.py` 的 `AUTO_PICK_MIN_SCORE`（0.5）
 - 任何外部模型升級後，拿已標注影片重跑一次對應的驗證（embedder 看 labeled-pair 距離分佈、tracking 看 tracklet 數量與同軌一致性）再信任結果
 - yp-reid 的 contract 變更要同步 bump `yp_video/contracts/reid.py` 與 `yp_reid/contract.py` 的版本（握手會擋不一致，見兩檔案的 docstring）

@@ -2,7 +2,7 @@
 
 入口：側邊欄 **Video → App Review**（`/app-review`）。
 
-這個頁面用 iOS 的片段規則檢查分析結果，再將使用者回饋交由人工審核。預覽不啟動推論，也不修改 App 雲端資料。
+這個頁面用與 iOS 相同的片段規則檢查分析結果，再將使用者回饋交由人工審核。預覽不啟動推論，也不修改 App 雲端資料。
 
 ## 預覽結果
 
@@ -19,13 +19,13 @@
 
 ### 片段規則
 
-實作對照 iOS `ActionEvent.swift`、`Match+Actions.swift`、`PlayerResolver.swift`、`CourtScore.swift`：
+排球規則集中在 [`yp_video/action/rules.py`](../src/yp_video/action/rules.py)，結果以 `attacks`／`rally_outcomes` 隨 analysis result 送出，iOS 與這個頁面都直接讀取，不各自推導。本機 pipeline 來源會先經同一模組補上這兩個欄位。頁面只負責依規則輸出決定取景範圍：
 
-- 接→舉→扣只向前找比錨點低的組織階段，不把發球或攔網當成該攻擊的組織。
+- 組織進攻：每次扣球一組，向前找接→舉，不越過前一次扣球，也不把發球或攔網當成組織。
 - 回合歸屬使用 `start ≤ time ≤ end`，不加入邊界容差。
-- 一個 Rally 只產生一個 Score，以最後一次得分事件為結尾；没有得分事件則使用回合結束。
-- Score 的歸屬球員是最後一次扣球，沒有扣球才取最後一次實際觸球。
-- 人工單次觸球指派優先於整組人物配對；整組配對只在辨識 result ID 相符時套用。
+- 一個 Rally 只產生一個 Score，以最後一聲哨音（`score_event_index`，相鄰重複哨音只取最後一聲）為結尾；沒有哨音則使用回合結束。
+- Score 的歸屬球員取自 `deciding_event_indices`：哨音前最後一次組織進攻的扣球，沒有扣球才取最後一次實際觸球。只有發球或接發的回合標為 `serve_point`。
+- 人工單次觸球指派優先於整組人物配對；指派存成 null 表示使用者標記「無人」，會清空該次觸球的球員。整組配對只在辨識 result ID 相符時套用。
 - 使用者裁切覆蓋取景模式；隱藏片段不刪除原始動作時間軸。
 
 ### Library Rally 快照
@@ -81,4 +81,4 @@ corrections 6.0 本身沒有 analysis job ID。選擇要比對的 job 是審核�
 - 先保存寫入意圖，再以原子替換更新標註。若中斷，可使用「恢復中斷的標註匯入」；恢復前會重新核對檔案版本，不將舊操作套到新標註。
 - 舊 corrections schema、不相符的 match、重複／模糊對應不做相容轉換。
 
-測試位於 [`tests/test_app_review.py`](../tests/test_app_review.py)，涵蓋 iOS 片段規則、辨識版本、Library UUID／裁切、明確標註寫入、版本衝突、錯誤來源、中斷恢復與 HTTP 匯入流程。
+測試位於 [`tests/test_app_review.py`](../tests/test_app_review.py)，涵蓋規則輸出的取景、辨識版本、Library UUID／裁切、明確標註寫入、版本衝突、錯誤來源、中斷恢復與 HTTP 匯入流程。

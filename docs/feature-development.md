@@ -1,6 +1,6 @@
 # 新增功能準則
 
-這份文件定義 yp-video 新功能的產品、UI、資料與模型整合規則。新增頁面前，先找最接近的既有流程作為模板；目前 Train 以 Fusion Train（所有 SPOT recipe 的單一入口）為準，Predict 以 Action Predict / Rally SPOT Predict 為準。
+這份文件定義 yp-video 新功能的產品、UI、資料與模型整合規則。新增頁面前，先找最接近的既有流程作為模板；目前 Train 以 Fusion Train（所有 SPOT recipe 的單一入口）為準，單階段 Predict 以 Action Predict / Rally SPOT Predict 為準，多階段一鍵執行以 Inference 為準。
 
 ## 1. 先定義功能邊界
 
@@ -16,12 +16,11 @@
 依序使用：
 
 1. `PageHeader`：只放頁級說明與少量頁級操作。
-2. 四個 `StatTile`：資料量、標註量、validation 或 checkpoint、目前狀態。
-3. 主區域：`1.6fr / 1fr`。
+2. 主區域：`1.6fr / 1fr`。
    - 左：`Training config`
-   - 右：資料集摘要、實際 selection/split 與輸出 heads
-4. `Training job`：放在主區域下方，獨占整列。
-5. `Validation performance`：有結果才顯示。
+   - 右：`Training dataset`，實際 selection/split 與 checkpoint heads
+3. `TrainJobCard`：放在主區域下方，獨占整列。
+4. `TrainPerfCard`：有結果才顯示。
 
 ### Predict 頁
 
@@ -78,7 +77,7 @@
   - init 只需要可載入相容 backbone/head。
   - Resume 需要完整架構、optimizer 與 frozen run data。
   - Predict 需要使用者選擇的 output head 真正存在。
-- 專案不承擔一般性的向後相容；但已經作為產品入口公開的舊 checkpoint，必須明確支援、提供 migration，或在 UI 說明拒絕原因。
+- 專案不承擔向後相容：格式不符的舊 checkpoint 直接拒絕並在 UI 說明原因，不寫 migration 或 fallback。
 - 多 head checkpoint 的 best epoch 選擇標準必須顯示。若某 head 尚未參與 best metric，不能讓 UI 暗示它已由 validation 最佳化。
 
 ## 6. Predict 的資料安全
@@ -88,7 +87,16 @@
 - 人工 reviewed / final 資料預設不可被 prediction 覆寫。
 - Checkpoint、output head、video selection 與 job 統計都必須屬於目前 Predict 模式。
 
-## 7. API、Jobs 與前端接線
+## 7. Inference 階段
+
+`/inference` 對每支影片依序執行 rally+winner → action → tracking → detection → association。新增或修改階段時：
+
+- 階段邏輯放在 `web/fusion_inference.py`，不依賴 router；router 只負責 job 與 R2 鏡像。
+- 每個階段寫入與對應單階段 Predict 頁相同的 machine store，讓 Label 編輯器、工作清單與 pipeline 狀態不需要分辨來源。
+- 每個階段有自己的 skip 判定，回傳不執行的原因（缺少上游輸出，或既有輸出仍有效且未勾 overwrite），列進結果的 skipped，而不是當成失敗。
+- 需要讀影格的階段使用 `r2_client.materialized_cut` 暫時取得 cut，不假設本機已有影片。
+
+## 8. API、Jobs 與前端接線
 
 新增 Web 功能時逐項確認：
 
@@ -110,21 +118,20 @@ Status endpoint 是 UI 的 source of truth，應一次回傳：
 
 不要讓前端用多個不一致的 endpoint 自行猜測 eligibility 或 checkpoint family。
 
-## 8. 完成條件
+## 9. 完成條件
 
 至少執行：
 
 ```bash
 cd src/yp_video/web/frontend
+npm run lint
 npm run typecheck
 npm run build
 
 cd ../../../..
-.venv/bin/python -m unittest <相關測試>
+uv run pytest <相關測試>
 git diff --check
 ```
-
-若 frontend 已配置 linter，`npm run lint` 也必須通過。不可只留下沒有 dependency / config、實際無法執行的 lint script。
 
 測試應涵蓋：
 
@@ -136,4 +143,4 @@ git diff --check
 - overwrite protection
 - job payload、progress 與完成後 query refresh
 
-最後人工對照最接近的 Action 或 Rally 頁面，確認資訊順序、欄位命名、responsive grid、empty/loading/error/disabled 狀態一致。
+最後人工對照最接近的 Fusion Train、Predict 或 Inference 頁面，確認資訊順序、欄位命名、responsive grid、empty/loading/error/disabled 狀態一致。

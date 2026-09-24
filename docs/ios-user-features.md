@@ -1,6 +1,6 @@
 # VolleyIQ iOS App：使用者功能整理
 
-整理日期：2026-09-20。
+整理日期：2026-09-25。
 
 VolleyIQ 目前的主要用途，是把排球比賽影片整理成可快速回看的回合與動作片段，讓使用者修正、分類、配對球員，再輸出個人或球隊需要的影片。
 
@@ -25,7 +25,7 @@ VolleyIQ 目前的主要用途，是把排球比賽影片整理成可快速回�
 1. 匯入一場比賽影片，命名並選擇拍攝角度。
 2. 等待分析，查看已產生的回合、動作與回合結束片段。
 3. 按球員或動作篩選，回看需要檢討的球。
-4. 調整片段範圍、確認人物、標記得失分及失分原因。
+4. 調整片段範圍、確認人物、修正得分方，並確認或標記失分原因。
 5. 加入收藏分類，匯出片段、製作合輯，或分享連結。
 
 ## 2. 匯入影片與分析
@@ -45,7 +45,7 @@ YouTube 畫質選項為 360p、480p、720p、1080p，預設 1080p。實際可取
 ### 分析期間與重新分析
 
 - 查看處理百分比與目前階段；影片庫另有「處理中」清單。
-- 分析會逐步提供結果，不必等整支影片處理完才看到所有已產生的內容。
+- 分析會逐步提供結果，不必等整支影片處理完才看到所有已產生的內容；處理中會顯示已找到的回合數，可先點入預覽部分結果。
 - 運算主機暫時沒有回應時，畫面會顯示等待主機的提示。
 - 可以取消進行中的分析。
 - 完成後可從影片選單重新分析 Rally，或只重新分析 Action。
@@ -55,7 +55,7 @@ YouTube 畫質選項為 360p、480p、720p、1080p，預設 1080p。實際可取
 | Rally | 重跑整支影片，重新產生回合及 Action／Score；原有回合分類標籤與已看標記會重置 |
 | Action | 沿用現有回合，包含手動調整過的範圍，只重跑 Action／Score |
 
-手動標記的得失分、球員與失分原因，只有在新舊結果仍能對應相同時間點時才會保留；不能把重新分析視為所有修正都一定保留的操作。
+手動修正的得分方、球員與失分原因，只有在新舊結果仍能對應相同時間點時才會保留；不能把重新分析視為所有修正都一定保留的操作。
 
 ## 3. 影片庫與資料夾
 
@@ -73,9 +73,9 @@ YouTube 畫質選項為 360p、480p、720p、1080p，預設 1080p。實際可取
 
 | 頁籤 | 適合回答的問題 | 目前功能 |
 |---|---|---|
-| Rally | 「這一球從開始到結束發生了什麼？」 | 回合列表、時間範圍、排序、播放、裁切、分類與刪除 |
+| Rally | 「這一球從開始到結束發生了什麼？」 | 回合列表、時間範圍、組織進攻次數與失分原因、排序、播放、裁切、分類與刪除 |
 | Action | 「我要看某位球員的接球／舉球／扣球」 | 依觸球動作切出的片段、球員與動作篩選、動作時間軸、人物修正 |
-| Score | 「這一球最後怎麼結束？我們為何失分？」 | 回合結束片段、場邊得分累計、手動得失分標記與失分原因彙整 |
+| Score | 「這一球最後怎麼結束？我們為何失分？」 | 回合結束片段、場邊得分累計、組織進攻次數、得分方修正與各側失分原因彙整 |
 
 ### 篩選與片段取景
 
@@ -109,23 +109,30 @@ Action 另有三種觀看範圍，不必重新分析就能切換：
 
 ## 6. 得失分與失分原因
 
-Score 詳情可以手動標記：
+Score 詳情與 Rally 詳情都可以修正：
 
-- 這一球是「得分」或「失分」。
-- 對應的球員；有辨識出的觸球可供指派時才能指定。
-- 失分原因，例如扣球出界、扣球掛網、被攔網、舉球失誤、接發失誤、發球失誤、防守失誤或其他。
+- 得分方：預設帶入系統辨識的獲勝側，有誤可直接改選；系統無法判定的回合也能手動指定。
+- 失分原因：選定得分方後，為另一側標記原因，例如扣球失誤、被攔網、舉球失誤、接發失誤、嗆司接噴、發球失誤、防守失誤或其他。
 - 新增這場比賽專用的自訂失分原因，並可移除自訂原因。
+- 失分原因卡片可以收合，收合後仍顯示目前的原因；收合狀態會記住。
 
-Score 列表可以展開失分分析，查看已標記的失分數量、最常見原因與原因分布。選取球員等篩選條件時，彙整也會跟著縮小範圍。
+只發球就結束的回合，系統會預判為「發球失誤」；發球後接球就結束的回合，預判為「接發失誤」。預判會標示「自動判定」，看完這一球後，可在 Rally 詳情、Score 詳情或全螢幕播放中一鍵確認，也可以改選其他原因；使用者自己標記的原因一律優先。其他回合不會自動判定。
+
+Score 列表可以查看：
+
+- 整場的組織進攻次數。
+- 依場側展開失分分析，查看各側失分數量、最常見原因與原因分布；尚未標記的失分會另列為「未標記」，得分方未確認的回合不納入統計。選取球員等篩選條件時，失分分析也會跟著縮小範圍，組織進攻次數則維持整場。
+
+Rally 列表的每個回合也會顯示該回合的組織進攻次數與目前的失分原因，並以不同顏色區分自動判定與人工標記。
 
 這裡有兩種不同的資訊：
 
 | 資訊 | 代表什麼 |
 |---|---|
-| 場邊比分／獲勝側 | 累計系統辨識到的左、右、近、遠側獲勝回合；無法判定的回合會列為未知 |
-| 手動得失分與原因 | 使用者自行判斷與標記的結果；失分分析依這些標記計算 |
+| 場邊比分／獲勝側 | 累計左、右、近、遠側的獲勝回合，採用系統辨識結果或使用者修正後的得分方；無法判定的回合會列為未知 |
+| 失分原因 | 使用者標記的原因，加上發球、接發就結束之回合的自動判定；失分分析依這些原因計算 |
 
-**場邊累計目前不會追蹤隊伍換邊，也不是完整的正式賽事計分。** 現行分析輸出尚未自動分局，不能將一整場多局影片的結果當成已正確分局的比分。系統也不會自動替使用者判斷上述失分原因。
+**場邊累計目前不會追蹤隊伍換邊，也不是完整的正式賽事計分。** 現行分析輸出尚未自動分局，不能將一整場多局影片的結果當成已正確分局的比分。除了上述發球、接發就結束的回合，失分原因仍需使用者自行判斷與標記。
 
 ## 7. 球員名單、辨識與配對
 
@@ -134,7 +141,7 @@ Score 列表可以展開失分分析，查看已標記的失分數量、最常�
 - 為每場比賽新增球員，填寫背號、姓名與位置。
 - 編輯或刪除球員。
 - 從其他比賽匯入既有球員名單。
-- 在動作詳情直接指定球員，或開啟名單編輯。
+- 在動作詳情直接指定球員，或開啟名單編輯；Rally 詳情與全螢幕播放也能指定目前播放位置附近那次觸球的球員。
 
 ### 確認畫面中的人是誰
 
@@ -148,16 +155,18 @@ Score 列表可以展開失分分析，查看已標記的失分數量、最常�
 - 調整「配對鬆緊」，讓未完成配對的項目合併得更多或分得更細。
 - 將裁判、觀眾等誤抓片段標為「不是球員」，並復原被移除的項目。
 - 解除已完成的配對。
+- 將某次觸球改回「未指定」；即使它所屬的出場片段已配對到球員，也會維持未指定。
 - 修正動作的球員時，選擇只改這一次，或一併修改同一人物出場片段內的多個動作。
 
 目前需要使用者確認人物身分，不能視為已能全自動讀取背號、姓名並保證配對正確。
 
 ### 以球員為中心回看
 
-- 球員詳情顯示觸球總數，以及各種動作的片段數。
-- 點擊「扣球」「接球」等統計，直接進入對應片段列表。
-- 製作這位球員在該場比賽的個人合輯。
-- 把某場比賽的背號連結到同一位跨比賽球員；建立連結後，可以切換「本場／所有比賽」查看該球員的片段。
+- 球員詳情顯示觸球總數，以及各種動作的次數。
+- 點擊「全部」「扣球」「接球」等統計，直接在同一頁篩選下方的觸球片段列表；點片段進入動作詳情播放。
+- 在片段上解除配對：觸球來自已配對的出場片段時，會解除整個出場片段；否則只解除這一次觸球。
+- 從右上選單輸出這位球員在該場比賽的個人合輯，也可編輯球員資料。
+- 把某場比賽的背號連結到同一位跨比賽球員；建立連結後，可以切換「本場／全部比賽」查看該球員的片段。
 
 這些數量取決於已偵測的動作與人物配對／手動修正。目前不是完整的球員能力評分、攻擊成功率或戰術評估報表。
 
@@ -217,14 +226,14 @@ App 可以開啟分享連結、播放其中的影片／回合，再匯入影片�
 | Free／Pro 方案 | 設定頁的開發測試選項，尚未接上正式訂閱或付款；目前用來控制照片圖庫單批可選影片數，Free 2 支、Pro 10 支 |
 | 後端服務網址 | 設定頁仍提供的開發選項；一般使用流程依賴已配置的可用服務 |
 | 全自動球員身分辨識 | 有人物分組與配對建議，但仍需使用者確認與修正 |
-| 全自動失分原因分析 | 現有原因統計來自人工標記 |
+| 全自動失分原因分析 | 只有發球、接發就結束的回合會自動預判，且需使用者確認；其餘原因仍來自人工標記 |
 | 正式隊伍比分、自動分局 | 現有場邊累計尚未涵蓋隊伍換邊追蹤與自動分局 |
 | 球員技術評分／完整戰術報表 | 目前提供動作片段、觸球數與人工標記彙整，尚無這類完整報表 |
 | App 內直接拍攝、檔案 App 匯入 | 目前上傳入口是照片圖庫與 YouTube，未提供這兩種來源入口 |
 
 ## 附錄：整理依據
 
-本次檢查的 iOS 原始碼版本為 `VolleyIQ@24bfa01`；與分數、分局相關的服務行為另對照 `volleyiq-backend@726ceec`。以下連結供維護者更新文件時查核，正文以使用者操作為主。
+本次檢查的 iOS 原始碼版本為 `VolleyIQ@14c707b`；與分數、分局相關的服務行為另對照 `volleyiq-backend@726ceec`。以下連結供維護者更新文件時查核，正文以使用者操作為主。
 
 | 功能 | 主要依據 |
 |---|---|
@@ -233,8 +242,9 @@ App 可以開啟分享連結、播放其中的影片／回合，再匯入影片�
 | 影片庫、資料夾、處理進度 | [LibraryView.swift](../../VolleyIQ/VolleyIQ/Screens/Library/LibraryView.swift)、[FolderDetailView.swift](../../VolleyIQ/VolleyIQ/Screens/Library/FolderDetailView.swift)、[ProcessingHeader.swift](../../VolleyIQ/VolleyIQ/Screens/RallyFeed/ProcessingHeader.swift) |
 | 三種片段與重新分析 | [RallyFeedView.swift](../../VolleyIQ/VolleyIQ/Screens/RallyFeed/RallyFeedView.swift)、[AdvancedFeedOptions.swift](../../VolleyIQ/VolleyIQ/Components/AdvancedFeedOptions.swift)、[ActionEvent.swift](../../VolleyIQ/VolleyIQ/Models/ActionEvent.swift) |
 | 播放與修剪 | [RallyDetailView.swift](../../VolleyIQ/VolleyIQ/Screens/RallyDetail/RallyDetailView.swift)、[TrimSheet.swift](../../VolleyIQ/VolleyIQ/Screens/Trim/TrimSheet.swift)、[ActionRangeTrimmer.swift](../../VolleyIQ/VolleyIQ/Screens/Trim/ActionRangeTrimmer.swift) |
-| 得失分與比分限制 | [ScoreScopeView.swift](../../VolleyIQ/VolleyIQ/Screens/RallyFeed/ScoreScopeView.swift)、[ScoreDetailView.swift](../../VolleyIQ/VolleyIQ/Screens/ScoreDetail/ScoreDetailView.swift)、[CourtScore.swift](../../VolleyIQ/VolleyIQ/Models/CourtScore.swift) |
-| 球員配對與跨比賽回看 | [MatchPairingView.swift](../../VolleyIQ/VolleyIQ/Screens/PlayerPairing/MatchPairingView.swift)、[PlayerDetailView.swift](../../VolleyIQ/VolleyIQ/Screens/PlayerPairing/PlayerDetailView.swift)、[PlayerClipsView.swift](../../VolleyIQ/VolleyIQ/Screens/PlayerPairing/PlayerClipsView.swift) |
+| 得失分與比分限制 | [ScoreScopeView.swift](../../VolleyIQ/VolleyIQ/Screens/RallyFeed/ScoreScopeView.swift)、[ScoreDetailView.swift](../../VolleyIQ/VolleyIQ/Screens/ScoreDetail/ScoreDetailView.swift)、[CourtScore.swift](../../VolleyIQ/VolleyIQ/Models/CourtScore.swift)、[RallyWinnerPicker.swift](../../VolleyIQ/VolleyIQ/Components/RallyWinnerPicker.swift) |
+| 失分原因與自動判定、組織進攻次數 | [LossReasonEditor.swift](../../VolleyIQ/VolleyIQ/Components/LossReasonEditor.swift)、[LossReason.swift](../../VolleyIQ/VolleyIQ/Models/LossReason.swift)、[Match+Actions.swift](../../VolleyIQ/VolleyIQ/Models/Match+Actions.swift)、[RallyRules.swift](../../VolleyIQ/VolleyIQ/Models/RallyRules.swift) |
+| 球員配對與跨比賽回看 | [MatchPairingView.swift](../../VolleyIQ/VolleyIQ/Screens/PlayerPairing/MatchPairingView.swift)、[PlayerDetailView.swift](../../VolleyIQ/VolleyIQ/Screens/PlayerPairing/PlayerDetailView.swift)、[PlayerClipsList.swift](../../VolleyIQ/VolleyIQ/Screens/PlayerPairing/PlayerClipsList.swift) |
 | 收藏與精選 | [FavoritesView.swift](../../VolleyIQ/VolleyIQ/Screens/Favorites/FavoritesView.swift)、[HighlightsView.swift](../../VolleyIQ/VolleyIQ/Screens/Highlights/HighlightsView.swift) |
 | 匯出、連結與共編 | [ExportSheet.swift](../../VolleyIQ/VolleyIQ/Screens/Share/ExportSheet.swift)、[HighlightReelSheet.swift](../../VolleyIQ/VolleyIQ/Screens/Share/HighlightReelSheet.swift)、[CloudShareSheet.swift](../../VolleyIQ/VolleyIQ/Screens/Share/CloudShareSheet.swift)、[SharedCloudShareView.swift](../../VolleyIQ/VolleyIQ/Screens/Share/SharedCloudShareView.swift) |
 | 設定、方案與修正同步 | [SettingsView.swift](../../VolleyIQ/VolleyIQ/Screens/Settings/SettingsView.swift)、[UserTier.swift](../../VolleyIQ/VolleyIQ/Models/UserTier.swift)、[MatchCorrections.swift](../../VolleyIQ/VolleyIQ/Models/MatchCorrections.swift) |
