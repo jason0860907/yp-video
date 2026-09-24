@@ -1,17 +1,16 @@
 # yp-video
 
-排球影片分析 pipeline，整合影片下載、剪輯、VLM 偵測、Rally / Action 標註、SPOT 模型訓練與推論，全部透過統一的 Web Dashboard 操作。
+排球影片分析 pipeline，整合影片下載、剪輯、Rally / Action 標註、SPOT 模型訓練與推論，全部透過統一的 Web Dashboard 操作。
 
 ## 功能
 
 - **Download** - 批次下載 YouTube 播放清單影片
 - **Cut** - 將完整比賽影片切分為個別 set
-- **Detect** - 使用 Qwen3-VL 模型偵測 rally 片段（VLM + 投票平滑）
-- **Annotate** - 檢視偵測結果並人工校正 rally 標註
+- **Annotate** - 檢視 SPOT 預標並人工校正 rally 標註
 - **Action Annotate** - 逐 frame 動作事件標註（serve / receive / set / spike / block / score）
 - **Train** - 用校正後的標註訓練 SPOT 模型（rally 分段與 action 事件各一套流程）
 - **Predict** - 用訓練好的 SPOT checkpoint 對影片做推論
-- **Jobs** - 監控背景任務、控制 vLLM 伺服器
+- **Jobs** - 監控背景任務
 - **Audit** - 誰在什麼時候做了什麼：每個會改變狀態的操作與背景工作都留下紀錄
 
 SPOT 模型本體住在獨立的 `~/yp-spot` repo（自己的 venv），yp-video 透過 subprocess + JSON 檔案跨進程呼叫它——這裡只負責組指令、解析 checkpoint、轉換輸出格式。
@@ -34,7 +33,7 @@ RF-DETR 的獨立 tracking／detection 工具仍供離線標註使用。
 uv sync
 
 # 所有設定都在 workspace 根目錄的單一 .env（R2 金鑰、服務 token、
-# Cloudflare Access、稽核資料庫、vLLM 參數全都在裡面）
+# Cloudflare Access、稽核資料庫全都在裡面）
 cp ../.env.example ../.env    # 填好之後 ../scripts/sync-env.sh 會散佈給後端兩個元件
 
 # 稽核資料庫（本機 Postgres，只綁 loopback）
@@ -90,25 +89,7 @@ uv run yp-app
 uv run yp-download "https://youtube.com/watch?v=xxx"
 uv run yp-download "https://youtube.com/watch?v=xxx" -q 720
 
-# 2. VLM 偵測（需先啟動 vLLM 伺服器）
-./start_vllm_server.sh
-uv run yp-vlm-segment --video ../videos/cuts-broadcast/set1.mp4
-
-# 3. VLM 片段偵測 → Rally 標註合併
-uv run yp-vlm-to-rally
-# 讀取 videos/rally/seg-annotations/ → 輸出至 videos/rally/pre-annotations/
-
-# 4. 人工校正標註、SPOT 訓練與推論 → 使用 Web Dashboard
-```
-
-### VLM 偵測參數
-
-```bash
-uv run yp-vlm-segment --video path/to/video.mp4 \
-    --server http://localhost:8000 \
-    --clip-duration 6.0 \
-    --slide-interval 3.0 \
-    --batch-size 32
+# 2. 剪輯、SPOT 預標、人工校正、訓練與推論 → 使用 Web Dashboard
 ```
 
 ### TPVL 影片重命名（選用）
@@ -120,13 +101,12 @@ uv run python -m yp_video.youtube.rename_tpvl --dry-run
 ## 工作流程
 
 ```
-Download → Cut → Detect → VLM→Rally → Annotate → Train → Predict
-   │        │       │         │          │          │        │
-   │        │       │         │          │          │        └─ SPOT 推論（rally / action）
-   │        │       │         │          │          └─ 訓練 SPOT 模型（yp-spot）
-   │        │       │         │          └─ 人工校正 → ground truth
-   │        │       │         └─ 片段偵測合併為 rally 標註
-   │        │       └─ VLM 偵測（Qwen3-VL）
+Download → Cut → Predict → Annotate → Train → Inference
+   │        │       │          │          │         │
+   │        │       │          │          │         └─ fusion 一鍵推論（rally / action / tracking / association）
+   │        │       │          │          └─ 訓練 SPOT 模型（yp-spot）
+   │        │       │          └─ 人工校正 → ground truth
+   │        │       └─ SPOT 預標（rally / action）
    │        └─ 切分為個別 set
    └─ 下載 YouTube 影片
 ```
@@ -149,10 +129,7 @@ yp-video/
 │   ├── config.py               # 集中管理路徑與設定
 │   ├── core/                   # 核心邏輯（無 Web 依賴）
 │   │   ├── ffmpeg.py           # FFmpeg 影片處理
-│   │   ├── vlm_segment.py      # VLM 排球偵測
-│   │   ├── vlm_to_rally.py     # VLM 片段 → rally 標註合併
 │   │   ├── jsonl.py            # JSONL 讀寫
-│   │   ├── sampling.py         # 影片取樣工具
 │   │   └── person_boxes.py     # Fusion 人物框檔案格式，供推論、追蹤、偵測共用
 │   ├── action/                 # SPOT 流程編排：frame 快取、預標、推論輸出轉換
 │   ├── contracts/              # 跨 repo 資料格式（yp-video ↔ yp-spot / yp-reid / selfhost-worker）
@@ -171,13 +148,10 @@ yp-video/
 │       ├── db.py               # 稽核用 Postgres 連線池與 migration
 │       │                       # （設定一律讀 workspace 根目錄的 ../.env）
 │       ├── jobs.py             # 背景任務管理
-│       ├── vllm_manager.py     # vLLM 生命週期管理
 │       ├── routers/            # API 路由
 │       └── frontend/           # React SPA（build 到 frontend/dist）
 ├── migrations/                 # 稽核資料庫 schema（NNNN_*.sql）
 ├── docker-compose.yml          # 本機 Postgres
-├── prompts/                    # VLM Prompt 模板
-├── start_vllm_server.sh        # vLLM 啟動腳本
 └── pyproject.toml
 ```
 
@@ -198,9 +172,6 @@ videos/
 ├── raw-videos/              # 下載的完整比賽影片
 ├── cuts-broadcast/          # 剪輯後的 set 影片（轉播視角）
 ├── cuts-sideline/           # 剪輯後的 set 影片（場邊視角）
-├── rally/
-│   ├── seg-annotations/     # VLM 逐片段偵測結果（自動）
-│   └── pre-annotations/     # VLM 合併後的 rally 預標註（自動）
 ├── rally-spot/
 │   ├── annotations/         # 人工校正後的 rally ground truth（含 winner）
 │   └── pre-annotations/     # rally SPOT 推論結果
@@ -229,7 +200,5 @@ videos/
 |------|:---:|------|
 | `yp-app` | — | 啟動 Web Dashboard（port 8080，只綁 loopback） |
 | `yp-download` | 1 | 下載 YouTube 影片 |
-| `yp-vlm-segment` | 2 | VLM 排球偵測 |
-| `yp-vlm-to-rally` | 3 | VLM 片段偵測 → Rally 標註合併 |
 
 SPOT 訓練與推論沒有獨立 CLI，統一走 Web Dashboard 的 Train / Predict 頁面。
