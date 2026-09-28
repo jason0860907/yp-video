@@ -40,6 +40,10 @@ export interface CourtState {
   net_landmarks: Record<string, Point>;
   lines: [number, number, number, number][];
   court: { length: number; width: number };
+  /** How far past the frame edge a mark may sit (fraction of the frame). */
+  outside_frame: number;
+  /** Longest gap between touches still drawn as one flight, seconds. */
+  max_flight_s: number;
 }
 
 /** Apply a 3×3 homography; null for a point on or behind the horizon. */
@@ -101,9 +105,6 @@ export type Segment = [Point, Point];
 /** GET /court/positions — each action's actor feet, in court metres. */
 export interface CourtPositions {
   video: string;
-  fit_rmse_m: number;
-  camera: Camera | null;
-  camera_error: string | null;
   events: {
     id: string;
     frame: number;
@@ -160,7 +161,7 @@ export function ballAt(arcs: Arc[], t: number): Point3 | null {
 /** The infinite line through a segment, clipped to the frame grown by
  *  `margin` — a guide drawn along a short stretch of paint should reach every
  *  line it crosses, off-screen ones included. */
-export function extendToFrame([[x1, y1], [x2, y2]]: Segment, margin = 0): Segment | null {
+export function extendToFrame([[x1, y1], [x2, y2]]: Segment, margin: number): Segment | null {
   const lo = -margin;
   const hi = 1 + margin;
   const dx = x2 - x1;
@@ -182,7 +183,7 @@ export function extendToFrame([[x1, y1], [x2, y2]]: Segment, margin = 0): Segmen
 export function intersect(
   [[x1, y1], [x2, y2]]: Segment,
   [[x3, y3], [x4, y4]]: Segment,
-  margin = 0,
+  margin: number,
 ): Point | null {
   const d = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
   if (Math.abs(d) < 1e-9) return null;

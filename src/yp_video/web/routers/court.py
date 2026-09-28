@@ -24,18 +24,22 @@ def _stem(name: str) -> str:
     return video.stem
 
 
-def _state(calibration: annotations.Calibration) -> dict:
+def _state(calibration: annotations.Calibration | None) -> dict:
+    points = calibration.points if calibration else {}
     try:
-        fit, fit_error = geometry.fit(calibration.points).model_dump(), None
+        fit, fit_error = geometry.fit(points).model_dump(), None
     except geometry.FitError as exc:
         fit, fit_error = None, str(exc)
-    try:
-        cam, camera_error = camera.solve(calibration).model_dump(), None
-    except camera.CameraError as exc:
-        cam, camera_error = None, str(exc)
+    if calibration is None:
+        cam, camera_error = None, fit_error
+    else:
+        try:
+            cam, camera_error = camera.solve(calibration).model_dump(), None
+        except camera.CameraError as exc:
+            cam, camera_error = None, str(exc)
     return {
-        "points": calibration.points,
-        "net_height_m": calibration.net_height_m,
+        "points": points,
+        "net_height_m": calibration.net_height_m if calibration else annotations.DEFAULT_NET_HEIGHT,
         "fit": fit,
         "fit_error": fit_error,
         "camera": cam,
@@ -44,6 +48,8 @@ def _state(calibration: annotations.Calibration) -> dict:
         "net_landmarks": geometry.NET_LANDMARKS,
         "lines": geometry.LINES,
         "court": {"length": geometry.COURT_LENGTH, "width": geometry.COURT_WIDTH},
+        "outside_frame": annotations.OUTSIDE_FRAME,
+        "max_flight_s": court_positions.MAX_FLIGHT_S,
     }
 
 
@@ -64,7 +70,7 @@ def videos() -> list[dict]:
 @router.get("/video/{name}")
 def get_calibration(name: str) -> dict:
     stem = _stem(name)
-    return _state(annotations.load(stem) or annotations.Calibration())
+    return _state(annotations.load(stem))
 
 
 @router.put("/video/{name}")

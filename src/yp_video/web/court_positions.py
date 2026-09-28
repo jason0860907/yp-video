@@ -45,9 +45,9 @@ def compute(stem: str) -> dict:
     fit = geometry.fit(calibration.points)
     to_court = np.array(fit.image_to_court)
     try:
-        cam, camera_error = camera.solve(calibration), None
-    except camera.CameraError as exc:
-        cam, camera_error = None, str(exc)
+        cam = camera.solve(calibration)
+    except camera.CameraError:
+        cam = None  # no camera, no heights: the floor positions still stand
 
     path = extraction_store.records_path(stem)
     if not path.exists():
@@ -142,9 +142,6 @@ def compute(stem: str) -> dict:
         "video": stem,
         "units": "m",
         "court": {"length": length, "width": width_m},
-        "fit_rmse_m": fit.rmse_m,
-        "camera": cam.model_dump() if cam else None,
-        "camera_error": camera_error,
         "events": [out(e) for e in events],
         "arcs": arcs,
     }

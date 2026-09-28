@@ -19,17 +19,18 @@ from yp_video.court.geometry import Landmark
 #: a corner the camera cut off is still marked, at the crossing of the guide
 #: lines drawn along the paint that is visible.
 OUTSIDE_FRAME = 0.25
+#: A men's net; the calibration a video starts from.
+DEFAULT_NET_HEIGHT = 2.43
 Coordinate = Annotated[float, Field(ge=-OUTSIDE_FRAME, le=1 + OUTSIDE_FRAME, allow_inf_nan=False)]
 
 
 class Calibration(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    version: int = 1
     #: Height of the net's top band, metres — what the net-top marks stand at.
-    net_height_m: float = Field(default=2.43, ge=1.5, le=3.0)
+    net_height_m: float = Field(default=DEFAULT_NET_HEIGHT, ge=1.5, le=3.0)
     #: The video's frame (width, height) in pixels: the camera solve needs
     #: the aspect ratio the normalized marks were taken in.
-    frame_size: tuple[int, int] | None = None
+    frame_size: tuple[Annotated[int, Field(gt=0)], Annotated[int, Field(gt=0)]]
     #: Landmark → where it sits in the frame (normalized x, y; may lie
     #: OUTSIDE_FRAME past the edge).
     points: dict[Landmark, tuple[Coordinate, Coordinate]] = Field(default_factory=dict)

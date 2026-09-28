@@ -19,6 +19,7 @@ from __future__ import annotations
 import cv2
 import numpy as np
 from pydantic import BaseModel
+from scipy.optimize import minimize_scalar
 
 from yp_video.court import geometry
 from yp_video.court.annotations import Calibration
@@ -81,8 +82,6 @@ def _pose(world: np.ndarray, image: np.ndarray, focal: float, aspect: float):
 
 def solve(calibration: Calibration) -> Camera:
     """Fit focal length and pose to every mark (floor and net tops)."""
-    if calibration.frame_size is None:
-        raise CameraError("Frame size unknown — save any mark once to record it")
     floor = sum(1 for n in calibration.points if n in geometry.LANDMARKS)
     if floor < geometry.MIN_POINTS:
         raise CameraError(f"Mark at least {geometry.MIN_POINTS} floor points ({floor} marked)")
@@ -91,23 +90,17 @@ def solve(calibration: Calibration) -> Camera:
     world, norm, off_floor = _world_points(calibration)
     image = norm * np.array([aspect, 1.0])
 
-    # Focal length is the one non-linear unknown: a coarse log sweep, then a
-    # golden-section polish around the best. Pose is solved exactly per focal.
+    # Focal length is the one non-linear unknown; pose is solved exactly per
+    # focal. The cost is not unimodal over the whole range, so a coarse log
+    # sweep brackets the best basin before the bounded 1-D minimiser polishes.
     def cost(log_f: float) -> float:
         r = _pose(world, image, float(np.exp(log_f)), aspect)
         return r[0] if r else np.inf
 
     grid = np.linspace(np.log(0.2), np.log(8.0), 80)
     best = int(np.argmin([cost(g) for g in grid]))
-    lo, hi = grid[max(best - 1, 0)], grid[min(best + 1, len(grid) - 1)]
-    phi = (np.sqrt(5) - 1) / 2
-    for _ in range(40):
-        a, b = hi - phi * (hi - lo), lo + phi * (hi - lo)
-        if cost(a) < cost(b):
-            hi = b
-        else:
-            lo = a
-    focal = float(np.exp((lo + hi) / 2))
+    bounds = (grid[max(best - 1, 0)], grid[min(best + 1, len(grid) - 1)])
+    focal = float(np.exp(minimize_scalar(cost, bounds=bounds, method="bounded").x))
     solved = _pose(world, image, focal, aspect)
     if solved is None:
         raise CameraError("Camera solve failed for these marks")

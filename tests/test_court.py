@@ -12,6 +12,8 @@ from yp_video.court import camera, geometry
 from yp_video.court.annotations import Calibration
 from yp_video.web.routers import court as routes
 
+SIZE = (1920, 1080)
+
 # A plausible sideline camera: court metres → normalized image.
 CAMERA = np.array([[0.045, 0.012, 0.08], [0.0, -0.032, 0.82], [0.0, 0.022, 1.0]])
 
@@ -70,7 +72,7 @@ def test_router_round_trips_marks_and_serves_the_fit(client):
     assert empty["points"] == {} and empty["fit"] is None and "at least 4" in empty["fit_error"]
     assert empty["net_height_m"] == 2.43
     marks = _marks(["left_near", "left_far", "right_near", "right_far"])
-    saved = client.put("/api/court/video/game.mp4", json={"version": 1, "points": marks}).json()
+    saved = client.put("/api/court/video/game.mp4", json={"points": marks, "frame_size": list(SIZE)}).json()
     assert saved["fit"]["rmse_m"] == pytest.approx(0, abs=1e-6)
     assert set(store.load("game").points) == set(marks)
     assert "image_to_court" not in store.annotation_path("game").read_text()
@@ -81,12 +83,15 @@ def test_router_rejects_unknown_landmarks_and_out_of_frame_marks(client):
     assert client.put("/api/court/video/game.mp4", json={"points": {"net_top": [0.5, 0.5]}}).status_code == 422
     assert client.put("/api/court/video/game.mp4", json={"points": {"left_near": [1.5, 0.5]}}).status_code == 422
     # A corner the camera cut off is still markable, a little past the edge.
-    assert client.put("/api/court/video/game.mp4", json={"points": {"left_near": [-0.2, 1.1]}}).status_code == 200
+    assert client.put(
+        "/api/court/video/game.mp4", json={"points": {"left_near": [-0.2, 1.1]}, "frame_size": list(SIZE)}
+    ).status_code == 200
+    # The camera solve needs the frame the marks were taken in.
+    assert client.put("/api/court/video/game.mp4", json={"points": {}}).status_code == 422
 
 
 # ── Camera (3D) ──────────────────────────────────────────────────────────
 
-SIZE = (1920, 1080)
 
 
 def _pinhole(focal=1.2, center=(9.0, -12.0, 3.0), target=(9.0, 4.5, 1.0)):
@@ -121,9 +126,7 @@ def test_camera_solve_recovers_focal_and_position():
     assert camera.project(cam, np.array([[4.0, 2.0, 3.0]]))[0] == pytest.approx(see((4.0, 2.0, 3.0)), abs=1e-6)
 
 
-def test_camera_needs_frame_size_and_floor_points():
-    with pytest.raises(camera.CameraError, match="Frame size"):
-        camera.solve(Calibration(points={}))
+def test_camera_needs_floor_points():
     with pytest.raises(camera.CameraError, match="floor points"):
         camera.solve(Calibration(points={}, frame_size=SIZE))
 
