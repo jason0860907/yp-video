@@ -32,6 +32,7 @@ import { RALLY_MODE, RallyPanel } from './RallyPanel';
 import { ACTION_MODE, ActionPanel } from './ActionPanel';
 import { ASSOCIATION_MODE, AssociationPanel } from './AssociationPanel';
 import { DETECTION_MODE, DetectionPanel } from './DetectionPanel';
+import { COURT_MODE, CourtPanel } from './CourtPanel';
 import { REID_MODE, ReidPanel } from './ReidPanel';
 import { SourceSelect } from './SourceSelect';
 import { StatusChip } from './StatusChip';
@@ -44,7 +45,7 @@ import type {
   PlaybackClock,
 } from './mode';
 
-const MODES: ModeDescriptor[] = [RALLY_MODE, ACTION_MODE, DETECTION_MODE, ASSOCIATION_MODE, REID_MODE];
+const MODES: ModeDescriptor[] = [RALLY_MODE, ACTION_MODE, DETECTION_MODE, ASSOCIATION_MODE, REID_MODE, COURT_MODE];
 
 type KindFilter = 'all' | 'broadcast' | 'sideline';
 
@@ -351,6 +352,8 @@ export function LabelPage() {
         <DetectionPanel key={video} video={video} registerGuard={registerGuard} clock={clock} />
       ) : mode === 'association' ? (
         <AssociationPanel video={video} clock={clock} />
+      ) : mode === 'court' ? (
+        <CourtPanel key={video} video={video} clock={clock} />
       ) : (
         <ReidPanel video={video} registerGuard={registerGuard} clock={clock} />
       )}

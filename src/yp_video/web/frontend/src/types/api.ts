@@ -14,7 +14,7 @@ export type LabelStatus = 'unlabeled' | 'pre-annotate' | 'in-progress' | 'done';
 /** GET /label/stats — per-mode status tally of the union video list,
  *  keys in pipeline order (web/routers/label_stats.py). */
 export type LabelStats = Record<
-  'rally' | 'action' | 'association' | 'reid' | 'detection',
+  'rally' | 'action' | 'association' | 'reid' | 'detection' | 'court',
   Record<LabelStatus, number>
 >;
 

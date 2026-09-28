@@ -25,7 +25,7 @@ from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import read_jsonl, write_jsonl
 
 #: Modes whose Done flag lives here.
-MODES = ("rally", "action", "association", "reid")
+MODES = ("rally", "action", "association", "reid", "court")
 
 
 class Ledger:

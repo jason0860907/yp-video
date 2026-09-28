@@ -15,7 +15,7 @@ class LedgerTest(unittest.TestCase):
                 self.assertEqual(label_done.set_done("a", "rally", True)["rally"], True)
                 label_done.set_done("b", "reid", True)
                 label_done.set_done("a", "action", True)
-                self.assertEqual(label_done.load("a"), {"rally": True, "action": True, "association": False, "reid": False})
+                self.assertEqual(label_done.load("a"), {"rally": True, "action": True, "association": False, "reid": False, "court": False})
                 self.assertTrue(label_done.is_done("b", "reid"))
                 # Unsetting the last flag drops the line; the file stays one ledger.
                 label_done.set_done("b", "reid", False)

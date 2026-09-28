@@ -40,6 +40,11 @@ export function useUnionVideos() {
     queryFn: () => apiFetch<NonNullable<UnionVideo['detection']>[]>(API.detectionLabel.videos),
   });
 
+  const courtQuery = useQuery({
+    queryKey: ['court-videos'],
+    queryFn: () => apiFetch<NonNullable<UnionVideo['court']>[]>(API.court.videos),
+  });
+
   const videos = useMemo<UnionVideo[]>(() => {
     const rows: UnionVideo[] = (actionQuery.data ?? []).map((v) => ({
       name: v.name,
@@ -59,6 +64,10 @@ export function useUnionVideos() {
       const row = byStem.get(stem(v.name));
       if (row) row.detection = v;
     }
+    for (const v of courtQuery.data ?? []) {
+      const row = byStem.get(stem(v.name));
+      if (row) row.court = v;
+    }
     for (const r of rallyQuery.data ?? []) {
       const s = rallyStem(r.name);
       const row = byStem.get(s);
@@ -72,13 +81,13 @@ export function useUnionVideos() {
         });
     }
     return rows;
-  }, [rallyQuery.data, actionQuery.data, assocQuery.data, reidQuery.data, detectionQuery.data]);
+  }, [rallyQuery.data, actionQuery.data, assocQuery.data, reidQuery.data, detectionQuery.data, courtQuery.data]);
 
   // Rows come from action + rally only (assoc/reid enrich existing rows), so
   // pending tracks just those two — partial data should show, not wait for
   // the slowest list. Errors surface from all four: a failed enrichment
   // silently marks rows "not ready" otherwise.
-  const all = [actionQuery, rallyQuery, assocQuery, reidQuery, detectionQuery];
+  const all = [actionQuery, rallyQuery, assocQuery, reidQuery, detectionQuery, courtQuery];
   const failed = all.filter((q) => q.isError);
   const query: ListQuery = {
     isPending: actionQuery.isPending || rallyQuery.isPending,

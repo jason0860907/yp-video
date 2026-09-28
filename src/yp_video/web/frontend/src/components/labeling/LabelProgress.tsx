@@ -22,6 +22,7 @@ const ROWS: Array<[label: string, mode: LabelMode]> = [
   ['Detection', 'detection'],
   ['Assoc', 'association'],
   ['ReID', 'reid'],
+  ['Court', 'court'],
 ];
 
 export function LabelProgress() {

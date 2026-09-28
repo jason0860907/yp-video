@@ -80,6 +80,8 @@ RALLY_ANNOTATIONS_DIR = VIDEOS_DIR / "rally-spot" / "annotations"
 ACTION_ANNOTATIONS_DIR = VIDEOS_DIR / "action" / "annotations"
 ACTION_PRE_ANNOTATIONS_DIR = VIDEOS_DIR / "action" / "pre-annotations"
 PERSON_ANNOTATIONS_DIR = VIDEOS_DIR / "person" / "annotations"
+# Court calibration: the court landmarks a user marked on each video's frame.
+COURT_ANNOTATIONS_DIR = VIDEOS_DIR / "court" / "annotations"
 ACTION_FRAMES_DIR = VIDEOS_DIR / "action" / "frames"
 # Precomputed per-frame audio features for SPOT late-fusion training, keyed by
 # backend name (e.g. action/audio/logmel/<video>.npy). Visual-only training
@@ -160,6 +162,7 @@ R2_CATEGORIES: dict[str, R2Category] = {
     "rally-spot/annotations": R2Category(RALLY_ANNOTATIONS_DIR, "*.jsonl", "Rally Annotations"),
     "rally-spot/pre-annotations": R2Category(RALLY_SPOT_PRE_ANNOTATIONS_DIR, "*.jsonl", "Rally Predictions (SPOT)"),
     "person/annotations": R2Category(PERSON_ANNOTATIONS_DIR, "*.json", "Person Detection Annotations"),
+    "court/annotations": R2Category(COURT_ANNOTATIONS_DIR, "*.json", "Court Calibrations"),
     "action/annotations": R2Category(ACTION_ANNOTATIONS_DIR, "*.jsonl", "Action Annotations"),
     "action/pre-annotations": R2Category(ACTION_PRE_ANNOTATIONS_DIR, "*.jsonl", "Action Pre-Annotations"),
     "spot/checkpoints": R2Category(SPOT_CHECKPOINTS_DIR, "**/*", "SPOT Checkpoints"),

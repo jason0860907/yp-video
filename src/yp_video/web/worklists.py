@@ -36,7 +36,7 @@ from yp_video.web.r2_client import all_cut_paths, r2_client, resolve_cut
 log = logging.getLogger(__name__)
 
 #: Pipeline order — also the row order the sidebar renders.
-MODES = ("rally", "action", "detection", "association", "reid")
+MODES = ("rally", "action", "detection", "association", "reid", "court")
 STATUSES = ("unlabeled", "pre-annotate", "in-progress", "done")
 
 
@@ -241,6 +241,21 @@ def detection_videos() -> list[dict]:
     return rows
 
 
+def court_videos() -> list[dict]:
+    """Every cut: calibration needs only the frames, so any video can open."""
+    from yp_video.court import annotations as court_annotations
+
+    rows = []
+    for video in all_cut_paths():
+        calibration = court_annotations.load(video.stem)
+        rows.append({
+            "name": video.name,
+            "status": "done" if label_done.is_done(video.stem, "court") else
+                      "in-progress" if calibration and calibration.points else "unlabeled",
+        })
+    return rows
+
+
 def label_stats() -> dict[str, dict[str, int]]:
     """Per-mode status tally of the union video list — videos, not events.
 
@@ -254,6 +269,7 @@ def label_stats() -> dict[str, dict[str, int]]:
         "association": {Path(r["name"]).stem: r["status"] for r in association_videos()},
         "detection": {Path(r["name"]).stem: r["status"] for r in detection_videos()},
         "reid": {Path(r["name"]).stem: r["status"] for r in reid_videos()},
+        "court": {Path(r["name"]).stem: r["status"] for r in court_videos()},
     }
     stems = set(by_mode["action"]) | set(by_mode["rally"])
     counts = {mode: dict.fromkeys(STATUSES, 0) for mode in MODES}

@@ -13,7 +13,7 @@ import type { ActionVideo, AssociationVideo, CutKind, LabelStatus, ReidVideo } f
 
 export type { LabelStatus };
 
-export type LabelMode = 'rally' | 'action' | 'association' | 'reid' | 'detection';
+export type LabelMode = 'rally' | 'action' | 'association' | 'reid' | 'detection' | 'court';
 
 /** One row of the annotate-results listing (rally annotation files). */
 export interface RallyResult {
@@ -40,6 +40,7 @@ export interface UnionVideo {
   assoc?: AssociationVideo;
   reid?: ReidVideo;
   detection?: { name: string; status: LabelStatus };
+  court?: { name: string; status: LabelStatus };
 }
 
 export const rallyStatus = (row: UnionVideo): LabelStatus => row.rally?.status ?? 'unlabeled';
