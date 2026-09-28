@@ -104,6 +104,7 @@ def match_bundle(lib: dict, row: dict) -> tuple[Bundle, list[str]]:
             f"{CORRECTIONS_VERSION}：使用者目前看到的是未修正的結果。"
         )
         corrections = None
+    folder = next((f for f in lib["folders"] if f["id"] == row["folder_id"]), None)
     bundle = Bundle.model_validate(
         {
             "result": customer.read_json(keys["result"]),
@@ -111,6 +112,7 @@ def match_bundle(lib: dict, row: dict) -> tuple[Bundle, list[str]]:
             "library_rallies": [
                 r for r in lib["rallies"] if r["match_id"] == row["id"]
             ],
+            "folder_roster": folder["roster"] if folder else None,
         }
     )
     # The corrections name the identification run their unit mapping belongs

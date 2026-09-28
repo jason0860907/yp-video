@@ -175,10 +175,20 @@ class Bundle(StrictModel):
     # The current per-match rows from the library /sync response. These own
     # App UUIDs and freely trimmed rally bounds, which corrections omits.
     library_rallies: list[LibraryRally] | None = None
+    # A filed match's jerseys resolve against its folder's shared roster; only
+    # a loose match's corrections carry the roster it uses. None = loose.
+    folder_roster: list[Roster] | None = None
 
     @property
     def rally_ids(self) -> dict[int, str]:
         return {r.index: r.id for r in self.library_rallies or []}
+
+    @property
+    def roster(self) -> list[Roster]:
+        """The roster the App resolves this match's players against."""
+        if self.folder_roster is not None:
+            return self.folder_roster
+        return self.corrections.roster if self.corrections else []
 
     @model_validator(mode="after")
     def same_match(self):

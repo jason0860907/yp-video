@@ -173,6 +173,24 @@ def test_player_run_scope_override_and_removed_units():
     assert any("result_id" in w for w in project(b)["warnings"])
 
 
+
+def test_filed_match_names_players_from_its_folder_roster():
+    b = bundle(
+        [("spike", 13)],
+        corrections={
+            "roster": [{"number": 7, "name": "stale", "position": "", "hue": 0}],
+            "player_identification": {
+                "unit_roster": {},
+                "removed_units": [],
+                "event_overrides": {"f390": 7},
+            },
+        },
+        folder_roster=[{"number": 7, "name": "Folder", "position": "", "hue": 0}],
+    )
+    assert project(b)["actions"][0]["player"]["name"] == "Folder"
+    assert [p["name"] for p in project(b)["roster"]] == ["Folder"]
+
+
 def test_library_uuid_trim_and_synthetic_score():
     uid = "11111111-1111-4111-8111-111111111111"
     b = bundle(
@@ -530,6 +548,7 @@ def app_library(b, **keys):
                 "id": MATCH,
                 "owner_id": "user",
                 "deleted_at": None,
+                "folder_id": None,
                 "source_video": {
                     "id": "s",
                     "r2_key": "src.mp4",
@@ -552,6 +571,7 @@ def app_library(b, **keys):
             }
             for r in b.result.rallies
         ],
+        "folders": [],
     }
 
 

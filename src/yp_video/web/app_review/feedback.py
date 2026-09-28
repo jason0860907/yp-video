@@ -222,12 +222,12 @@ def candidates(bundle: Bundle) -> list[dict]:
                 "reason": "人物分組與門檻不直接轉成訓練標註。",
             }
         )
-    if c and c.roster:
+    if c and bundle.roster:
         rows.append(
             {
                 "id": "roster",
                 "scope": "roster",
-                "value": [r.model_dump() for r in c.roster],
+                "value": [r.model_dump() for r in bundle.roster],
                 "clip": None,
                 "reason": "名單與跨場身分保留於回饋，不以姓名猜測訓練身分。",
             }

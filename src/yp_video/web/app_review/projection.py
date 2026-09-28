@@ -242,7 +242,7 @@ def project(
     def winner(rally: Rally | None):
         return rally and (overrides.get(rally.index) or rally.winner)
 
-    roster = {r.number: r.model_dump() for r in correction.roster} if correction else {}
+    roster = {r.number: r.model_dump() for r in bundle.roster} if corrected else {}
     players = player_numbers(bundle) if corrected else {}
     annotations = (
         {c.key: c for c in correction.actions + correction.scores} if correction else {}
