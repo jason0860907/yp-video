@@ -86,5 +86,9 @@ export function useUnionVideos() {
     error: failed[0]?.error ?? null,
     refetch: () => Promise.all(failed.map((q) => q.refetch())),
   };
-  return { videos, query };
+  // The cut list is what makes a rally row "rally-only". It is the slowest
+  // list (minutes while the server warms up after a restart); until it lands,
+  // every rally row only LOOKS cut-less, so no tab may be refused on it.
+  const cutsKnown = Boolean(actionQuery.data);
+  return { videos, query, cutsKnown };
 }

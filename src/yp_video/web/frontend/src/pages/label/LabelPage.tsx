@@ -50,7 +50,7 @@ type KindFilter = 'all' | 'broadcast' | 'sideline';
 
 export function LabelPage() {
   const { video, mode, set } = useLabelUrlState();
-  const { videos, query } = useUnionVideos();
+  const { videos, query, cutsKnown } = useUnionVideos();
   const [kindFilter, setKindFilter] = useState<KindFilter>('all');
   const [statusFilter, setStatusFilter] = useState('all');
   // The "which store to read" choice — a per-load setting, not a list
@@ -119,7 +119,8 @@ export function LabelPage() {
     void guarded(() => set({ mode: m }));
   };
 
-  const unavailable = pickedRow && !active.available(pickedRow);
+  const blocks = (m: ModeDescriptor) => Boolean(cutsKnown && pickedRow && !m.available(pickedRow));
+  const unavailable = cutsKnown && pickedRow && !active.available(pickedRow);
 
   // Page-level Done toggle for modes whose flag is a plain stored bit.
   // ReID has no doneApi — its panel button saves the board first and can
@@ -162,7 +163,7 @@ export function LabelPage() {
             Tabs are disabled where the picked video has nothing to open. */}
         <div className="flex flex-wrap items-center gap-1 border-b border-border">
           {MODES.map((m) => {
-            const disabled = Boolean(pickedRow && !m.available(pickedRow));
+            const disabled = blocks(m);
             return (
               <button
                 key={m.key}
