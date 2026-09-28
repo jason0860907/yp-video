@@ -21,6 +21,7 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { RallyTimeline } from '@/components/editor/RallyTimeline';
 import type { EditorAnnotation } from '@/components/editor/AnnotationEditor';
+import { stepVideo, useVideoKeys } from './useVideoKeys';
 import type { ReidPlayers, ReidRecord } from '@/types/api';
 import { OUTSIDE, RallySidebar } from './RallySidebar';
 import { canConfirm, fmtTime, hintOf, rallyOf, trackColor, trackKeyOf, verdictOf, VERDICT, type ActorFix, type ActorHint, type ActorVerdict, type Rally, type SidebarAction, type TrackData, type TrackMasks } from './shared';
@@ -190,44 +191,24 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
   // stay inert on the read-only side.
   const canFix = Boolean(onFixActor);
 
-  // Space = play/pause, ←/→ = step one frame (Shift: ten), P = the picking
-  // mode — the same contract as Action Label, down to the letter: text fields
-  // keep their keys for typing, the seek slider hands space back so scrubbing
-  // → space "just works", and range inputs keep the arrows for their native
-  // nudge.
+  // Space / ←→ are the Label panels' shared keys (useVideoKeys) — the same
+  // contract as Action Label. P = the picking mode, inert on the read-only
+  // side; text fields keep it for typing.
+  useVideoKeys(togglePlay, (n) => {
+    if (videoRef.current) stepVideo(videoRef.current, fps, n);
+  });
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null;
-      const tag = target?.tagName;
-      if (e.key === ' ') {
-        if (tag === 'TEXTAREA') return;
-        if (tag === 'INPUT' && (target as HTMLInputElement).type !== 'range') return;
-        e.preventDefault();
-        togglePlay();
-        return;
-      }
-      if (e.key === 'p' || e.key === 'P') {
-        if (tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'SELECT') return;
-        if (!canFix) return;
-        e.preventDefault();
-        setPickMode((m) => !m);
-        return;
-      }
-      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-        if (tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'SELECT') return;
-        const el = videoRef.current;
-        if (!el) return;
-        e.preventDefault();
-        el.pause();
-        const step = (e.key === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 10 : 1);
-        const f = Math.max(0, Math.floor(el.currentTime * fps) + step);
-        // Park mid-frame, mirroring seekEvent — floor(t·fps) lands back on f.
-        el.currentTime = (f + 0.5) / fps;
-      }
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (e.key !== 'p' && e.key !== 'P') return;
+      if (tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'SELECT') return;
+      if (!canFix) return;
+      e.preventDefault();
+      setPickMode((m) => !m);
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [fps, canFix]);
+  }, [canFix]);
 
   // frame → ByteTrack boxes for the overlay and the picker (measured ~286k
   // boxes on a real cut, ~30 ms to build — rebuilt only per tracking run).

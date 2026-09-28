@@ -43,6 +43,7 @@ import { scrollActionIntoView, scrollRallyTop } from '@/lib/sidebarScroll';
 import { ACTION_COLORS, actionColor } from '@/lib/actionColors';
 import type { ActionAnnotationData, ActionEvent, ActionVideo } from '@/types/api';
 import { actionStatus } from '@/lib/labelStatus';
+import { useVideoKeys } from '@/components/labeling/useVideoKeys';
 import { STATUS_OPTIONS, type LabelSource, type LoadedSource, type ModeDescriptor, type PlaybackClock, type RegisterGuard } from './mode';
 
 const ACTION_AUTOSAVE_MS = 2000;
@@ -611,6 +612,9 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, registerGu
   };
 
   // ── Keyboard ──
+  // Space / ←→ are the Label panels' shared keys; the arrows step through
+  // this panel's own frame clock.
+  useVideoKeys(togglePlay, stepFrame);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // Ctrl/Cmd+S saves from anywhere — checked before the input guard so it
@@ -621,32 +625,13 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, registerGu
         return;
       }
       const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
-      // On a focused <select> (e.g. the per-action label dropdown) space would
-      // open the native menu — but space must always be play/pause. Hijack just
-      // space here and leave every other key to the native select.
-      if (tag === 'SELECT') {
-        if (e.key === ' ') {
-          e.preventDefault();
-          togglePlay();
-        }
-        return;
-      }
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
       if (e.key >= '1' && e.key <= '6') {
         const l = labels[Number(e.key) - 1];
         if (l) setSelectedLabel(l);
         return;
       }
-      if (e.key === ' ') {
-        e.preventDefault();
-        togglePlay();
-      } else if (e.key === 'ArrowLeft') {
-        e.preventDefault();
-        stepFrame(e.shiftKey ? -10 : -1);
-      } else if (e.key === 'ArrowRight') {
-        e.preventDefault();
-        stepFrame(e.shiftKey ? 10 : 1);
-      } else if (e.key === 'Enter') {
+      if (e.key === 'Enter') {
         e.preventDefault();
         addEvent(0.5, 0.5);
       } else if (e.key.toLowerCase() === 'p') {
