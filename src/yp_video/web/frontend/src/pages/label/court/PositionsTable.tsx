@@ -1,6 +1,7 @@
 /** Every actor position the server computed, with a download of the same
  *  JSON. Clicking a row seeks the video there. */
 
+import { useEffect, useRef } from 'react';
 import { API, apiUrl, errMsg } from '@/lib/api';
 import { actionColor } from '@/lib/actionColors';
 import { cn } from '@/lib/cn';
@@ -20,6 +21,17 @@ export function PositionsTable({
   currentId: string | null;
   onSeek: (frame: number) => void;
 }) {
+  // Keep the playhead's row in view as the video plays — scrolling the list
+  // only, never the page around it.
+  const list = useRef<HTMLDivElement>(null);
+  const currentRow = useRef<HTMLTableRowElement>(null);
+  useEffect(() => {
+    const box = list.current;
+    const row = currentRow.current;
+    if (!box || !row) return;
+    const top = row.offsetTop - box.clientHeight / 2;
+    box.scrollTo({ top: Math.max(0, top) });
+  }, [currentId]);
   return (
     <>
       <div className="mb-2.5 flex items-center justify-between">
@@ -37,7 +49,7 @@ export function PositionsTable({
       {error ? (
         <p className="text-[11px] text-amber-400">{errMsg(error)}</p>
       ) : (
-        <div className="max-h-72 overflow-y-auto">
+        <div ref={list} className="relative max-h-72 overflow-y-auto">
           <table className="w-full text-[11px] tabular-nums">
             <thead className="sticky top-0 bg-surface-100 text-text-muted">
               <tr>
@@ -54,6 +66,7 @@ export function PositionsTable({
               {positions.map((p) => (
                 <tr
                   key={p.id}
+                  ref={p.id === currentId ? currentRow : undefined}
                   onClick={() => onSeek(p.frame)}
                   className={cn(
                     'cursor-pointer hover:bg-white/5',

@@ -99,27 +99,21 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
     },
   );
 
-  // Playhead → frame, every painted frame while playing.
-  useEffect(() => {
+  // Playhead → frame, every painted frame while playing. Bound through the
+  // <video>'s own onPlay/onSeeked: the element mounts only once the
+  // calibration has loaded, after any mount-time effect has already run.
+  const raf = useRef(0);
+  const followPlayhead = () => {
     const el = videoRef.current;
     if (!el || !fps) return;
-    let raf = 0;
+    cancelAnimationFrame(raf.current);
     const tick = () => {
       setFrame(Math.round(el.currentTime * fps));
-      if (!el.paused) raf = requestAnimationFrame(tick);
+      if (!el.paused) raf.current = requestAnimationFrame(tick);
     };
-    const start = () => {
-      cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(tick);
-    };
-    el.addEventListener('play', start);
-    el.addEventListener('seeked', start);
-    return () => {
-      cancelAnimationFrame(raf);
-      el.removeEventListener('play', start);
-      el.removeEventListener('seeked', start);
-    };
-  }, [fps, video]);
+    raf.current = requestAnimationFrame(tick);
+  };
+  useEffect(() => () => cancelAnimationFrame(raf.current), []);
 
   // Marks already outside the frame keep the canvas open.
   const reach = state?.outside_frame ?? 0;
@@ -305,6 +299,8 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
                   const at = takeHandover();
                   if (at != null) seekWhenSeekable(el, at);
                 }}
+                onPlay={followPlayhead}
+                onSeeked={followPlayhead}
                 onTimeUpdate={(e) => {
                   if (hasRealTime(e.currentTarget))
                     clock?.write(video, e.currentTarget.currentTime);
