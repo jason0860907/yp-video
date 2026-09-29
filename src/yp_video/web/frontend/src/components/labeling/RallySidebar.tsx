@@ -225,7 +225,7 @@ export const RallySidebar = memo(function RallySidebar({
           onConfirmRally(pending);
         }}
         title={`Confirm this rally's ${pending.length} model answers — picks stay confirmed and "Model: occluded?" becomes Occluded`}
-        className="flex items-center gap-1 rounded-full bg-primary/15 px-2 py-0.5 text-[11px] font-medium text-primary-light ring-1 ring-primary/30 transition-colors hover:bg-primary/30"
+        className="flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full bg-primary/15 px-2 py-0.5 text-[11px] font-medium text-primary-light ring-1 ring-primary/30 transition-colors hover:bg-primary/30"
       >
         ✓ <span className="opacity-80">{pending.length}</span>
       </button>
@@ -239,7 +239,7 @@ export const RallySidebar = memo(function RallySidebar({
     return (
       <span
         title={`${n} verdict${n === 1 ? '' : 's'} here resolve${n === 1 ? 's' : ''} to no tracklet — expand and re-pick those players so tracklet training can use them`}
-        className="flex items-center gap-1 rounded-full bg-amber-400/10 px-2 py-0.5 text-[11px] font-medium text-amber-400/90 ring-1 ring-amber-400/25"
+        className="flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full bg-amber-400/10 px-2 py-0.5 text-[11px] font-medium text-amber-400/90 ring-1 ring-amber-400/25"
       >
         {n} re-pick
       </span>
@@ -275,14 +275,14 @@ export const RallySidebar = memo(function RallySidebar({
                   data-rally-row={rally.rally_id}
                   onClick={() => onJumpRally(rally)}
                   className={cn(
-                    'ae-row flex cursor-pointer items-center gap-2.5 rounded-xl border px-3 py-2.5 transition-colors',
+                    'ae-row flex cursor-pointer flex-wrap items-center gap-x-1.5 gap-y-1 rounded-xl border px-3 py-2.5 transition-colors',
                     selected ? 'border-primary/45 bg-primary/[0.12]' : 'border-primary/20 bg-primary/[0.05] hover:bg-primary/[0.10]',
                     active && 'ring-1 ring-accent/50',
                   )}
                 >
-                  <span className="w-4 select-none text-right font-heading text-[10px] text-text-muted/60">{ri + 1}</span>
+                  <span className="w-4 shrink-0 select-none text-right font-heading text-[10px] text-text-muted/60">{ri + 1}</span>
                   <span
-                    className="w-7 select-none font-mono text-[9px] text-text-muted/40"
+                    className="w-7 shrink-0 select-none font-mono text-[9px] text-text-muted/40"
                     title={`rally_id ${rally.rally_id} — stable id, not the time order`}
                   >
                     #{rally.rally_id}
@@ -295,17 +295,21 @@ export const RallySidebar = memo(function RallySidebar({
                       if (isOpen) onSetExpanded(null);
                       else onJumpRally(rally);
                     }}
-                    className="flex items-center gap-1 rounded-full bg-primary/20 px-2 py-0.5 text-[11px] font-medium text-primary-text ring-1 ring-primary/25"
+                    className="flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full bg-primary/20 px-2 py-0.5 text-[11px] font-medium text-primary-text ring-1 ring-primary/25"
                   >
                     <span className={cn('transition-transform', isOpen && 'rotate-90')}>▸</span> actions <span className="opacity-70">{entries.length}</span>
                   </button>
                   {confirmButton(entries)}
                   {unresolvedChip(entries)}
-                  <span className="ml-auto font-mono text-[11px] tabular-nums text-text-muted">
-                    {fmtTime(rally.start)} → {fmtTime(rally.end)}
-                  </span>
-                  <span className="rounded bg-surface-200/40 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-text-muted">
-                    {Math.max(0, rally.end - rally.start).toFixed(1)}s
+                  {/* One unit, so a crowded row moves the time to its own line
+                      instead of breaking it mid-range. */}
+                  <span className="ml-auto flex shrink-0 items-center gap-1.5">
+                    <span className="whitespace-nowrap font-mono text-[11px] tabular-nums text-text-muted">
+                      {fmtTime(rally.start)} → {fmtTime(rally.end)}
+                    </span>
+                    <span className="rounded bg-surface-200/40 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-text-muted">
+                      {Math.max(0, rally.end - rally.start).toFixed(1)}s
+                    </span>
                   </span>
                 </div>
                 {isOpen && (
