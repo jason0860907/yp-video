@@ -127,6 +127,8 @@ export interface CourtPositions {
 
 export interface Arc {
   rally_id: number;
+  /** The touch that sent the ball — the flight takes its action colour. */
+  label: string | null;
   from: string;
   to: string;
   start: number;

@@ -175,7 +175,7 @@ export function VideoOverlay({
                 })
                 .join(' ')}
               fill="none"
-              stroke="#f97316"
+              stroke={actionColor(a.label)}
               strokeWidth={2}
               strokeOpacity={0.85}
               vectorEffect="non-scaling-stroke"

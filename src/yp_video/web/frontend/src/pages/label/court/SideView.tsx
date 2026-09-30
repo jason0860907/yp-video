@@ -1,6 +1,7 @@
 /** The play seen from the near sideline: distance along the court against
  *  height, so a flight's apex and its clearance over the net read directly. */
 
+import { actionColor } from '@/lib/actionColors';
 import type { Arc, Point3 } from './geometry';
 
 const TOP = 6;
@@ -50,7 +51,7 @@ export function SideView({
           key={`${a.from}-${a.to}`}
           points={a.points.map((p) => `${p[0]},${y(p[2])}`).join(' ')}
           fill="none"
-          stroke="#f97316"
+          stroke={actionColor(a.label)}
           strokeWidth={0.07}
           strokeOpacity={0.8}
         />

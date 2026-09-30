@@ -4,7 +4,7 @@
  *
  *  This file composes: data, saving marks, the playhead and the action under
  *  it. Drawing lives in court/VideoOverlay, guide lines in court/useGuides,
- *  the map / side view / positions table in their own components.
+ *  the map / side view / positions list in their own components.
  *
  *  No dirty guard: every mark is saved the moment it lands.
  */
@@ -23,7 +23,7 @@ import { useVideoLabelingData } from '@/components/labeling/useVideoLabelingData
 import type { MapDot } from './court/CourtMap';
 import { MapCard } from './court/MapCard';
 import { LandmarksCard } from './court/LandmarksCard';
-import { PositionsTable } from './court/PositionsTable';
+import { PositionsList } from './court/PositionsList';
 import { SideView } from './court/SideView';
 import { useGuides } from './court/useGuides';
 import { trackPointer } from './court/pointer';
@@ -261,7 +261,7 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
     );
 
   return (
-    <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_22rem]">
+    <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_420px]">
       <Card className="space-y-3">
         <div className="overflow-hidden rounded-2xl bg-surface-200 ring-1 ring-white/[0.06]">
           {/* The stage is the frame plus the optional outside margin; marks
@@ -406,14 +406,16 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
 
         {fit && (
           <Card>
-            <PositionsTable
+            <PositionsList
               video={video}
               positions={positions}
+              rallies={meta.rallies ?? []}
               error={positionsQuery.error}
+              time={t}
               currentId={current?.id ?? null}
-              onSeek={(f) => {
+              onSeek={(seconds) => {
                 const el = videoRef.current;
-                if (el && fps) el.currentTime = f / fps;
+                if (el) el.currentTime = seconds;
               }}
             />
           </Card>

@@ -180,6 +180,8 @@ def compute(stem: str) -> dict:
             continue
         arcs.append({
             "rally_id": a["rally_id"],
+            # The touch that sent the ball — what the flight is coloured by.
+            "label": a["label"],
             "from": a["id"],
             "to": b["id"],
             "start": round(a["time"], 3),

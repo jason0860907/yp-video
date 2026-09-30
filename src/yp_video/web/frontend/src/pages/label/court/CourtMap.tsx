@@ -1,6 +1,7 @@
 /** Top-down court: metres on the floor, the near sideline at the bottom so it
  *  reads the way the camera sees it. */
 
+import { actionColor } from '@/lib/actionColors';
 import type { Arc, CourtState, Point, Point3 } from './geometry';
 
 /** Free zone drawn around the court, metres. */
@@ -54,7 +55,7 @@ export function CourtMap({
           key={`${a.from}-${a.to}`}
           points={a.points.map((p) => `${p[0]},${y(p[1])}`).join(' ')}
           fill="none"
-          stroke="#f97316"
+          stroke={actionColor(a.label)}
           strokeWidth={0.07}
           strokeOpacity={0.7}
         />
