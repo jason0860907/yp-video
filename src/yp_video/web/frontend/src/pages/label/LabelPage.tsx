@@ -21,6 +21,7 @@ import type { LabelMode } from '@/lib/labelStatus';
 import { useUnionVideos } from '@/lib/useUnionVideos';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { Tabs } from '@/components/ui/Tabs';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { toast } from '@/components/feedback/toast';
@@ -162,32 +163,19 @@ export function LabelPage() {
         {/* Tier 1 — where you are. Underline tabs sit on the divider so the
             header reads as one line, not a box floating among form controls.
             Tabs are disabled where the picked video has nothing to open. */}
-        <div className="flex flex-wrap items-center gap-1 border-b border-border">
-          {MODES.map((m) => {
+        <Tabs
+          tabs={MODES.map((m) => {
             const disabled = blocks(m);
-            return (
-              <button
-                key={m.key}
-                type="button"
-                disabled={disabled}
-                onClick={() => pickMode(m.key)}
-                title={disabled && pickedRow ? m.hint(pickedRow) : undefined}
-                className={cn(
-                  '-mb-px border-b-2 px-4 pb-2 pt-1 text-xs font-medium transition-colors',
-                  m.key === mode
-                    ? 'border-primary text-text-primary'
-                    : disabled
-                      ? // A muted rose, color alone: distinct from the idle
-                        // gray without shouting like a full warning tint.
-                        'cursor-not-allowed border-transparent text-red-400/45'
-                      : 'border-transparent text-text-secondary hover:border-border-light hover:text-text-primary',
-                )}
-              >
-                {m.label}
-              </button>
-            );
+            return {
+              key: m.key,
+              label: m.label,
+              disabled,
+              title: disabled && pickedRow ? m.hint(pickedRow) : undefined,
+            };
           })}
-        </div>
+          active={mode}
+          onChange={pickMode}
+        />
 
         {/* Tier 2 — settings: what slice of the library, which store. */}
         <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2">

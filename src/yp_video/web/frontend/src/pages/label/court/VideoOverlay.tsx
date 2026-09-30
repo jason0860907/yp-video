@@ -66,13 +66,22 @@ function Lines({ lines, ...stroke }: { lines: Line[] } & React.SVGProps<SVGLineE
   );
 }
 
+/** Where a marker sits: centred on `at`, drawn at `scale` × its size. */
+const pin = (at: Point, scale: number): React.CSSProperties => ({
+  left: `${at[0] * 100}%`,
+  top: `${at[1] * 100}%`,
+  transform: `translate(-50%, -50%) scale(${scale})`,
+});
+
 function Dot({
   at,
+  scale,
   className,
   style,
   title,
 }: {
   at: Point;
+  scale: number;
   className: string;
   style?: React.CSSProperties;
   title: string;
@@ -80,7 +89,7 @@ function Dot({
   return (
     <span
       className={`pointer-events-none absolute ${className}`}
-      style={{ left: `${at[0] * 100}%`, top: `${at[1] * 100}%`, ...style }}
+      style={{ ...pin(at, scale), ...style }}
       title={title}
     />
   );
@@ -95,6 +104,7 @@ export function VideoOverlay({
   current,
   guides,
   editingGuides,
+  pointScale,
   onDragMark,
 }: {
   state: CourtState;
@@ -106,6 +116,8 @@ export function VideoOverlay({
   guides: Guides;
   /** Line tool active: guide ends get drag handles. */
   editingGuides: boolean;
+  /** Every marker's size, × its default. */
+  pointScale: number;
   onDragMark: (e: ReactPointerEvent, name: string) => void;
 }) {
   const { fit, camera } = state;
@@ -190,14 +202,16 @@ export function VideoOverlay({
       {layers.action && current?.foot_image && (
         <Dot
           at={current.foot_image}
-          className="-ml-1.5 -mt-1.5 h-3 w-3 rounded-full bg-fuchsia-500 ring-2 ring-white"
+          scale={pointScale}
+          className="h-3 w-3 rounded-full bg-fuchsia-500 ring-2 ring-white"
           title="Actor's feet"
         />
       )}
       {layers.action && current?.ball_image && (
         <Dot
           at={current.ball_image}
-          className="-ml-2.5 -mt-2.5 h-5 w-5 rounded-full border-2"
+          scale={pointScale}
+          className="h-5 w-5 rounded-full border-2"
           style={{ borderColor: actionColor(current.label) }}
           title={`${current.label ?? ''} ball`}
         />
@@ -205,7 +219,8 @@ export function VideoOverlay({
       {layers.path && ballAt && (
         <Dot
           at={ballAt}
-          className="-ml-2 -mt-2 h-4 w-4 rounded-full border-2 border-yellow-300"
+          scale={pointScale}
+          className="h-4 w-4 rounded-full border-2 border-yellow-300"
           title="Reconstructed ball"
         />
       )}
@@ -213,7 +228,8 @@ export function VideoOverlay({
         <Dot
           key={i}
           at={c}
-          className="-ml-1.5 -mt-1.5 h-3 w-3 rounded-full border border-cyan-300"
+          scale={pointScale}
+          className="h-3 w-3 rounded-full border border-cyan-300"
           title="Guide crossing"
         />
       ))}
@@ -225,8 +241,8 @@ export function VideoOverlay({
               type="button"
               onPointerDown={(e) => guides.dragEnd(e, i, end)}
               onDoubleClick={() => guides.remove(i)}
-              className="absolute z-20 -ml-1.5 -mt-1.5 h-3 w-3 cursor-move touch-none border border-white bg-cyan-400"
-              style={{ left: `${g[end][0] * 100}%`, top: `${g[end][1] * 100}%` }}
+              className="absolute z-20 h-3 w-3 cursor-move touch-none border border-white bg-cyan-400"
+              style={pin(g[end], pointScale)}
               title="Drag to adjust · double-click to delete this line"
             />
           )),
@@ -237,8 +253,8 @@ export function VideoOverlay({
             key={name}
             type="button"
             onPointerDown={(e) => onDragMark(e, name)}
-            className="absolute z-20 -ml-2 -mt-2 h-4 w-4 cursor-grab touch-none rounded-full border-2 border-white bg-yellow-400/80 active:cursor-grabbing"
-            style={{ left: `${x * 100}%`, top: `${y * 100}%` }}
+            className="absolute z-20 h-4 w-4 cursor-grab touch-none rounded-full border-2 border-white bg-yellow-400/80 active:cursor-grabbing"
+            style={pin([x, y], pointScale)}
             title={LANDMARK_LABELS[name] ?? name}
           />
         ))}

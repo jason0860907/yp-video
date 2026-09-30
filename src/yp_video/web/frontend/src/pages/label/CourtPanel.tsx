@@ -4,7 +4,8 @@
  *
  *  This file composes: data, saving marks, the playhead and the action under
  *  it. Drawing lives in court/VideoOverlay, guide lines in court/useGuides,
- *  the map / side view / positions list in their own components.
+ *  the map / side view / positions list in their own components, shown as
+ *  Landmarks / Court / Rally tabs beside the zoomable video (court/useZoom).
  *
  *  No dirty guard: every mark is saved the moment it lands.
  */
@@ -17,6 +18,8 @@ import { hasRealTime, seekWhenSeekable, usePlayheadHandover } from '@/lib/playhe
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { SectionLabel } from '@/components/ui/SectionLabel';
+import { Tabs } from '@/components/ui/Tabs';
+import { cn } from '@/lib/cn';
 import { toast } from '@/components/feedback/toast';
 import { stepVideo, useVideoKeys } from '@/components/labeling/useVideoKeys';
 import { useVideoLabelingData } from '@/components/labeling/useVideoLabelingData';
@@ -29,6 +32,7 @@ import { useGuides } from './court/useGuides';
 import { trackPointer } from './court/pointer';
 import type { Layers } from './court/layers';
 import { LayerToggles, VideoOverlay } from './court/VideoOverlay';
+import { MAX_ZOOM, useZoom } from './court/useZoom';
 import {
   apply,
   ballAt,
@@ -60,6 +64,32 @@ export const COURT_MODE: ModeDescriptor = {
 
 const round4 = (v: number) => Math.round(v * 1e4) / 1e4;
 
+type SideTab = 'landmarks' | 'court' | 'rally';
+
+const POINT_SCALE_KEY = 'court.pointScale';
+
+/** A number remembered in this browser — a viewer's preference, so a
+ *  blocked or empty store just means the default. */
+function useStoredNumber(key: string, fallback: number) {
+  const [value, setValue] = useState(() => {
+    try {
+      const stored = Number(localStorage.getItem(key));
+      return stored > 0 ? stored : fallback;
+    } catch {
+      return fallback;
+    }
+  });
+  const set = (next: number) => {
+    setValue(next);
+    try {
+      localStorage.setItem(key, String(next));
+    } catch {
+      // Not remembered; still applied.
+    }
+  };
+  return [value, set] as const;
+}
+
 export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackClock }) {
   const qc = useQueryClient();
   const query = useQuery({
@@ -77,7 +107,9 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
   const [frame, setFrame] = useState(0);
   const [armed, setArmed] = useState<string | null>(null);
   const [tool, setTool] = useState<'mark' | 'line'>('mark');
-  const [outside, setOutside] = useState(false);
+  // null until toggled: then the video opens with the margin exactly when a
+  // mark already sits out there.
+  const [outside, setOutside] = useState<boolean | null>(null);
   const [layers, setLayers] = useState<Layers>({
     court: true,
     net: true,
@@ -85,6 +117,9 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
     action: true,
     marks: true,
   });
+  const { zoom, zoomTo, pan, attach: attachViewport } = useZoom();
+  const [pointScale, setPointScale] = useStoredNumber(POINT_SCALE_KEY, 1);
+  const [tab, setTab] = useState<SideTab>('landmarks');
   const takeHandover = usePlayheadHandover(clock ? () => clock.read(video) : undefined, video);
 
   useVideoKeys(
@@ -115,12 +150,11 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
   };
   useEffect(() => () => cancelAnimationFrame(raf.current), []);
 
-  // Marks already outside the frame keep the canvas open.
   const reach = state?.outside_frame ?? 0;
   const hasOutsideMark = Object.values(state?.points ?? {}).some(
     ([x, y]) => x < 0 || x > 1 || y < 0 || y > 1,
   );
-  const margin = outside || hasOutsideMark ? reach : 0;
+  const margin = (outside ?? hasOutsideMark) ? reach : 0;
 
   const clientToPoint = (cx: number, cy: number): Point | null => {
     const r = wrapRef.current?.getBoundingClientRect();
@@ -199,6 +233,9 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
 
   const fit = state?.fit ?? null;
   const camera = state?.camera ?? null;
+  // The map and the positions need a floor fit; without one only the
+  // landmarks can be shown.
+  const shownTab: SideTab = fit ? tab : 'landmarks';
 
   // Actor positions are computed server-side (the export); keyed on the fit
   // so a moved mark refetches them.
@@ -267,66 +304,88 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
           {/* The stage is the frame plus the optional outside margin; marks
               and guides are in frame coordinates, so they may sit past 0..1. */}
           <div
-            className="relative mx-auto"
+            ref={attachViewport}
+            className="relative mx-auto overflow-hidden"
             style={{
               aspectRatio: `${aspect}`,
               maxWidth: `calc(var(--video-max-h, 60vh) * ${aspect})`,
             }}
+            // Middle or right drag pans anywhere; a plain drag pans the
+            // zoomed video wherever no tool has the pointer.
+            onPointerDownCapture={(e) => {
+              if (e.button === 1 || e.button === 2) pan(e);
+              else if (e.button === 0 && zoom > 1 && e.target === videoRef.current) pan(e);
+            }}
+            onContextMenu={(e) => e.preventDefault()}
           >
             <div
-              ref={wrapRef}
-              className="absolute bg-black"
-              style={{
-                left: `${(margin / (1 + 2 * margin)) * 100}%`,
-                top: `${(margin / (1 + 2 * margin)) * 100}%`,
-                width: `${(1 / (1 + 2 * margin)) * 100}%`,
-                height: `${(1 / (1 + 2 * margin)) * 100}%`,
-              }}
+              className="absolute left-0 top-0"
+              style={{ width: `${zoom * 100}%`, height: `${zoom * 100}%` }}
             >
-              <video
-                ref={videoRef}
-                src={apiUrl(API.actionAnnotate.video(video))}
-                className="block h-full w-full bg-black object-contain"
-                controls
-                playsInline
-                preload="metadata"
-                onLoadedMetadata={(e) => {
-                  const el = e.currentTarget;
-                  if (el.videoWidth && el.videoHeight) {
-                    setAspect(el.videoWidth / el.videoHeight);
-                    setFrameSize([el.videoWidth, el.videoHeight]);
-                  }
-                  const at = takeHandover();
-                  if (at != null) seekWhenSeekable(el, at);
+              <div
+                ref={wrapRef}
+                className="absolute bg-black"
+                style={{
+                  left: `${(margin / (1 + 2 * margin)) * 100}%`,
+                  top: `${(margin / (1 + 2 * margin)) * 100}%`,
+                  width: `${(1 / (1 + 2 * margin)) * 100}%`,
+                  height: `${(1 / (1 + 2 * margin)) * 100}%`,
                 }}
-                onPlay={followPlayhead}
-                onSeeked={followPlayhead}
-                onTimeUpdate={(e) => {
-                  if (hasRealTime(e.currentTarget))
-                    clock?.write(video, e.currentTarget.currentTime);
-                }}
-              />
-              <VideoOverlay
-                state={state}
-                margin={margin}
-                layers={layers}
-                arcs={arcs}
-                ball={ball}
-                current={current}
-                guides={guides}
-                editingGuides={tool === 'line'}
-                onDragMark={dragMark}
-              />
-            </div>
-            {/* Catch the pointer only while a tool needs it, so the native
+              >
+                <video
+                  ref={videoRef}
+                  src={apiUrl(API.actionAnnotate.video(video))}
+                  className={cn(
+                    'block h-full w-full bg-black object-contain',
+                    zoom > 1 && 'cursor-grab',
+                  )}
+                  // Zoomed, the native bar would sit off-screen under the stage;
+                  // the keyboard still plays and steps.
+                  controls={zoom === 1}
+                  playsInline
+                  preload="metadata"
+                  onLoadedMetadata={(e) => {
+                    const el = e.currentTarget;
+                    if (el.videoWidth && el.videoHeight) {
+                      setAspect(el.videoWidth / el.videoHeight);
+                      setFrameSize([el.videoWidth, el.videoHeight]);
+                    }
+                    const at = takeHandover();
+                    if (at != null) seekWhenSeekable(el, at);
+                  }}
+                  onPlay={followPlayhead}
+                  onSeeked={followPlayhead}
+                  onTimeUpdate={(e) => {
+                    if (hasRealTime(e.currentTarget))
+                      clock?.write(video, e.currentTarget.currentTime);
+                  }}
+                />
+                <VideoOverlay
+                  state={state}
+                  margin={margin}
+                  layers={layers}
+                  arcs={arcs}
+                  ball={ball}
+                  current={current}
+                  guides={guides}
+                  editingGuides={tool === 'line'}
+                  pointScale={pointScale}
+                  onDragMark={dragMark}
+                />
+              </div>
+              {/* Catch the pointer only while a tool needs it, so the native
                 controls keep working the rest of the time. */}
-            {tool === 'line' ? (
-              <div className="absolute inset-0 z-10 cursor-crosshair" onPointerDown={guides.draw} />
-            ) : (
-              armed && (
-                <div className="absolute inset-0 z-10 cursor-crosshair" onPointerDown={place} />
-              )
-            )}
+              {tool === 'line' ? (
+                <div
+                  className="absolute inset-0 z-10 cursor-crosshair"
+                  onPointerDown={guides.draw}
+                />
+              ) : (
+                armed && (
+                  <div className="absolute inset-0 z-10 cursor-crosshair" onPointerDown={place} />
+                )
+              )}
+            </div>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -353,22 +412,75 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
           <Button
             size="sm"
             intent={margin ? 'primary' : 'default'}
-            onClick={() => setOutside((v) => !v)}
-            disabled={hasOutsideMark}
+            onClick={() => setOutside(!margin)}
             title={
               hasOutsideMark
-                ? 'Some marks sit outside the frame'
+                ? 'Room around the frame for off-screen corners — some marks sit out there'
                 : 'Room around the frame for off-screen corners'
             }
           >
             Outside frame
           </Button>
+          <span className="ml-auto inline-flex items-center gap-1">
+            <Button
+              size="sm"
+              onClick={() => zoomTo(zoom / 1.5)}
+              disabled={zoom <= 1}
+              title="Zoom out"
+            >
+              −
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => zoomTo(1)}
+              disabled={zoom <= 1}
+              title="Wheel over the video zooms; drag (or right-drag while marking) pans. Click to reset."
+            >
+              {zoom.toFixed(1)}×
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => zoomTo(zoom * 1.5)}
+              disabled={zoom >= MAX_ZOOM}
+              title="Zoom in"
+            >
+              +
+            </Button>
+          </span>
+          <label
+            className="inline-flex items-center gap-1.5 text-[11px] text-text-muted"
+            title="Size of every point drawn on the video"
+          >
+            Point size
+            <input
+              type="range"
+              min={0.5}
+              max={2.5}
+              step={0.1}
+              value={pointScale}
+              onChange={(e) => setPointScale(Number(e.target.value))}
+              className="w-20"
+            />
+          </label>
         </div>
         <LayerToggles layers={layers} onChange={setLayers} />
       </Card>
 
-      <div className="space-y-5">
-        <Card>
+      <Card className="space-y-4">
+        <Tabs
+          tabs={[
+            { key: 'landmarks', label: 'Landmarks' },
+            ...(['court', 'rally'] as const).map((key) => ({
+              key,
+              label: key === 'court' ? 'Court' : 'Rally',
+              disabled: !fit,
+              title: fit ? undefined : 'Mark at least 4 floor points first',
+            })),
+          ]}
+          active={shownTab}
+          onChange={setTab}
+        />
+        {shownTab === 'landmarks' && (
           <LandmarksCard
             state={state}
             armed={armed}
@@ -377,10 +489,9 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
             onNetHeight={(h) => void save(state.points, h)}
             frameHeight={frameSize?.[1] ?? null}
           />
-        </Card>
-
-        {fit && (
-          <Card>
+        )}
+        {shownTab === 'court' && (
+          <>
             <MapCard
               state={state}
               positions={positions}
@@ -389,38 +500,34 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
               arcs={arcs}
               ball={ball}
             />
-          </Card>
+            {camera && arcs.length > 0 && (
+              <div>
+                <SectionLabel>Side view · rally {arcs[0]!.rally_id}</SectionLabel>
+                <SideView
+                  length={state.court.length}
+                  netHeight={state.net_height_m}
+                  arcs={arcs}
+                  ball={ball}
+                />
+              </div>
+            )}
+          </>
         )}
-
-        {camera && arcs.length > 0 && (
-          <Card>
-            <SectionLabel>Side view · rally {arcs[0]!.rally_id}</SectionLabel>
-            <SideView
-              length={state.court.length}
-              netHeight={state.net_height_m}
-              arcs={arcs}
-              ball={ball}
-            />
-          </Card>
+        {shownTab === 'rally' && (
+          <PositionsList
+            video={video}
+            positions={positions}
+            rallies={meta.rallies ?? []}
+            error={positionsQuery.error}
+            time={t}
+            currentId={current?.id ?? null}
+            onSeek={(seconds) => {
+              const el = videoRef.current;
+              if (el) el.currentTime = seconds;
+            }}
+          />
         )}
-
-        {fit && (
-          <Card>
-            <PositionsList
-              video={video}
-              positions={positions}
-              rallies={meta.rallies ?? []}
-              error={positionsQuery.error}
-              time={t}
-              currentId={current?.id ?? null}
-              onSeek={(seconds) => {
-                const el = videoRef.current;
-                if (el) el.currentTime = seconds;
-              }}
-            />
-          </Card>
-        )}
-      </div>
+      </Card>
     </div>
   );
 }
