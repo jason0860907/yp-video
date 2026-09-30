@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from yp_video.court import annotations as store
 from yp_video.court import camera, geometry
 from yp_video.court.annotations import Calibration
+from yp_video.web import court_positions
 from yp_video.web.routers import court as routes
 
 SIZE = (1920, 1080)
@@ -135,6 +136,35 @@ def test_lift_recovers_contact_height_above_the_feet():
     see = _pinhole()
     cam = camera.solve(_calibration(see))
     assert camera.lift(cam, see((4.0, 2.0, 3.1)), (4.0, 2.0)) == pytest.approx([4.0, 2.0, 3.1], abs=1e-3)
+
+
+def test_lift_refuses_feet_behind_the_camera():
+    see = _pinhole()
+    cam = camera.solve(_calibration(see))
+    # A camera at y = -12: feet at y = -20 stand behind it.
+    assert camera.lift(cam, see((4.0, 2.0, 3.1)), (4.0, -20.0)) is None
+
+
+def test_grounded_feet_are_the_lowest_around_the_contact():
+    tracklet = {
+        "frames": [8, 10, 12, 14, 16],
+        # Standing, feet low at takeoff, rising, airborne at the contact, landed.
+        "boxes": [[0, 0, 10, 500], [0, 0, 10, 530], [0, 0, 10, 520], [0, 0, 10, 480], [0, 0, 10, 510]],
+    }
+    assert court_positions._grounded_box(tracklet, 14, window=4) == [0, 0, 10, 530]
+    # Lost mid-jump: the landing still places them.
+    assert court_positions._grounded_box(tracklet, 14, window=2) == [0, 0, 10, 520]
+    assert court_positions._grounded_box(tracklet, 30, window=2) is None
+
+
+def test_positions_outside_the_free_zone_or_reach_are_dropped():
+    assert court_positions._in_play_area(np.array([-2.9, 11.9]))
+    assert not court_positions._in_play_area(np.array([9.0, 15.4]))
+    see = _pinhole()
+    cam = camera.solve(_calibration(see))
+    assert court_positions._lift(cam, see((4.0, 2.0, 3.1)), np.array([4.0, 2.0])) is not None
+    assert court_positions._lift(cam, see((4.0, 2.0, 6.0)), np.array([4.0, 2.0])) is None
+    assert court_positions._lift(None, see((4.0, 2.0, 3.1)), np.array([4.0, 2.0])) is None
 
 
 def test_arc_is_ballistic_between_its_ends():

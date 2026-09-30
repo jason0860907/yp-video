@@ -126,8 +126,9 @@ def project(camera: Camera, points: np.ndarray) -> np.ndarray:
     return h[:, :2] / h[:, 2:3]
 
 
-def lift(camera: Camera, ball_xy: tuple[float, float], foot: tuple[float, float]) -> np.ndarray:
-    """The ball's court position at a contact.
+def lift(camera: Camera, ball_xy: tuple[float, float], foot: tuple[float, float]) -> np.ndarray | None:
+    """The ball's court position at a contact, or None when the feet name no
+    point in front of the camera.
 
     The ball lies somewhere on its image ray; which depth is what one camera
     cannot say. The contact supplies it: the ball is (near) above the actor's
@@ -143,7 +144,7 @@ def lift(camera: Camera, ball_xy: tuple[float, float], foot: tuple[float, float]
     a = np.array([[d @ d, -(d @ up)], [d @ up, -(up @ up)]])
     b = np.array([(f - c) @ d, (f - c) @ up])
     s, _z = np.linalg.solve(a, b)
-    return c + s * d
+    return c + s * d if s > 0 else None
 
 
 def arc(p0: np.ndarray, p1: np.ndarray, duration: float, samples: int = 16) -> np.ndarray:
