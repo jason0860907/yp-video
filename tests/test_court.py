@@ -171,3 +171,14 @@ def test_arc_is_ballistic_between_its_ends():
     path = camera.arc(np.array([0.0, 0.0, 1.0]), np.array([10.0, 3.0, 1.0]), 1.0, samples=5)
     assert path[0] == pytest.approx([0, 0, 1]) and path[-1] == pytest.approx([10, 3, 1])
     assert path[2][2] == pytest.approx(1 + 9.81 / 8)  # apex at the midpoint: g·T²/8 above
+
+
+def test_flights_never_jump_over_an_unplaced_touch():
+    def touch(frame, rally=1):
+        return {"id": f"e{frame}", "frame": frame, "time": frame / 30, "rally_id": rally,
+                "label": "set", "ball_3d": np.array([frame / 10, 4.0, 2.0])}
+
+    placed = [touch(0), touch(30), touch(60), touch(90, rally=2)]
+    # Frame 45 was touched too but could not be placed (no actor).
+    flights = court_positions._flights(placed, [0, 30, 45, 60, 90])
+    assert [(f["from"], f["to"]) for f in flights] == [("e0", "e30")]

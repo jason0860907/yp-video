@@ -13,6 +13,8 @@ and one bad point turns every arc it touches into nonsense.
 
 from __future__ import annotations
 
+from bisect import bisect_right
+
 import numpy as np
 
 from yp_video.core.jsonl import read_jsonl_cached
@@ -89,6 +91,38 @@ def _lift(cam: camera.Camera | None, ball: tuple[float, float] | None, court_xy:
     return point if point is not None and 0 <= point[2] <= MAX_CONTACT_Z_M else None
 
 
+def _flights(events: list[dict], touch_frames: list[int]) -> list[dict]:
+    """Ballistic arcs between consecutive placed touches of a rally.
+
+    `touch_frames` (sorted) holds every annotated touch, including ones that
+    could not be placed. An arc never jumps over one of those: joining the
+    touches either side of it would draw a single flight where the ball was
+    really played twice.
+    """
+    arcs = []
+    for a, b in zip(events, events[1:]):
+        if a["rally_id"] is None or a["rally_id"] != b["rally_id"]:
+            continue
+        if a["ball_3d"] is None or b["ball_3d"] is None:
+            continue
+        if bisect_right(touch_frames, a["frame"]) < bisect_right(touch_frames, b["frame"] - 1):
+            continue
+        duration = b["time"] - a["time"]
+        if not 0 < duration <= MAX_FLIGHT_S:
+            continue
+        arcs.append({
+            "rally_id": a["rally_id"],
+            # The touch that sent the ball — what the flight is coloured by.
+            "label": a["label"],
+            "from": a["id"],
+            "to": b["id"],
+            "start": round(a["time"], 3),
+            "end": round(b["time"], 3),
+            "points": [[round(float(v), 2) for v in p] for p in camera.arc(a["ball_3d"], b["ball_3d"], duration)],
+        })
+    return arcs
+
+
 def compute(stem: str) -> dict:
     calibration = annotations.load(stem)
     if calibration is None:
@@ -116,7 +150,11 @@ def compute(stem: str) -> dict:
     window = round(GROUNDED_WINDOW_S * fps)
 
     events = []
+    # Every annotated touch, placed or not: a flight is only drawn between
+    # touches with nothing labeled in between.
+    touch_frames = []
     for r in extraction_store.labelable(records, stem, fps):
+        touch_frames.append(r["frame"])
         box = r.get("box")
         if not box or r.get("resolution") in _NO_ACTOR:
             continue
@@ -148,6 +186,8 @@ def compute(stem: str) -> dict:
     if source is not None:
         _ann_meta, rows = read_jsonl_cached(source)
         for e in rows:
+            if e.get("label") == "score" and e.get("frame") is not None:
+                touch_frames.append(int(e["frame"]))
             ball = _visible_xy(e)
             if e.get("label") != "score" or ball is None or e.get("frame") is None:
                 continue
@@ -169,25 +209,7 @@ def compute(stem: str) -> dict:
         e["time"] = e["frame"] / fps
         e["rally_id"] = _rally_of(e["time"], spans)
 
-    arcs = []
-    for a, b in zip(events, events[1:]):
-        if a["rally_id"] is None or a["rally_id"] != b["rally_id"]:
-            continue
-        if a["ball_3d"] is None or b["ball_3d"] is None:
-            continue
-        duration = b["time"] - a["time"]
-        if not 0 < duration <= MAX_FLIGHT_S:
-            continue
-        arcs.append({
-            "rally_id": a["rally_id"],
-            # The touch that sent the ball — what the flight is coloured by.
-            "label": a["label"],
-            "from": a["id"],
-            "to": b["id"],
-            "start": round(a["time"], 3),
-            "end": round(b["time"], 3),
-            "points": [[round(float(v), 2) for v in p] for p in camera.arc(a["ball_3d"], b["ball_3d"], duration)],
-        })
+    arcs = _flights(events, sorted(touch_frames))
 
     length, width_m = geometry.COURT_LENGTH, geometry.COURT_WIDTH
 
