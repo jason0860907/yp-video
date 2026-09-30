@@ -5,6 +5,7 @@ export interface AppUser {
   id: string;
   provider: string;
   email: string | null;
+  display_name: string | null;
   created_at: number;
   match_count: number;
   updated_at: number;

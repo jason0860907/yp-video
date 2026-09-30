@@ -51,13 +51,13 @@ export function LibraryBrowser({
 
   if (!user) {
     const rows = (users.data ?? []).filter(
-      (u) => !needle || `${u.email ?? ''} ${u.id}`.toLowerCase().includes(needle),
+      (u) => !needle || `${u.display_name ?? ''} ${u.email ?? ''} ${u.id}`.toLowerCase().includes(needle),
     );
     return (
       <div className="space-y-2">
         <input
           className={fieldCls}
-          placeholder="搜尋 email 或 user id"
+          placeholder="搜尋姓名、email 或 user id"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
@@ -73,7 +73,7 @@ export function LibraryBrowser({
                 onUser(u.id);
               }}
             >
-              <span className="block truncate font-medium">{u.email ?? u.id}</span>
+              <span className="block truncate font-medium">{u.display_name ?? u.email ?? u.id}</span>
               <span className="block text-xs text-text-muted">
                 {u.match_count} 場 · {fmtDate(u.updated_at)} · {u.provider}
               </span>
@@ -84,7 +84,8 @@ export function LibraryBrowser({
     );
   }
 
-  const email = users.data?.find((u) => u.id === user)?.email ?? user;
+  const selected = users.data?.find((u) => u.id === user);
+  const label = selected?.display_name ?? selected?.email ?? user;
   const matches = (library.data?.matches ?? []).filter(
     (m) => m.deleted_at === null && (!needle || m.title.toLowerCase().includes(needle)),
   );
@@ -102,7 +103,7 @@ export function LibraryBrowser({
           ← 用戶
         </Button>
         <span className="truncate text-sm font-medium" title={user}>
-          {email}
+          {label}
         </span>
       </div>
       <input
