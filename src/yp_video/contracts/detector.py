@@ -66,7 +66,7 @@ class Rally(BaseModel):
         default=None,
         description=(
             "Court side the rally's winner played on, camera-frame: "
-            "left/right (sideline footage) or near/far (broadcast). Null when "
+            "left/right (broadcast footage) or near/far (sideline). Null when "
             "the checkpoint has no winner head."
         ),
     )

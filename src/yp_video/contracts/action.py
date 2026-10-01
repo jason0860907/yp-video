@@ -328,8 +328,8 @@ class CourtSide(str, Enum):
     """Where a court side sits in camera-frame terms.
 
     The value space of the ``winner`` task: which side of the frame the team
-    that WON the rally was playing on. Sideline footage uses left/right,
-    broadcast/baseline footage near/far — one 4-class vocabulary so a single
+    that WON the rally was playing on. Broadcast footage uses left/right,
+    sideline (amateur) footage near/far — one 4-class vocabulary so a single
     head serves both camera setups. The winning side, not where the ball
     landed: an out ball lands on the loser's side.
     """

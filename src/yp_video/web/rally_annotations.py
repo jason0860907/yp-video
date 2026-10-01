@@ -28,7 +28,7 @@ class Annotation(StrictModel):
     end: float
     label: str
     #: Court side the rally's winner played on (camera-frame): left/right for
-    #: sideline footage, near/far for broadcast. None = not annotated yet.
+    #: broadcast footage, near/far for sideline. None = not annotated yet.
     winner: Literal["left", "right", "near", "far"] | None = None
 
 
