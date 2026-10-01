@@ -20,6 +20,7 @@ from yp_video.action.training import rally_match_span
 from yp_video.actor import candidates
 from yp_video.config import ACTION_ANNOTATIONS_DIR, cut_kind_of
 from yp_video.contracts.action import ACTOR_FILE_SUFFIX, TASKS
+from yp_video.core.rallies import load_rallies
 from yp_video.core.jsonl import read_jsonl, write_jsonl
 
 log = logging.getLogger(__name__)
@@ -118,6 +119,11 @@ def prepare_action_training_labels(
             span_frames += match_span[1] - match_span[0]
         else:
             span_frames += cache_frames
+        # Action mAP scores only inside rallies (both ends included), in
+        # seconds so the evaluator needs no frame rounding.
+        rallies = load_rallies(stem)
+        if rallies:
+            training_meta["rally_spans"] = [[r["start"], r["end"]] for r in rallies]
 
         # Who acted, where the video can say so. Written to its OWN file: only
         # a handful of videos carry actor work, and the action labels are read

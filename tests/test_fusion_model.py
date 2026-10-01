@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -266,6 +267,34 @@ class FusionLabelScopeTests(unittest.TestCase):
             build.assert_not_called()
             self.assertFalse((root / "run" / "labels" / "actor-candidates").exists())
             self.assertEqual(summary["videos"], 1)
+
+    def test_snapshot_carries_rally_spans_for_scoring(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_dir:
+            root = Path(raw_dir)
+            label = root / "match_actions.jsonl"
+            video = root / "match.mp4"
+            video.touch()
+            write_jsonl(
+                label,
+                {"video": "match", "num_frames": 300, "fps": 30},
+                [{"id": "event", "frame": 40, "label": "spike"}],
+            )
+            rallies = [{"rally_id": 1, "start": 1.0, "end": 2.5}, {"rally_id": 2, "start": 4.0, "end": 6.0}]
+            with (
+                patch.object(training_labels, "inspect_action_frame_cache", return_value={"frame_count": 300}),
+                patch.object(training_labels, "cut_kind_of", return_value="sideline"),
+                patch.object(training_labels, "load_rallies", return_value=rallies),
+                patch.object(training_labels, "rally_match_span", return_value=(0, 240)),
+            ):
+                training_labels.prepare_action_training_labels(
+                    items=[(label, video)],
+                    frame_dir=root / "frames",
+                    save_dir=root / "run",
+                    tasks=("action",),
+                )
+            written = next((root / "run" / "labels").rglob("match_actions.jsonl"))
+            meta = json.loads(written.read_text().splitlines()[0])
+            self.assertEqual(meta["rally_spans"], [[1.0, 2.5], [4.0, 6.0]])
 
 
 if __name__ == "__main__":
