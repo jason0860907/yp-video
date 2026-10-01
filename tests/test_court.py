@@ -178,7 +178,8 @@ def test_flights_never_jump_over_an_unplaced_touch():
         return {"id": f"e{frame}", "frame": frame, "time": frame / 30, "rally_id": rally,
                 "label": "set", "ball_3d": np.array([frame / 10, 4.0, 2.0])}
 
-    placed = [touch(0), touch(30), touch(60), touch(90, rally=2)]
     # Frame 45 was touched too but could not be placed (no actor).
-    flights = court_positions._flights(placed, [0, 30, 45, 60, 90])
+    unplaced = {**touch(45), "ball_3d": None}
+    events = [touch(0), touch(30), unplaced, touch(60), touch(90, rally=2)]
+    flights = court_positions._flights(events)
     assert [(f["from"], f["to"]) for f in flights] == [("e0", "e30")]

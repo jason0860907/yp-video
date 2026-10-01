@@ -27,14 +27,20 @@ export function MapCard({
 }) {
   const [scope, setScope] = useState<'current' | 'all'>('current');
   const shown = scope === 'all' ? positions : current ? [current] : [];
-  const events: MapDot[] = shown.map((p) => ({
-    key: `e${p.id}`,
-    at: p.court_xy,
-    color: actionColor(p.label),
-    kind: 'event',
-    title: `${p.label ?? ''} · frame ${p.frame} · (${p.court_xy[0].toFixed(2)}, ${p.court_xy[1].toFixed(2)}) m`,
-    selected: p.id === current?.id,
-  }));
+  const events: MapDot[] = shown.flatMap(({ court_xy: at, ...p }) =>
+    at
+      ? [
+          {
+            key: `e${p.id}`,
+            at,
+            color: actionColor(p.label),
+            kind: 'event' as const,
+            title: `${p.label ?? ''} · frame ${p.frame} · (${at[0].toFixed(2)}, ${at[1].toFixed(2)}) m`,
+            selected: p.id === current?.id,
+          },
+        ]
+      : [],
+  );
 
   return (
     <>

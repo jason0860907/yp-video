@@ -152,7 +152,7 @@ export function VideoOverlay({
 
   // The line the height was read off: straight up from the feet to the ball.
   const lift =
-    current?.ball_3d != null
+    current?.ball_3d != null && current.court_xy
       ? pair(toImage([current.court_xy[0], current.court_xy[1], 0]), toImage(current.ball_3d))
       : [];
   const ballAt = ball ? toImage(ball) : null;

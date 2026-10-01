@@ -111,15 +111,19 @@ export interface CourtPositions {
     time: number;
     rally_id: number | null;
     label: string | null;
-    /** The actor's feet in the frame; null for a score (no actor). */
+    /** The actor's feet in the frame; null for a score or when unplaced. */
     foot_image: Point | null;
     /** The annotated ball point in the frame; null when not visible. */
     ball_image: Point | null;
     /** Actor's feet — or, for a score, where the ball landed. */
-    court_xy: Point;
+    /** null when it cannot be placed — `reason` says why. */
+    court_xy: Point | null;
     in_court: boolean;
     /** The ball at the touch, metres; null without a camera or ball point. */
     ball_3d: Point3 | null;
+    /** Why there is no court position: occluded, no association, no
+     *  detection, outside rally, no takeoff, off court or ball hidden. */
+    reason: string | null;
   }[];
   /** Ballistic flights between consecutive touches, sampled evenly in time. */
   arcs: Arc[];

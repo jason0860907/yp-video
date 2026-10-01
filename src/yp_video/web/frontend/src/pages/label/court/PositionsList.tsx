@@ -15,6 +15,17 @@ type Position = CourtPositions['events'][number];
 
 const metres = (v: number | undefined) => (v == null ? '–' : v.toFixed(2));
 
+/** What each reason for a missing court position means, and what fixes it. */
+const REASONS: Record<string, string> = {
+  occluded: 'The actor is marked occluded in Association — no feet to place it by',
+  'no association': 'No actor picked yet — label it in Association',
+  'no detection': 'Player Detection has not run on this action',
+  'outside rally': 'Falls in no rally span',
+  'no takeoff': 'Airborne touch, but the actor is not tracked on the floor within 0.7 s of it',
+  'off court': 'Projects more than 3 m past the court lines — a failed projection',
+  'ball hidden': 'Score with no visible ball point — nowhere to land it',
+};
+
 export function PositionsList({
   video,
   positions,
@@ -65,7 +76,7 @@ export function PositionsList({
       selectedId={currentId}
       isActive={(p) => Math.abs(p.time - time) <= 0.5}
       onJump={(p) => onSeek(p.time)}
-      rowClassName={(p) => !p.in_court && 'opacity-60'}
+      rowClassName={(p) => p.court_xy != null && !p.in_court && 'opacity-60'}
     >
       {(p) => (
         <>
@@ -76,15 +87,35 @@ export function PositionsList({
           <span className="text-center font-heading text-[10px] tabular-nums text-text-muted">
             {formatActionTime(p.time)}
           </span>
-          <span className="text-right font-mono text-[11px] tabular-nums" title="x (m) — along the court">
-            {metres(p.court_xy[0])}
-          </span>
-          <span className="text-right font-mono text-[11px] tabular-nums" title="y (m) — across the court">
-            {metres(p.court_xy[1])}
-          </span>
-          <span className="text-right font-mono text-[11px] tabular-nums" title="z (m) — ball height at the touch">
-            {metres(p.ball_3d?.[2])}
-          </span>
+          {p.court_xy ? (
+            <>
+              <span
+                className="text-right font-mono text-[11px] tabular-nums"
+                title="x (m) — along the court"
+              >
+                {metres(p.court_xy[0])}
+              </span>
+              <span
+                className="text-right font-mono text-[11px] tabular-nums"
+                title="y (m) — across the court"
+              >
+                {metres(p.court_xy[1])}
+              </span>
+              <span
+                className="text-right font-mono text-[11px] tabular-nums"
+                title="z (m) — ball height at the touch"
+              >
+                {metres(p.ball_3d?.[2])}
+              </span>
+            </>
+          ) : (
+            <span
+              className="col-span-3 justify-self-end truncate rounded-full bg-amber-400/10 px-2 py-0.5 text-[10px] text-amber-400/90 ring-1 ring-amber-400/25"
+              title={REASONS[p.reason ?? ''] ?? 'No court position'}
+            >
+              {p.reason ?? 'unplaced'}
+            </span>
+          )}
         </>
       )}
     </EventRows>
@@ -94,7 +125,8 @@ export function PositionsList({
     <>
       <div className="mb-2.5 flex items-center justify-between">
         <SectionLabel className="mb-0">
-          Rallies ({rallies.length} rally · {positions.length} action)
+          Rallies ({rallies.length} rally · {positions.length} action ·{' '}
+          {positions.filter((p) => p.court_xy == null).length} unplaced)
         </SectionLabel>
         {positions.length > 0 && (
           <a
@@ -136,7 +168,9 @@ export function PositionsList({
                 rowKey={OUTSIDE_RALLY_KEY}
                 count={outside.length}
                 open={expanded === OUTSIDE_RALLY_KEY}
-                onToggle={() => setExpanded(expanded === OUTSIDE_RALLY_KEY ? null : OUTSIDE_RALLY_KEY)}
+                onToggle={() =>
+                  setExpanded(expanded === OUTSIDE_RALLY_KEY ? null : OUTSIDE_RALLY_KEY)
+                }
               />
               {expanded === OUTSIDE_RALLY_KEY && rows(outside, 'No outside positions')}
             </div>

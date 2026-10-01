@@ -13,8 +13,6 @@ and one bad point turns every arc it touches into nonsense.
 
 from __future__ import annotations
 
-from bisect import bisect_right
-
 import numpy as np
 
 from yp_video.core.jsonl import read_jsonl_cached
@@ -24,8 +22,6 @@ from yp_video.extraction import links
 from yp_video.extraction import store as extraction_store
 from yp_video.tracklets.store import tracklet_index, tracks_path
 
-#: Actor answers that name nobody — no feet to place.
-_NO_ACTOR = ("unresolved", "occluded")
 #: Contacts made in the air. At the contact the feet are off the floor, and
 #: the floor homography puts raised feet far behind where the player stands —
 #: twice as far for a 0.4 m jump under a camera 0.8 m up. Their feet come
@@ -91,21 +87,18 @@ def _lift(cam: camera.Camera | None, ball: tuple[float, float] | None, court_xy:
     return point if point is not None and 0 <= point[2] <= MAX_CONTACT_Z_M else None
 
 
-def _flights(events: list[dict], touch_frames: list[int]) -> list[dict]:
+def _flights(events: list[dict]) -> list[dict]:
     """Ballistic arcs between consecutive placed touches of a rally.
 
-    `touch_frames` (sorted) holds every annotated touch, including ones that
-    could not be placed. An arc never jumps over one of those: joining the
-    touches either side of it would draw a single flight where the ball was
-    really played twice.
+    `events` (frame order) holds every annotated touch, placed or not, and
+    only neighbours are joined — so an arc never jumps over an unplaced one,
+    which would draw a single flight where the ball was really played twice.
     """
     arcs = []
     for a, b in zip(events, events[1:]):
         if a["rally_id"] is None or a["rally_id"] != b["rally_id"]:
             continue
         if a["ball_3d"] is None or b["ball_3d"] is None:
-            continue
-        if bisect_right(touch_frames, a["frame"]) < bisect_right(touch_frames, b["frame"] - 1):
             continue
         duration = b["time"] - a["time"]
         if not 0 < duration <= MAX_FLIGHT_S:
@@ -149,72 +142,80 @@ def compute(stem: str) -> dict:
     index = tracklet_index(stem)
     window = round(GROUNDED_WINDOW_S * fps)
 
-    events = []
-    # Every annotated touch, placed or not: a flight is only drawn between
-    # touches with nothing labeled in between.
-    touch_frames = []
-    for r in extraction_store.labelable(records, stem, fps):
-        touch_frames.append(r["frame"])
+    placeable = {r["id"]: r for r in extraction_store.labelable(records, stem, fps)}
+
+    def place_actor(
+        event_id: str, frame: int
+    ) -> tuple[tuple[float, float] | None, np.ndarray | None, str | None]:
+        """(feet in the frame, feet on the court, why not) for a touch."""
+        r = placeable.get(event_id)
+        if r is None:
+            # labelable drops what lies in no rally; the rest never got a record.
+            return None, None, "outside rally" if _rally_of(frame / fps, spans) is None else "no detection"
+        if r.get("resolution") == "occluded":
+            return None, None, "occluded"
         box = r.get("box")
-        if not box or r.get("resolution") in _NO_ACTOR:
-            continue
+        if not box or r.get("resolution") == "unresolved":
+            return None, None, "no association"
         if r.get("label") in _AIRBORNE:
-            ref = actors.get(r["id"])
+            ref = actors.get(event_id)
             tracklet = index.tracklet(ref) if ref else None
-            box = _grounded_box(tracklet, r["frame"], window) if tracklet else None
+            box = _grounded_box(tracklet, frame, window) if tracklet else None
             if box is None:
-                continue
+                return None, None, "no takeoff"
         foot = ((box[0] + box[2]) / 2 / width, box[3] / height)
         court_xy = geometry.project(to_court, np.array([foot]))[0]
         if not _in_play_area(court_xy):
+            return foot, None, "off court"
+        return foot, court_xy, None
+
+    # Every annotated action is listed, placed or not, so what is missing —
+    # and why — shows next to what is not.
+    source = extraction_store.action_annotation_path(stem)
+    rows = read_jsonl_cached(source)[1] if source is not None else []
+    events = []
+    for row in rows:
+        if row.get("frame") is None:
             continue
-        ball = _visible_xy(r)
+        event_id = str(row.get("id") or f"f{row['frame']}")
+        frame = int(row["frame"])
+        label = row.get("label")
+        ball = _visible_xy(row)
+        if label == "score":
+            # Where the ball came down — on the floor, so the floor
+            # homography places it without any actor.
+            foot = None
+            court_xy = geometry.project(to_court, np.array([ball]))[0] if ball else None
+            reason = "ball hidden" if ball is None else None if _in_play_area(court_xy) else "off court"
+            if reason:
+                court_xy = None
+            ball_3d = np.array([court_xy[0], court_xy[1], 0.0]) if court_xy is not None else None
+        else:
+            foot, court_xy, reason = place_actor(event_id, frame)
+            # The actor's feet anchor the ball's depth along its image ray.
+            ball_3d = _lift(cam, ball, court_xy) if court_xy is not None else None
         events.append({
-            "id": r["id"],
-            "frame": r["frame"],
-            "label": r.get("label"),
-            "foot_image": foot,
+            "id": event_id,
+            "frame": frame,
+            "label": label,
+            "foot_image": foot if court_xy is not None else None,
             "ball_image": ball,
             "court_xy": court_xy,
-            # The actor's feet anchor the ball's depth along its image ray.
-            "ball_3d": _lift(cam, ball, court_xy),
+            "ball_3d": ball_3d,
+            "reason": reason,
         })
-
-    # A score marks where the ball came down — on the floor, so the floor
-    # homography places it without any actor.
-    source = extraction_store.action_annotation_path(stem)
-    if source is not None:
-        _ann_meta, rows = read_jsonl_cached(source)
-        for e in rows:
-            if e.get("label") == "score" and e.get("frame") is not None:
-                touch_frames.append(int(e["frame"]))
-            ball = _visible_xy(e)
-            if e.get("label") != "score" or ball is None or e.get("frame") is None:
-                continue
-            landing = geometry.project(to_court, np.array([ball]))[0]
-            if not _in_play_area(landing):
-                continue
-            events.append({
-                "id": str(e.get("id") or f"f{e['frame']}"),
-                "frame": int(e["frame"]),
-                "label": "score",
-                "foot_image": None,
-                "ball_image": ball,
-                "court_xy": landing,
-                "ball_3d": np.array([landing[0], landing[1], 0.0]),
-            })
 
     events.sort(key=lambda e: e["frame"])
     for e in events:
         e["time"] = e["frame"] / fps
         e["rally_id"] = _rally_of(e["time"], spans)
 
-    arcs = _flights(events, sorted(touch_frames))
+    arcs = _flights(events)
 
     length, width_m = geometry.COURT_LENGTH, geometry.COURT_WIDTH
 
     def out(e: dict) -> dict:
-        x, y = (float(v) for v in e["court_xy"])
+        xy = e["court_xy"]
         return {
             "id": e["id"],
             "frame": e["frame"],
@@ -223,9 +224,12 @@ def compute(stem: str) -> dict:
             "label": e["label"],
             "foot_image": [round(float(v), 4) for v in e["foot_image"]] if e["foot_image"] else None,
             "ball_image": [round(float(v), 4) for v in e["ball_image"]] if e["ball_image"] else None,
-            "court_xy": [round(x, 2), round(y, 2)],
-            "in_court": bool(0 <= x <= length and 0 <= y <= width_m),
+            "court_xy": [round(float(v), 2) for v in xy] if xy is not None else None,
+            "in_court": xy is not None and bool(0 <= xy[0] <= length and 0 <= xy[1] <= width_m),
             "ball_3d": [round(float(v), 2) for v in e["ball_3d"]] if e["ball_3d"] is not None else None,
+            # Why court_xy is null: occluded, no association, no detection,
+            # outside rally, no takeoff, off court or ball hidden.
+            "reason": e["reason"],
         }
 
     return {
