@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from yp_video.contracts.action import event_id
 from yp_video.core.jsonl import read_jsonl_cached
 from yp_video.core.rallies import load_rallies
 from yp_video.court import annotations, camera, geometry
@@ -145,10 +146,10 @@ def compute(stem: str) -> dict:
     placeable = {r["id"]: r for r in extraction_store.labelable(records, stem, fps)}
 
     def place_actor(
-        event_id: str, frame: int
+        eid: str, frame: int
     ) -> tuple[tuple[float, float] | None, np.ndarray | None, str | None]:
         """(feet in the frame, feet on the court, why not) for a touch."""
-        r = placeable.get(event_id)
+        r = placeable.get(eid)
         if r is None:
             # labelable drops what lies in no rally; the rest never got a record.
             return None, None, "outside rally" if _rally_of(frame / fps, spans) is None else "no detection"
@@ -158,7 +159,7 @@ def compute(stem: str) -> dict:
         if not box or r.get("resolution") == "unresolved":
             return None, None, "no association"
         if r.get("label") in _AIRBORNE:
-            ref = actors.get(event_id)
+            ref = actors.get(eid)
             tracklet = index.tracklet(ref) if ref else None
             box = _grounded_box(tracklet, frame, window) if tracklet else None
             if box is None:
@@ -177,13 +178,13 @@ def compute(stem: str) -> dict:
     for row in rows:
         if row.get("frame") is None:
             continue
-        event_id = str(row.get("id") or f"f{row['frame']}")
+        eid = event_id(row)
         frame = int(row["frame"])
         label = row.get("label")
         ball = _visible_xy(row)
-        if label == "score":
-            # Where the ball came down — on the floor, so the floor
-            # homography places it without any actor.
+        if label in extraction_store.SKIP_LABELS:
+            # A score names no player: it marks where the ball came down —
+            # on the floor, so the floor homography places it on its own.
             foot = None
             court_xy = geometry.project(to_court, np.array([ball]))[0] if ball else None
             reason = "ball hidden" if ball is None else None if _in_play_area(court_xy) else "off court"
@@ -191,11 +192,11 @@ def compute(stem: str) -> dict:
                 court_xy = None
             ball_3d = np.array([court_xy[0], court_xy[1], 0.0]) if court_xy is not None else None
         else:
-            foot, court_xy, reason = place_actor(event_id, frame)
+            foot, court_xy, reason = place_actor(eid, frame)
             # The actor's feet anchor the ball's depth along its image ray.
             ball_3d = _lift(cam, ball, court_xy) if court_xy is not None else None
         events.append({
-            "id": event_id,
+            "id": eid,
             "frame": frame,
             "label": label,
             "foot_image": foot if court_xy is not None else None,
