@@ -20,6 +20,7 @@ import { memo, type RefObject } from 'react';
 import { cn } from '@/lib/cn';
 import { actionColor } from '@/lib/actionColors';
 import { Card } from '@/components/ui/Card';
+import { OutsideRow, RallyRow } from '@/components/action/RallyRows';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import type { ReidPlayers } from '@/types/api';
 import {
@@ -255,10 +256,10 @@ export const RallySidebar = memo(function RallySidebar({
           <div
             onClick={onSelectAll}
             className={cn(
-              'ae-row flex cursor-pointer items-center gap-1.5 rounded-xl border px-3 py-2.5 transition-colors',
+              'flex cursor-pointer items-center gap-1.5 rounded-xl border px-3 py-2.5 transition-colors',
               selectedRally === 'all'
-                ? 'border-primary/45 bg-primary/[0.12]'
-                : 'border-primary/20 bg-primary/[0.05] hover:bg-primary/[0.10]',
+                ? 'border-primary/40 bg-primary/[0.1]'
+                : 'border-primary/15 bg-primary/[0.04] hover:bg-primary/[0.08]',
             )}
           >
             <span className="text-xs font-medium text-text-primary">All rallies</span>
@@ -271,47 +272,20 @@ export const RallySidebar = memo(function RallySidebar({
             const selected = selectedRally === rally.rally_id;
             return (
               <div key={rally.rally_id} className="space-y-1.5">
-                <div
-                  data-rally-row={rally.rally_id}
-                  onClick={() => onJumpRally(rally)}
-                  className={cn(
-                    'ae-row flex cursor-pointer flex-wrap items-center gap-x-1.5 gap-y-1 rounded-xl border px-3 py-2.5 transition-colors',
-                    selected ? 'border-primary/45 bg-primary/[0.12]' : 'border-primary/20 bg-primary/[0.05] hover:bg-primary/[0.10]',
-                    active && 'ring-1 ring-accent/50',
-                  )}
+                <RallyRow
+                  index={ri}
+                  rally={rally}
+                  count={entries.length}
+                  open={isOpen}
+                  selected={selected}
+                  live={active}
+                  onSelect={() => onJumpRally(rally)}
+                  // Collapse if open; otherwise select + expand + seek to the rally start.
+                  onToggle={() => (isOpen ? onSetExpanded(null) : onJumpRally(rally))}
                 >
-                  <span className="w-4 shrink-0 select-none text-right font-heading text-[10px] text-text-muted/60">{ri + 1}</span>
-                  <span
-                    className="w-7 shrink-0 select-none font-mono text-[9px] text-text-muted/40"
-                    title={`rally_id ${rally.rally_id} — stable id, not the time order`}
-                  >
-                    #{rally.rally_id}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      // Collapse if open; otherwise select + expand + seek to the rally start.
-                      if (isOpen) onSetExpanded(null);
-                      else onJumpRally(rally);
-                    }}
-                    className="flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full bg-primary/20 px-2 py-0.5 text-[11px] font-medium text-primary-text ring-1 ring-primary/25"
-                  >
-                    <span className={cn('transition-transform', isOpen && 'rotate-90')}>▸</span> actions <span className="opacity-70">{entries.length}</span>
-                  </button>
                   {confirmButton(entries)}
                   {unresolvedChip(entries)}
-                  {/* One unit, so a crowded row moves the time to its own line
-                      instead of breaking it mid-range. */}
-                  <span className="ml-auto flex shrink-0 items-center gap-1.5">
-                    <span className="whitespace-nowrap font-mono text-[11px] tabular-nums text-text-muted">
-                      {fmtTime(rally.start)} → {fmtTime(rally.end)}
-                    </span>
-                    <span className="rounded bg-surface-200/40 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-text-muted">
-                      {Math.max(0, rally.end - rally.start).toFixed(1)}s
-                    </span>
-                  </span>
-                </div>
+                </RallyRow>
                 {isOpen && (
                   <ReidEventPanel
                     entries={entries}
@@ -332,27 +306,15 @@ export const RallySidebar = memo(function RallySidebar({
           })}
           {outside.length > 0 && (
             <div className="space-y-1.5">
-              <div
-                data-rally-row={OUTSIDE}
-                onClick={() => onSetExpanded(OUTSIDE)}
-                className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-amber-500/20 bg-amber-500/[0.04] px-3 py-2.5 hover:bg-amber-500/[0.08]"
+              <OutsideRow
+                rowKey={OUTSIDE}
+                count={outside.length}
+                open={expanded === OUTSIDE}
+                onToggle={() => onSetExpanded(expanded === OUTSIDE ? null : OUTSIDE)}
               >
-                <span className="w-4 select-none text-right font-heading text-[10px] text-text-muted/60">out</span>
-                <span className="w-7 select-none" />
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onSetExpanded(expanded === OUTSIDE ? null : OUTSIDE);
-                  }}
-                  className="flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-300 ring-1 ring-amber-500/25"
-                >
-                  <span className={cn('transition-transform', expanded === OUTSIDE && 'rotate-90')}>▸</span> outside <span className="opacity-70">{outside.length}</span>
-                </button>
                 {confirmButton(outside)}
                 {unresolvedChip(outside)}
-                <span className="ml-auto font-heading text-[11px] text-text-muted">outside rally</span>
-              </div>
+              </OutsideRow>
               {expanded === OUTSIDE && (
                 <ReidEventPanel
                   entries={outside}
