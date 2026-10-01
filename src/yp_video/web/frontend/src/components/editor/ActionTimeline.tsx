@@ -2,6 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as
 import { cn } from '@/lib/cn';
 import type { ActionEvent, ActionRally, WaveformData } from '@/types/api';
 
+/** What the timeline draws of an action — any page's events that carry
+ *  these can sit on it. */
+export type TimelineEvent = Pick<ActionEvent, 'id' | 'frame' | 'visible' | 'rally_id'> & {
+  label: string | null;
+};
+
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 const fmt = (s: number) => {
   if (!Number.isFinite(s)) return '0:00';
@@ -42,7 +48,7 @@ interface ActionTimelineProps {
   numFrames: number;
   frame: number;
   rallies: ActionRally[];
-  events: ActionEvent[];
+  events: TimelineEvent[];
   selectedRallyId: number | 'all';
   selectedId: string | null;
   playing: boolean;
@@ -255,7 +261,7 @@ export function ActionTimeline({
             {events
               .filter((e) => selectedRallyId === 'all' || e.rally_id === selectedRallyId)
               .map((e) => {
-                const color = colors[e.label] || '#8E8E93';
+                const color = colors[e.label ?? ''] || '#8E8E93';
                 const active = e.id === selectedId;
                 return (
                   <button
@@ -266,7 +272,7 @@ export function ActionTimeline({
                       ev.stopPropagation();
                       onJumpEvent(e.id);
                     }}
-                    title={`${e.label} · frame ${e.frame}`}
+                    title={`${e.label ?? ''} · frame ${e.frame}`}
                     className={cn('absolute top-1/2 -translate-y-1/2 rounded-full border border-black/50 transition-transform', active ? '-ml-[7px] h-5 w-3.5 scale-105' : '-ml-px h-4 w-1.5 hover:scale-125')}
                     style={{ left: xOf(fps ? e.frame / fps : 0), background: e.visible ? color : 'transparent', borderColor: e.visible ? 'rgba(0,0,0,0.5)' : color }}
                   />

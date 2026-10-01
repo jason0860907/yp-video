@@ -15,6 +15,10 @@ import type { PointerEvent as ReactPointerEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { API, apiFetch, apiUrl, errMsg } from '@/lib/api';
 import { hasRealTime, seekWhenSeekable, usePlayheadHandover } from '@/lib/playheadHandover';
+import { ActionTimeline, type TimelineEvent } from '@/components/editor/ActionTimeline';
+import { ACTION_COLORS } from '@/lib/actionColors';
+import { formatActionTime } from '@/lib/actionEditorModel';
+import { useActionWaveform } from '@/lib/useActionWaveform';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { SectionLabel } from '@/components/ui/SectionLabel';
@@ -122,17 +126,24 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
   const [tab, setTab] = useState<SideTab>('landmarks');
   const takeHandover = usePlayheadHandover(clock ? () => clock.read(video) : undefined, video);
 
-  useVideoKeys(
-    () => {
-      const el = videoRef.current;
-      if (!el) return;
-      if (el.paused) void el.play();
-      else el.pause();
-    },
-    (n) => {
-      if (videoRef.current && fps) stepVideo(videoRef.current, fps, n);
-    },
-  );
+  const [playing, setPlaying] = useState(false);
+  const [duration, setDuration] = useState(0);
+  const { waveform, loadWaveform } = useActionWaveform();
+
+  const togglePlay = () => {
+    const el = videoRef.current;
+    if (!el) return;
+    if (el.paused) void el.play();
+    else el.pause();
+  };
+  const step = (n: number) => {
+    if (videoRef.current && fps) stepVideo(videoRef.current, fps, n);
+  };
+  const seekFrame = (f: number) => {
+    const el = videoRef.current;
+    if (el && fps) el.currentTime = (Math.max(0, f) + 0.5) / fps;
+  };
+  useVideoKeys(togglePlay, step);
 
   // Playhead → frame, every painted frame while playing. Bound through the
   // <video>'s own onPlay/onSeeked: the element mounts only once the
@@ -247,6 +258,18 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
   });
   const positions = useMemo(() => positionsQuery.data?.events ?? [], [positionsQuery.data]);
 
+  const timelineEvents = useMemo<TimelineEvent[]>(
+    () =>
+      positions.map((p) => ({
+        id: p.id,
+        frame: p.frame,
+        label: p.label,
+        rally_id: p.rally_id,
+        visible: p.ball_image != null,
+      })),
+    [positions],
+  );
+
   const t = fps ? frame / fps : 0;
   const maxFlight = state?.max_flight_s ?? 0;
   // The action at the playhead: the latest touch not after it, while its
@@ -298,236 +321,314 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
     );
 
   return (
-    <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_420px]">
-      <Card className="space-y-3">
-        <div className="overflow-hidden rounded-2xl bg-surface-200 ring-1 ring-white/[0.06]">
-          {/* The stage is the frame plus the optional outside margin; marks
-              and guides are in frame coordinates, so they may sit past 0..1. */}
-          <div
-            ref={attachViewport}
-            className="relative mx-auto overflow-hidden"
-            style={{
-              aspectRatio: `${aspect}`,
-              maxWidth: `calc(var(--video-max-h, 60vh) * ${aspect})`,
-            }}
-            // Middle or right drag pans anywhere; a plain drag pans the
-            // zoomed video wherever no tool has the pointer.
-            onPointerDownCapture={(e) => {
-              if (e.button === 1 || e.button === 2) pan(e);
-              else if (e.button === 0 && zoom > 1 && e.target === videoRef.current) pan(e);
-            }}
-            onContextMenu={(e) => e.preventDefault()}
-          >
-            <div
-              className="absolute left-0 top-0"
-              style={{ width: `${zoom * 100}%`, height: `${zoom * 100}%` }}
-            >
-              <div
-                ref={wrapRef}
-                className="absolute bg-black"
-                style={{
-                  left: `${(margin / (1 + 2 * margin)) * 100}%`,
-                  top: `${(margin / (1 + 2 * margin)) * 100}%`,
-                  width: `${(1 / (1 + 2 * margin)) * 100}%`,
-                  height: `${(1 / (1 + 2 * margin)) * 100}%`,
-                }}
+    <div className="flex flex-col gap-5 lg:flex-row">
+      {/* Player */}
+      <div className="min-w-0 flex-1 space-y-4">
+        <Card>
+          <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <h3 className="font-heading text-sm font-semibold text-text-primary">
+              Court Calibration
+            </h3>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                size="sm"
+                intent={tool === 'mark' ? 'primary' : 'default'}
+                onClick={() => setTool('mark')}
               >
-                <video
-                  ref={videoRef}
-                  src={apiUrl(API.actionAnnotate.video(video))}
-                  className={cn(
-                    'block h-full w-full bg-black object-contain',
-                    zoom > 1 && 'cursor-grab',
-                  )}
-                  // Zoomed, the native bar would sit off-screen under the stage;
-                  // the keyboard still plays and steps.
-                  controls={zoom === 1}
-                  playsInline
-                  preload="metadata"
-                  onLoadedMetadata={(e) => {
-                    const el = e.currentTarget;
-                    if (el.videoWidth && el.videoHeight) {
-                      setAspect(el.videoWidth / el.videoHeight);
-                      setFrameSize([el.videoWidth, el.videoHeight]);
-                    }
-                    const at = takeHandover();
-                    if (at != null) seekWhenSeekable(el, at);
-                  }}
-                  onPlay={followPlayhead}
-                  onSeeked={followPlayhead}
-                  onTimeUpdate={(e) => {
-                    if (hasRealTime(e.currentTarget))
-                      clock?.write(video, e.currentTarget.currentTime);
-                  }}
-                />
-                <VideoOverlay
-                  state={state}
-                  margin={margin}
-                  layers={layers}
-                  arcs={arcs}
-                  ball={ball}
-                  current={current}
-                  guides={guides}
-                  editingGuides={tool === 'line'}
-                  pointScale={pointScale}
-                  onDragMark={dragMark}
-                />
-              </div>
-              {/* Catch the pointer only while a tool needs it, so the native
-                controls keep working the rest of the time. */}
-              {tool === 'line' ? (
-                <div
-                  className="absolute inset-0 z-10 cursor-crosshair"
-                  onPointerDown={guides.draw}
-                />
-              ) : (
-                armed && (
-                  <div className="absolute inset-0 z-10 cursor-crosshair" onPointerDown={place} />
-                )
-              )}
+                Mark points
+              </Button>
+              <Button
+                size="sm"
+                intent={tool === 'line' ? 'primary' : 'default'}
+                onClick={() => setTool('line')}
+              >
+                Draw lines
+              </Button>
+              <Button size="sm" onClick={guides.undo} disabled={!guides.guides.length}>
+                Undo line
+              </Button>
+              <Button size="sm" onClick={guides.clear} disabled={!guides.guides.length}>
+                Clear lines
+              </Button>
+              <Button
+                size="sm"
+                intent={margin ? 'primary' : 'default'}
+                onClick={() => setOutside(!margin)}
+                title={
+                  hasOutsideMark
+                    ? 'Room around the frame for off-screen corners — some marks sit out there'
+                    : 'Room around the frame for off-screen corners'
+                }
+              >
+                Outside frame
+              </Button>
             </div>
           </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            size="sm"
-            intent={tool === 'mark' ? 'primary' : 'default'}
-            onClick={() => setTool('mark')}
-          >
-            Mark points
-          </Button>
-          <Button
-            size="sm"
-            intent={tool === 'line' ? 'primary' : 'default'}
-            onClick={() => setTool('line')}
-          >
-            Draw lines
-          </Button>
-          <Button size="sm" onClick={guides.undo} disabled={!guides.guides.length}>
-            Undo line
-          </Button>
-          <Button size="sm" onClick={guides.clear} disabled={!guides.guides.length}>
-            Clear lines
-          </Button>
-          <Button
-            size="sm"
-            intent={margin ? 'primary' : 'default'}
-            onClick={() => setOutside(!margin)}
-            title={
-              hasOutsideMark
-                ? 'Room around the frame for off-screen corners — some marks sit out there'
-                : 'Room around the frame for off-screen corners'
-            }
-          >
-            Outside frame
-          </Button>
-          <span className="ml-auto inline-flex items-center gap-1">
-            <Button
-              size="sm"
-              onClick={() => zoomTo(zoom / 1.5)}
-              disabled={zoom <= 1}
-              title="Zoom out"
-            >
-              −
-            </Button>
-            <Button
-              size="sm"
-              onClick={() => zoomTo(1)}
-              disabled={zoom <= 1}
-              title="Wheel over the video zooms; drag (or right-drag while marking) pans. Click to reset."
-            >
-              {zoom.toFixed(1)}×
-            </Button>
-            <Button
-              size="sm"
-              onClick={() => zoomTo(zoom * 1.5)}
-              disabled={zoom >= MAX_ZOOM}
-              title="Zoom in"
-            >
-              +
-            </Button>
-          </span>
-          <label
-            className="inline-flex items-center gap-1.5 text-[11px] text-text-muted"
-            title="Size of every point drawn on the video"
-          >
-            Point size
-            <input
-              type="range"
-              min={0.5}
-              max={2.5}
-              step={0.1}
-              value={pointScale}
-              onChange={(e) => setPointScale(Number(e.target.value))}
-              className="w-20"
-            />
-          </label>
-        </div>
-        <LayerToggles layers={layers} onChange={setLayers} />
-      </Card>
 
-      <Card className="space-y-4">
-        <Tabs
-          tabs={[
-            { key: 'landmarks', label: 'Landmarks' },
-            ...(['court', 'rally'] as const).map((key) => ({
-              key,
-              label: key === 'court' ? 'Court' : 'Rally',
-              disabled: !fit,
-              title: fit ? undefined : 'Mark at least 4 floor points first',
-            })),
-          ]}
-          active={shownTab}
-          onChange={setTab}
-        />
-        {shownTab === 'landmarks' && (
-          <LandmarksCard
-            state={state}
-            armed={armed}
-            onArm={arm}
-            onRemove={remove}
-            onNetHeight={(h) => void save(state.points, h)}
-            frameHeight={frameSize?.[1] ?? null}
-          />
-        )}
-        {shownTab === 'court' && (
-          <>
-            <MapCard
-              state={state}
-              positions={positions}
-              current={current}
-              players={players}
-              arcs={arcs}
-              ball={ball}
-            />
-            {camera && arcs.length > 0 && (
-              <div>
-                <SectionLabel>Side view · rally {arcs[0]!.rally_id}</SectionLabel>
-                <SideView
-                  length={state.court.length}
-                  netHeight={state.net_height_m}
-                  arcs={arcs}
-                  ball={ball}
-                />
+          <div className="overflow-hidden rounded-2xl bg-surface-200 ring-1 ring-white/[0.06]">
+            {/* The stage is the frame plus the optional outside margin; marks
+                and guides are in frame coordinates, so they may sit past 0..1. */}
+            <div
+              ref={attachViewport}
+              className="relative mx-auto overflow-hidden"
+              style={{
+                aspectRatio: `${aspect}`,
+                maxWidth: `calc(var(--video-max-h, 45vh) * ${aspect})`,
+              }}
+              // Middle or right drag pans anywhere; a plain drag pans the
+              // zoomed video wherever no tool has the pointer.
+              onPointerDownCapture={(e) => {
+                if (e.button === 1 || e.button === 2) pan(e);
+                else if (e.button === 0 && zoom > 1 && e.target === videoRef.current) pan(e);
+              }}
+              onContextMenu={(e) => e.preventDefault()}
+            >
+              <div
+                className="absolute left-0 top-0"
+                style={{ width: `${zoom * 100}%`, height: `${zoom * 100}%` }}
+              >
+                <div
+                  ref={wrapRef}
+                  className="absolute bg-black"
+                  style={{
+                    left: `${(margin / (1 + 2 * margin)) * 100}%`,
+                    top: `${(margin / (1 + 2 * margin)) * 100}%`,
+                    width: `${(1 / (1 + 2 * margin)) * 100}%`,
+                    height: `${(1 / (1 + 2 * margin)) * 100}%`,
+                  }}
+                >
+                  <video
+                    ref={videoRef}
+                    src={apiUrl(API.actionAnnotate.video(video))}
+                    className={cn(
+                      'block h-full w-full bg-black object-contain',
+                      zoom > 1 && 'cursor-grab',
+                    )}
+                    playsInline
+                    preload="metadata"
+                    onLoadedMetadata={(e) => {
+                      const el = e.currentTarget;
+                      if (el.videoWidth && el.videoHeight) {
+                        setAspect(el.videoWidth / el.videoHeight);
+                        setFrameSize([el.videoWidth, el.videoHeight]);
+                      }
+                      setDuration(el.duration);
+                      loadWaveform(video, el.duration);
+                      const at = takeHandover();
+                      if (at != null) seekWhenSeekable(el, at);
+                    }}
+                    onPlay={() => {
+                      setPlaying(true);
+                      followPlayhead();
+                    }}
+                    onPause={() => setPlaying(false)}
+                    onSeeked={followPlayhead}
+                    onTimeUpdate={(e) => {
+                      if (hasRealTime(e.currentTarget))
+                        clock?.write(video, e.currentTarget.currentTime);
+                    }}
+                  />
+                  <VideoOverlay
+                    state={state}
+                    margin={margin}
+                    layers={layers}
+                    arcs={arcs}
+                    ball={ball}
+                    current={current}
+                    guides={guides}
+                    editingGuides={tool === 'line'}
+                    pointScale={pointScale}
+                    onDragMark={dragMark}
+                  />
+                </div>
+                {/* Catch the pointer only while a tool needs it, so a drag pans
+                  the zoomed video the rest of the time. */}
+                {tool === 'line' ? (
+                  <div
+                    className="absolute inset-0 z-10 cursor-crosshair"
+                    onPointerDown={guides.draw}
+                  />
+                ) : (
+                  armed && (
+                    <div className="absolute inset-0 z-10 cursor-crosshair" onPointerDown={place} />
+                  )
+                )}
               </div>
-            )}
-          </>
-        )}
-        {shownTab === 'rally' && (
-          <PositionsList
-            video={video}
-            positions={positions}
-            rallies={meta.rallies ?? []}
-            error={positionsQuery.error}
-            time={t}
-            currentId={current?.id ?? null}
-            onSeek={(seconds) => {
-              const el = videoRef.current;
-              if (el) el.currentTime = seconds;
-            }}
+            </div>
+          </div>
+
+          {/* The Action Label timeline: rally bands, the touches placed on the
+              court, the waveform. */}
+          <div className="mt-3">
+            <ActionTimeline
+              duration={duration}
+              fps={fps ?? 0}
+              numFrames={fps ? Math.round(duration * fps) : 0}
+              frame={frame}
+              rallies={meta.rallies ?? []}
+              events={timelineEvents}
+              selectedRallyId="all"
+              selectedId={current?.id ?? null}
+              playing={playing}
+              waveform={waveform}
+              colors={ACTION_COLORS}
+              onSeekFrame={seekFrame}
+              onJumpEvent={(id) => {
+                const p = positions.find((x) => x.id === id);
+                if (p) seekFrame(p.frame);
+              }}
+            />
+          </div>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+            <span className="rounded-lg border border-border bg-surface-200/50 px-2.5 py-1 font-mono text-sm tabular-nums text-text-primary">
+              {formatActionTime(t)} / f{frame}
+            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button size="sm" onClick={togglePlay}>
+                {playing ? 'Pause' : 'Play'}
+              </Button>
+              <Button size="sm" onClick={() => step(-1)}>
+                ◂
+              </Button>
+              <Button size="sm" onClick={() => step(1)}>
+                ▸
+              </Button>
+              <span className="inline-flex items-center gap-1">
+                <Button
+                  size="sm"
+                  onClick={() => zoomTo(zoom / 1.5)}
+                  disabled={zoom <= 1}
+                  title="Zoom out"
+                >
+                  −
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() => zoomTo(1)}
+                  disabled={zoom <= 1}
+                  title="Wheel over the video zooms; drag (or right-drag while marking) pans. Click to reset."
+                >
+                  {zoom.toFixed(1)}×
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() => zoomTo(zoom * 1.5)}
+                  disabled={zoom >= MAX_ZOOM}
+                  title="Zoom in"
+                >
+                  +
+                </Button>
+              </span>
+              <label
+                className="inline-flex items-center gap-1.5 text-[11px] text-text-muted"
+                title="Size of every point drawn on the video"
+              >
+                Point size
+                <input
+                  type="range"
+                  min={0.5}
+                  max={2.5}
+                  step={0.1}
+                  value={pointScale}
+                  onChange={(e) => setPointScale(Number(e.target.value))}
+                  className="w-20"
+                />
+              </label>
+            </div>
+          </div>
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+            <LayerToggles layers={layers} onChange={setLayers} />
+            <span className="font-mono text-[11px] tabular-nums text-text-muted">
+              {fps && duration
+                ? `${fps.toFixed(3)} fps · ${Math.round(duration * fps)} frames`
+                : ''}
+            </span>
+          </div>
+        </Card>
+        <p className="px-1 text-[11px] text-text-muted">
+          <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">
+            Space
+          </kbd>{' '}
+          play ·{' '}
+          <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">
+            ← →
+          </kbd>{' '}
+          frame ·{' '}
+          <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">
+            Wheel
+          </kbd>{' '}
+          zoom ·{' '}
+          <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">
+            Drag
+          </kbd>{' '}
+          pan (right-drag while marking)
+        </p>
+      </div>
+
+      {/* Landmarks · Court · Rally */}
+      <div className="min-w-0 lg:w-[420px] lg:flex-shrink-0">
+        <Card className="space-y-4">
+          <Tabs
+            tabs={[
+              { key: 'landmarks', label: 'Landmarks' },
+              ...(['court', 'rally'] as const).map((key) => ({
+                key,
+                label: key === 'court' ? 'Court' : 'Rally',
+                disabled: !fit,
+                title: fit ? undefined : 'Mark at least 4 floor points first',
+              })),
+            ]}
+            active={shownTab}
+            onChange={setTab}
           />
-        )}
-      </Card>
+          {shownTab === 'landmarks' && (
+            <LandmarksCard
+              state={state}
+              armed={armed}
+              onArm={arm}
+              onRemove={remove}
+              onNetHeight={(h) => void save(state.points, h)}
+              frameHeight={frameSize?.[1] ?? null}
+            />
+          )}
+          {shownTab === 'court' && (
+            <>
+              <MapCard
+                state={state}
+                positions={positions}
+                current={current}
+                players={players}
+                arcs={arcs}
+                ball={ball}
+              />
+              {camera && arcs.length > 0 && (
+                <div>
+                  <SectionLabel>Side view · rally {arcs[0]!.rally_id}</SectionLabel>
+                  <SideView
+                    length={state.court.length}
+                    netHeight={state.net_height_m}
+                    arcs={arcs}
+                    ball={ball}
+                  />
+                </div>
+              )}
+            </>
+          )}
+          {shownTab === 'rally' && (
+            <PositionsList
+              video={video}
+              positions={positions}
+              rallies={meta.rallies ?? []}
+              error={positionsQuery.error}
+              time={t}
+              currentId={current?.id ?? null}
+              onSeek={(seconds) => {
+                if (fps) seekFrame(Math.floor(seconds * fps));
+              }}
+            />
+          )}
+        </Card>
+      </div>
     </div>
   );
 }
