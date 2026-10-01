@@ -4,7 +4,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { API, apiUrl, errMsg } from '@/lib/api';
-import { formatActionTime, OUTSIDE_RALLY_KEY } from '@/lib/actionEditorModel';
+import { formatActionTime, OUTSIDE_RALLY_KEY, rallyAt } from '@/lib/actionEditorModel';
 import { scrollActionIntoView, scrollRallyTop } from '@/lib/sidebarScroll';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { ActionDot, EventRows, OutsideRow, RallyRow } from '@/components/action/RallyRows';
@@ -47,7 +47,7 @@ export function PositionsList({
 }) {
   const list = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
-  const liveRally = rallies.find((r) => time >= r.start && time < r.end)?.rally_id ?? null;
+  const liveRally = rallyAt(rallies, time)?.rally_id ?? null;
 
   // Entering a rally opens its group; a collapse mid-rally sticks.
   const [enteredRally, setEnteredRally] = useState<number | null>(null);

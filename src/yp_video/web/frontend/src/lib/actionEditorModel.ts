@@ -44,8 +44,13 @@ const normalizeRallyId = (value: unknown): number | null => {
   return Number.isInteger(id) && id > 0 ? id : null;
 };
 
+/** The rally holding `time` (seconds). Both ends belong to the rally: the
+ *  one rule for every page, matching the backend's readers. */
+export const rallyAt = <R extends { start: number; end: number }>(rallies: R[], time: number): R | null =>
+  rallies.find((rally) => time >= rally.start && time <= rally.end) ?? null;
+
 export const findRallyAtTime = (time: number, editor: ActionEditor): ActionRally | null =>
-  editor.rallies.find((rally) => time >= rally.start && time < rally.end) ?? null;
+  rallyAt(editor.rallies, time);
 
 export const findActionRally = (frame: number, editor: ActionEditor): ActionRally | null =>
   findRallyAtTime(frame / (editor.fps || 30), editor);

@@ -112,7 +112,7 @@ def rally_for_event(event: dict, fps: float, rallies: list[dict]) -> dict | None
         frame = parse_optional_float(event.get("frame")) or 0.0
         time = frame / fps if fps > 0 else 0.0
     for rally in rallies:
-        if rally["start"] <= time < rally["end"]:
+        if rally["start"] <= time <= rally["end"]:
             return rally
     existing_id = coerce_rally_id(event.get("rally_id"))
     if existing_id:

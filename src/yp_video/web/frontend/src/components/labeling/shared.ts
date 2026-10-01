@@ -1,6 +1,7 @@
 /** Types and helpers shared by the ReID Label page, its video player and
  *  its group board. */
 
+import { rallyAt } from '@/lib/actionEditorModel';
 import type { ReidRecord } from '@/types/api';
 
 /** The human verdict on one event's actor. "unreviewed" is the absence of
@@ -130,8 +131,7 @@ export const rallyOf = <T extends { frame: number; time?: number | null }>(
   event: T,
   fps: number,
 ): Rally | null => {
-  const t = event.time != null ? event.time : event.frame / fps;
-  return rallies.find((r) => t >= r.start && t <= r.end) ?? null;
+  return rallyAt(rallies, event.time != null ? event.time : event.frame / fps);
 };
 
 /** The tracklet an event's actor sits on, as a stable "rally:track" key. */

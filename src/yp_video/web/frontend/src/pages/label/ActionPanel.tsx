@@ -29,6 +29,7 @@ import {
   EMPTY_ACTION_EDITOR,
   OUTSIDE_RALLY_KEY,
   clamp,
+  findActionRally,
   findRallyAtTime,
   formatActionTime,
   hasActiveActionAnnotation,
@@ -153,13 +154,8 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, registerGu
       // that it is known, point the sidebar at the rally that holds it.
       //
       // Looked up by the handed-over time rather than the rounded frame: at a
-      // rally's first frame the rounding can land a hair before `start`. And
-      // spans are half-open everywhere else, but the Rally tab parks the
-      // playhead exactly ON a rally's end when it plays one through — arriving
-      // there means arriving in that rally, so fall back to the rally holding
-      // the frame before.
-      const step = 1 / (edRef.current.fps || 30);
-      const rally = findRallyAtTime(t, edRef.current) ?? findRallyAtTime(t - step, edRef.current);
+      // rally's first frame the rounding can land a hair before `start`.
+      const rally = findRallyAtTime(t, edRef.current);
       setSelectedRallyId(rally?.rally_id ?? 'all');
       setExpanded(rally ? String(rally.rally_id) : null);
       if (!rally) return;
@@ -413,8 +409,7 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, registerGu
   // The rally under the playhead, and the nearest action inside it. Both are
   // ids, so the effects below fire on CHANGE, not on every frame tick.
   const currentRallyId = useMemo(() => {
-    const t = frame / (ed.fps || 30);
-    return ed.rallies.find((r) => t >= r.start && t < r.end)?.rally_id ?? null;
+    return findActionRally(frame, ed)?.rally_id ?? null;
   }, [ed.rallies, ed.fps, frame]);
   const currentActionId = useMemo(() => {
     if (currentRallyId == null) return null;
@@ -711,8 +706,7 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, registerGu
                   const entries = eventsByRally(rally.rally_id);
                   const isOpen = expanded === String(rally.rally_id);
                   const sel = selectedRallyId === rally.rally_id;
-                  const t = frame / (ed.fps || 30);
-                  const live = t >= rally.start && t < rally.end;
+                  const live = currentRallyId === rally.rally_id;
                   return (
                     <div key={rally.rally_id} className="space-y-1.5">
                       <RallyRow
