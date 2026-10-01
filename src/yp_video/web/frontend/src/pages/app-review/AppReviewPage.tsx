@@ -13,6 +13,7 @@ import { API, apiFetch, apiUrl, errMsg } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { fieldCls } from '@/components/form/Field';
 import { Card } from '@/components/ui/Card';
+import { Tabs } from '@/components/ui/Tabs';
 import { ClipList } from './ClipList';
 import { ClipPlayer } from './ClipPlayer';
 import { FeedbackPanel } from './FeedbackPanel';
@@ -156,28 +157,16 @@ export function AppReviewPage() {
 
       {detail.data && preview && (
         <Card className="flex flex-col xl:max-h-[calc(100vh-120px)]">
-          <div className="-mt-1 mb-3 flex gap-1 border-b border-border">
-            {(
-              [
-                ['clips', '片段'],
-                ['info', '比賽資訊'],
-                ['review', `修正審核 ${detail.data.candidates.length}`],
-              ] as const
-            ).map(([key, label]) => (
-              <button
-                key={key}
-                onClick={() => setTab(key)}
-                className={cn(
-                  '-mb-px border-b-2 px-3 pb-2 text-xs font-medium',
-                  key === tab
-                    ? 'border-primary text-text-primary'
-                    : 'border-transparent text-text-secondary hover:text-text-primary',
-                )}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          <Tabs<Tab>
+            className="-mt-1 mb-3"
+            tabs={[
+              { key: 'clips', label: '片段' },
+              { key: 'info', label: '比賽資訊' },
+              { key: 'review', label: `修正審核 ${detail.data.candidates.length}` },
+            ]}
+            active={tab}
+            onChange={setTab}
+          />
           <div className="flex min-h-0 flex-1 flex-col overflow-auto">
             {tab === 'clips' && (
               <ClipList
