@@ -21,7 +21,8 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { RallyTimeline } from '@/components/editor/RallyTimeline';
 import type { EditorAnnotation } from '@/components/editor/AnnotationEditor';
-import { stepVideo, useVideoKeys } from './useVideoKeys';
+import { useVideoKeys } from './useVideoKeys';
+import { useFrameClock } from './useFrameClock';
 import type { ReidPlayers, ReidRecord } from '@/types/api';
 import { OUTSIDE, RallySidebar } from './RallySidebar';
 import { canConfirm, fmtTime, hintOf, rallyOf, trackColor, trackKeyOf, verdictOf, VERDICT, type ActorFix, type ActorHint, type ActorVerdict, type Rally, type SidebarAction, type TrackData, type TrackMasks } from './shared';
@@ -102,14 +103,18 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
   { src, videoName, clock, tracklets, fps, frameSize, records, actionEvents, matches, rallies, selectedRally, onSelectRally, onFixActor, onConfirmActor, confirmableIds, onConfirmRally, fixing = false, onJumpToCrop, trackLinks },
   ref,
 ) {
-  const videoRef = useRef<HTMLVideoElement>(null);
   const takeHandover = usePlayheadHandover(
     clock ? () => clock.read(videoName) : undefined,
     videoName,
   );
-  const [frame, setFrame] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [playing, setPlaying] = useState(false);
+  // The Action Label frame clock: with a rally selected, playback stops at
+  // its end, and play from there replays it.
+  const { videoRef, bindVideo, frame, playing, step, togglePlay } = useFrameClock({
+    fps,
+    numFrames: Math.round(duration * fps),
+    rally: selectedRally === 'all' ? null : rallies.find((r) => r.rally_id === selectedRally),
+  });
   const [showTracks, setShowTracks] = useState(false);
   // Expanded rally (or OUTSIDE) in the sidebar + last event jumped to — same
   // interaction as the Action Label rally list.
@@ -125,24 +130,6 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
     setSelectedEventId(null);
     setPickMode(false);
   }, [src]);
-  // Read inside the frame-clock callback without re-arming it.
-  const rallyRef = useRef<Rally | null>(null);
-  rallyRef.current = selectedRally === 'all' ? null : rallies.find((r) => r.rally_id === selectedRally) ?? null;
-
-  const togglePlay = () => {
-    const el = videoRef.current;
-    if (!el) return;
-    if (el.paused) {
-      // Parked at (or past) the selected rally's end the frame clock would
-      // pause again on the very first frame — play there replays the rally.
-      const r = rallyRef.current;
-      if (r && el.currentTime >= r.end - 1 / fps) el.currentTime = r.start + 0.5 / fps;
-      void el.play();
-    } else {
-      el.pause();
-    }
-  };
-
   useImperativeHandle(ref, () => ({
     jumpToEvent: (a: { id: string; frame: number; time: number | null }) => {
       const rally = seekEvent(a);
@@ -150,41 +137,6 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
       videoRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     },
   }));
-
-  // Frame clock via requestVideoFrameCallback — same approach as the Action
-  // Label editor, re-armed per presented frame.
-  const prevTimeRef = useRef(0);
-  useEffect(() => {
-    const el = videoRef.current;
-    if (!el) return;
-    let alive = true;
-    let id = 0;
-    const tick = (_now: number, meta: { mediaTime: number }) => {
-      if (!alive) return;
-      setFrame(Math.round(meta.mediaTime * fps));
-      // With a rally selected, playback stops at its end (Action Label rule) —
-      // but only when crossing it from inside; a playhead parked beyond the
-      // rally (event jumps, scrubs) must never trip it.
-      const r = rallyRef.current;
-      const prev = prevTimeRef.current;
-      prevTimeRef.current = meta.mediaTime;
-      if (r && !el.paused && prev >= r.start && prev < r.end && meta.mediaTime >= r.end) el.pause();
-      id = el.requestVideoFrameCallback(tick);
-    };
-    id = el.requestVideoFrameCallback(tick);
-    const onSeeked = () => {
-      prevTimeRef.current = el.currentTime;
-      // floor, not round: seeks park mid-frame ((f + 0.5) / fps), and the
-      // frame under a timestamp is floor(t·fps) — round would land on f+1.
-      setFrame(Math.floor(el.currentTime * fps));
-    };
-    el.addEventListener('seeked', onSeeked);
-    return () => {
-      alive = false;
-      el.cancelVideoFrameCallback(id);
-      el.removeEventListener('seeked', onSeeked);
-    };
-  }, [fps, src]);
 
   // Association Label passes onFixActor and gets the picker; ReID Label omits
   // it and gets a read-only player. Derived before the key handler so P can
@@ -194,9 +146,7 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
   // Space / ←→ are the Label panels' shared keys (useVideoKeys) — the same
   // contract as Action Label. P = the picking mode, inert on the read-only
   // side; text fields keep it for typing.
-  useVideoKeys(togglePlay, (n) => {
-    if (videoRef.current) stepVideo(videoRef.current, fps, n);
-  });
+  useVideoKeys(togglePlay, step);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement | null)?.tagName;
@@ -466,7 +416,7 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
       const el = videoRef.current;
       if (el) el.currentTime = rally.start + 0.5 / fps;
     },
-    [onSelectRally, fps],
+    [onSelectRally, fps, videoRef],
   );
   const selectAllRallies = useCallback(() => onSelectRally('all'), [onSelectRally]);
 
@@ -487,7 +437,7 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
       }
       return rally;
     },
-    [rallies, fps, onSelectRally],
+    [rallies, fps, onSelectRally, videoRef],
   );
 
   const timelineAnnotations = useMemo<EditorAnnotation[]>(
@@ -504,13 +454,10 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
           <div className="overflow-hidden rounded-2xl bg-black shadow-lg shadow-black/40 ring-1 ring-white/[0.06]">
             <div className="relative mx-auto" style={{ aspectRatio: `${aspect}`, maxWidth: `calc(var(--video-max-h, 45vh) * ${aspect})` }}>
               <video
-                ref={videoRef}
+                ref={bindVideo}
                 src={src}
                 preload="metadata"
                 onClick={pickMode ? undefined : togglePlay}
-                onPlay={() => setPlaying(true)}
-                onPause={() => setPlaying(false)}
-                onEnded={() => setPlaying(false)}
                 onTimeUpdate={(e) => {
                   if (hasRealTime(e.currentTarget)) {
                     clock?.write(videoName, e.currentTarget.currentTime);

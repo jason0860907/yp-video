@@ -45,6 +45,8 @@ import { ACTION_COLORS, actionColor } from '@/lib/actionColors';
 import type { ActionAnnotationData, ActionEvent, ActionVideo } from '@/types/api';
 import { actionStatus } from '@/lib/labelStatus';
 import { useVideoKeys } from '@/components/labeling/useVideoKeys';
+import { useFrameClock } from '@/components/labeling/useFrameClock';
+import { FrameStats, KeyHints, PlayerTransport } from '@/components/labeling/PlayerTransport';
 import { STATUS_OPTIONS, type LabelSource, type LoadedSource, type ModeDescriptor, type PlaybackClock, type RegisterGuard } from './mode';
 
 const ACTION_AUTOSAVE_MS = 2000;
@@ -68,7 +70,6 @@ export const ACTION_MODE: ModeDescriptor = {
 };
 
 export function ActionPanel({ video, source = 'annotation', onLoaded, registerGuard, clock }: { video: string; source?: LabelSource; onLoaded?: (s: LoadedSource) => void; registerGuard?: RegisterGuard; clock?: PlaybackClock }) {
-  const videoRef = useRef<HTMLVideoElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   // The rally list's scroll box — the panel pins rows to its top through it.
   const listRef = useRef<HTMLDivElement>(null);
@@ -86,87 +87,34 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, registerGu
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedRallyId, setSelectedRallyId] = useState<number | 'all'>('all');
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [frame, setFrame] = useState(0);
-  const [playing, setPlaying] = useState(false);
 
   const takeHandover = usePlayheadHandover(
     clock ? () => clock.read(video) : undefined,
     video,
   );
 
-  // Frame-clock refs (read inside the requestVideoFrameCallback loop).
-  const lockedFrame = useRef<number | null>(null);
-  const presented = useRef<number | null>(null);
-  const cbId = useRef<number | null>(null);
-  const gen = useRef(0);
   const edRef = useRef(ed);
   edRef.current = ed;
-  const selRallyRef = useRef(selectedRallyId);
-  selRallyRef.current = selectedRallyId;
 
   const videosQuery = useQuery({ queryKey: ['action-videos'], queryFn: () => apiFetch<ActionVideo[]>(API.actionAnnotate.videos) });
   const labelsQuery = useQuery({ queryKey: ['action-labels'], queryFn: () => apiFetch<{ labels?: string[] }>(API.actionAnnotate.labels) });
   const labels = labelsQuery.data?.labels ?? DEFAULT_ACTION_LABELS;
 
-  // ── Frame clock ──
-  const computeFrame = () => {
-    const e = edRef.current;
-    if (lockedFrame.current !== null) return clamp(lockedFrame.current, 0, Math.max(0, e.numFrames - 1));
-    const el = videoRef.current;
-    const t = presented.current != null && Number.isFinite(presented.current) ? presented.current : el?.currentTime || 0;
-    return clamp(Math.round(t * (e.fps || 30)), 0, Math.max(0, e.numFrames - 1));
-  };
-  const prevPlayFrame = useRef(0);
-  const refreshPlayhead = () => {
-    const f = computeFrame();
-    setFrame(f);
-    const prev = prevPlayFrame.current;
-    prevPlayFrame.current = f;
-    // Auto-pause at the end of the selected rally during playback, so a rally
-    // doesn't run on into the next one — but only when crossing the end from
-    // inside the rally; a playhead parked beyond it must never trip this.
-    const el = videoRef.current;
-    const e = edRef.current;
-    const rid = selRallyRef.current;
-    if (!el || el.paused || rid === 'all' || !e.fps) return;
-    const rally = e.rallies.find((r) => r.rally_id === rid);
-    if (!rally) return;
-    const startFrame = Math.round(rally.start * e.fps);
-    const endFrame = Math.max(0, Math.ceil(rally.end * e.fps) - 1);
-    if (prev >= startFrame && prev < endFrame && f >= endFrame) {
-      el.pause();
-      seekFrame(endFrame);
-    }
-  };
-
-  useEffect(() => {
-    let alive = true;
-    const tick = () => {
-      const el = videoRef.current;
-      if (!el?.requestVideoFrameCallback) return;
-      const myGen = gen.current;
-      cbId.current = el.requestVideoFrameCallback((_n, meta) => {
-        if (!alive) return;
-        // A seek (or load) bumped the generation — restart the clock with the
-        // new generation instead of letting the loop die.
-        if (myGen !== gen.current) {
-          tick();
-          return;
-        }
-        if (!el.paused) lockedFrame.current = null;
-        if (Number.isFinite(meta?.mediaTime) && (lockedFrame.current === null || !el.paused)) presented.current = meta.mediaTime;
-        refreshPlayhead();
-        tick();
-      });
-    };
-    tick();
-    const poll = setInterval(refreshPlayhead, 120);
-    return () => {
-      alive = false;
-      clearInterval(poll);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // ── Frame clock ── (auto-pauses at the selected rally's end)
+  const {
+    videoRef,
+    bindVideo,
+    frame,
+    playing,
+    currentFrame: computeFrame,
+    seekFrame,
+    step: stepFrame,
+    togglePlay,
+  } = useFrameClock({
+    fps: ed.fps,
+    numFrames: ed.numFrames,
+    rally: selectedRallyId === 'all' ? null : ed.rallies.find((r) => r.rally_id === selectedRallyId),
+  });
 
   // Presigned video URLs expire and range requests can hang; reload the src
   // (which fetches a fresh URL) and seek back to where the user was.
@@ -175,57 +123,6 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, registerGu
     onRecover: () => toast.info('影片串流中斷，已自動重新載入'),
     onGiveUp: () => toast.error('影片重載後仍卡在同一處，已停止自動重試 — 請把 DevTools Console 的 [video-recovery] 記錄回報'),
   });
-
-  // Track play/pause so the timeline only follows the playhead during playback.
-  useEffect(() => {
-    const el = videoRef.current;
-    if (!el) return;
-    const onPlay = () => setPlaying(true);
-    const onPause = () => setPlaying(false);
-    el.addEventListener('play', onPlay);
-    el.addEventListener('pause', onPause);
-    el.addEventListener('ended', onPause);
-    return () => {
-      el.removeEventListener('play', onPlay);
-      el.removeEventListener('pause', onPause);
-      el.removeEventListener('ended', onPause);
-    };
-  }, []);
-
-  const seekFrame = (f: number) => {
-    const el = videoRef.current;
-    const e = edRef.current;
-    if (!el || !e.fps) return;
-    const target = clamp(f, 0, Math.max(0, e.numFrames - 1));
-    lockedFrame.current = target;
-    presented.current = target / e.fps;
-    gen.current += 1;
-    el.currentTime = e.duration > 0 ? clamp((target + 0.5) / e.fps, 0, e.duration) : Math.max(0, (target + 0.5) / e.fps);
-    setFrame(target);
-  };
-  const stepFrame = (d: number) => {
-    videoRef.current?.pause();
-    seekFrame((lockedFrame.current ?? computeFrame()) + d);
-  };
-  const togglePlay = () => {
-    const el = videoRef.current;
-    if (!el?.src) return;
-    if (el.paused) {
-      // Parked at the selected rally's end — refreshPlayhead would pause again
-      // on the very next tick, so play there means "replay the rally".
-      const rid = selRallyRef.current;
-      const { fps, rallies } = edRef.current;
-      const rally = rid === 'all' || !fps ? undefined : rallies.find((r) => r.rally_id === rid);
-      if (rally && computeFrame() >= Math.max(0, Math.ceil(rally.end * fps) - 1)) {
-        seekFrame(Math.round(rally.start * fps));
-      }
-      // Release any seek lock so the playhead tracks playback from frame one.
-      lockedFrame.current = null;
-      void el.play().catch((e) => toast.error(`Play failed: ${errMsg(e)}`));
-    } else {
-      el.pause();
-    }
-  };
 
   // ── On-video overlay ──
   // The wrap div carries the video's exact aspect ratio, so the video fills it
@@ -249,7 +146,7 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, registerGu
     const t = takeHandover();
     if (t == null) return;
     const arriveAt = () => {
-      const f = Math.round(t * (edRef.current.fps || 30));
+      const f = Math.floor(t * (edRef.current.fps || 30));
       seekFrame(f);
       // Arriving from another tab means arriving at a POSITION, not at rally 1.
       // load() had to guess before it knew where the playhead would land; now
@@ -365,9 +262,6 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, registerGu
       setSelectedId(null);
       setSelectedRallyId(next.rallies[0]?.rally_id ?? 'all');
       setExpanded(next.rallies[0] ? String(next.rallies[0].rally_id) : null);
-      lockedFrame.current = null;
-      presented.current = 0;
-      gen.current += 1;
       const el = videoRef.current;
       if (el) {
         el.pause();
@@ -375,7 +269,6 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, registerGu
         el.load();
       }
       loadWaveform(next.video, next.duration);
-      setFrame(0);
       toast.success(`Loaded ${next.events.length} event(s)`);
     } catch (e) {
       onLoaded?.('none');
@@ -692,7 +585,7 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, registerGu
               style={{ aspectRatio: `${aspect}`, maxWidth: `calc(var(--video-max-h, 45vh) * ${aspect})` }}
             >
               <video
-                ref={videoRef}
+                ref={bindVideo}
                 className={cn('block h-full w-full bg-black object-contain', pointMode && ed.video && 'cursor-crosshair')}
                 playsInline
                 preload="metadata"
@@ -752,38 +645,28 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, registerGu
               onJumpEvent={jumpToEvent}
             />
           </div>
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-            <span className="rounded-lg border border-border bg-surface-200/50 px-2.5 py-1 font-mono text-sm tabular-nums text-text-primary">
-              {formatActionTime(frame / (ed.fps || 30))} / f{frame}
-            </span>
-            <div className="flex items-center gap-2">
-              <Button size="sm" onClick={togglePlay}>
-                Play
-              </Button>
-              <Button size="sm" onClick={() => stepFrame(-1)}>
-                ◂
-              </Button>
-              <Button size="sm" onClick={() => stepFrame(1)}>
-                ▸
-              </Button>
-              <Button size="sm" intent={pointMode ? 'primary' : 'default'} onClick={() => setPointMode((m) => !m)} title="Point mode: click the video to drop the selected action">
-                {pointMode ? 'Point mode' : 'Review mode'}
-              </Button>
-              <Button size="sm" intent="primary" onClick={() => addEvent(0.5, 0.5)}>
-                Add center
-              </Button>
-            </div>
+          <PlayerTransport frame={frame} fps={ed.fps} playing={playing} onTogglePlay={togglePlay} onStep={stepFrame}>
+            <Button size="sm" intent={pointMode ? 'primary' : 'default'} onClick={() => setPointMode((m) => !m)} title="Point mode: click the video to drop the selected action">
+              {pointMode ? 'Point mode' : 'Review mode'}
+            </Button>
+            <Button size="sm" intent="primary" onClick={() => addEvent(0.5, 0.5)}>
+              Add center
+            </Button>
+          </PlayerTransport>
+          <div className="mt-2">
+            <FrameStats fps={ed.fps} numFrames={ed.numFrames} />
           </div>
-          <div className="mt-2 font-mono text-[11px] tabular-nums text-text-muted">{ed.video ? `${ed.fps.toFixed(3)} fps · ${ed.numFrames} frames` : ''}</div>
         </Card>
-        <p className="px-1 text-[11px] text-text-muted">
-          <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">1-6</kbd> label ·{' '}
-          <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">← →</kbd> frame ·{' '}
-          <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">Enter</kbd> add ·{' '}
-          <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">A S</kbd> nudge frame ·{' '}
-          <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">P</kbd> point mode ·{' '}
-          <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">Del</kbd> remove
-        </p>
+        <KeyHints
+          keys={[
+            ['1-6', 'label'],
+            ['← →', 'frame'],
+            ['Enter', 'add'],
+            ['A S', 'nudge frame'],
+            ['P', 'point mode'],
+            ['Del', 'remove'],
+          ]}
+        />
       </div>
 
       {/* Rallies + events */}

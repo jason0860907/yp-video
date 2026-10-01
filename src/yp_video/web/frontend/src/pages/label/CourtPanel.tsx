@@ -10,14 +10,13 @@
  *  No dirty guard: every mark is saved the moment it lands.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { API, apiFetch, apiUrl, errMsg } from '@/lib/api';
 import { hasRealTime, seekWhenSeekable, usePlayheadHandover } from '@/lib/playheadHandover';
 import { ActionTimeline, type TimelineEvent } from '@/components/editor/ActionTimeline';
 import { ACTION_COLORS } from '@/lib/actionColors';
-import { formatActionTime } from '@/lib/actionEditorModel';
 import { useActionWaveform } from '@/lib/useActionWaveform';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -25,8 +24,10 @@ import { SectionLabel } from '@/components/ui/SectionLabel';
 import { Tabs } from '@/components/ui/Tabs';
 import { cn } from '@/lib/cn';
 import { toast } from '@/components/feedback/toast';
-import { stepVideo, useVideoKeys } from '@/components/labeling/useVideoKeys';
+import { useVideoKeys } from '@/components/labeling/useVideoKeys';
 import { buildTrackBoxes, nearestFrame } from '@/components/labeling/masks';
+import { useFrameClock } from '@/components/labeling/useFrameClock';
+import { FrameStats, KeyHints, PlayerTransport } from '@/components/labeling/PlayerTransport';
 import { useVideoLabelingData } from '@/components/labeling/useVideoLabelingData';
 import type { MapDot } from './court/CourtMap';
 import { MapCard } from './court/MapCard';
@@ -104,11 +105,9 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
   const { meta, tracksQuery } = useVideoLabelingData(video);
   const fps = meta.fps;
 
-  const videoRef = useRef<HTMLVideoElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const [aspect, setAspect] = useState(16 / 9);
   const [frameSize, setFrameSize] = useState<[number, number] | null>(null);
-  const [frame, setFrame] = useState(0);
   const [armed, setArmed] = useState<string | null>(null);
   const [tool, setTool] = useState<'mark' | 'line'>('mark');
   // null until toggled: then the video opens with the margin exactly when a
@@ -126,40 +125,14 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
   const [tab, setTab] = useState<SideTab>('landmarks');
   const takeHandover = usePlayheadHandover(clock ? () => clock.read(video) : undefined, video);
 
-  const [playing, setPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
   const { waveform, loadWaveform } = useActionWaveform();
-
-  const togglePlay = () => {
-    const el = videoRef.current;
-    if (!el) return;
-    if (el.paused) void el.play();
-    else el.pause();
-  };
-  const step = (n: number) => {
-    if (videoRef.current && fps) stepVideo(videoRef.current, fps, n);
-  };
-  const seekFrame = (f: number) => {
-    const el = videoRef.current;
-    if (el && fps) el.currentTime = (Math.max(0, f) + 0.5) / fps;
-  };
+  const numFrames = fps ? Math.round(duration * fps) : 0;
+  const { videoRef, bindVideo, frame, playing, seekFrame, step, togglePlay } = useFrameClock({
+    fps: fps ?? 0,
+    numFrames,
+  });
   useVideoKeys(togglePlay, step);
-
-  // Playhead → frame, every painted frame while playing. Bound through the
-  // <video>'s own onPlay/onSeeked: the element mounts only once the
-  // calibration has loaded, after any mount-time effect has already run.
-  const raf = useRef(0);
-  const followPlayhead = () => {
-    const el = videoRef.current;
-    if (!el || !fps) return;
-    cancelAnimationFrame(raf.current);
-    const tick = () => {
-      setFrame(Math.round(el.currentTime * fps));
-      if (!el.paused) raf.current = requestAnimationFrame(tick);
-    };
-    raf.current = requestAnimationFrame(tick);
-  };
-  useEffect(() => () => cancelAnimationFrame(raf.current), []);
 
   const reach = state?.outside_frame ?? 0;
   const hasOutsideMark = Object.values(state?.points ?? {}).some(
@@ -402,7 +375,7 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
                   }}
                 >
                   <video
-                    ref={videoRef}
+                    ref={bindVideo}
                     src={apiUrl(API.actionAnnotate.video(video))}
                     className={cn(
                       'block h-full w-full bg-black object-contain',
@@ -421,12 +394,6 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
                       const at = takeHandover();
                       if (at != null) seekWhenSeekable(el, at);
                     }}
-                    onPlay={() => {
-                      setPlaying(true);
-                      followPlayhead();
-                    }}
-                    onPause={() => setPlaying(false)}
-                    onSeeked={followPlayhead}
                     onTimeUpdate={(e) => {
                       if (hasRealTime(e.currentTarget))
                         clock?.write(video, e.currentTarget.currentTime);
@@ -467,7 +434,7 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
             <ActionTimeline
               duration={duration}
               fps={fps ?? 0}
-              numFrames={fps ? Math.round(duration * fps) : 0}
+              numFrames={numFrames}
               frame={frame}
               rallies={meta.rallies ?? []}
               events={timelineEvents}
@@ -483,90 +450,68 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
               }}
             />
           </div>
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-            <span className="rounded-lg border border-border bg-surface-200/50 px-2.5 py-1 font-mono text-sm tabular-nums text-text-primary">
-              {formatActionTime(t)} / f{frame}
-            </span>
-            <div className="flex flex-wrap items-center gap-2">
-              <Button size="sm" onClick={togglePlay}>
-                {playing ? 'Pause' : 'Play'}
-              </Button>
-              <Button size="sm" onClick={() => step(-1)}>
-                ◂
-              </Button>
-              <Button size="sm" onClick={() => step(1)}>
-                ▸
-              </Button>
-              <span className="inline-flex items-center gap-1">
-                <Button
-                  size="sm"
-                  onClick={() => zoomTo(zoom / 1.5)}
-                  disabled={zoom <= 1}
-                  title="Zoom out"
-                >
-                  −
-                </Button>
-                <Button
-                  size="sm"
-                  onClick={() => zoomTo(1)}
-                  disabled={zoom <= 1}
-                  title="Wheel over the video zooms; drag (or right-drag while marking) pans. Click to reset."
-                >
-                  {zoom.toFixed(1)}×
-                </Button>
-                <Button
-                  size="sm"
-                  onClick={() => zoomTo(zoom * 1.5)}
-                  disabled={zoom >= MAX_ZOOM}
-                  title="Zoom in"
-                >
-                  +
-                </Button>
-              </span>
-              <label
-                className="inline-flex items-center gap-1.5 text-[11px] text-text-muted"
-                title="Size of every point drawn on the video"
+          <PlayerTransport
+            frame={frame}
+            fps={fps ?? 0}
+            playing={playing}
+            onTogglePlay={togglePlay}
+            onStep={step}
+          >
+            <span className="inline-flex items-center gap-1">
+              <Button
+                size="sm"
+                onClick={() => zoomTo(zoom / 1.5)}
+                disabled={zoom <= 1}
+                title="Zoom out"
               >
-                Point size
-                <input
-                  type="range"
-                  min={0.5}
-                  max={2.5}
-                  step={0.1}
-                  value={pointScale}
-                  onChange={(e) => setPointScale(Number(e.target.value))}
-                  className="w-20"
-                />
-              </label>
-            </div>
-          </div>
+                −
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => zoomTo(1)}
+                disabled={zoom <= 1}
+                title="Wheel over the video zooms; drag (or right-drag while marking) pans. Click to reset."
+              >
+                {zoom.toFixed(1)}×
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => zoomTo(zoom * 1.5)}
+                disabled={zoom >= MAX_ZOOM}
+                title="Zoom in"
+              >
+                +
+              </Button>
+            </span>
+            <label
+              className="inline-flex items-center gap-1.5 text-[11px] text-text-muted"
+              title="Size of every point drawn on the video"
+            >
+              Point size
+              <input
+                type="range"
+                min={0.5}
+                max={2.5}
+                step={0.1}
+                value={pointScale}
+                onChange={(e) => setPointScale(Number(e.target.value))}
+                className="w-20"
+              />
+            </label>
+          </PlayerTransport>
           <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
             <LayerToggles layers={layers} onChange={setLayers} />
-            <span className="font-mono text-[11px] tabular-nums text-text-muted">
-              {fps && duration
-                ? `${fps.toFixed(3)} fps · ${Math.round(duration * fps)} frames`
-                : ''}
-            </span>
+            <FrameStats fps={fps ?? 0} numFrames={numFrames} />
           </div>
         </Card>
-        <p className="px-1 text-[11px] text-text-muted">
-          <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">
-            Space
-          </kbd>{' '}
-          play ·{' '}
-          <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">
-            ← →
-          </kbd>{' '}
-          frame ·{' '}
-          <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">
-            Wheel
-          </kbd>{' '}
-          zoom ·{' '}
-          <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">
-            Drag
-          </kbd>{' '}
-          pan (right-drag while marking)
-        </p>
+        <KeyHints
+          keys={[
+            ['Space', 'play'],
+            ['← →', 'frame'],
+            ['Wheel', 'zoom'],
+            ['Drag', 'pan (right-drag while marking)'],
+          ]}
+        />
       </div>
 
       {/* Landmarks · Court · Rally */}

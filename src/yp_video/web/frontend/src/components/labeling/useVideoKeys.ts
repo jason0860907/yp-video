@@ -1,14 +1,5 @@
 import { useEffect, useRef } from 'react';
 
-/** Step a plain <video> by whole frames, paused and parked mid-frame so
- *  floor(t·fps) lands back on the target. For panels without a frame clock
- *  of their own. */
-export function stepVideo(el: HTMLVideoElement, fps: number, frames: number) {
-  el.pause();
-  const f = Math.max(0, Math.floor(el.currentTime * fps) + frames);
-  el.currentTime = (f + 0.5) / fps;
-}
-
 /** The Label panels' shared player keys: Space = play/pause, ←/→ = one frame
  *  (Shift: ten). Each panel supplies what those mean for its player — e.g.
  *  replay a rally from its start, or step through its own frame clock.
