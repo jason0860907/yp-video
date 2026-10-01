@@ -3,7 +3,9 @@
 Volleyball rules (attacks, how a point was decided) are not derived here: they
 arrive in the result as ``attacks`` / ``rally_outcomes``, computed once by
 ``yp_video.action.rules``. What is left is framing clips around them and
-applying the customer's corrections, which the App does on-device. This module
+applying the customer's corrections, which the App does on-device — with one
+exception, ``TouchIndex.inferred_loss_reason``, which the App also derives
+on-device and this module mirrors. This module
 mirrors ``Match+Actions.swift`` (``TouchIndex``, ``actionClips``,
 ``scoreClips``) and ``TouchContext.window``; the shared fixture
 ``VolleyIQTests/Fixtures/clip_windows.json`` holds both sides to one answer.
@@ -126,6 +128,14 @@ class TouchIndex:
         return position if rally and rally.index == rally_index else None
 
     def inferred_loss_reason(self, rally_index: int, removed: set[str]) -> str | None:
+        """A serve or receive error read off the rally's shape, after the
+        customer's removals.
+
+        A deliberate mirror of the App's ``TouchIndex.inferredLossReason``
+        (Match+Actions.swift), not a rule from ``action.rules``: it depends on
+        corrections only the App sees, so the App derives it on-device and
+        this port must answer the same.
+        """
         kinds = [
             kind(e)
             for e in self.events_in(rally_index)
