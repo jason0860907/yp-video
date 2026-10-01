@@ -26,6 +26,7 @@ import { Tabs } from '@/components/ui/Tabs';
 import { cn } from '@/lib/cn';
 import { toast } from '@/components/feedback/toast';
 import { stepVideo, useVideoKeys } from '@/components/labeling/useVideoKeys';
+import { buildTrackBoxes, nearestFrame } from '@/components/labeling/masks';
 import { useVideoLabelingData } from '@/components/labeling/useVideoLabelingData';
 import type { MapDot } from './court/CourtMap';
 import { MapCard } from './court/MapCard';
@@ -40,7 +41,6 @@ import { MAX_ZOOM, useZoom } from './court/useZoom';
 import {
   apply,
   ballAt,
-  boxesAt,
   footOf,
   rallyArcs,
   type CourtPositions,
@@ -289,9 +289,13 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
   const ball = ballAt(arcs, t);
 
   // Every tracked player's feet at the playhead, on the court.
+  const trackBoxes = useMemo(
+    () => buildTrackBoxes(tracksQuery.data?.tracklets ?? []),
+    [tracksQuery.data],
+  );
   const players = useMemo<MapDot[]>(() => {
     if (!fit || !frameSize) return [];
-    return boxesAt(tracksQuery.data?.tracklets ?? [], frame).flatMap(({ key, box }) => {
+    return (nearestFrame(trackBoxes, frame) ?? []).flatMap(({ key, box }) => {
       const at = apply(fit.image_to_court, footOf(box, frameSize));
       return at
         ? [
@@ -305,7 +309,7 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
           ]
         : [];
     });
-  }, [fit, frameSize, tracksQuery.data, frame]);
+  }, [fit, frameSize, trackBoxes, frame]);
 
   if (query.isPending)
     return (

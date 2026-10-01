@@ -2,8 +2,6 @@
  *  server solved (court/geometry.py). Solving stays server-side — one solver,
  *  which the iOS port will mirror — so nothing here inverts or fits. */
 
-import type { TrackData } from '@/components/labeling/shared';
-
 type Row = [number, number, number];
 export type Matrix = [Row, Row, Row];
 type Row4 = [number, number, number, number];
@@ -57,31 +55,6 @@ export function apply([a, b, c]: Matrix, [x, y]: Point): Point | null {
  *  floor, the one part of a person the homography can place. */
 export function footOf(box: [number, number, number, number], [w, h]: [number, number]): Point {
   return [(box[0] + box[2]) / 2 / w, box[3] / h];
-}
-
-/** Tracks sample every few frames: accept the nearest sample this close. */
-const TRACK_GAP = 5;
-
-/** Each tracklet's box at `frame`, if the tracklet covers it. */
-export function boxesAt(tracklets: TrackData['tracklets'], frame: number) {
-  const out: { key: string; box: [number, number, number, number] }[] = [];
-  for (const t of tracklets) {
-    const at = (i: number) => t.frames[i] ?? Number.NaN;
-    const n = t.frames.length;
-    if (!n || frame < at(0) - TRACK_GAP || frame > at(n - 1) + TRACK_GAP) continue;
-    let lo = 0;
-    let hi = n - 1;
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1;
-      if (at(mid) < frame) lo = mid + 1;
-      else hi = mid;
-    }
-    const i = lo > 0 && frame - at(lo - 1) < at(lo) - frame ? lo - 1 : lo;
-    const box = t.boxes[i];
-    if (box && Math.abs(at(i) - frame) <= TRACK_GAP)
-      out.push({ key: `${t.rally_id}:${t.track_id}`, box });
-  }
-  return out;
 }
 
 /** Display names, left-to-right along the court as seen from the camera. */
