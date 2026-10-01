@@ -5,8 +5,9 @@ import { useCallback, useMemo, useState } from 'react';
 import { cn } from '@/lib/cn';
 import { fieldCls } from '@/components/form/Field';
 import { Badge } from '@/components/ui/Badge';
+import { formatTimePrecise } from '@/lib/format';
 import type { Clip, Preview, Scope, Tag } from './types';
-import { KIND_LABEL, SIDE_LABEL, fmtTime, lossReasonLabel, playerLabel } from './types';
+import { KIND_LABEL, SIDE_LABEL, lossReasonLabel, playerLabel } from './types';
 
 const SCOPES: [Scope, string][] = [
   ['rallies', 'Rally'],
@@ -161,7 +162,7 @@ export function ClipList({
                   : `${KIND_LABEL[c.kind] ?? c.kind} #${c.index}`}
               </span>
               <span className="font-mono text-xs text-text-muted">
-                {fmtTime(c.start)}–{fmtTime(c.end)}
+                {formatTimePrecise(c.start, 1)}–{formatTimePrecise(c.end, 1)}
               </span>
             </span>
             <span className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-text-secondary">

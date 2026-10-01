@@ -9,10 +9,11 @@ import { API, apiFetch, errMsg } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { fieldCls } from '@/components/form/Field';
 import { Badge } from '@/components/ui/Badge';
+import { formatTimePrecise } from '@/lib/format';
 import { Button } from '@/components/ui/Button';
 import { Collapsible } from '@/components/ui/Collapsible';
 import type { Candidate, LibraryMatch, MatchDetail, Review } from './types';
-import { DECISION_LABEL, SIDE_LABEL, fmtDate, fmtTime, lossReasonLabel } from './types';
+import { DECISION_LABEL, SIDE_LABEL, fmtDate, lossReasonLabel } from './types';
 
 type Value = Record<string, unknown>;
 
@@ -23,20 +24,20 @@ function title(c: Candidate): string {
     const parts = [
       v.removed && '刪除',
       v.trim_start != null &&
-        `裁切 ${fmtTime(v.trim_start as number)}–${fmtTime(v.trim_end as number)}`,
+        `裁切 ${formatTimePrecise(v.trim_start as number, 1)}–${formatTimePrecise(v.trim_end as number, 1)}`,
       v.loss_reason && `失分：${lossReasonLabel(v.loss_reason as string)}`,
       (v.tag_ids as string[]).length > 0 && '收藏',
     ].filter(Boolean);
     const where =
       rest.startsWith('rally-') || rest.startsWith('unmapped-')
         ? '回合結尾'
-        : fmtTime(Number(rest));
+        : formatTimePrecise(Number(rest), 1);
     return `${scope === 'actions' ? 'Action' : 'Score'} ${where}：${parts.join('、') || '無變更'}`;
   }
   if (scope === 'rally') return `刪除 Rally ${rest}`;
   if (scope === 'rally_bounds') {
     const [b, a] = [v.before as [number, number], v.after as [number, number]];
-    return `Rally ${rest} 界線 ${fmtTime(b[0])}–${fmtTime(b[1])} → ${fmtTime(a[0])}–${fmtTime(a[1])}`;
+    return `Rally ${rest} 界線 ${formatTimePrecise(b[0], 1)}–${formatTimePrecise(b[1], 1)} → ${formatTimePrecise(a[0], 1)}–${formatTimePrecise(a[1], 1)}`;
   }
   if (scope === 'winner') {
     const side = (s: unknown) => (s ? (SIDE_LABEL[s as string] ?? String(s)) : '未知');

@@ -169,10 +169,5 @@ export const DECISION_LABEL: Record<string, string> = {
 
 export const playerLabel = (p: Player) => `#${p.number} ${p.name}`;
 
-export const fmtTime = (s: number) => {
-  const m = Math.floor(s / 60);
-  return `${m}:${(s - m * 60).toFixed(1).padStart(4, '0')}`;
-};
-
 export const fmtDate = (epoch: number) =>
   new Date(epoch * 1000).toLocaleString('zh-TW', { dateStyle: 'short', timeStyle: 'short' });
