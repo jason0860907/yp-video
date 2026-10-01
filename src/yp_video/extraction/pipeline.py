@@ -552,7 +552,6 @@ def _apply_actor_fix(
     # Clear the previous pick; each branch below re-fills what applies.
     record.update(status="miss", box=None, actor_box=None, score=None, crop=None)
     record.pop("crop_schema", None)
-    record.pop("keypoints", None)
     record.pop("crop_frame", None)
 
     target = label_target(stem, record, label) if label is not None else None

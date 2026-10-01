@@ -374,7 +374,6 @@ def _clear(record: dict) -> bool:
         resolution=ActorResolution.UNRESOLVED.value,
         crop_frame=_ABSENT,
         track=_ABSENT,
-        keypoints=_ABSENT,
     )
     if changed:
         record["actor_revision"] = int(record.get("actor_revision") or 0) + 1

@@ -423,8 +423,6 @@ def fix(
     # box pick that lands on a tracked player clears the flag by resolving.
     if label is not None and req.event_id in links.unresolved_labels(stem):
         record["actor_review_unresolved"] = True
-    for detection in record.get("detections") or []:
-        detection.pop("keypoints", None)
     track_link = None
     if tracks_store.tracks_path(stem).exists():
         ref = links.event_tracks(stem).get(req.event_id)

@@ -455,7 +455,7 @@ class FixEndpointTests(unittest.TestCase):
 
         tasks = _Tasks()
         result = actor_fix.ActorFixResult(
-            record={"id": "e1", "actor_revision": 3, "detections": [{"box": [1, 2, 3, 4], "keypoints": [[1, 2, 0.9]]}]},
+            record={"id": "e1", "actor_revision": 3, "detections": [{"box": [1, 2, 3, 4], "score": 0.9}]},
             refreshing_models=("clip-reid",),
             actor_revision=3,
         )
@@ -500,8 +500,6 @@ class FixEndpointTests(unittest.TestCase):
         )
         self.assertEqual(model, "clip-reid")
         self.assertEqual(response["record"]["actor_review"], "manual")
-        # Skeletons stay server-side; the picker only ever needed boxes.
-        self.assertNotIn("keypoints", response["record"]["detections"][0])
         self.assertIsNone(response["track_link"])
         self.assertEqual(response["refreshing_models"], ("clip-reid",))
         # The matrices not refreshed inline must be scheduled, or they stay

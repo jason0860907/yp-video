@@ -210,8 +210,6 @@ def cut(
         crop=crop_file.name,
         crop_schema=CROP_SCHEMA_VERSION,
     )
-    # Re-cropping also migrates records produced before pose data was removed.
-    record.pop("keypoints", None)
     # Which frame the pixels came from is part of pointing at them: absent
     # means "the event's own", and a stale value would send every later
     # reader — the tracklet link, the next re-crop — to the wrong frame.
