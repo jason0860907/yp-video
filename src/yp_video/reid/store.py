@@ -235,7 +235,7 @@ def players_path(stem: str) -> Path:
 
 # ── Who each unit depicts ─────────────────────────────────────────
 
-PLAYERS_SCHEMA_VERSION = 2
+PLAYERS_SCHEMA_VERSION = 3
 
 # Serializes read-modify-write of the players file: the UI auto-saves
 # assignments while a Done verdict lands, and interleaving would drop one edit.
@@ -245,24 +245,21 @@ _players_store = JsonSidecar(lambda stem: players_path(stem))
 
 @dataclass(frozen=True)
 class PlayersFile:
-    """``<stem>_players.json`` — who each unit depicts.
+    """``<stem>_players.json`` — who each event's actor is.
 
-        {"version": 2,
-         "tracks":      {"12:3": "王小明"},
+        {"version": 3,
          "assignments": {"<event_id>": "王小明"}}
 
-    ``tracks`` is the unit: name a tracklet once and every action it performed
-    carries the name. ``assignments`` exists for the two things a tracklet
-    cannot say — an event no tracklet reaches, and an event that contradicts
-    its tracklet, which is what a ByteTrack identity switch looks like from
-    the outside. An event override therefore WINS; a tracklet that gets
-    contradicted is evidence, not an error.
+    Names are stored per EVENT, never per tracklet. Tracklet ids are
+    renumbered by every tracking run, so a name keyed by "rally:track" lands
+    on whoever inherits the id — silently, and on every naming at once. The
+    board still names a tracklet in one gesture; it writes that name onto
+    each of the tracklet's events, which survive any re-track.
 
     The "labeling is finished" verdict is NOT here — every mode's Done flag
     lives in the shared sidecar (core/label_done.py).
     """
 
-    tracks: dict[str, str]
     assignments: dict[str, str]
 
 
@@ -288,29 +285,15 @@ def _clean(names: Mapping[str, str]) -> dict[str, str]:
 
 def load_players(stem: str) -> PlayersFile:
     data = _cached_players(stem)
-    return PlayersFile(
-        tracks=_clean(data.get("tracks") or {}),
-        assignments=_clean(data.get("assignments") or {}),
-    )
+    return PlayersFile(assignments=_clean(data.get("assignments") or {}))
 
 
-def save_players(
-    stem: str,
-    *,
-    tracks: Mapping[str, str] | None = None,
-    assignments: Mapping[str, str] | None = None,
-) -> None:
-    """Replace the naming maps. Omitted maps are left as they are."""
+def save_players(stem: str, assignments: Mapping[str, str]) -> None:
+    """Replace the event → name map."""
+    data: dict = {"version": PLAYERS_SCHEMA_VERSION}
+    if cleaned := _clean(assignments):
+        data["assignments"] = cleaned
     with _players_store.transaction():
-        data = _read_players(stem)
-        data["version"] = PLAYERS_SCHEMA_VERSION
-        if tracks is not None:
-            data["tracks"] = _clean(tracks)
-        if assignments is not None:
-            data["assignments"] = _clean(assignments)
-        for key in ("tracks", "assignments"):
-            if not data.get(key):
-                data.pop(key, None)
         _write_players(stem, data)
 
 
@@ -318,9 +301,7 @@ def drop_assignment(stem: str, event_id: str) -> None:
     """Forget who one event depicts.
 
     Called when its actor changes: the crop now shows a different person, so
-    the name attached to the old crop is not evidence about the new one. Only
-    the event's own override is dropped — its old tracklet keeps its name,
-    because that name was never a claim about this one event.
+    the name attached to the old crop is not evidence about the new one.
     """
     with _players_store.transaction():
         data = _read_players(stem)

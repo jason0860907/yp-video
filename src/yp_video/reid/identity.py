@@ -5,7 +5,7 @@ Two consumers, one data source (the per-video extraction records):
 - ``cluster``: unsupervised grouping of a video's embeddings — the zero-label
   view that shows whether the appearance features separate players at all.
 - Player assignments + ``match``: the user names events (usually by naming a
-  cluster), which defines per-player centroids; every unassigned event is then
+  cluster of units), which defines per-player centroids; every unassigned event is then
   matched to its nearest centroid with a cosine similarity score. The UI
   decides how to render low-similarity matches.
 
@@ -34,7 +34,6 @@ from yp_video.extraction.store import (
 )
 from yp_video.reid.embedder import DEFAULT_EMBEDDER
 from yp_video.reid.store import (
-    PlayersFile,
     load_embedding_matrix,
     load_players,
     require_embedding_path,
@@ -174,9 +173,10 @@ def _cut(links, matrix: np.ndarray, threshold: float) -> np.ndarray:
 
 # ── Units: what identity is actually about ───────────────────────
 # A name belongs to a PERSON, and the longest-lived handle we have on a
-# person is the tracklet that follows them through a rally. Naming a
-# tracklet names every action it performed; an event with no tracklet is
-# still its own unit, so downstream code sees one vocabulary, not two cases.
+# person is the tracklet that follows them through a rally, so the board
+# groups and names units. Names are still STORED per event (see
+# store.PlayersFile): a unit is a view over the current tracklets, rebuilt
+# from them on every read. An event with no tracklet is its own unit.
 
 UNIT_TRACK_PREFIX = "t:"
 UNIT_EVENT_PREFIX = "e:"
@@ -189,11 +189,6 @@ LinksFor = Callable[[str], Mapping[str, str]]
 def unit_key(event_id: str, track_key: str | None) -> str:
     """The unit an event belongs to — its tracklet, or itself."""
     return f"{UNIT_TRACK_PREFIX}{track_key}" if track_key else f"{UNIT_EVENT_PREFIX}{event_id}"
-
-
-def track_of_unit(key: str) -> str | None:
-    """The "rally:track" a unit stands for, or None for a lone event."""
-    return key[len(UNIT_TRACK_PREFIX):] if key.startswith(UNIT_TRACK_PREFIX) else None
 
 
 @dataclass(frozen=True)
@@ -304,66 +299,25 @@ def seeded_groups(
     return out, leftover
 
 
-def unit_names(units: Iterable[Unit], players: PlayersFile) -> dict[str, str]:
-    """unit key → player name, for the units that have one.
+def unit_names(units: Iterable[Unit], assignments: Mapping[str, str]) -> dict[str, str]:
+    """unit key → player name, for the units whose named events agree.
 
-    A tracklet's own name wins. Failing that, the unit takes the name its
-    events already agree on: naming events one by one is what labeling looked
-    like before units existed, and a tracklet whose every named crop says
-    "王小明" IS 王小明 — reading it any other way would make an entire video's
-    existing work vanish from the board. Events that DISAGREE name nobody:
-    that is an identity switch mid-track, and picking a winner would bury it.
+    A tracklet whose every named crop says "王小明" IS 王小明. Events that
+    DISAGREE name nobody: that is an identity switch mid-track, and picking a
+    winner would bury it. Unnamed events in an agreeing unit inherit the name
+    on the board, and the next save writes it onto them.
     """
     out: dict[str, str] = {}
     for unit in units:
-        track = track_of_unit(unit.key)
-        if track is not None and track in players.tracks:
-            out[unit.key] = players.tracks[track]
-            continue
-        named = {
-            players.assignments[event_id]
-            for event_id in unit.event_ids
-            if event_id in players.assignments
-        }
+        named = {assignments[e] for e in unit.event_ids if e in assignments}
         if len(named) == 1:
             out[unit.key] = next(iter(named))
     return out
 
 
-def resolve_names(
-    event_ids: Iterable[str], links: Mapping[str, str], players: PlayersFile
-) -> dict[str, str]:
-    """event id → player name. The one place precedence is decided.
-
-    An explicit assignment wins over the tracklet's name: it is the only way
-    to say "this tracklet is right about everything except here".
-    """
-    out: dict[str, str] = {}
-    for event_id in event_ids:
-        if event_id in players.assignments:
-            out[event_id] = players.assignments[event_id]
-            continue
-        track = links.get(event_id)
-        if track and track in players.tracks:
-            out[event_id] = players.tracks[track]
-    return out
-
-
-def load_assignments(stem: str, links: Mapping[str, str] | None = None) -> dict[str, str]:
-    """Every named event, tracklet names expanded across their events.
-
-    ``links`` omitted means "only what is named explicitly" — correct for
-    callers that have no tracklets to expand, and NOT a silent default: with
-    tracklet names present it would under-report, so callers that can pass it
-    must.
-    """
-    players = load_players(stem)
-    if links is None:
-        return dict(players.assignments)
-    ids = set(players.assignments) | {
-        event_id for event_id, track in links.items() if track in players.tracks
-    }
-    return resolve_names(ids, links, players)
+def load_assignments(stem: str) -> dict[str, str]:
+    """Every named event of one video."""
+    return dict(load_players(stem).assignments)
 
 
 def match(

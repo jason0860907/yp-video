@@ -96,7 +96,7 @@ def _candidates(groups: Sequence[SessionGroup], masked: bool, links_for: LinksFo
     for group in groups:
         for stem in group.stems:
             links = links_for(stem) if links_for else {}
-            assignments = load_assignments(stem, links or None)
+            assignments = load_assignments(stem)
             meta, records = read_jsonl_cached(records_path(stem))
             records = labelable(records, stem, float(meta.get("fps") or 0))
             source_dir = masked_crop_dir(stem) if masked else crop_dir(stem)

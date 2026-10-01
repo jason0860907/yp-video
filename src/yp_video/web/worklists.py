@@ -201,9 +201,7 @@ def reid_videos() -> list[dict]:
             continue
         players = reid_store.load_players(f.stem)
         embedded = reid_store.embedded_models(f.stem)
-        player_count = len(
-            set(players.tracks.values()) | set(players.assignments.values())
-        )
+        player_count = len(set(players.assignments.values()))
         done = label_done.is_done(f.stem, "reid")
         # Embeddings are the machine's prep work — computed, nobody grouped.
         status = ("done" if done

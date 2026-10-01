@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 
 from yp_video.config import REID_ANNOTATIONS_DIR
 from yp_video.core import label_done
-from yp_video.reid.identity import LinksFor, load_assignments
+from yp_video.reid.identity import load_assignments
 from yp_video.reid.store import PLAYERS_SUFFIX
 
 
@@ -48,7 +48,7 @@ class SessionGroup:
         return len(self.stems) == 1
 
 
-def labeled_stems(*, done_only: bool = False, links_for: LinksFor | None = None) -> list[str]:
+def labeled_stems(*, done_only: bool = False) -> list[str]:
     """Video stems with at least one player assignment, sorted.
 
     ``done_only`` keeps only videos the user marked finished on the Label page
@@ -62,7 +62,7 @@ def labeled_stems(*, done_only: bool = False, links_for: LinksFor | None = None)
         p.name[: -len(PLAYERS_SUFFIX)]
         for p in REID_ANNOTATIONS_DIR.glob(f"*{PLAYERS_SUFFIX}")
     ]
-    keep = (s for s in stems if load_assignments(s, links_for(s) if links_for else None))
+    keep = (s for s in stems if load_assignments(s))
     if done_only:
         keep = (s for s in keep if label_done.is_done(s, "reid"))
     return sorted(keep)
@@ -72,7 +72,6 @@ def build_sessions(
     stems: Sequence[str] | None = None,
     *,
     done_only: bool = False,
-    links_for: LinksFor | None = None,
 ) -> list[SessionGroup]:
     """Group videos by shared player names (union-find).
 
@@ -82,20 +81,13 @@ def build_sessions(
 
     ``done_only`` restricts the default stem set to finished videos; it is
     ignored when ``stems`` is passed explicitly (the caller owns membership).
-
-    ``links_for`` supplies each video's event→tracklet map so a name given to
-    a whole tracklet counts for every event on it. Omitted, only explicitly
-    named events count — correct before any tracklet has been named, and an
-    undercount after, which is why the routers pass it.
     """
     stems = (
         list(stems)
         if stems is not None
-        else labeled_stems(done_only=done_only, links_for=links_for)
+        else labeled_stems(done_only=done_only)
     )
-    assignments = {
-        s: load_assignments(s, links_for(s) if links_for else None) for s in stems
-    }
+    assignments = {s: load_assignments(s) for s in stems}
 
     # name -> stems that use it; a name in two stems links them.
     by_name: dict[str, list[str]] = {}

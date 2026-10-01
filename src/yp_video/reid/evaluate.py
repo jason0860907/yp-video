@@ -29,7 +29,6 @@ from dataclasses import asdict, dataclass
 import numpy as np
 
 from yp_video.reid.identity import (
-    LinksFor,
     cluster_sweep,
     load_assignments,
     load_embeddings,
@@ -314,7 +313,7 @@ def _nice_step(span: float) -> float:
 # ── evaluation ───────────────────────────────────────────────────────────
 
 
-def gather(stems: Sequence[str], model: str, links_for: LinksFor | None = None):
+def gather(stems: Sequence[str], model: str):
     """(matrix, pids, names, stem_idx, drops) for these videos under one model.
 
     load_embeddings already filters to embedded, non-SKIP records and
@@ -328,7 +327,7 @@ def gather(stems: Sequence[str], model: str, links_for: LinksFor | None = None):
     embedded_ids: set[str] = set()
 
     for i, stem in enumerate(stems):
-        assignments = load_assignments(stem, links_for(stem) if links_for else None)
+        assignments = load_assignments(stem)
         n_assigned += len(assignments)
         records, matrix = load_embeddings(stem, model=model)
         for row, record in enumerate(records):
@@ -359,11 +358,11 @@ def gather(stems: Sequence[str], model: str, links_for: LinksFor | None = None):
 
 
 def evaluate_video(
-    stem: str, model: str, links_for: LinksFor | None = None
+    stem: str, model: str
 ) -> tuple[VideoEval, np.ndarray, np.ndarray] | None:
     """One video's evaluation, plus its (matrix, pids) so a caller pooling
     across videos doesn't have to gather them a second time."""
-    matrix, pids, _names, _stem_idx, drops = gather([stem], model, links_for)
+    matrix, pids, _names, _stem_idx, drops = gather([stem], model)
     if len(matrix) < 2:
         return None
     if len(matrix) > MAX_GROUP_CROPS:
@@ -388,7 +387,7 @@ def evaluate_video(
 
 
 def cross_video_eval(
-    group: SessionGroup, model: str, links_for: LinksFor | None = None
+    group: SessionGroup, model: str
 ) -> dict | None:
     """Does an identity survive into another recording of the same session?
 
@@ -400,7 +399,7 @@ def cross_video_eval(
     """
     if len(group.stems) < 2:
         return None
-    matrix, pids, _names, stem_idx, _drops = gather(group.stems, model, links_for)
+    matrix, pids, _names, stem_idx, _drops = gather(group.stems, model)
     if len(matrix) < 2:
         return None
     q = stem_idx == 0
@@ -447,7 +446,6 @@ def _pooled_threshold(collected: list[tuple[np.ndarray, np.ndarray]]) -> Thresho
 def evaluate_models(
     groups: Sequence[SessionGroup],
     models: Sequence[str],
-    links_for: LinksFor | None = None,
 ) -> dict:
     """The /performance payload: per-VIDEO scores plus a cross-video section.
 
@@ -469,7 +467,7 @@ def evaluate_models(
             if model not in embedded_models(stem):
                 skipped.append(stem)
                 continue
-            result = evaluate_video(stem, model, links_for)
+            result = evaluate_video(stem, model)
             if result is None:
                 skipped.append(stem)
                 continue

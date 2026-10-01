@@ -85,9 +85,9 @@ def status() -> dict:
     labeled are surfaced only as ``pending_videos`` so the page can nudge the
     user to finish them, never as training material.
     """
-    groups = sessions.build_sessions(done_only=True, links_for=track_keys)
+    groups = sessions.build_sessions(done_only=True)
     ready = [stem for g in groups for stem in g.stems]
-    pending = len(sessions.labeled_stems(links_for=track_keys)) - len(ready)
+    pending = len(sessions.labeled_stems()) - len(ready)
     registry = build_embedders()
     return {
         "sessions": [_session_payload(g) for g in groups],
@@ -139,7 +139,7 @@ async def performance(model: str | None = None) -> dict:
     Note this takes ``model=`` rather than the other train routers' ``run=``:
     there are no training runs here yet, there are embedders.
     """
-    groups = sessions.build_sessions(done_only=True, links_for=track_keys)
+    groups = sessions.build_sessions(done_only=True)
     if not groups:
         return {"models": [], "evaluated_at": time.time()}
     registry = list(build_embedders())
@@ -149,7 +149,7 @@ async def performance(model: str | None = None) -> dict:
         registry = [model]
 
     def compute() -> dict:
-        return {**evaluate.evaluate_models(groups, registry, track_keys), "evaluated_at": time.time()}
+        return {**evaluate.evaluate_models(groups, registry), "evaluated_at": time.time()}
 
     try:
         # Off the event loop: numpy holds the GIL for the matmuls.
@@ -163,9 +163,9 @@ async def performance(model: str | None = None) -> dict:
 
 
 def _plan(split_mode: str, test_ratio: float, seed: int, masked: bool):
-    groups = sessions.build_sessions(done_only=True, links_for=track_keys)
+    groups = sessions.build_sessions(done_only=True)
     if not groups:
-        pending = len(sessions.labeled_stems(links_for=track_keys))
+        pending = len(sessions.labeled_stems())
         if pending:
             raise HTTPException(
                 400,

@@ -191,9 +191,8 @@ def clusters(
 
 
 class SavePlayersRequest(StrictModel):
-    """The naming maps as the board holds them (see store.PlayersFile)."""
+    """Every named event as the board holds them (see store.PlayersFile)."""
 
-    tracks: dict[str, str] = Field(default_factory=dict)
     assignments: dict[str, str] = Field(default_factory=dict)
 
 
@@ -201,24 +200,22 @@ class SavePlayersRequest(StrictModel):
 def get_players(name: str, model: str = DEFAULT_EMBEDDER) -> dict:
     """Saved identities + nearest-centroid match for every unit."""
     stem = Path(unquote(name)).stem
-    players = store.load_players(stem)
-    unit_links = links.track_keys(stem)
+    assignments = store.load_players(stem).assignments
     matches: dict[str, dict] = {}
     names: dict[str, str] = {}
-    if players.tracks or players.assignments:
+    if assignments:
         records, matrix = _load_or_http(
             lambda: identity.load_embeddings(
                 stem, model=_validated_fresh_model(stem, model)
             )
         )
-        units, unit_matrix = identity.unit_embeddings(records, matrix, unit_links)
-        names = identity.unit_names(units, players)
+        units, unit_matrix = identity.unit_embeddings(records, matrix, links.track_keys(stem))
+        names = identity.unit_names(units, assignments)
         matches = identity.match(units, unit_matrix, names)
     return {
-        "tracks": players.tracks,
-        "assignments": players.assignments,
+        "assignments": assignments,
         "unit_names": names,
-        "players": sorted(set(players.tracks.values()) | set(players.assignments.values())),
+        "players": sorted(set(assignments.values())),
         "matches": matches,
     }
 
@@ -245,27 +242,19 @@ def put_done(name: str, req: DoneRequest) -> dict:
 
 
 def _naming_rows(players) -> list[dict]:
-    """The two naming maps as one list of records, for auditing.
-
-    Tracks and assignments are keyed independently, so the scope prefix keeps
-    a track and an event that share a key from looking like the same item.
-    """
-    return [
-        {"id": f"track:{k}", "name": v} for k, v in players.tracks.items()
-    ] + [
-        {"id": f"event:{k}", "name": v} for k, v in players.assignments.items()
-    ]
+    """The naming map as a list of records, for auditing."""
+    return [{"id": k, "name": v} for k, v in players.assignments.items()]
 
 
 @router.put("/players/{name}")
 def put_players(name: str, req: SavePlayersRequest) -> dict:
-    """Persist the naming maps. Returns them without matches — a save must
+    """Persist the event names. Returns them without matches — a save must
     succeed even when the current model's matrix is missing."""
     stem = Path(unquote(name)).stem
     if not extraction_store.records_path(stem).exists():
         raise HTTPException(404, f"No extraction records for {stem}")
     before = _naming_rows(store.load_players(stem))
-    store.save_players(stem, tracks=req.tracks, assignments=req.assignments)
+    store.save_players(stem, req.assignments)
     sync_to_r2(store.players_path(stem), "reid/annotations")
     # Read back rather than trusting the request: save_players cleans empty
     # names out, so the request is not what landed.
@@ -274,13 +263,11 @@ def put_players(name: str, req: SavePlayersRequest) -> dict:
         before=before,
         after=_naming_rows(store.load_players(stem)),
         key=lambda r: r["id"],
-        tracks=len(req.tracks),
         assignments=len(req.assignments),
     )
     return {
-        "tracks": req.tracks,
         "assignments": req.assignments,
-        "players": sorted(set(req.tracks.values()) | set(req.assignments.values())),
+        "players": sorted(set(req.assignments.values())),
     }
 
 

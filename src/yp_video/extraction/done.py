@@ -20,7 +20,6 @@ from yp_video.actor import labels as actor_labels
 from yp_video.actor.labels import ActorLabel
 from yp_video.core import label_done
 from yp_video.core.jsonl import read_jsonl_cached
-from yp_video.extraction.links import track_keys
 from yp_video.extraction.store import labelable, records_path
 from yp_video.reid import identity
 
@@ -32,12 +31,12 @@ def confirmable_actors(
 
     Here the endorsement is the player name: naming an identity means the
     user looked at that crop and called the person by name, which is also a
-    statement that the right person was cropped. A name given to the whole
-    tracklet counts — it was given while looking at these crops. An unnamed
-    auto pick is output nobody has looked at, so Done leaves it alone; the
-    Association Label page confirms those, on its own evidence.
+    statement that the right person was cropped. Naming a whole tracklet
+    writes the name onto each of its events, so it counts the same. An
+    unnamed auto pick is output nobody has looked at, so Done leaves it
+    alone; the Association Label page confirms those, on its own evidence.
     """
-    assignments = identity.load_assignments(stem, track_keys(stem))
+    assignments = identity.load_assignments(stem)
     return {
         event_id: label
         for event_id, label in actor_labels.confirmations_for(records).items()

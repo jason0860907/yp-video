@@ -217,21 +217,19 @@ export function useGroupBoard({ picked, embedder, threshold, clusters, units, un
         return { ...g, name };
       });
 
-      // A unit key says where its name belongs: a tracklet name covers every
-      // action on the track, an event name covers just that event.
-      const nextTracks: Record<string, string> = {};
+      // Names are stored per event: a tracklet id is renumbered by every
+      // re-track, an event id is not. Naming a unit names each of its events.
       const nextAssignments: Record<string, string> = {};
       for (const g of named) {
         const name = g.name.trim();
         if (!name) continue;
         for (const key of g.unitKeys) {
-          if (key.startsWith('t:')) nextTracks[key.slice(2)] = name;
-          else nextAssignments[key.slice(2)] = name;
+          for (const id of eventsOf(key)) nextAssignments[id] = name;
         }
       }
       await apiFetch(API.reid.players(picked, embedder), {
         method: 'PUT',
-        body: { tracks: nextTracks, assignments: nextAssignments },
+        body: { assignments: nextAssignments },
       });
       // Patch the minted placeholders into whatever the board looks like NOW —
       // never replace the array wholesale, edits may have landed mid-PUT and a
@@ -243,10 +241,8 @@ export function useGroupBoard({ picked, embedder, threshold, clusters, units, un
       if (editSeq.current === seq) setDirty(false);
       await qc.invalidateQueries({ queryKey: ['reid-players', picked] });
       if (!auto) {
-        const named = { ...nextTracks, ...nextAssignments };
         toast.success(
-          `Saved ${new Set(Object.values(named)).size} player(s) over ` +
-            `${Object.keys(nextTracks).length} tracklet(s) and ` +
+          `Saved ${new Set(Object.values(nextAssignments)).size} player(s) over ` +
             `${Object.keys(nextAssignments).length} event(s)`,
         );
       }

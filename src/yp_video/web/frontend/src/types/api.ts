@@ -553,13 +553,10 @@ export interface ReidClusters {
 
 /** Saved identities + nearest-centroid matches for one video.
  *
- *  Names live on the unit: `tracks` names a tracklet (and with it every
- *  action it performed), `assignments` names a single event — for events no
- *  tracklet reaches, and for the ones that contradict their tracklet, which
- *  is what an identity switch looks like. An event name WINS over its
- *  tracklet's. `unit_names` is the two resolved onto units. */
+ *  Names are stored per event (`assignments`); tracklet ids do not survive a
+ *  re-track. `unit_names` names each unit whose named events agree — a unit
+ *  whose events disagree (an identity switch) stays unnamed. */
 export interface ReidPlayers {
-  tracks: Record<string, string>;
   assignments: Record<string, string>;
   unit_names: Record<string, string>;
   players: string[];
