@@ -29,6 +29,9 @@ from yp_video.tracklets.tracking import MIN_TRACK_FRAMES
 # Fusion boxes score lower than RF-DETR's: at 0.4 they leave as many boxes per
 # frame (~9) as RF-DETR does at McByte++'s default 0.6 (measured 2026-10-01).
 MCBYTE_TRACK_THRESH = 0.4
+#: McByte++'s published second-association floor; fusion boxes were only
+#: ever evaluated with it.
+MCBYTE_LOW_THRESH = 0.1
 
 
 def fusion_tracks_current(stem: str, tracker: Tracker) -> bool:
@@ -145,7 +148,7 @@ def _mcbyte_tracks(video_path, people, spans, width, height, on_progress) -> tup
         rally_spans.append((rally_id, int(people.frames[indices[0]]), int(people.frames[indices[-1]])))
     tracklets = mcbyte.track(
         video_path, detections, rally_spans, stride=people.stride * mcbyte.STRIDE,
-        track_thresh=MCBYTE_TRACK_THRESH,
+        track_thresh=MCBYTE_TRACK_THRESH, low_thresh=MCBYTE_LOW_THRESH,
         # A fixed sideline camera gains nothing from motion compensation.
         cmc=cut_kind_of(video_path) == "broadcast", on_progress=on_progress,
     )

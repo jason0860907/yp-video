@@ -20,6 +20,7 @@ from urllib.parse import unquote
 from fastapi import APIRouter, HTTPException
 from pydantic import Field
 
+from yp_video.config import cut_kind_of
 from yp_video.core.rallies import rally_sources
 from yp_video.extraction import links
 from yp_video.extraction import store as extraction_store
@@ -108,6 +109,7 @@ def _track(path: Path, stride: int, tracker: tracks_store.Tracker, on_progress) 
     with materialized_cut(path):
         return tracking.track_video(
             path,
+            moving_camera=cut_kind_of(path) == "broadcast",
             stride=stride,
             tracker=tracker,
             event_frames={e["frame"] for e in load_events(path.stem)},

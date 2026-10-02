@@ -121,7 +121,7 @@ class TrackingDependencyTests(unittest.TestCase):
             patch.object(tracking, "load_rallies", return_value=[]) as load,
             self.assertRaisesRegex(ValueError, "No rally spans"),
         ):
-            tracking.track_video(Path("/nonexistent/match.mp4"))
+            tracking.track_video(Path("/nonexistent/match.mp4"), moving_camera=False)
         load.assert_called_once_with("match")
 
 

@@ -26,6 +26,6 @@ whenever any layout below changes — and update both sides.
 - stdout: progress lines ``TRACK_PROGRESS {"done": int, "total": int}``.
 """
 
-TRACK_CONTRACT_VERSION = "1.0.0"
+TRACK_CONTRACT_VERSION = "1.1.0"
 TRACK_CONTRACT_VERSION_ENV = "YP_TRACK_CONTRACT_VERSION"
 TRACK_PROGRESS_PREFIX = "TRACK_PROGRESS "

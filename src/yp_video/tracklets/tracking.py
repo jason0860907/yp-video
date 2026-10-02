@@ -41,7 +41,6 @@ from pathlib import Path
 
 import numpy as np
 
-from yp_video.config import cut_kind_of
 from yp_video.core.jsonl import write_jsonl
 from yp_video.core.progress import ProgressFn
 from yp_video.core.rallies import load_rallies, rally_fingerprint
@@ -64,12 +63,16 @@ TRACK_SCORE_THRESHOLD = 0.05
 # Tracklets shorter than this many detections are detector flicker, not a player.
 MIN_TRACK_FRAMES = 5
 
-# McByte++ starts and extends tracks from detections above this; its published
-# default, which sits where RF-DETR Seg's scores separate players from noise.
-MCBYTE_TRACK_THRESH = 0.6
-# ...and never looks below this (its low-score association floor), so neither
-# are those detections' masks kept for it.
-MCBYTE_MIN_SCORE = 0.1
+# McByte++ extends tracks from detections above this in its first association
+# and starts new ones from this + 0.1. Its published 0.6 left players RF-DETR
+# scores below 0.7 untracked; 0.4 (new tracks from 0.5) picked up the
+# half-occluded and far-side players on review (10-03).
+MCBYTE_TRACK_THRESH = 0.4
+# ...and its second association recovers lost tracks from detections above
+# this (upstream: a fixed 0.1); nothing below reaches it, masks included.
+# Matches the dense pass's own floor: occluded players live down at 0.05–0.1,
+# and this stage only lets them extend tracks that already exist.
+MCBYTE_MIN_SCORE = 0.05
 
 # The traced fp16 graph bakes the batch dimension in, so every call must be
 # exactly this size — partial final batches are padded and sliced.
@@ -123,6 +126,19 @@ class _BatchDetector:
         model.optimize_for_inference(dtype=torch.float16, batch_size=BATCH_SIZE)
         self._model = model
 
+    def release(self) -> None:
+        """Free the compiled model's VRAM (~8 GB at BATCH_SIZE). The next
+        ensure() rebuilds it."""
+        if self._model is None:
+            return
+        import gc
+
+        import torch
+
+        self._model = None
+        gc.collect()
+        torch.cuda.empty_cache()
+
     def predict_batch(self, tensors: list) -> list:
         """≤BATCH_SIZE preprocessed (C, res, res) tensors → sv.Detections each
         (person class only, masks included), boxes in resolution-pixel space
@@ -139,12 +155,18 @@ _detector = _BatchDetector()
 def track_video(
     video_path: Path,
     *,
+    moving_camera: bool,
     stride: int = 1,
     tracker: Tracker = "bytetrack",
     event_frames: set[int] | None = None,
     on_progress: ProgressFn | None = None,
 ) -> dict:
     """Detect + track every annotated rally span of one video.
+
+    ``moving_camera`` says whether the shot pans or zooms (broadcast) or is
+    fixed (a sideline phone); McByte++ pays for camera motion compensation
+    only when it does. The caller knows — a file path does not: an uploaded
+    clip sits in a temp dir, not under a cut-kind folder.
 
     ``stride`` detects every Nth frame (skipped frames are grabbed but not
     decoded); the tracker sees the effective frame rate. ``tracker`` picks
@@ -324,8 +346,11 @@ def track_video(
         cap.release()
 
     if tracker == "mcbyte":
+        # McByte++ runs in its own process with EdgeTAM + Re-ID; holding the
+        # detector meanwhile would put both models on the GPU at once.
+        _detector.release()
         records, masks_store = _mcbyte_tracks(
-            video_path, spans, stride, frame_detections, frame_masks,
+            video_path, spans, stride, frame_detections, frame_masks, moving_camera=moving_camera,
             on_progress=(lambda done, n, msg: on_progress(total + done, total * scale, msg)) if on_progress else None,
         )
 
@@ -368,13 +393,13 @@ def _mcbyte_tracks(
     detections: dict[int, np.ndarray],
     masks: dict[int, list[np.ndarray]],
     *,
+    moving_camera: bool,
     on_progress: ProgressFn | None,
 ) -> tuple[list[dict], dict[str, np.ndarray]]:
     """McByte++ over the collected detections; masks re-attached by det index."""
     tracklets = mcbyte.track(
         video_path, detections, spans, stride=stride, track_thresh=MCBYTE_TRACK_THRESH,
-        # A fixed sideline camera gains nothing from motion compensation.
-        cmc=cut_kind_of(video_path) == "broadcast", on_progress=on_progress,
+        low_thresh=MCBYTE_MIN_SCORE, cmc=moving_camera, on_progress=on_progress,
     )
     records: list[dict] = []
     masks_store: dict[str, np.ndarray] = {}
