@@ -137,9 +137,11 @@ class JobPayloadTests(unittest.TestCase):
 
 
 class ActorFixTransactionTests(unittest.TestCase):
-    def test_active_weight_family_is_synchronous_and_others_are_deferred(
+    def test_every_embedded_model_is_refreshed_after_the_response(
         self,
     ) -> None:
+        """Re-embedding inline cold-loads the ReID engine per click, so the
+        fix only crops; every matrix is handed to the background refresh."""
         models = [
             "clip-reid",
             "clip-reid-masked",
@@ -206,21 +208,18 @@ class ActorFixTransactionTests(unittest.TestCase):
                 patch.object(actor_fix.store, "drop_assignment"),
             ):
                 result = actor_fix.apply(
-                    root / "match.mp4",
+                    "match",
+                    "https://r2.test/match.mp4",
                     actor_fix.MarkOccluded(
                         mode="occluded", event_id="event-1"
                     ),
-                    active_model="clip-reident-masked",
                 )
 
         self.assertEqual(
-            apply_actor_fix.call_args.kwargs["models"],
-            ["clip-reident", "clip-reident-masked"],
+            apply_actor_fix.call_args.args[:2],
+            ("match", "https://r2.test/match.mp4"),
         )
-        self.assertEqual(
-            result.refreshing_models,
-            ("clip-reid", "clip-reid-masked"),
-        )
+        self.assertEqual(result.refreshing_models, tuple(models))
         self.assertEqual(result.actor_revision, 7)
 
     def test_request_mode_resolves_to_one_command_without_branching(
@@ -291,7 +290,6 @@ class ActorFixTransactionTests(unittest.TestCase):
 
             def mutate_derived(*_args, **_kwargs):
                 record_file.write_bytes(b"records-after")
-                embedding_file.write_bytes(b"embedding-after")
                 actor_fix.store.mark_actor_embedding_stale(
                     "match", ["model"], "event-1"
                 )
@@ -349,13 +347,13 @@ class ActorFixTransactionTests(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(RuntimeError, "label write failed"):
                     actor_fix.apply(
-                        root / "match.mp4",
+                        "match",
+                        str(root / "match.mp4"),
                         actor_fix.PickActor(
                             mode="pick",
                             event_id="event-1",
                             box=(1, 2, 3, 4),
                         ),
-                        active_model="model",
                     )
 
             self.assertEqual(record_file.read_bytes(), b"records-before")
@@ -538,36 +536,13 @@ class StagesStopWhereTheyShouldTests(unittest.TestCase):
                 patch.object(actor_fix.store, "drop_assignment"),
             ):
                 result = actor_fix.apply(
-                    root / "match.mp4",
+                    "match",
+                    str(root / "match.mp4"),
                     actor_fix.MarkOccluded(mode="occluded", event_id="e1"),
-                    active_model=None,
                 )
 
-        self.assertEqual(applied.call_args.kwargs["models"], [])
+        applied.assert_called_once()
         self.assertEqual(result.refreshing_models, ())
-
-    def test_a_named_model_must_still_actually_exist(self) -> None:
-        """None means "nothing is embedded"; a NAME that is not there is a
-        caller bug, and silently embedding nothing would hide it."""
-        with tempfile.TemporaryDirectory() as raw_dir:
-            root = Path(raw_dir)
-            (root / "match_reid.jsonl").write_bytes(b"reid")
-            with (
-                patch.object(
-                    actor_fix.extraction_store,
-                    "records_path",
-                    return_value=root / "match_reid.jsonl",
-                ),
-                patch.object(
-                    actor_fix.store, "embedded_models", return_value=["clip-reid"]
-                ),
-                self.assertRaises(FileNotFoundError),
-            ):
-                actor_fix.apply(
-                    root / "match.mp4",
-                    actor_fix.MarkOccluded(mode="occluded", event_id="e1"),
-                    active_model="clip-reident",
-                )
 
 
 class ConfirmableAnswerTests(unittest.TestCase):

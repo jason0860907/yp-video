@@ -81,8 +81,9 @@ export function AssociationPanel({ video, clock }: { video: string; clock?: Play
   const { records, meta, tracksQuery, actionEvents } = useVideoLabelingData(video);
   const rallies = useMemo(() => meta.rallies ?? [], [meta.rallies]);
 
-  // A fix re-crops and re-embeds the event server-side; fixingEvent gates the
-  // picker so a double click cannot fire two overlapping writes.
+  // A fix re-crops the event server-side (re-embedding follows in the
+  // background); fixingEvent gates the picker so a double click cannot fire
+  // two overlapping writes.
   const [fixingEvent, setFixingEvent] = useState<string | null>(null);
   const fixActor = async (eventId: string, fix: ActorFix) => {
     if (fixingEvent) return;

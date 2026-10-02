@@ -28,7 +28,6 @@ from yp_video.config import (
     ACTION_FRAMES_DIR,
     SPOT_DIR,
     SPOT_PYTHON,
-    find_cut,
 )
 from yp_video.core import label_done
 from yp_video.core.cache import StatCache
@@ -36,8 +35,6 @@ from yp_video.core.jsonl import read_jsonl_cached
 from yp_video.extraction import actor_fix, links, reassociate
 from yp_video.extraction import done as extraction_done
 from yp_video.extraction import store as extraction_store
-from yp_video.reid import store as reid_store
-from yp_video.reid.embedder import DEFAULT_EMBEDDER, base_embedder_name
 from yp_video.tracklets import store as tracks_store
 from yp_video.tracklets.geometry import TrackRef
 from yp_video.web import audit, worklists
@@ -46,7 +43,12 @@ from yp_video.web.job_helpers import (
     spawn_batch_video_job,
 )
 from yp_video.web.jobs import JobSummary, JobType, job_manager
-from yp_video.web.r2_client import materialized_cut, resolve_cut, sync_to_r2
+from yp_video.web.r2_client import (
+    cut_frame_source,
+    materialized_cut,
+    resolve_cut,
+    sync_to_r2,
+)
 from yp_video.web.schemas import StrictModel
 
 log = logging.getLogger(__name__)
@@ -348,31 +350,6 @@ ActorFixRequest = Annotated[
 ]
 
 
-def _synchronous_model(stem: str) -> str | None:
-    """The embedding family refreshed before the response returns.
-
-    None when nothing is embedded yet, which is the ordinary case: actor
-    review is what decides whether a crop is worth embedding, so it runs
-    first. Refusing the fix there would have made this page depend on the
-    stage that depends on it.
-
-    Once vectors do exist a fix invalidates every matrix, but refreshing them
-    all inline would make the click feel broken. The default embedder's family
-    goes first because that is what the ReID Label page opens with; the rest
-    follow in the background. Which model that is stays server-side —
-    reviewing an actor is not a question about embeddings, so the page never
-    has to name one.
-    """
-    embedded = reid_store.embedded_models(stem)
-    if not embedded:
-        return None
-    family = base_embedder_name(DEFAULT_EMBEDDER)
-    return next(
-        (name for name in embedded if base_embedder_name(name) == family),
-        embedded[0],
-    )
-
-
 def _actor_rows(labels) -> list[dict]:
     """The video's actor verdicts as records, for auditing.
 
@@ -390,10 +367,12 @@ def fix(
 
     The verdict lands in the video's actor labels (the durable human record,
     replayed on re-extraction) and is applied to the extraction record
-    immediately: the chosen box is cropped and re-embedded, so the identity
-    clusters that read those crops follow.
+    immediately: the chosen box is cropped. The crop is re-embedded in the
+    background, so the identity clusters that read it follow shortly after.
     """
-    video_path = find_cut(unquote(name))
+    # Cuts live in R2; the crop needs one frame, so an R2-only cut is read
+    # over a presigned URL rather than downloaded.
+    video_path = resolve_cut(Path(unquote(name)).name)
     if video_path is None:
         raise HTTPException(404, f"Video not found: {name}")
     stem = video_path.stem
@@ -403,9 +382,7 @@ def fix(
     before = _actor_rows(actor_labels.load(stem))
     command: actor_fix.ActorFixCommand = req.command
     try:
-        result = actor_fix.apply(
-            video_path, command, active_model=_synchronous_model(stem)
-        )
+        result = actor_fix.apply(stem, cut_frame_source(video_path), command)
     except FileNotFoundError as exc:
         raise HTTPException(404, str(exc)) from exc
     except KeyError as exc:

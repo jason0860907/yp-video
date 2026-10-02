@@ -189,9 +189,9 @@ class LockOrderTests(unittest.TestCase):
                 patch.object(actor_fix.store, "drop_assignment"),
             ) as seen:
                 actor_fix.apply(
-                    root / "match.mp4",
+                    "match",
+                    str(root / "match.mp4"),
                     actor_fix.MarkOccluded(mode="occluded", event_id="e1"),
-                    active_model="clip-reident-masked",
                 )
 
         # Proof the code reached the locks: a fix that took none would

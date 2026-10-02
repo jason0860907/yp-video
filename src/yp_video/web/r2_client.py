@@ -305,6 +305,18 @@ def resolve_cut(name: str) -> Path | None:
     return find_cut(name) or _remote_cut_path(name)
 
 
+def cut_frame_source(path: Path) -> str:
+    """What OpenCV should open to read a few frames of a cut: the local file,
+    or a presigned URL to its R2 object. For a single seek, streaming
+    (~0.6 s) beats ``materialized_cut``'s whole-file download."""
+    if path.exists():
+        return str(path)
+    entry = _remote_cut_entry(path.name)
+    if entry is None:
+        raise FileNotFoundError(f"{path.name} is neither local nor in R2")
+    return r2_client.generate_presigned_url(f"{entry[0].r2_category}/{path.name}")
+
+
 def all_cut_paths() -> list[Path]:
     """Every cut video, local and R2-only, as canonical local paths.
 

@@ -470,11 +470,10 @@ _actor_fix_lock = threading.RLock()
 
 
 def apply_actor_fix(
-    video_path: Path,
+    stem: str,
+    frame_source: str,
     event_id: str,
     label: ActorLabel | None,
-    *,
-    models: list[str],
 ) -> dict:
     """Re-point one extracted event at the person a human named, in place.
 
@@ -490,35 +489,26 @@ def apply_actor_fix(
     cut from THAT frame (the pixels actually contain the actor) and no
     detection snap applies (stored detections belong to the event frame).
 
-    Only ``models`` are refreshed synchronously. Other existing matrices keep
-    an explicit pending event in the refresh sidecar; the application service
-    refreshes them after the response.
+    ``frame_source`` is what OpenCV opens for the crop: a local path or a
+    presigned URL. No matrix is re-embedded here — each keeps an explicit
+    pending event in the refresh sidecar, and the application service runs
+    ``refresh_actor_embeddings`` after the response.
 
     Returns the updated record without embeddings (the UI payload).
     """
-    stem = video_path.stem
     with embedding_write_transaction(), _actor_fix_lock:
         mark_actor_embedding_stale(stem, embedded_models(stem), event_id)
-        record, row, crop = _apply_actor_fix(video_path, event_id, label)
-    _patch_embedding_row(
-        stem,
-        record,
-        row,
-        crop,
-        models=models,
-        expected_revision=int(record["actor_revision"]),
-    )
-    return record
+        return _apply_actor_fix(stem, frame_source, event_id, label)
 
 
 def _apply_actor_fix(
-    video_path: Path,
+    stem: str,
+    frame_source: str,
     event_id: str,
     label: ActorLabel | None,
-) -> tuple[dict, int, object | None]:
+) -> dict:
     import cv2
 
-    stem = video_path.stem
     path = records_path(stem)
     meta, records = read_jsonl(path)
     row = next((i for i, r in enumerate(records) if r["id"] == event_id), None)
@@ -579,14 +569,14 @@ def _apply_actor_fix(
 
     crop = None
     if person is not None:
-        cap = cv2.VideoCapture(str(video_path))
+        cap = cv2.VideoCapture(frame_source)
         try:
             cap.set(cv2.CAP_PROP_POS_FRAMES, src_frame)
             ok, frame_img = cap.read()
         finally:
             cap.release()
         if not ok:
-            raise ValueError(f"Could not decode frame {src_frame} of {video_path.name}")
+            raise ValueError(f"Could not decode frame {src_frame} of {stem}")
         bx0, by0 = int(person.xyxy[0]), int(person.xyxy[1])
         suffix = "" if revert else f"_fix_{src_frame}_{bx0}_{by0}"  # per-pick name busts browser cache
         crop = cut(
@@ -608,7 +598,7 @@ def _apply_actor_fix(
             record["status"] = "ok"
 
     write_jsonl(path, meta, records)
-    return dict(record), row, crop
+    return dict(record)
 
 
 _embedding_locks_guard = threading.Lock()

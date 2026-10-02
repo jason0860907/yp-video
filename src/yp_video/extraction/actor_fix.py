@@ -40,7 +40,6 @@ from yp_video.actor.labels import ActorLabel, ActorVerdict
 from yp_video.extraction import pipeline
 from yp_video.extraction import store as extraction_store
 from yp_video.reid import store
-from yp_video.reid.embedder import base_embedder_name
 from yp_video.tracklets.geometry import TrackRef
 
 log = logging.getLogger(__name__)
@@ -148,19 +147,18 @@ def _directory_files(path: Path) -> set[Path]:
     return set(path.iterdir()) if path.exists() else set()
 
 
-def apply(
-    video_path: Path, command: ActorFixCommand, *, active_model: str | None
-) -> ActorFixResult:
-    """Apply one actor fix and synchronously refresh the active weight family.
+def apply(stem: str, frame_source: str, command: ActorFixCommand) -> ActorFixResult:
+    """Apply one actor fix: the label, the derived record and its crop.
 
-    ``active_model`` is None when the video has not been embedded yet, which
-    is the normal case: actor review comes BEFORE embedding (see
-    extraction/pipeline.py). Then there is no matrix to keep in step and the
-    fix is three writes and a crop. A fix that arrives later — spotted on the
-    ReID board, after the vectors exist — still refreshes them.
+    ``frame_source`` is what OpenCV opens to cut the crop — the local mp4, or
+    a presigned R2 URL when the cut isn't on this machine (one seek, so
+    streaming beats downloading the whole file). Every embedding matrix is
+    refreshed afterwards by ``refresh_deferred``: re-embedding inline cold-
+    loads the ReID engine in a subprocess, several seconds per click. Until
+    the refresh lands, the refresh sidecar marks the row stale so no reader
+    takes the old vector as current.
     """
     _validate(command)
-    stem = video_path.stem
     record_file = extraction_store.records_path(stem)
     if not record_file.exists():
         raise FileNotFoundError(f"No extraction records for {stem}")
@@ -171,36 +169,16 @@ def apply(
         actor_labels.write_transaction(),
         store.players_write_transaction(),
     ):
-        embedded_models = store.embedded_models(stem)
-        if active_model is not None and active_model not in embedded_models:
-            raise FileNotFoundError(
-                f"No {active_model} embeddings for {stem} — backfill the model first"
-            )
-        active_family = (
-            base_embedder_name(active_model) if active_model is not None else None
-        )
-        synchronous_models = [
-            model
-            for model in embedded_models
-            if base_embedder_name(model) == active_family
-        ]
-        deferred_models = tuple(
-            model
-            for model in embedded_models
-            if model not in synchronous_models
-        )
-        # Only the matrices this transaction WRITES are snapshotted. A
-        # deferred model's matrix is untouched until the background refresh,
-        # and each matrix is ~1 MB — snapshotting every registered model on
-        # every click was several MB of pure read per fix. What protects the
-        # deferred ones is the refresh sidecar, which is snapshotted here.
+        refreshing_models = tuple(store.embedded_models(stem))
+        # No matrix is written here, so none is snapshotted; what keeps them
+        # honest until the background refresh is the sidecar, snapshotted
+        # with the files this transaction does write.
         snapshots = _snapshot(
             [
                 record_file,
                 actor_labels.actors_path(stem),
                 store.players_path(stem),
                 store.embedding_refresh_path(stem),
-                *(store.embedding_path(stem, m) for m in synchronous_models),
             ]
         )
         crop_dirs = (
@@ -214,10 +192,7 @@ def apply(
             # Derived record first: it is the only step that can fail on the
             # video itself, and a failed fix must not leave a label behind.
             record = pipeline.apply_actor_fix(
-                video_path,
-                command.event_id,
-                command.label,
-                models=synchronous_models,
+                stem, frame_source, command.event_id, command.label
             )
             actor_labels.save(stem, command.event_id, command.label)
             # The crop now shows a different person (or nobody), so whatever
@@ -225,7 +200,7 @@ def apply(
             store.drop_assignment(stem, command.event_id)
             return ActorFixResult(
                 record=record,
-                refreshing_models=deferred_models,
+                refreshing_models=refreshing_models,
                 actor_revision=int(record["actor_revision"]),
             )
         except BaseException:
@@ -247,7 +222,7 @@ def refresh_deferred(
     models: tuple[str, ...],
     expected_revision: int,
 ) -> None:
-    """Best-effort background refresh for matrices not visible during the fix."""
+    """Best-effort background refresh of every matrix a fix made stale."""
     if not models:
         return
     try:

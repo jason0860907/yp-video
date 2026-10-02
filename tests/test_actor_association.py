@@ -460,19 +460,19 @@ class FixEndpointTests(unittest.TestCase):
             actor_revision=3,
         )
 
-        def fake_apply(_video, command, *, active_model):
-            applied.append((command, active_model))
+        def fake_apply(stem, frame_source, command):
+            applied.append((command, frame_source))
             return result
 
         with tempfile.TemporaryDirectory() as raw_dir:
             records = Path(raw_dir) / "match.jsonl"
             records.touch()
             with (
-                patch.object(router, "find_cut", return_value=Path(raw_dir) / "match.mp4"),
+                patch.object(router, "resolve_cut", return_value=Path(raw_dir) / "match.mp4"),
+                patch.object(router, "cut_frame_source", return_value="https://r2.test/match.mp4"),
                 patch.object(
                     router.extraction_store, "records_path", return_value=records
                 ),
-                patch.object(router, "_synchronous_model", return_value="clip-reid"),
                 patch.object(router.actor_fix, "apply", side_effect=fake_apply),
                 patch.object(
                     router.tracks_store, "tracks_path", return_value=Path(raw_dir) / "none"
@@ -484,7 +484,7 @@ class FixEndpointTests(unittest.TestCase):
         return response, applied[0], tasks.scheduled
 
     def test_pick_reaches_the_service_as_a_manual_label(self) -> None:
-        response, (command, model), scheduled = self._fix(
+        response, (command, frame_source), scheduled = self._fix(
             {
                 "mode": "pick",
                 "event_id": "e1",
@@ -498,17 +498,18 @@ class FixEndpointTests(unittest.TestCase):
             command.label,
             ActorLabel(ActorVerdict.MANUAL, box=(1, 2, 3, 4), frame=7, snap=False),
         )
-        self.assertEqual(model, "clip-reid")
+        # An R2-only cut is read over its URL, not required on disk.
+        self.assertEqual(frame_source, "https://r2.test/match.mp4")
         self.assertEqual(response["record"]["actor_review"], "manual")
         self.assertIsNone(response["track_link"])
         self.assertEqual(response["refreshing_models"], ("clip-reid",))
-        # The matrices not refreshed inline must be scheduled, or they stay
-        # silently stale.
+        # Every matrix is refreshed after the response; unscheduled, they'd
+        # stay silently stale.
         self.assertEqual(len(scheduled), 1)
         self.assertEqual(scheduled[0][2]["expected_revision"], 3)
 
     def test_revert_reports_the_event_as_unreviewed_again(self) -> None:
-        response, (command, _model), _scheduled = self._fix(
+        response, (command, _frame_source), _scheduled = self._fix(
             {"mode": "auto", "event_id": "e1"}
         )
 
@@ -519,7 +520,7 @@ class FixEndpointTests(unittest.TestCase):
         adapter = TypeAdapter(router.ActorFixRequest)
         with tempfile.TemporaryDirectory() as raw_dir:
             with (
-                patch.object(router, "find_cut", return_value=Path(raw_dir) / "m.mp4"),
+                patch.object(router, "resolve_cut", return_value=Path(raw_dir) / "m.mp4"),
                 patch.object(
                     router.extraction_store,
                     "records_path",
