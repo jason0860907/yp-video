@@ -24,8 +24,8 @@ from yp_video.core.rallies import rally_sources
 from yp_video.extraction import links
 from yp_video.extraction import store as extraction_store
 from yp_video.extraction.pipeline import load_events
+from yp_video.tracklets import mcbyte, tracking
 from yp_video.tracklets import store as tracks_store
-from yp_video.tracklets import tracking
 from yp_video.web.job_helpers import init_batch_items, spawn_batch_video_job
 from yp_video.web.jobs import JobSummary, JobType, job_manager
 from yp_video.web.r2_client import materialized_cut, resolve_cut
@@ -38,8 +38,15 @@ router = APIRouter()
 class TrackRequest(StrictModel):
     videos: list[str] = Field(min_length=1)
     overwrite: bool = False
-    # Detect every Nth rally frame; ByteTrack is told the effective rate.
+    # Detect every Nth rally frame; the tracker is told the effective rate.
     stride: int = Field(1, ge=1, le=10)
+    tracker: tracks_store.Tracker = "bytetrack"
+
+
+@router.get("/trackers")
+def trackers() -> dict:
+    """Which association steps this server can run (McByte++ needs yp-track)."""
+    return {"bytetrack": True, "mcbyte": mcbyte.available()}
 
 
 @router.post("/run", response_model=JobSummary)
@@ -60,19 +67,26 @@ async def run(req: TrackRequest) -> dict:
             )
         # Tracks that no longer serve — cut against rallies that have since
         # moved, or by the pre-mask detector — are redone without asking.
-        if not req.overwrite and tracks_store.tracks_current(path.stem):
+        if (
+            not req.overwrite
+            and tracks_store.tracks_current(path.stem)
+            and tracks_store.tracks_tracker(path.stem) == req.tracker
+        ):
             skipped.append(path.stem)
             continue
         video_paths.append(path)
 
     if not video_paths:
         raise HTTPException(400, "All selected videos already have current tracking (enable overwrite)")
+    if req.tracker == "mcbyte" and not mcbyte.available():
+        raise HTTPException(409, "McByte++ needs the yp-track package (uv sync in yp-track)")
 
     job = job_manager.create_job(
         JobType.PLAYER_TRACKING,
         {
             "videos": [p.name for p in video_paths],
             "skipped_existing": skipped,
+            "tracker": req.tracker,
             "items": init_batch_items([p.name for p in video_paths]),
         },
         name=f"Rally Tracking ({len(video_paths)} videos)",
@@ -83,18 +97,19 @@ async def run(req: TrackRequest) -> dict:
         # Event frames ride along (this layer may join action + tracking;
         # the tracking stage itself stays action-free): their raw detections
         # persist as a sidecar so the sparse detect stage skips re-decoding.
-        work=lambda p, cb: _track(p, req.stride, cb),
+        work=lambda p, cb: _track(p, req.stride, req.tracker, cb),
         done_message=lambda c: f"{c['tracklets']} tracklets over {c['frames']} frames",
         start_message="tracking rallies...",
     )
     return job.to_dict()
 
 
-def _track(path: Path, stride: int, on_progress) -> dict:
+def _track(path: Path, stride: int, tracker: tracks_store.Tracker, on_progress) -> dict:
     with materialized_cut(path):
         return tracking.track_video(
             path,
             stride=stride,
+            tracker=tracker,
             event_frames={e["frame"] for e in load_events(path.stem)},
             on_progress=on_progress,
         )

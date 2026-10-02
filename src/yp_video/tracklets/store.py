@@ -18,6 +18,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 
@@ -52,6 +53,19 @@ def tracks_stride(stem: str) -> int:
 
 def tracks_masks_path(stem: str) -> Path:
     return TRACKS_DIR / f"{stem}_masks.npz"
+
+
+#: The association step that linked detections into tracklets.
+Tracker = Literal["bytetrack", "mcbyte"]
+
+
+def tracks_tracker(stem: str) -> Tracker | None:
+    """Which tracker cut this video's tracks; None when there are none."""
+    path = tracks_path(stem)
+    if not path.exists():
+        return None
+    source = read_jsonl_header(path)["source"]["tracker"]
+    return "mcbyte" if source.startswith("McByte++") else "bytetrack"
 
 
 def tracks_current(stem: str) -> bool:

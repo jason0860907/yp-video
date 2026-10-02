@@ -46,6 +46,11 @@ REID_PKG_DIR = _env_path("YP_REID_DIR", PROJECT_ROOT.parent / "yp-reid")
 REID_PYTHON = _env_path("YP_REID_PYTHON", REID_PKG_DIR / ".venv" / "bin" / "python")
 REID_EMBED_MODULE = "yp_reid.embed"
 REID_TRAIN_MODULE = "yp_reid.train"
+# yp-track: same pattern again — McByte++ needs its own venv (Python 3.10,
+# numpy 1.24); contract handshake contracts/track.py ⇄ yp_track/contract.py.
+TRACK_PKG_DIR = _env_path("YP_TRACK_DIR", PROJECT_ROOT.parent / "yp-track")
+TRACK_PYTHON = _env_path("YP_TRACK_PYTHON", TRACK_PKG_DIR / ".venv" / "bin" / "python")
+TRACK_MCBYTE_MODULE = "yp_track.mcbyte"
 # One env file for the whole workspace, at PROJECT_ROOT.parent — R2 keys,
 # service tokens, Cloudflare Access, the audit database. It used to be
 # several files (r2.env, tokens.env, plus a second r2.env at the workspace

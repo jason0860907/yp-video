@@ -37,7 +37,7 @@ from yp_video.extraction import reassociate
 from yp_video.extraction.pipeline import detect_video, detections_current, load_events
 from yp_video.extraction.store import records_path
 from yp_video.tracklets.fusion import fusion_tracks_current, track_person_boxes
-from yp_video.tracklets.store import tracks_path
+from yp_video.tracklets.store import Tracker, tracks_path
 from yp_video.web.action_annotations import (
     pre_annotation_path,
     save_spot_pre_annotation,
@@ -195,11 +195,11 @@ def run_spot_stages(
 # ----------------------------------------------------- perception stages
 
 
-def tracking_skip(stem: str, *, overwrite: bool, rallies: bool) -> str | None:
+def tracking_skip(stem: str, *, overwrite: bool, rallies: bool, tracker: Tracker) -> str | None:
     """Why tracking does not run for this video, or None to run it."""
     if not rallies:
         return "no rallies"
-    if not overwrite and fusion_tracks_current(stem):
+    if not overwrite and fusion_tracks_current(stem, tracker):
         return "kept existing tracks"
     return None
 
@@ -230,9 +230,9 @@ def association_skip(stem: str, *, events: bool) -> str | None:
 
 
 def run_tracking_stage(
-    *, video: Path, on_progress: StageProgress
+    *, video: Path, tracker: Tracker, on_progress: StageProgress
 ) -> dict:
-    return track_person_boxes(video, on_progress=_fractional(on_progress))
+    return track_person_boxes(video, tracker=tracker, on_progress=_fractional(on_progress))
 
 
 def run_detection_stage(*, video: Path, on_progress: StageProgress) -> dict:
@@ -301,6 +301,7 @@ def run_video(
     clip_checkpoint: Path,
     rally: RallyOptions,
     spot: SpotOptions,
+    tracker: Tracker,
     overwrite: bool,
     on_progress: BatchProgress,
 ) -> VideoResult:
@@ -345,12 +346,12 @@ def run_video(
         events = load_events(stem)
 
         stage_progress(2)(0.0, "starting")
-        skip = tracking_skip(stem, overwrite=overwrite, rallies=bool(rallies))
+        skip = tracking_skip(stem, overwrite=overwrite, rallies=bool(rallies), tracker=tracker)
         if skip is not None:
             result.skipped["tracking"] = skip
         else:
             counts = run_tracking_stage(
-                video=video, on_progress=stage_progress(2),
+                video=video, tracker=tracker, on_progress=stage_progress(2),
             )
             result.tracklets = counts["tracklets"]
 

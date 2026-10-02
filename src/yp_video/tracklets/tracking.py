@@ -1,10 +1,11 @@
-"""Per-rally ByteTrack tracklets over dense RF-DETR Seg detections.
+"""Per-rally tracklets over dense RF-DETR Seg detections.
 
 The extraction pipeline is tracking-free on purpose — one frame per event.
 This module adds the dense complement: within each annotated rally span,
-every frame is detected and linked into tracklets (supervision's ByteTrack,
-motion-only), so events whose actor boxes land on the same tracklet are the
-same player and an identity labeled once propagates along the track.
+every frame is detected and linked into tracklets — by supervision's
+ByteTrack (motion-only, inline) or McByte++ (masks + re-ID, run after the
+pass; see tracklets/mcbyte.py) — so events whose actor boxes land on the
+same tracklet are the same player.
 
 The seg model gives every tracked detection an instance mask for free; the
 masks persist beside the tracklets (box-crop space, packed bits — see
@@ -40,12 +41,15 @@ from pathlib import Path
 
 import numpy as np
 
+from yp_video.config import cut_kind_of
 from yp_video.core.jsonl import write_jsonl
 from yp_video.core.progress import ProgressFn
 from yp_video.core.rallies import load_rallies, rally_fingerprint
 from yp_video.person.detector import DETECTOR_NAME
 from yp_video.person.seg import PERSON_CLASS_ID, SEG_WEIGHTS
+from yp_video.tracklets import mcbyte
 from yp_video.tracklets.store import (
+    Tracker,
     save_span_detections,
     save_track_masks,
     tracks_path,
@@ -59,6 +63,13 @@ TRACK_SCORE_THRESHOLD = 0.05
 
 # Tracklets shorter than this many detections are detector flicker, not a player.
 MIN_TRACK_FRAMES = 5
+
+# McByte++ starts and extends tracks from detections above this; its published
+# default, which sits where RF-DETR Seg's scores separate players from noise.
+MCBYTE_TRACK_THRESH = 0.6
+# ...and never looks below this (its low-score association floor), so neither
+# are those detections' masks kept for it.
+MCBYTE_MIN_SCORE = 0.1
 
 # The traced fp16 graph bakes the batch dimension in, so every call must be
 # exactly this size — partial final batches are padded and sliced.
@@ -129,15 +140,18 @@ def track_video(
     video_path: Path,
     *,
     stride: int = 1,
+    tracker: Tracker = "bytetrack",
     event_frames: set[int] | None = None,
     on_progress: ProgressFn | None = None,
 ) -> dict:
-    """Detect + ByteTrack every annotated rally span of one video.
+    """Detect + track every annotated rally span of one video.
 
     ``stride`` detects every Nth frame (skipped frames are grabbed but not
-    decoded); ByteTrack is told the effective frame rate. Returns the summary
-    counts also written to the jsonl header. Synchronous and GPU-bound —
-    callers run it in an executor.
+    decoded); the tracker sees the effective frame rate. ``tracker`` picks
+    the association step: ByteTrack runs inline, frame by frame, while
+    McByte++ (tracklets/mcbyte.py) runs after the detection pass over the
+    detections it collected. Returns the summary counts also written to the
+    jsonl header. Synchronous and GPU-bound — callers run it in an executor.
 
     ``event_frames`` (native indices, supplied by the caller so this stage
     keeps not reading the action file) marks frames whose raw detections are
@@ -169,10 +183,12 @@ def track_video(
         for r in rallies
     ]
     total = sum((f1 - f0) // stride + 1 for _, f0, f1 in spans)
+    # McByte++ tracks after detection; give each pass half the bar.
+    scale = 2 if tracker == "mcbyte" else 1
 
     if on_progress:
         # ensure() below loads + fp16-compiles the model on first use.
-        on_progress(0, total, "loading detector weights...")
+        on_progress(0, total * scale, "loading detector weights...")
     _detector.ensure()
     res = _detector.resolution
     box_scale = np.array([frame_w / res, frame_h / res, frame_w / res, frame_h / res])
@@ -224,9 +240,12 @@ def track_video(
     records: list[dict] = []
     masks_store: dict[str, np.ndarray] = {}
     span_detections: dict[int, np.ndarray] = {}
+    # McByte++ input, collected over the pass: frame -> rows, frame -> packed masks.
+    frame_detections: dict[int, np.ndarray] = {}
+    frame_masks: dict[int, list[np.ndarray]] = {}
     detected = 0
     current_rally: int | None = None
-    tracker = None
+    bytetrack = None
     tracks: dict[int, dict] = {}
 
     def flush_rally() -> None:
@@ -252,12 +271,12 @@ def track_video(
                 break
             detections = _detector.predict_batch([p[2] for p in pending])
             for (rally_id, frame_idx, _), det in zip(pending, detections):
-                if rally_id != current_rally:
+                if tracker == "bytetrack" and rally_id != current_rally:
                     # Rally boundary: batches may span it (detection is
                     # stateless) but the tracker must not.
                     flush_rally()
                     current_rally = rally_id
-                    tracker = sv.ByteTrack(
+                    bytetrack = sv.ByteTrack(
                         frame_rate=max(1, round(fps / stride)),
                         # Two consecutive hits before a track exists — kills the
                         # one-frame ghosts a 0.1 detection floor produces in a crowd.
@@ -270,7 +289,19 @@ def track_video(
                     span_detections[frame_idx] = np.concatenate(
                         (det.xyxy, det.confidence[:, None]), axis=1
                     ).astype(np.float32)
-                det = tracker.update_with_detections(det)  # masks ride along, aligned
+                if tracker == "mcbyte":
+                    keep = det.confidence > MCBYTE_MIN_SCORE
+                    frame_detections[frame_idx] = np.concatenate(
+                        (det.xyxy[keep], det.confidence[keep, None]), axis=1
+                    ).astype(np.float32)
+                    frame_masks[frame_idx] = [
+                        _pack_mask(m, xyxy / box_scale) for m, xyxy in zip(det.mask[keep], det.xyxy[keep])
+                    ]
+                    detected += 1
+                    if on_progress:
+                        on_progress(detected, total * scale, f"frame {detected}/{total} · rally {rally_id}")
+                    continue
+                det = bytetrack.update_with_detections(det)  # masks ride along, aligned
                 for i, (xyxy, score, tid) in enumerate(zip(det.xyxy, det.confidence, det.tracker_id)):
                     t = tracks.setdefault(int(tid), {"frames": [], "boxes": [], "scores": [], "masks": []})
                     t["frames"].append(frame_idx)
@@ -292,6 +323,12 @@ def track_video(
         producer.join(timeout=5)
         cap.release()
 
+    if tracker == "mcbyte":
+        records, masks_store = _mcbyte_tracks(
+            video_path, spans, stride, frame_detections, frame_masks,
+            on_progress=(lambda done, n, msg: on_progress(total + done, total * scale, msg)) if on_progress else None,
+        )
+
     counts = {
         "rallies": len(spans),
         "frames": detected,
@@ -299,7 +336,10 @@ def track_video(
     }
     header = {
         "video": stem,
-        "source": {"detector": f"{SEG_WEIGHTS} (fp16 batch)", "tracker": f"supervision.ByteTrack {sv.__version__}"},
+        "source": {
+            "detector": f"{SEG_WEIGHTS} (fp16 batch)",
+            "tracker": mcbyte.SOURCE if tracker == "mcbyte" else f"supervision.ByteTrack {sv.__version__}",
+        },
         "fps": fps,
         "frame_size": [frame_w, frame_h],
         "stride": stride,
@@ -319,3 +359,29 @@ def track_video(
     save_track_masks(stem, (MASK_H, MASK_W), masks_store)
     write_jsonl(tracks_path(stem), header, records)
     return counts
+
+
+def _mcbyte_tracks(
+    video_path: Path,
+    spans: list[tuple[int, int, int]],
+    stride: int,
+    detections: dict[int, np.ndarray],
+    masks: dict[int, list[np.ndarray]],
+    *,
+    on_progress: ProgressFn | None,
+) -> tuple[list[dict], dict[str, np.ndarray]]:
+    """McByte++ over the collected detections; masks re-attached by det index."""
+    tracklets = mcbyte.track(
+        video_path, detections, spans, stride=stride, track_thresh=MCBYTE_TRACK_THRESH,
+        # A fixed sideline camera gains nothing from motion compensation.
+        cmc=cut_kind_of(video_path) == "broadcast", on_progress=on_progress,
+    )
+    records: list[dict] = []
+    masks_store: dict[str, np.ndarray] = {}
+    for t in tracklets:
+        det_index = t.pop("det_index")
+        records.append(t)
+        masks_store[f"{t['rally_id']}:{t['track_id']}"] = np.stack(
+            [masks[f][i] for f, i in zip(t["frames"], det_index)]
+        )
+    return records, masks_store

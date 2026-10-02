@@ -93,12 +93,13 @@ class PerceptionPlanTests(unittest.TestCase):
     inputs exist."""
 
     def test_tracking_needs_rallies_and_keeps_only_matching_tracks(self):
-        self.assertEqual(fi.tracking_skip("m", overwrite=False, rallies=False), "no rallies")
+        skip = lambda **kw: fi.tracking_skip("m", tracker="bytetrack", **kw)  # noqa: E731
+        self.assertEqual(skip(overwrite=False, rallies=False), "no rallies")
         with patch.object(fi, "fusion_tracks_current", return_value=True):
-            self.assertEqual(fi.tracking_skip("m", overwrite=False, rallies=True), "kept existing tracks")
-            self.assertIsNone(fi.tracking_skip("m", overwrite=True, rallies=True))
+            self.assertEqual(skip(overwrite=False, rallies=True), "kept existing tracks")
+            self.assertIsNone(skip(overwrite=True, rallies=True))
         with patch.object(fi, "fusion_tracks_current", return_value=False):
-            self.assertIsNone(fi.tracking_skip("m", overwrite=False, rallies=True))
+            self.assertIsNone(skip(overwrite=False, rallies=True))
 
     def test_maskless_tracks_are_current_but_segmented_tracks_require_masks(self):
         with tempfile.TemporaryDirectory() as tmp:
