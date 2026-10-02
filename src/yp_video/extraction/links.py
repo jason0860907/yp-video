@@ -272,6 +272,13 @@ def link_payload(stem: str) -> dict[str, dict]:
 #: fragment, and a fragment always loses an IoU contest to the occluder in
 #: front of it.
 MASK_COVERAGE_MIN = 0.6
+#: Box IoU a covering detection also needs with the tracklet's own box.
+#: Coverage alone cannot tell the player from an occluder standing in front:
+#: the occluder's box encloses the visible fragment too, covers it fully, and
+#: then wins on detector score. Measured 2026-10-02 over 1,346 masked events:
+#: the occluder won 74 times (IoU 0.05–0.42 with the tracklet) while the
+#: player's own detection sat at 0.76–0.99; no event lost every candidate.
+TRACK_SHAPE_IOU = 0.5
 #: How far from the event the tracklet may be sampled before it counts as
 #: "never reaches the action" and the crop comes from elsewhere.
 EVENT_TRACK_MAX_DELTA = 3
@@ -407,6 +414,7 @@ def resolve_track(
         covered = [
             d for d in detections
             if _mask_coverage(mask, track_box, d["box"]) >= MASK_COVERAGE_MIN
+            and iou(d["box"], track_box) >= TRACK_SHAPE_IOU
         ]
         if covered:
             # The mask has already decided WHO; among the boxes that cover
