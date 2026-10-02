@@ -316,6 +316,12 @@ EMBEDDER_THRESHOLDS = {
     "clip-reident": {"min": 0.016, "max": 0.039, "default": 0.026, "step": 0.001},
     "clip-reid-masked": {"min": 0.083, "max": 0.23, "default": 0.16, "step": 0.005},
     "clip-reident-masked": {"min": 0.019, "max": 0.043, "default": 0.034, "step": 0.001},
+    # Tracklet-window mean (extraction/windows.py) over McByte++ tracks:
+    # averaging tightens same-player distances, so its scale sits well below
+    # the single masked crop's. Fit 2026-10-02 on 913 events / 64 identities
+    # (6 sideline videos); ARI peaks at 0.017 then drops steeply, so the
+    # default takes the over-split side of the peak.
+    "clip-reident-masked-win30": {"min": 0.005, "max": 0.027, "default": 0.016, "step": 0.001},
 }
 FALLBACK_THRESHOLD = {"min": 0.05, "max": 0.95, "default": 0.3, "step": 0.01}
 

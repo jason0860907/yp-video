@@ -44,6 +44,11 @@ _BANDS = {
 }
 
 
+#: Advanced tracking detects every 2nd frame: McByte++'s F1 held (0.44 vs
+#: 0.39 at stride 1) while the dense pass costs 2.5× less.
+ADVANCED_STRIDE = 2
+
+
 @dataclass(frozen=True)
 class UnitImage:
     """One complete source-video frame with this appearance boxed."""
@@ -93,6 +98,7 @@ def identify_players(
     embedder: str = DEFAULT_EMBEDDER,
     fusion_checkpoint: Path,
     person_boxes: Path | None = None,
+    advanced: bool = False,
     reps_per_unit: int = 3,
     on_progress: ProgressFn | None = None,
 ) -> IdentifyResult:
@@ -104,6 +110,14 @@ def identify_players(
 
     ``fusion_checkpoint`` pins one package: the temporal/person base weights
     and its companion ``person_action.pt`` joint checkpoint.
+
+    ``advanced`` swaps the fast perception (fusion person boxes + ByteTrack)
+    for dense RF-DETR Seg + McByte++ at stride 2: tracklets hold one person
+    far longer (pairwise F1 0.26 → 0.49 on labeled sideline video) for
+    ~10 extra GPU minutes per video. It reads no fusion boxes, so
+    ``person_boxes`` must be None. Those tracklets also carry the identity
+    vectors: advanced embeds with extraction/windows.py (masked crops averaged
+    over ±1 s of the actor's tracklet) and ignores ``embedder``.
     """
     # Deferred imports: this module is also imported for its dataclasses by
     # code that must not pull the GPU stack in.
@@ -115,9 +129,13 @@ def identify_players(
     from yp_video.extraction import links
     from yp_video.extraction.pipeline import detect_video, embed_video, load_events
     from yp_video.extraction.reassociate import reassociate_video
+    from yp_video.extraction.windows import WINDOWED_EMBEDDER, embed_tracklet_windows
     from yp_video.reid import identity
     from yp_video.tracklets.fusion import track_person_boxes
+    from yp_video.tracklets.tracking import track_video
 
+    if advanced:
+        embedder = WINDOWED_EMBEDDER
     stem = video_path.stem
     events = load_events(stem)
     if not events:
@@ -127,24 +145,34 @@ def identify_players(
     if not person_action_checkpoint.is_file():
         raise FileNotFoundError(f"Missing joint person/action weights: {person_action_checkpoint}")
     tracking_cb = _banded(on_progress, "tracking")
-    if person_boxes is not None:
-        save_person_boxes(person_boxes, person_boxes_path(stem), fusion_checkpoint)
+    if advanced:
+        if person_boxes is not None:
+            raise ValueError("advanced identify runs its own detector; person_boxes must be None")
+        # Uploads are filmed by a phone fixed on the sideline: no camera motion.
+        track_video(
+            video_path, moving_camera=False, stride=ADVANCED_STRIDE, tracker="mcbyte",
+            event_frames={e["frame"] for e in events}, on_progress=tracking_cb,
+        )
+        detect_video(video_path, on_progress=_banded(on_progress, "detecting"))
     else:
-        run_spot_pass(
-            video_path, checkpoint=fusion_checkpoint, tasks=("rally", "action"),
-            rally=RallyOptions(min_score=0.5, max_gap_s=2.0, min_duration_s=4.0),
-            spot=SpotOptions(batch_size=1, num_workers=0, clip_len=64), rally_pad_s=2.0,
-            person_output=person_boxes_path(stem),
-            on_progress=(lambda fraction: tracking_cb(int(fraction * 80), 100, "fusion person boxes"))
+        if person_boxes is not None:
+            save_person_boxes(person_boxes, person_boxes_path(stem), fusion_checkpoint)
+        else:
+            run_spot_pass(
+                video_path, checkpoint=fusion_checkpoint, tasks=("rally", "action"),
+                rally=RallyOptions(min_score=0.5, max_gap_s=2.0, min_duration_s=4.0),
+                spot=SpotOptions(batch_size=1, num_workers=0, clip_len=64), rally_pad_s=2.0,
+                person_output=person_boxes_path(stem),
+                on_progress=(lambda fraction: tracking_cb(int(fraction * 80), 100, "fusion person boxes"))
+                if tracking_cb else None,
+            )
+        track_person_boxes(
+            video_path,
+            on_progress=(lambda done, total, msg: tracking_cb(80 + int(20 * done / max(total, 1)), 100, msg))
             if tracking_cb else None,
         )
-    track_person_boxes(
-        video_path,
-        on_progress=(lambda done, total, msg: tracking_cb(80 + int(20 * done / max(total, 1)), 100, msg))
-        if tracking_cb else None,
-    )
-    detect_video(video_path, person_boxes=person_boxes_path(stem),
-                 on_progress=_banded(on_progress, "detecting"))
+        detect_video(video_path, person_boxes=person_boxes_path(stem),
+                     on_progress=_banded(on_progress, "detecting"))
     cap = cv2.VideoCapture(str(video_path))
     try:
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -158,7 +186,10 @@ def identify_players(
                           width=width, height=height, on_progress=associate_cb)
     reassociate_video(video_path, policy, on_progress=_banded(on_progress, "cropping"))
 
-    embed_video(stem, models=[embedder], on_progress=_banded(on_progress, "embedding"))
+    if advanced:
+        embed_tracklet_windows(stem, video_path, on_progress=_banded(on_progress, "embedding"))
+    else:
+        embed_video(stem, models=[embedder], on_progress=_banded(on_progress, "embedding"))
 
     if on_progress:
         on_progress(_BANDS["clustering"][0], 100, "creating pairing suggestions...")
@@ -359,6 +390,9 @@ def _main() -> None:
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--fusion-checkpoint", type=Path, required=True)
     parser.add_argument("--person-boxes", type=Path, help="Reuse whole-video Fusion boxes from this analysis")
+    parser.add_argument("--advanced", action="store_true",
+                        help="RF-DETR Seg + McByte++ tracking and tracklet-window embeddings "
+                             "(--embedder then does not apply)")
     parser.add_argument("--embedder", default=DEFAULT_EMBEDDER)
     parser.add_argument("--reps-per-unit", type=int, default=3)
     args = parser.parse_args()
@@ -371,6 +405,7 @@ def _main() -> None:
         embedder=args.embedder,
         fusion_checkpoint=args.fusion_checkpoint,
         person_boxes=args.person_boxes,
+        advanced=args.advanced,
         reps_per_unit=args.reps_per_unit,
         on_progress=report,
     )
