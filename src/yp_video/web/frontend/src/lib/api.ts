@@ -206,6 +206,7 @@ export const API = {
     start: '/inference/start',
   },
   tracklets: {
+    trackers: '/tracklets/trackers',
     run: '/tracklets/run',
     get: (name: string) => `/tracklets/${encodeURIComponent(name)}`,
     masks: (name: string, rally: number) =>
