@@ -55,6 +55,41 @@ class AdvancedIdentifyTests(unittest.TestCase):
         track_person_boxes.assert_called_once()
         self.assertIsNotNone(detect_video.call_args.kwargs["person_boxes"])
 
+    def _associate(self, **kwargs):
+        """Run up to the person/action call and return its kwargs."""
+        from yp_video.actor import candidates, person_action
+
+        class _Capture:
+            def get(self, prop):
+                return 1920 if prop == 3 else 1080
+
+            def release(self):
+                pass
+
+        with tempfile.TemporaryDirectory() as tmp:
+            checkpoint = Path(tmp) / "checkpoint_best.pt"
+            checkpoint.write_bytes(b"")
+            (Path(tmp) / "person_action.pt").write_bytes(b"")
+            with (
+                patch.object(pipeline, "load_events", return_value=[{"frame": 120}]),
+                patch.object(tracking, "track_video"),
+                patch.object(fusion, "track_person_boxes"),
+                patch.object(spot_pass, "run_spot_pass"),
+                patch.object(pipeline, "detect_video"),
+                patch.object(candidates, "track_paths", return_value={"1:1": {120: [0, 0, 9, 9]}}),
+                patch("cv2.VideoCapture", return_value=_Capture()),
+                patch.object(person_action, "build_policy", side_effect=_StopAfterDetection) as build,
+                self.assertRaises(_StopAfterDetection),
+            ):
+                identify.identify_players(Path(tmp) / "match.mp4", fusion_checkpoint=checkpoint, **kwargs)
+            return build.call_args.kwargs
+
+    def test_advanced_picks_actors_among_tracklets(self):
+        self.assertEqual(self._associate(advanced=True)["tracks"], {"1:1": {120: [0, 0, 9, 9]}})
+
+    def test_standard_picks_among_model_proposals(self):
+        self.assertIsNone(self._associate()["tracks"])
+
     def test_advanced_refuses_fusion_boxes(self):
         with tempfile.TemporaryDirectory() as tmp:
             checkpoint = Path(tmp) / "checkpoint_best.pt"

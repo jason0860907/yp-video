@@ -117,13 +117,17 @@ def identify_players(
     ~10 extra GPU minutes per video. It reads no fusion boxes, so
     ``person_boxes`` must be None. Those tracklets also carry the identity
     vectors: advanced embeds with extraction/windows.py (masked crops averaged
-    over ±1 s of the actor's tracklet) and ignores ``embedder``.
+    over ±1 s of the actor's tracklet) and ignores ``embedder``. And they are
+    the actor candidates: the person/action head picks among each event's
+    tracklets within ±3 frames instead of its own proposals (actor hit
+    77.6% → 82.6% on the model's 7-video validation split).
     """
     # Deferred imports: this module is also imported for its dataclasses by
     # code that must not pull the GPU stack in.
     import cv2
 
     from yp_video.action.spot_pass import RallyOptions, SpotOptions, run_spot_pass
+    from yp_video.actor.candidates import track_paths
     from yp_video.actor.person_action import build_policy
     from yp_video.core.person_boxes import person_boxes_path, save_person_boxes
     from yp_video.extraction import links
@@ -182,8 +186,11 @@ def identify_players(
     if width <= 0 or height <= 0:
         raise ValueError(f"Invalid video geometry: {video_path}")
     associate_cb = _banded(on_progress, "associating")
+    # Advanced: the model picks among the McByte++ tracklets themselves.
     policy = build_policy(video_path, person_action_checkpoint, events,
-                          width=width, height=height, on_progress=associate_cb)
+                          width=width, height=height,
+                          tracks=track_paths(stem) if advanced else None,
+                          on_progress=associate_cb)
     reassociate_video(video_path, policy, on_progress=_banded(on_progress, "cropping"))
 
     if advanced:

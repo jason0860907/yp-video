@@ -1,38 +1,62 @@
-"""Joint person/action inference at existing events, across the SPOT boundary."""
+"""Joint person/action inference at existing events, across the SPOT boundary.
+
+Standard identify lets the model score its own person proposals and answers
+with a box. Advanced identify hands it each event's tracklets instead
+(``actor/candidates.boxes_on``) and answers with the tracklet it picked, so
+every later step — crop, window embedding, units — stands on that tracklet
+rather than re-matching a box onto one.
+"""
 from __future__ import annotations
 
 import json
 import math
 import subprocess
 import tempfile
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
+from yp_video.actor.candidates import boxes_on
 from yp_video.actor.policy import ActorPick, EventContext
 from yp_video.config import SPOT_DIR, SPOT_PYTHON
 from yp_video.contracts.action import event_id
 from yp_video.core.progress import ProgressFn
+from yp_video.tracklets.geometry import TrackRef
 
 
 class PersonActionPolicy:
     name = "fusion-person-action"
-    needs_tracklets = False
 
-    def __init__(self, answers: dict[str, dict]):
+    def __init__(self, answers: dict[str, dict], *, by_tracklet: bool):
         self.answers = answers
+        #: Tracklet answers resolve through the tracks and their masks.
+        self.needs_tracklets = by_tracklet
 
     def decide(self, context: EventContext) -> ActorPick:
         answer = self.answers[context.event_id]
+        track = answer.get("track")
         return ActorPick(
-            box=tuple(answer["box"]) if answer["box"] is not None else None,
+            box=tuple(answer["box"]) if answer["box"] is not None and track is None else None,
+            track=TrackRef.parse(track) if track is not None else None,
             candidates=answer["candidates"],
             diagnostic={"source": self.name, "status": answer["status"]},
         )
 
 
 def build_policy(video: Path, checkpoint: Path, events: list[dict], *,
-                 width: int, height: int, on_progress: ProgressFn | None = None):
+                 width: int, height: int,
+                 tracks: Mapping[str, Mapping[int, Sequence[float]]] | None = None,
+                 on_progress: ProgressFn | None = None):
+    """``tracks`` (``actor/candidates.track_paths``) switches the candidates
+    from the model's own proposals to each event's tracklets."""
     rows = [{"id": event_id(e), "frame": int(e["frame"]), "label": e["label"]}
             for e in events]
+    keys = None
+    if tracks is not None:
+        keys = {}
+        for row in rows:
+            near = boxes_on(tracks, row["frame"], width, height)
+            keys[row["id"]] = [key for key, _ in near]
+            row["candidates"] = [box for _, box in near]
     with tempfile.TemporaryDirectory(prefix="fusion-association-") as scratch:
         source, output = Path(scratch) / "events.json", Path(scratch) / "answers.json"
         source.write_text(json.dumps(rows))
@@ -56,11 +80,16 @@ def build_policy(video: Path, checkpoint: Path, events: list[dict], *,
                 process.wait()
                 raise
         answers = json.loads(output.read_text())["events"]
-    return policy_from_answers(rows, answers, width=width, height=height)
+    return policy_from_answers(rows, answers, width=width, height=height, keys=keys)
 
 
-def policy_from_answers(rows: list[dict], answers: list[dict], *, width: int, height: int):
-    """Validate the subprocess boundary before any crop or embedding is made."""
+def policy_from_answers(rows: list[dict], answers: list[dict], *, width: int, height: int,
+                        keys: Mapping[str, list[str]] | None = None):
+    """Validate the subprocess boundary before any crop or embedding is made.
+
+    ``keys`` (event id → the tracklet behind each candidate, in order) marks
+    a tracklet call: the answer's ``pick`` must index those candidates.
+    """
     if len(answers) != len(rows) or {a["id"] for a in answers} != {r["id"] for r in rows}:
         raise ValueError("Person/action output does not match the requested events")
     expected = {r["id"]: r for r in rows}
@@ -68,6 +97,12 @@ def policy_from_answers(rows: list[dict], answers: list[dict], *, width: int, he
         row = expected[answer["id"]]
         if any(answer[key] != row[key] for key in ("frame", "label")):
             raise ValueError("Person/action inference changed an existing event")
+        if keys is not None:
+            options, pick = keys[answer["id"]], answer["pick"]
+            if answer["candidates"] != len(options) or (
+                    pick is not None and not (isinstance(pick, int) and 0 <= pick < len(options))):
+                raise ValueError("Person/action pick does not name a candidate tracklet")
+            answer["track"] = options[pick] if pick is not None else None
         box = answer["box"]
         if box is not None:
             if (len(box) != 4 or not all(math.isfinite(v) and 0 <= v <= 1 for v in box)
@@ -75,4 +110,4 @@ def policy_from_answers(rows: list[dict], answers: list[dict], *, width: int, he
                 raise ValueError("Invalid person/action box")
             answer["box"] = [box[0] * width, box[1] * height,
                              box[2] * width, box[3] * height]
-    return PersonActionPolicy({a["id"]: a for a in answers})
+    return PersonActionPolicy({a["id"]: a for a in answers}, by_tracklet=keys is not None)

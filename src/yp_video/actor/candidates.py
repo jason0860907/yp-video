@@ -102,6 +102,22 @@ def candidates_on(
     return sorted(key for key, boxes in paths.items() if box_near(boxes, frame) is not None)
 
 
+def boxes_on(
+    paths: Mapping[str, Mapping[int, Sequence[float]]], frame: int, width: int, height: int
+) -> list[tuple[str, list[float]]]:
+    """``candidates_on`` with each tracklet's nearest box, normalized.
+
+    The candidate set the person/action head scores in advanced identify —
+    one box per tracklet, on the event frame, at the same reach.
+    """
+    out = []
+    for key in candidates_on(paths, frame):
+        box = _normalized(box_near(paths[key], frame), width, height)
+        if box is not None:
+            out.append((key, box))
+    return out
+
+
 def candidates_only(stem: str, events: Iterable[dict]) -> list[dict]:
     """The candidate set per event, with no answer attached.
 
