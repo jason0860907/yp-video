@@ -26,10 +26,10 @@ class _Index:
         return self._tracklet
 
 
-def _resolve(detections: list[dict]):
-    tracklet = {"frames": [50], "boxes": [BEHIND]}
+def _resolve(detections: list[dict], tracklet: dict | None = None, frame: int = 50):
+    tracklet = tracklet or {"frames": [50], "boxes": [BEHIND]}
     mask = np.ones((96, 48), dtype=bool)  # the whole tracklet box is them
-    record = {"frame": 50, "detections": detections}
+    record = {"frame": frame, "detections": detections}
     with tempfile.TemporaryDirectory() as tmp:
         tracks = Path(tmp) / "v_tracks.jsonl"
         tracks.write_text("")
@@ -62,6 +62,22 @@ class ResolveTrackTests(unittest.TestCase):
             {"box": near, "score": 0.90},
         ])
         self.assertEqual(pick.box, tuple(near))
+
+    def test_a_fast_hitter_between_strided_frames_is_compared_where_they_are(self):
+        # Stride 2: no box on frame 51. The player runs 60 px per frame, so
+        # either neighbour's box alone fails the shape gate against their own
+        # event-frame detection; the interpolated one passes.
+        tracklet = {"frames": [50, 52], "boxes": [[0.0, 0, 40, 120], [120.0, 0, 160, 120]]}
+        own = [60.0, 0, 100, 120]
+        pick = _resolve([{"box": own, "score": 0.9}], tracklet, frame=51)
+        self.assertEqual(pick.box, tuple(own))
+        self.assertTrue(pick.snap)
+
+    def test_a_track_that_ends_beside_the_event_uses_its_last_box(self):
+        tracklet = {"frames": [48, 50], "boxes": [[0.0, 0, 40, 120], BEHIND]}
+        pick = _resolve([], tracklet, frame=51)
+        self.assertEqual(pick.box, tuple(BEHIND))
+        self.assertFalse(pick.snap)
 
 
 if __name__ == "__main__":

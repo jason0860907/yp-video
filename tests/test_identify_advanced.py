@@ -26,8 +26,8 @@ class AdvancedIdentifyTests(unittest.TestCase):
             events = [{"frame": 120}, {"frame": 300}]
             with (
                 patch.object(pipeline, "load_events", return_value=events),
-                patch.object(tracking, "track_video") as track_video,
-                patch.object(fusion, "track_person_boxes") as track_person_boxes,
+                patch.object(tracking, "track_video", autospec=True) as track_video,
+                patch.object(fusion, "track_person_boxes", autospec=True) as track_person_boxes,
                 patch.object(spot_pass, "run_spot_pass") as run_spot_pass,
                 patch.object(pipeline, "detect_video", side_effect=_StopAfterDetection) as detect_video,
                 self.assertRaises(_StopAfterDetection),
@@ -48,11 +48,12 @@ class AdvancedIdentifyTests(unittest.TestCase):
         run_spot_pass.assert_not_called()
 
     def test_standard_keeps_fusion_boxes_and_bytetrack(self):
-        track_video, track_person_boxes, run_spot_pass, detect_video = self._run()
+        track_video, track_person_boxes, run_spot_pass, detect_video = self._run(embedder="clip-reident")
 
         track_video.assert_not_called()
         run_spot_pass.assert_called_once()
         track_person_boxes.assert_called_once()
+        self.assertIs(track_person_boxes.call_args.kwargs["moving_camera"], False)
         self.assertIsNotNone(detect_video.call_args.kwargs["person_boxes"])
 
     def _associate(self, **kwargs):
@@ -88,7 +89,12 @@ class AdvancedIdentifyTests(unittest.TestCase):
         self.assertEqual(self._associate(advanced=True)["tracks"], {"1:1": {120: [0, 0, 9, 9]}})
 
     def test_standard_picks_among_model_proposals(self):
-        self.assertIsNone(self._associate()["tracks"])
+        self.assertIsNone(self._associate(embedder="clip-reident")["tracks"])
+
+    def test_mode_decides_the_embedder(self):
+        for kwargs in ({"advanced": True, "embedder": "clip-reident"}, {}):
+            with self.assertRaises(ValueError):
+                identify.identify_players(Path("/tmp/m.mp4"), fusion_checkpoint=Path("/tmp/c.pt"), **kwargs)
 
     def test_advanced_refuses_fusion_boxes(self):
         with tempfile.TemporaryDirectory() as tmp:

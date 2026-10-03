@@ -24,22 +24,16 @@ from yp_video.tracklets.geometry import TrackRef
 
 
 class PersonActionPolicy:
-    name = "fusion-person-action"
+    """The person/action head's answers, decided and validated up front."""
 
-    def __init__(self, answers: dict[str, dict], *, by_tracklet: bool):
-        self.answers = answers
+    def __init__(self, picks: dict[str, ActorPick], *, name: str, needs_tracklets: bool):
+        self.picks = picks
+        self.name = name
         #: Tracklet answers resolve through the tracks and their masks.
-        self.needs_tracklets = by_tracklet
+        self.needs_tracklets = needs_tracklets
 
     def decide(self, context: EventContext) -> ActorPick:
-        answer = self.answers[context.event_id]
-        track = answer.get("track")
-        return ActorPick(
-            box=tuple(answer["box"]) if answer["box"] is not None and track is None else None,
-            track=TrackRef.parse(track) if track is not None else None,
-            candidates=answer["candidates"],
-            diagnostic={"source": self.name, "status": answer["status"]},
-        )
+        return self.picks[context.event_id]
 
 
 def build_policy(video: Path, checkpoint: Path, events: list[dict], *,
@@ -88,26 +82,39 @@ def policy_from_answers(rows: list[dict], answers: list[dict], *, width: int, he
     """Validate the subprocess boundary before any crop or embedding is made.
 
     ``keys`` (event id → the tracklet behind each candidate, in order) marks
-    a tracklet call: the answer's ``pick`` must index those candidates.
+    a tracklet call: the answer's ``pick`` names one of those tracklets and
+    its box is not used. Otherwise the box is the answer.
     """
     if len(answers) != len(rows) or {a["id"] for a in answers} != {r["id"] for r in rows}:
         raise ValueError("Person/action output does not match the requested events")
     expected = {r["id"]: r for r in rows}
+    by_tracklet = keys is not None
+    name = "fusion-person-action:tracklet" if by_tracklet else "fusion-person-action"
+    picks = {}
     for answer in answers:
         row = expected[answer["id"]]
         if any(answer[key] != row[key] for key in ("frame", "label")):
             raise ValueError("Person/action inference changed an existing event")
-        if keys is not None:
-            options, pick = keys[answer["id"]], answer["pick"]
-            if answer["candidates"] != len(options) or (
-                    pick is not None and not (isinstance(pick, int) and 0 <= pick < len(options))):
-                raise ValueError("Person/action pick does not name a candidate tracklet")
-            answer["track"] = options[pick] if pick is not None else None
-        box = answer["box"]
-        if box is not None:
-            if (len(box) != 4 or not all(math.isfinite(v) and 0 <= v <= 1 for v in box)
+        pick, count = answer["pick"], answer["num_candidates"]
+        if pick is not None and not (type(pick) is int and 0 <= pick < count):
+            raise ValueError("Person/action pick does not name a candidate")
+        if (pick is None) != (answer["status"] == "no_candidate"):
+            raise ValueError("Person/action status disagrees with its pick")
+        track = box = None
+        if by_tracklet:
+            options = keys[answer["id"]]
+            if count != len(options):
+                raise ValueError("Person/action scored a different candidate set")
+            track = TrackRef.parse(options[pick]) if pick is not None else None
+        elif pick is not None:
+            box = answer["box"]
+            if (box is None or len(box) != 4
+                    or not all(math.isfinite(v) and 0 <= v <= 1 for v in box)
                     or box[0] >= box[2] or box[1] >= box[3]):
                 raise ValueError("Invalid person/action box")
-            answer["box"] = [box[0] * width, box[1] * height,
-                             box[2] * width, box[3] * height]
-    return PersonActionPolicy({a["id"]: a for a in answers}, by_tracklet=keys is not None)
+            box = (box[0] * width, box[1] * height, box[2] * width, box[3] * height)
+        picks[answer["id"]] = ActorPick(
+            box=box, track=track, candidates=count,
+            diagnostic={"source": name, "status": answer["status"]},
+        )
+    return PersonActionPolicy(picks, name=name, needs_tracklets=by_tracklet)

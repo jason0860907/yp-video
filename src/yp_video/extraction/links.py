@@ -54,6 +54,7 @@ from yp_video.tracklets.geometry import (
     BoxQuery,
     TrackletIndex,
     TrackRef,
+    box_near,
     link_boxes,
 )
 from yp_video.tracklets.store import (
@@ -305,14 +306,28 @@ class TrackPick:
     snap: bool
 
 
-def _box_near(tracklet: dict, frame: int, *, window: int) -> tuple[list[float], int] | None:
-    """The tracklet's box at (or nearest to) ``frame``, and where it was found."""
-    at = {f: box for f, box in zip(tracklet["frames"], tracklet["boxes"])}
-    for delta in range(window + 1):
-        for candidate in (frame,) if delta == 0 else (frame - delta, frame + delta):
-            if candidate in at:
-                return at[candidate], candidate
-    return None
+def _box_on(boxes: dict[int, Sequence[float]], frame: int) -> tuple[list[float], int] | None:
+    """The tracklet's box ON ``frame``, and the frame its mask row sits on.
+
+    At stride 2 an odd event frame has no box of its own. The detections it is
+    compared against were taken on the event frame, so the two boxes either
+    side are interpolated — a hitter covers a lot of ground in two frames, and
+    comparing their event-frame detection with a box from a neighbouring frame
+    would read them as someone else. One side only (the track starts or ends
+    there) is taken as is.
+    """
+    found = box_near(boxes, frame)
+    if found is None:
+        return None
+    box, at = found
+    if at != frame:
+        reach = range(1, EVENT_TRACK_MAX_DELTA + 1)
+        f0 = next((frame - d for d in reach if frame - d in boxes), None)
+        f1 = next((frame + d for d in reach if frame + d in boxes), None)
+        if f0 is not None and f1 is not None:
+            t = (frame - f0) / (f1 - f0)
+            return [a + t * (b - a) for a, b in zip(boxes[f0], boxes[f1])], at
+    return list(box), at
 
 
 def _mask_coverage(mask, track_box: Sequence[float], det_box: Sequence[float]) -> float:
@@ -393,16 +408,14 @@ def resolve_track(
         return None
 
     event_frame = record["frame"]
-    found = _box_near(tracklet, event_frame, window=EVENT_TRACK_MAX_DELTA)
+    boxes = dict(zip(tracklet["frames"], tracklet["boxes"]))
+    found = _box_on(boxes, event_frame)
     if found is None:
         # The track never reaches the action — the actor was undetected
         # around it. Crop where the player demonstrably IS. The client used to
         # need a hand-clicked frame for this; the tracklet already knows one.
-        nearest = min(tracklet["frames"], key=lambda f: abs(f - event_frame))
-        elsewhere = _box_near(tracklet, nearest, window=0)
-        if elsewhere is None:
-            return None
-        return TrackPick(box=_as_box(elsewhere[0]), frame=elsewhere[1], snap=False)
+        nearest = min(boxes, key=lambda f: abs(f - event_frame))
+        return TrackPick(box=_as_box(boxes[nearest]), frame=nearest, snap=False)
 
     track_box, at = found
     detections = record.get("detections") or []

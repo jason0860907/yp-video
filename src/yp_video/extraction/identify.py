@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from yp_video.core.progress import ProgressFn
-from yp_video.reid.embedder import DEFAULT_EMBEDDER, threshold_calibration
+from yp_video.reid.embedder import threshold_calibration
 
 #: Overall-percent band per phase, tuned to measured cost: dense tracking is
 #: the GPU bill (~14.5 ms/frame over every rally frame); everything after it
@@ -95,7 +95,7 @@ class IdentifyResult:
 def identify_players(
     video_path: Path,
     *,
-    embedder: str = DEFAULT_EMBEDDER,
+    embedder: str | None = None,
     fusion_checkpoint: Path,
     person_boxes: Path | None = None,
     advanced: bool = False,
@@ -117,7 +117,8 @@ def identify_players(
     ~10 extra GPU minutes per video. It reads no fusion boxes, so
     ``person_boxes`` must be None. Those tracklets also carry the identity
     vectors: advanced embeds with extraction/windows.py (masked crops averaged
-    over ±1 s of the actor's tracklet) and ignores ``embedder``. And they are
+    over ±1 s of the actor's tracklet), so it takes no ``embedder`` — standard
+    identify requires one. And they are
     the actor candidates: the person/action head picks among each event's
     tracklets within ±3 frames instead of its own proposals (actor hit
     77.6% → 82.6% on the model's 7-video validation split).
@@ -138,6 +139,8 @@ def identify_players(
     from yp_video.tracklets.fusion import track_person_boxes
     from yp_video.tracklets.tracking import track_video
 
+    if advanced == (embedder is not None):
+        raise ValueError("standard identify needs an embedder; advanced embeds its own windows")
     if advanced:
         embedder = WINDOWED_EMBEDDER
     stem = video_path.stem
@@ -172,10 +175,10 @@ def identify_players(
             )
         track_person_boxes(
             video_path,
+            moving_camera=False,
             on_progress=(lambda done, total, msg: tracking_cb(80 + int(20 * done / max(total, 1)), 100, msg))
             if tracking_cb else None,
         )
-            moving_camera=False,
         detect_video(video_path, person_boxes=person_boxes_path(stem),
                      on_progress=_banded(on_progress, "detecting"))
     cap = cv2.VideoCapture(str(video_path))
@@ -398,10 +401,10 @@ def _main() -> None:
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--fusion-checkpoint", type=Path, required=True)
     parser.add_argument("--person-boxes", type=Path, help="Reuse whole-video Fusion boxes from this analysis")
-    parser.add_argument("--advanced", action="store_true",
-                        help="RF-DETR Seg + McByte++ tracking and tracklet-window embeddings "
-                             "(--embedder then does not apply)")
-    parser.add_argument("--embedder", default=DEFAULT_EMBEDDER)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--embedder", help="Standard identify: fusion boxes + ByteTrack, embedded with this model")
+    mode.add_argument("--advanced", action="store_true",
+                      help="RF-DETR Seg + McByte++ tracking and tracklet-window embeddings")
     parser.add_argument("--reps-per-unit", type=int, default=3)
     args = parser.parse_args()
 

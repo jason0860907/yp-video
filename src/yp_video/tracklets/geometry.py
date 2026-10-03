@@ -16,6 +16,7 @@ are dict lookups.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Mapping
 from typing import NamedTuple, Sequence
 
 from yp_video.person.detector import iou
@@ -48,6 +49,21 @@ LINK_MIN_MARGIN = 0.1
 #: window (extraction/links.py) and the actor head's candidate sets are
 #: built from it (actor/candidates.py).
 EVENT_TRACK_MAX_DELTA = 3
+
+
+def box_near(
+    boxes: Mapping[int, Sequence[float]], frame: int, window: int = EVENT_TRACK_MAX_DELTA
+) -> tuple[Sequence[float], int] | None:
+    """One tracklet's box nearest ``frame`` within ``window`` frames, and the
+    frame it is on — or None when the tracklet is nowhere near it.
+
+    ``boxes`` is that tracklet's frame → box map. Ties go to the earlier frame.
+    """
+    for delta in range(window + 1):
+        for at in (frame,) if delta == 0 else (frame - delta, frame + delta):
+            if at in boxes:
+                return boxes[at], at
+    return None
 
 
 class TrackRef(NamedTuple):

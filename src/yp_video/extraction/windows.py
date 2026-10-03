@@ -42,7 +42,8 @@ from yp_video.reid.store import (
     embedding_write_transaction,
     save_embedding_matrix,
 )
-from yp_video.tracklets.store import tracklet_data
+from yp_video.tracklets.geometry import TrackletIndex, TrackRef
+from yp_video.tracklets.store import tracklet_index
 
 WINDOWED_EMBEDDER = "clip-reident-masked-win30"
 BASE_EMBEDDER = "clip-reident"
@@ -50,6 +51,8 @@ WINDOW_FRAMES = 30
 WINDOW_CROPS = 8
 # A sequential grab beats a seek up to about this many frames.
 _SEEK_GAP = 120
+# Progress: masking fills the first half of the bar, embedding the second.
+_HALF = 500
 
 Box = tuple[float, float, float, float]
 
@@ -65,14 +68,15 @@ def window_picks(frames: np.ndarray, frame: int) -> list[int]:
     return sorted({int(inside[i]) for i in spread})
 
 
-def window_boxes(records: list[dict], links: dict[str, str], tracks: dict[str, dict]) -> list[list[tuple[int, Box]]]:
+def window_boxes(records: list[dict], links: dict[str, str], index: TrackletIndex) -> list[list[tuple[int, Box]]]:
     """Per record, the (frame, box) views its identity is averaged over."""
     out: list[list[tuple[int, Box]]] = []
     for record in records:
         if not record.get("crop"):
             out.append([])
             continue
-        tracklet = tracks.get(links.get(record["id"], ""))
+        key = links.get(record["id"])
+        tracklet = index.tracklet(TrackRef.parse(key)) if key is not None else None
         if tracklet is None:
             box = record.get("actor_box") or record["box"]
             out.append([(int(record["frame"]), tuple(box))])
@@ -118,7 +122,7 @@ def _cut_masked(video_path: Path, views: list[list[tuple[int, Box]]], out_dir: P
             ok, image = cap.read()
             pos += 1
             if not ok:
-                continue
+                raise ValueError(f"Could not decode frame {frame} of {video_path.name}")
             for box in need[frame]:
                 x0, y0, x1, y1 = _crop_bounds(box, w, h)
                 if x1 <= x0 or y1 <= y0:
@@ -128,7 +132,7 @@ def _cut_masked(video_path: Path, views: list[list[tuple[int, Box]]], out_dir: P
                 cv2.imwrite(str(path), crop_masker().mask_crop(image[y0:y1, x0:x1], target))
                 paths[(frame, box)] = path
                 if on_progress and len(paths) % 200 == 0:
-                    on_progress(len(paths), total * 2, "masking window crops...")
+                    on_progress(_HALF * len(paths) // total, 2 * _HALF, "masking window crops...")
     finally:
         cap.release()
     return paths
@@ -138,17 +142,16 @@ def embed_tracklet_windows(stem: str, video_path: Path, *, on_progress: Progress
     """Records + tracks + video → the WINDOWED_EMBEDDER matrix, rows aligned
     with the records. Returns ``{"models": [...], "crops": N}`` like embed_video."""
     _meta, records = read_jsonl(records_path(stem))
-    tracks = {f"{t['rally_id']}:{t['track_id']}": t for t in tracklet_data(stem).records}
-    views = window_boxes(records, track_keys(stem), tracks)
+    views = window_boxes(records, track_keys(stem), tracklet_index(stem))
     embedder = build_embedders()[BASE_EMBEDDER]
     with tempfile.TemporaryDirectory(prefix="window-crops-") as tmp:
         crops = _cut_masked(video_path, views, Path(tmp), on_progress)
         order = list(crops)
-        offset = len(order)
 
         def progress(done: int, total: int, msg: str) -> None:
+            # Second half of the bar, whatever the embedder counts in.
             if on_progress:
-                on_progress(offset + done, offset + total, f"{BASE_EMBEDDER} · {msg}")
+                on_progress(_HALF + _HALF * done // max(total, 1), 2 * _HALF, f"{BASE_EMBEDDER} · {msg}")
 
         vectors = embedder.embed_paths([crops[k] for k in order], on_progress=progress)
     row_of = {k: i for i, k in enumerate(order)}

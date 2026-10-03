@@ -25,7 +25,7 @@ from yp_video.actor.labels import ActorVerdict
 from yp_video.contracts.action import ACTOR_WINDOW_OFFSETS, ActorTargetKind, event_id
 from yp_video.core.jsonl import read_jsonl_cached
 from yp_video.extraction.store import records_path
-from yp_video.tracklets.geometry import EVENT_TRACK_MAX_DELTA
+from yp_video.tracklets.geometry import box_near
 from yp_video.tracklets.store import load_tracklets, tracks_path, tracks_stride
 
 
@@ -46,15 +46,15 @@ def _normalized(
     """A box in [0, 1], or None where tracking has none for that frame."""
     if box is None:
         return None
-    x0, y0, x1, y1 = (float(v) for v in box)
+    x0, y0, x1, y1 = (
+        round(min(max(float(v) / size, 0.0), 1.0), 5)
+        for v, size in zip(box, (width, height, width, height))
+    )
+    # After clamping: a box hanging off the frame keeps its visible part, and
+    # one entirely outside it is no box at all.
     if x1 <= x0 or y1 <= y0:
         return None
-    return [
-        round(min(max(x0 / width, 0.0), 1.0), 5),
-        round(min(max(y0 / height, 0.0), 1.0), 5),
-        round(min(max(x1 / width, 0.0), 1.0), 5),
-        round(min(max(y1 / height, 0.0), 1.0), 5),
-    ]
+    return [x0, y0, x1, y1]
 
 
 def track_paths(stem: str) -> dict[str, dict[int, Sequence[float]]]:
@@ -70,20 +70,6 @@ def track_paths(stem: str) -> dict[str, dict[int, Sequence[float]]]:
         }
         for tracklet in tracklets
     }
-
-
-def box_near(boxes: Mapping[int, Sequence[float]], frame: int) -> Sequence[float] | None:
-    """The tracklet's box nearest ``frame`` within EVENT_TRACK_MAX_DELTA, or None.
-
-    Nearest rather than exact: tracks at stride 2 have no box on every other
-    frame, and an event or a window offset landing there would otherwise read
-    as the player being absent.
-    """
-    for delta in range(EVENT_TRACK_MAX_DELTA + 1):
-        for at in (frame,) if delta == 0 else (frame - delta, frame + delta):
-            if at in boxes:
-                return boxes[at]
-    return None
 
 
 def candidates_on(
@@ -102,6 +88,11 @@ def candidates_on(
     return sorted(key for key, boxes in paths.items() if box_near(boxes, frame) is not None)
 
 
+def _box_near(boxes: Mapping[int, Sequence[float]], frame: int) -> Sequence[float] | None:
+    found = box_near(boxes, frame)
+    return found[0] if found is not None else None
+
+
 def boxes_on(
     paths: Mapping[str, Mapping[int, Sequence[float]]], frame: int, width: int, height: int
 ) -> list[tuple[str, list[float]]]:
@@ -111,8 +102,8 @@ def boxes_on(
     one box per tracklet, on the event frame, at the same reach.
     """
     out = []
-    for key in candidates_on(paths, frame):
-        box = _normalized(box_near(paths[key], frame), width, height)
+    for key in sorted(paths):
+        box = _normalized(_box_near(paths[key], frame), width, height)
         if box is not None:
             out.append((key, box))
     return out
@@ -147,7 +138,7 @@ def candidates_only(stem: str, events: Iterable[dict]) -> list[dict]:
                     {
                         "track": key,
                         "boxes": [
-                            _normalized(box_near(paths[key], frame + offset), width, height)
+                            _normalized(_box_near(paths[key], frame + offset), width, height)
                             for offset in ACTOR_WINDOW_OFFSETS
                         ],
                     }
@@ -193,7 +184,7 @@ def build(stem: str, events: Iterable[dict]) -> tuple[list[dict], dict[str, int]
             {
                 "track": key,
                 "boxes": [
-                    _normalized(box_near(paths[key], frame + offset), width, height)
+                    _normalized(_box_near(paths[key], frame + offset), width, height)
                     for offset in ACTOR_WINDOW_OFFSETS
                 ],
             }

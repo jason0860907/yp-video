@@ -103,6 +103,6 @@ def test_no_action_events_returns_completed_empty_identification():
     with patch('yp_video.extraction.pipeline.load_events',return_value=[]), \
          patch('yp_video.action.spot_pass.run_spot_pass') as inference, \
          patch('yp_video.extraction.identify.threshold_calibration',return_value={'min':.2,'max':.8,'default':.5,'step':.01}):
-        result=identify_players(Path('/tmp/empty.mp4'),fusion_checkpoint=Path('/tmp/model.pt'))
+        result=identify_players(Path('/tmp/empty.mp4'),embedder='clip-reident',fusion_checkpoint=Path('/tmp/model.pt'))
     assert not result.units and not result.linkage
     inference.assert_not_called()
