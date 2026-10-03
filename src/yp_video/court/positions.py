@@ -78,6 +78,36 @@ def _flights(events: list[dict]) -> list[dict]:
     return arcs
 
 
+def calibration_summary(calibration: Calibration) -> dict:
+    """How well the marks fit, in a form a client can draw without any
+    geometry of its own: the floor fit's error, the court's painted lines and
+    the net projected back into the frame (normalized image points), and
+    whether a camera — hence heights — could be solved.
+    """
+    fit = geometry.fit(calibration.points)
+    to_image = np.array(fit.court_to_image)
+    lines = [
+        geometry.project(to_image, np.array([[x0, y0], [x1, y1]])).round(4).tolist()
+        for x0, y0, x1, y1 in geometry.LINES
+    ]
+    try:
+        cam = camera.solve(calibration)
+    except camera.CameraError:
+        cam = None
+    net = None
+    if cam is not None:
+        half = geometry.COURT_LENGTH / 2
+        net = camera.project(cam, np.array([
+            [half, 0.0, calibration.net_height_m], [half, geometry.COURT_WIDTH, calibration.net_height_m],
+        ])).round(4).tolist()
+    return {
+        "floor_rmse_m": round(fit.rmse_m, 3),
+        "lines": lines,
+        "net": net,
+        "camera": {"rmse": round(cam.rmse, 4), "center": [round(v, 2) for v in cam.center]} if cam else None,
+    }
+
+
 def compute(calibration: Calibration, events: Sequence[Mapping], feet: Feet) -> dict:
     """Place every event on the court.
 

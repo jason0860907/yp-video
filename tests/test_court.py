@@ -204,3 +204,14 @@ def test_compute_places_feet_lifts_contacts_and_keeps_reasons():
     assert by_id["f75"]["court_xy"] is None and by_id["f75"]["reason"] == "occluded"
     assert by_id["f90"]["court_xy"] == pytest.approx([12.0, 5.0], abs=0.01)
     assert [(a["from"], a["to"]) for a in result["arcs"]] == [("f30", "f60")]
+
+
+def test_calibration_summary_projects_the_lines_back_onto_the_marks():
+    see = _pinhole()
+    summary = positions.calibration_summary(_calibration(see))
+    assert summary["floor_rmse_m"] == pytest.approx(0.0, abs=1e-6)
+    # The near sideline runs from the left-near corner to the right-near one.
+    assert summary["lines"][0][0] == pytest.approx(see((0.0, 0.0, 0.0)), abs=1e-3)
+    assert summary["lines"][0][1] == pytest.approx(see((18.0, 0.0, 0.0)), abs=1e-3)
+    assert summary["net"][0] == pytest.approx(see((9.0, 0.0, 2.43)), abs=1e-3)
+    assert summary["camera"]["center"] == pytest.approx([9.0, -12.0, 3.0], abs=0.01)
