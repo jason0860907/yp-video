@@ -25,6 +25,7 @@ from yp_video.actor.labels import ActorVerdict
 from yp_video.contracts.action import ACTOR_WINDOW_OFFSETS, ActorTargetKind, event_id
 from yp_video.core.jsonl import read_jsonl_cached
 from yp_video.extraction.store import records_path
+from yp_video.tracklets.geometry import EVENT_TRACK_MAX_DELTA
 from yp_video.tracklets.store import load_tracklets, tracks_path, tracks_stride
 
 
@@ -71,18 +72,34 @@ def track_paths(stem: str) -> dict[str, dict[int, Sequence[float]]]:
     }
 
 
+def box_near(boxes: Mapping[int, Sequence[float]], frame: int) -> Sequence[float] | None:
+    """The tracklet's box nearest ``frame`` within EVENT_TRACK_MAX_DELTA, or None.
+
+    Nearest rather than exact: tracks at stride 2 have no box on every other
+    frame, and an event or a window offset landing there would otherwise read
+    as the player being absent.
+    """
+    for delta in range(EVENT_TRACK_MAX_DELTA + 1):
+        for at in (frame,) if delta == 0 else (frame - delta, frame + delta):
+            if at in boxes:
+                return boxes[at]
+    return None
+
+
 def candidates_on(
     paths: Mapping[str, Mapping[int, Sequence[float]]], frame: int
 ) -> list[str]:
-    """The tracklets with a box on this exact frame, in a stable order.
+    """The tracklets with a box within EVENT_TRACK_MAX_DELTA of this frame,
+    in a stable order.
 
-    Membership is decided on the event frame alone. A window would let a
-    tracklet that had already vanished before the contact re-enter as a
-    candidate, and the model would be asked to rule out someone who was not
-    there; the window's other offsets only add history for a player already
-    established as present.
+    Membership is decided around the event frame alone, never across the
+    whole actor window: a wider window would let a tracklet that had already
+    vanished before the contact re-enter as a candidate, and the model would
+    be asked to rule out someone who was not there. ±3 frames (0.1 s) is the
+    smallest reach that survives stride-2 tracking, where an exact-frame
+    rule left 47% of events with no candidate at all (10-03).
     """
-    return sorted(key for key, boxes in paths.items() if frame in boxes)
+    return sorted(key for key, boxes in paths.items() if box_near(boxes, frame) is not None)
 
 
 def candidates_only(stem: str, events: Iterable[dict]) -> list[dict]:
@@ -114,7 +131,7 @@ def candidates_only(stem: str, events: Iterable[dict]) -> list[dict]:
                     {
                         "track": key,
                         "boxes": [
-                            _normalized(paths[key].get(frame + offset), width, height)
+                            _normalized(box_near(paths[key], frame + offset), width, height)
                             for offset in ACTOR_WINDOW_OFFSETS
                         ],
                     }
@@ -160,7 +177,7 @@ def build(stem: str, events: Iterable[dict]) -> tuple[list[dict], dict[str, int]
             {
                 "track": key,
                 "boxes": [
-                    _normalized(paths[key].get(frame + offset), width, height)
+                    _normalized(box_near(paths[key], frame + offset), width, height)
                     for offset in ACTOR_WINDOW_OFFSETS
                 ],
             }

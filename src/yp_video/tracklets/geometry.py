@@ -41,6 +41,14 @@ BOX_MATCH_IOU = 0.3
 #: becomes visible re-pick work instead.
 LINK_MIN_MARGIN = 0.1
 
+#: How far from an event a tracklet's box still describes the person at it.
+#: Tracking at stride 2 leaves every other frame without boxes, so an event
+#: on a skipped frame must reach a neighbour; a tracklet with nothing this
+#: close counts as never reaching the action. Manual picks crop from this
+#: window (extraction/links.py) and the actor head's candidate sets are
+#: built from it (actor/candidates.py).
+EVENT_TRACK_MAX_DELTA = 3
+
 
 class TrackRef(NamedTuple):
     """A tracklet's identity. The pair — track_id alone restarts per rally."""

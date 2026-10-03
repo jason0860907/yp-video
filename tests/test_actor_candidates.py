@@ -40,7 +40,8 @@ class ActorCandidateExportTests(unittest.TestCase):
             self.tracks,
             {"frame_size": FRAME_SIZE, "stride": 1},
             [
-                # Two players on the event frame, plus one that has a gap there.
+                # Two players on the event frame, one in a stride gap there
+                # (boxes 2 frames either side), one gone 10 frames before it.
                 {
                     "rally_id": 2,
                     "track_id": 7,
@@ -60,6 +61,13 @@ class ActorCandidateExportTests(unittest.TestCase):
                     "track_id": 9,
                     "frames": [98, 102],
                     "boxes": [[300, 50, 400, 250]] * 2,
+                    "scores": [0.9] * 2,
+                },
+                {
+                    "rally_id": 2,
+                    "track_id": 11,
+                    "frames": [80, 90],
+                    "boxes": [[800, 50, 900, 250]] * 2,
                     "scores": [0.9] * 2,
                 },
             ],
@@ -96,11 +104,12 @@ class ActorCandidateExportTests(unittest.TestCase):
         )
         self.assertEqual([row["id"] for row in rows], [f"f{EVENT_FRAME}", "act_7"])
 
-    def test_the_candidate_set_is_who_was_tracked_on_the_event_frame(self) -> None:
-        """Only the event frame. A window would re-admit a player who had
-        already left before the ball was touched."""
+    def test_the_candidate_set_is_who_was_tracked_around_the_event_frame(self) -> None:
+        """Within ±3 frames, so a stride-2 gap on the event frame (2:9) keeps
+        its player; no wider, so one who left 10 frames earlier (2:11) is not
+        asked about."""
         row = self._build("a", ActorLabel(ActorVerdict.MANUAL, track=TrackRef(2, 7)))
-        self.assertEqual([c["track"] for c in row["candidates"]], ["2:3", "2:7"])
+        self.assertEqual([c["track"] for c in row["candidates"]], ["2:3", "2:7", "2:9"])
 
     def test_a_tracklet_verdict_points_at_its_candidate(self) -> None:
         row = self._build("a", ActorLabel(ActorVerdict.MANUAL, track=TrackRef(2, 7)))
@@ -115,12 +124,11 @@ class ActorCandidateExportTests(unittest.TestCase):
         self.assertEqual(row["target_kind"], "occluded")
         self.assertNotIn("target", row)
 
-    def test_a_tracklet_absent_from_the_event_frame_is_untracked(self) -> None:
-        """Track 2:9 exists either side but has no box ON the event frame. The
-        answer is genuinely not in the candidate set, and calling that
-        'occluded' would train the model to read a tracking gap as a player it
-        could not see."""
-        row = self._build("a", ActorLabel(ActorVerdict.MANUAL, track=TrackRef(2, 9)))
+    def test_a_tracklet_absent_around_the_event_frame_is_untracked(self) -> None:
+        """Track 2:11 left 10 frames before the event. The answer is genuinely
+        not in the candidate set, and calling that 'occluded' would train the
+        model to read a tracking gap as a player it could not see."""
+        row = self._build("a", ActorLabel(ActorVerdict.MANUAL, track=TrackRef(2, 11)))
         self.assertEqual(row["target_kind"], "untracked")
         self.assertNotIn("target", row)
 
@@ -171,8 +179,9 @@ class ActorCandidateExportTests(unittest.TestCase):
         at_event = ACTOR_WINDOW_OFFSETS.index(0)
         walker = next(c for c in row["candidates"] if c["track"] == "2:7")
         self.assertEqual(walker["boxes"][at_event], [0.1, 0.1, 0.2, 0.5])
-        # Tracked only at 98/100/102, so every other offset is a gap.
-        self.assertEqual(sum(b is not None for b in walker["boxes"]), 1)
+        # Tracked only at 98/100/102: offsets 0 and ±4 reach a box within 3
+        # frames, every farther offset is a gap.
+        self.assertEqual(sum(b is not None for b in walker["boxes"]), 3)
 
 
 class ContractTests(unittest.TestCase):

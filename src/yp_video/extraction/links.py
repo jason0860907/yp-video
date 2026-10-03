@@ -49,6 +49,7 @@ from yp_video.extraction.store import (
 from yp_video.person.detector import iou
 from yp_video.tracklets.geometry import (
     BOX_MATCH_IOU,
+    EVENT_TRACK_MAX_DELTA,
     LINK_MIN_MARGIN,
     BoxQuery,
     TrackletIndex,
@@ -279,9 +280,6 @@ MASK_COVERAGE_MIN = 0.6
 #: the occluder won 74 times (IoU 0.05–0.42 with the tracklet) while the
 #: player's own detection sat at 0.76–0.99; no event lost every candidate.
 TRACK_SHAPE_IOU = 0.5
-#: How far from the event the tracklet may be sampled before it counts as
-#: "never reaches the action" and the crop comes from elsewhere.
-EVENT_TRACK_MAX_DELTA = 3
 #: A mask row this far from the sampled frame still describes the same pose.
 MASK_NEAR_OFFSETS = (0, -1, 1)
 
