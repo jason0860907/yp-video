@@ -29,7 +29,8 @@ from yp_video.tracklets.geometry import box_near
 from yp_video.tracklets.store import load_tracklets, tracks_path, tracks_stride
 
 
-def _frame_size(stem: str) -> tuple[int, int] | None:
+def frame_size(stem: str) -> tuple[int, int] | None:
+    """The source frame size detection recorded, or None before detection."""
     path = records_path(stem)
     if not path.exists():
         return None
@@ -117,7 +118,7 @@ def candidates_only(stem: str, events: Iterable[dict]) -> list[dict]:
     ``target_kind`` at all — absent means unlabelled, and inventing one here
     would put a guess where supervision goes.
     """
-    size = _frame_size(stem)
+    size = frame_size(stem)
     if size is None:
         return []
     width, height = size
@@ -163,7 +164,7 @@ def build(stem: str, events: Iterable[dict]) -> tuple[list[dict], dict[str, int]
         tally["unlabelled"] = sum(1 for _ in events)
         return [], tally
 
-    size = _frame_size(stem)
+    size = frame_size(stem)
     paths = track_paths(stem)
     # Built from the same file track_paths reads, so a test (or caller)
     # redirecting tracks_path redirects both views of the tracklets.

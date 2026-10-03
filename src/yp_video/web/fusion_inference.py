@@ -1,8 +1,10 @@
-"""Fusion rally/action/person inference → ByteTrack → clip association.
+"""Fusion rally/action/person inference → tracking → person/action association.
 
 One SPOT decode supplies both temporal predictions and person boxes.
 Tracking and event detection consume those boxes without another detector
-or image decode. The separate clip classifier chooses who acted.
+or image decode. The package's joint person/action head (``person_action.pt``)
+then picks who acted among each event's tracklets — the same call App
+advanced identify makes (``actor/person_action.build_policy``).
 
 Each stage writes the same machine store the single-stage page writes, so
 the label editors, the work lists and the pipeline chips see no difference
@@ -24,7 +26,8 @@ from pathlib import Path
 
 from yp_video.action import prelabel
 from yp_video.action.spot_pass import RallyOptions, SpotOptions, run_spot_pass
-from yp_video.actor import policy as actor_policy
+from yp_video.actor import person_action
+from yp_video.actor.candidates import frame_size, track_paths
 from yp_video.config import RALLY_SPOT_PRE_ANNOTATIONS_DIR, SPOT_CHECKPOINTS_DIR
 from yp_video.core.jsonl import write_jsonl
 from yp_video.core.person_boxes import (
@@ -44,9 +47,10 @@ from yp_video.web.action_annotations import (
 )
 from yp_video.web.r2_client import materialized_cut
 
-#: The heads the fusion checkpoint must carry. Association is the clip
-#: classifier's (a second checkpoint), not the fusion actor head's.
+#: The heads the fusion checkpoint must carry. Association is the joint
+#: person/action head, a companion file beside the checkpoint.
 REQUIRED_TASKS = ("rally", "action", "person")
+PERSON_ACTION_FILE = "person_action.pt"
 
 #: Action inference scans each rally span with this much slack on both
 #: sides — the same cascade Action Predict and the selfhost worker run.
@@ -78,6 +82,7 @@ def list_checkpoints(root: Path = SPOT_CHECKPOINTS_DIR) -> list[dict]:
     return [
         row for row in prelabel.list_checkpoints(root)
         if set(REQUIRED_TASKS) <= set(row["tasks"])
+        and prelabel.resolve_checkpoint_path(row["path"], root).with_name(PERSON_ACTION_FILE).is_file()
     ]
 
 
@@ -92,8 +97,8 @@ def resolve_checkpoint(value: str) -> Path:
     ref = value or default_checkpoint()
     if not ref:
         raise FileNotFoundError(
-            "No SPOT package serves rally, action and person together; "
-            "train and package a fusion model with a person head first"
+            f"No SPOT package serves rally, action and person together with a "
+            f"{PERSON_ACTION_FILE}; package a fusion model with its person/action head first"
         )
     checkpoint = prelabel.resolve_checkpoint(ref)
     tasks = package_tasks(checkpoint)
@@ -103,6 +108,8 @@ def resolve_checkpoint(value: str) -> Path:
             f"{checkpoint.parent.name} serves {tasks or 'no tasks'}; "
             f"Inference needs {', '.join(missing)} as well"
         )
+    if not checkpoint.with_name(PERSON_ACTION_FILE).is_file():
+        raise ValueError(f"{checkpoint.parent.name} has no {PERSON_ACTION_FILE} for association")
     return checkpoint
 
 
@@ -244,16 +251,22 @@ def run_detection_stage(*, video: Path, on_progress: StageProgress) -> dict:
 
 
 def run_association_stage(
-    *, video: Path, clip_checkpoint: Path, on_progress: StageProgress
+    *, video: Path, checkpoint: Path, events: list[dict], on_progress: StageProgress
 ) -> dict:
-    """Who acted, by the per-player clip classifier: every candidate on the
-    event frame is cropped and scored, and the one most likely to have done
-    the event's action is written into the records."""
+    """Who acted, by the joint person/action head: it scores every tracklet
+    within reach of each event frame and the event's action names the pick,
+    which is written into the records (verdicts are kept)."""
+    stem = video.stem
+    size = frame_size(stem)
+    if size is None:
+        raise ValueError(f"{stem} detections carry no frame size")
+    width, height = size
     progress = _fractional(on_progress)
-    plan = actor_policy.ClipPlan(clip_checkpoint)
-    return reassociate.reassociate_video(
-        video, plan.build(video, progress), on_progress=progress
+    policy = person_action.build_policy(
+        video, checkpoint.with_name(PERSON_ACTION_FILE), events,
+        width=width, height=height, tracks=track_paths(stem), on_progress=progress,
     )
+    return reassociate.reassociate_video(video, policy, on_progress=progress)
 
 
 def _fractional(on_progress: StageProgress):
@@ -300,7 +313,6 @@ def run_video(
     *,
     video: Path,
     checkpoint: Path,
-    clip_checkpoint: Path,
     rally: RallyOptions,
     spot: SpotOptions,
     tracker: Tracker,
@@ -376,7 +388,7 @@ def run_video(
             result.skipped["association"] = skip
         else:
             result.association = run_association_stage(
-                video=video, clip_checkpoint=clip_checkpoint, on_progress=stage_progress(4),
+                video=video, checkpoint=checkpoint, events=events, on_progress=stage_progress(4),
             )
 
     on_progress(total, total, "done")

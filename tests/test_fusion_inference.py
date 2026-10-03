@@ -14,10 +14,12 @@ from yp_video.tracklets import store as tracks_store
 from yp_video.web import fusion_inference as fi
 
 
-def _make_package(root: Path, name: str, tasks: list[str]) -> Path:
+def _make_package(root: Path, name: str, tasks: list[str], *, person_action: bool = True) -> Path:
     package = root / name
     package.mkdir()
     (package / "checkpoint_best.pt").write_bytes(b"")
+    if person_action:
+        (package / fi.PERSON_ACTION_FILE).write_bytes(b"")
     (package / "manifest.json").write_text(
         json.dumps({"type": SPOT_PACKAGE_TYPE, "tasks": tasks, "best": {"epoch": 1}}),
         encoding="utf-8",
@@ -33,6 +35,7 @@ class CheckpointTests(unittest.TestCase):
             _make_package(root, "without_people", ["action", "rally", "winner"])
             _make_package(root, "rally_only", ["rally", "winner"])
             _make_package(root, "action_only", ["action", "location"])
+            _make_package(root, "no_person_action", ["action", "rally", "person"], person_action=False)
             rows = fi.list_checkpoints(root)
             self.assertEqual([row["experiment"] for row in rows], ["fusion"])
             self.assertTrue(fi.default_checkpoint(root).endswith("fusion/checkpoint_best.pt"))
@@ -53,6 +56,18 @@ class CheckpointTests(unittest.TestCase):
                 fi.resolve_checkpoint("rally_only/checkpoint_best.pt")
             self.assertIn("action", str(ctx.exception))
             self.assertNotIn("actor", str(ctx.exception))
+
+    def test_resolve_rejects_a_package_without_person_action_weights(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            checkpoint = _make_package(
+                Path(tmp), "fusion", ["rally", "action", "person"], person_action=False
+            )
+            with (
+                patch.object(fi.prelabel, "resolve_checkpoint", return_value=checkpoint),
+                self.assertRaises(ValueError) as ctx,
+            ):
+                fi.resolve_checkpoint("fusion/checkpoint_best.pt")
+            self.assertIn(fi.PERSON_ACTION_FILE, str(ctx.exception))
 
     def test_resolve_without_any_fusion_package_is_not_found(self):
         with (
@@ -160,6 +175,40 @@ class PerceptionPlanTests(unittest.TestCase):
                 patch.object(fi, "records_path", return_value=present),
             ):
                 self.assertIsNone(fi.association_skip("m", events=True))
+
+
+class AssociationStageTests(unittest.TestCase):
+    def test_person_action_head_scores_the_event_tracklets(self):
+        video = Path("/videos/cuts-sideline/match.mp4")
+        checkpoint = Path("/ckpt/fusion/checkpoint_best.pt")
+        events = [{"id": "e1", "frame": 20, "label": "spike"}]
+        tracks = {"1:3": {20: [0, 0, 10, 10]}}
+        policy = object()
+        with (
+            patch.object(fi, "frame_size", return_value=(1920, 1080)),
+            patch.object(fi, "track_paths", return_value=tracks),
+            patch.object(fi.person_action, "build_policy", return_value=policy) as build,
+            patch.object(fi.reassociate, "reassociate_video", return_value={"changed": 1}) as apply,
+        ):
+            counts = fi.run_association_stage(
+                video=video, checkpoint=checkpoint, events=events, on_progress=lambda *a: None
+            )
+        self.assertEqual(counts, {"changed": 1})
+        args, kwargs = build.call_args
+        self.assertEqual(args, (video, checkpoint.with_name(fi.PERSON_ACTION_FILE), events))
+        self.assertEqual((kwargs["width"], kwargs["height"], kwargs["tracks"]), (1920, 1080, tracks))
+        self.assertIs(apply.call_args.args[1], policy)
+
+    def test_missing_frame_size_fails_before_scoring(self):
+        with (
+            patch.object(fi, "frame_size", return_value=None),
+            patch.object(fi.person_action, "build_policy") as build,
+            self.assertRaises(ValueError),
+        ):
+            fi.run_association_stage(
+                video=Path("m.mp4"), checkpoint=Path("c.pt"), events=[], on_progress=lambda *a: None
+            )
+        build.assert_not_called()
 
 
 class SummaryTests(unittest.TestCase):

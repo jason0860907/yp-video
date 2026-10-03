@@ -15,7 +15,6 @@ from pydantic import Field
 
 from yp_video.action import prelabel
 from yp_video.action.spot_pass import RallyOptions, SpotOptions
-from yp_video.actor import clip_associate
 from yp_video.config import SPOT_CHECKPOINTS_DIR, SPOT_DIR, cut_kind_of
 from yp_video.extraction.prerequisites import prerequisites
 from yp_video.tracklets import mcbyte
@@ -34,10 +33,8 @@ router = APIRouter()
 
 class InferenceRequest(StrictModel):
     videos: list[str] = Field(min_length=1)
-    #: Fusion package for rally + action + person; empty = newest.
+    #: Fusion package for rally + action + person (+ person_action.pt); empty = newest.
     checkpoint: str = ""
-    #: Clip classifier package for association; empty = newest.
-    clip_checkpoint: str = ""
     rally_min_score: float = Field(default=0.5, ge=0.0, le=1.0)
     max_gap_s: float = Field(default=2.0, ge=0.0, le=30.0)
     min_duration_s: float = Field(default=4.0, ge=0.0, le=60.0)
@@ -80,18 +77,11 @@ def spot_info() -> dict:
     checkpoints = fusion_inference.list_checkpoints()
     info["checkpoints"] = checkpoints
     info["default_checkpoint"] = fusion_inference.default_checkpoint()
-    clip_checkpoints = clip_associate.list_checkpoints()
-    info["clip_checkpoints"] = clip_checkpoints
-    info["default_clip_checkpoint"] = clip_associate.default_checkpoint()
     if not checkpoints:
         info["error"] = (
             f"No package under {SPOT_CHECKPOINTS_DIR} serves rally, action and person "
-            "together; train and package a fusion model with a person head first."
-        )
-    elif not clip_checkpoints:
-        info["error"] = (
-            f"No clip classifier package under {SPOT_CHECKPOINTS_DIR}; train one "
-            "with yp_spot.clips.train and package it with yp-clip-package."
+            f"together with a {fusion_inference.PERSON_ACTION_FILE}; package a fusion "
+            "model with its person/action head first."
         )
     return info
 
@@ -100,7 +90,6 @@ def spot_info() -> dict:
 async def start(req: InferenceRequest) -> dict:
     try:
         checkpoint = fusion_inference.resolve_checkpoint(req.checkpoint)
-        clip_checkpoint = clip_associate.resolve_checkpoint(req.clip_checkpoint)
     except FileNotFoundError as exc:
         raise HTTPException(404, str(exc)) from exc
     except ValueError as exc:
@@ -133,7 +122,6 @@ async def start(req: InferenceRequest) -> dict:
         {
             "videos": [p.name for p in video_paths],
             "checkpoint": prelabel.checkpoint_ref(checkpoint),
-            "clip_checkpoint": prelabel.checkpoint_ref(clip_checkpoint),
             "overwrite": req.overwrite,
             "tracker": req.tracker,
             "items": init_batch_items([p.name for p in video_paths]),
@@ -151,7 +139,6 @@ async def start(req: InferenceRequest) -> dict:
         work=lambda path, cb: fusion_inference.run_video(
             video=path,
             checkpoint=checkpoint,
-            clip_checkpoint=clip_checkpoint,
             rally=rally,
             spot=spot,
             tracker=req.tracker,
