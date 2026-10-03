@@ -10,7 +10,8 @@ from fastapi.testclient import TestClient
 from yp_video.court import annotations as store
 from yp_video.court import camera, geometry
 from yp_video.court.annotations import Calibration
-from yp_video.web import court_positions
+from yp_video.court import positions
+from yp_video.extraction import feet as extraction_feet
 from yp_video.web.routers import court as routes
 
 SIZE = (1920, 1080)
@@ -151,20 +152,20 @@ def test_grounded_feet_are_the_lowest_around_the_contact():
         # Standing, feet low at takeoff, rising, airborne at the contact, landed.
         "boxes": [[0, 0, 10, 500], [0, 0, 10, 530], [0, 0, 10, 520], [0, 0, 10, 480], [0, 0, 10, 510]],
     }
-    assert court_positions._grounded_box(tracklet, 14, window=4) == [0, 0, 10, 530]
+    assert extraction_feet._grounded_box(tracklet, 14, window=4) == [0, 0, 10, 530]
     # Lost mid-jump: the landing still places them.
-    assert court_positions._grounded_box(tracklet, 14, window=2) == [0, 0, 10, 520]
-    assert court_positions._grounded_box(tracklet, 30, window=2) is None
+    assert extraction_feet._grounded_box(tracklet, 14, window=2) == [0, 0, 10, 520]
+    assert extraction_feet._grounded_box(tracklet, 30, window=2) is None
 
 
 def test_positions_outside_the_free_zone_or_reach_are_dropped():
-    assert court_positions._in_play_area(np.array([-2.9, 11.9]))
-    assert not court_positions._in_play_area(np.array([9.0, 15.4]))
+    assert positions._in_play_area(np.array([-2.9, 11.9]))
+    assert not positions._in_play_area(np.array([9.0, 15.4]))
     see = _pinhole()
     cam = camera.solve(_calibration(see))
-    assert court_positions._lift(cam, see((4.0, 2.0, 3.1)), np.array([4.0, 2.0])) is not None
-    assert court_positions._lift(cam, see((4.0, 2.0, 6.0)), np.array([4.0, 2.0])) is None
-    assert court_positions._lift(None, see((4.0, 2.0, 3.1)), np.array([4.0, 2.0])) is None
+    assert positions._lift(cam, see((4.0, 2.0, 3.1)), np.array([4.0, 2.0])) is not None
+    assert positions._lift(cam, see((4.0, 2.0, 6.0)), np.array([4.0, 2.0])) is None
+    assert positions._lift(None, see((4.0, 2.0, 3.1)), np.array([4.0, 2.0])) is None
 
 
 def test_arc_is_ballistic_between_its_ends():
@@ -181,5 +182,25 @@ def test_flights_never_jump_over_an_unplaced_touch():
     # Frame 45 was touched too but could not be placed (no actor).
     unplaced = {**touch(45), "ball_3d": None}
     events = [touch(0), touch(30), unplaced, touch(60), touch(90, rally=2)]
-    flights = court_positions._flights(events)
+    flights = positions._flights(events)
     assert [(f["from"], f["to"]) for f in flights] == [("e0", "e30")]
+
+
+def test_compute_places_feet_lifts_contacts_and_keeps_reasons():
+    see = _pinhole()
+    calibration = _calibration(see)
+    events = [
+        # A set at (4, 2) touched at 2.5 m, then a spike there at 3.1 m.
+        {"id": "f30", "frame": 30, "time": 1.0, "label": "set", "ball": see((4.0, 2.0, 2.5)), "rally_id": 1},
+        {"id": "f60", "frame": 60, "time": 2.0, "label": "spike", "ball": see((4.0, 2.0, 3.1)), "rally_id": 1},
+        {"id": "f75", "frame": 75, "time": 2.5, "label": "receive", "ball": None, "rally_id": 1},
+        {"id": "f90", "frame": 90, "time": 3.0, "label": "score", "ball": see((12.0, 5.0, 0.0)), "rally_id": 1},
+    ]
+    feet = {"f30": see((4.0, 2.0, 0.0)), "f60": see((4.0, 2.0, 0.0)), "f75": "occluded"}
+    result = positions.compute(calibration, events, feet)
+    by_id = {e["id"]: e for e in result["events"]}
+    assert by_id["f30"]["court_xy"] == pytest.approx([4.0, 2.0], abs=0.01)
+    assert by_id["f60"]["ball_3d"][2] == pytest.approx(3.1, abs=0.01)
+    assert by_id["f75"]["court_xy"] is None and by_id["f75"]["reason"] == "occluded"
+    assert by_id["f90"]["court_xy"] == pytest.approx([12.0, 5.0], abs=0.01)
+    assert [(a["from"], a["to"]) for a in result["arcs"]] == [("f30", "f60")]

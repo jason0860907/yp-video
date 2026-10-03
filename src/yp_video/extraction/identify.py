@@ -90,6 +90,10 @@ class IdentifyResult:
     linkage: tuple[tuple[float, float, float, float], ...]
     #: Calibrated distance band for the active embedder.
     threshold: dict[str, float]
+    #: Event id → the actor's feet in the frame, or why there are none
+    #: (extraction/feet.py) — what a court calibration later places on the
+    #: floor, after this run's records are gone.
+    feet: dict[str, list[float] | str]
 
 
 def identify_players(
@@ -132,6 +136,7 @@ def identify_players(
     from yp_video.actor.person_action import build_policy
     from yp_video.core.person_boxes import person_boxes_path, save_person_boxes
     from yp_video.extraction import links
+    from yp_video.extraction.feet import actor_feet
     from yp_video.extraction.pipeline import detect_video, embed_video, load_events
     from yp_video.extraction.reassociate import reassociate_video
     from yp_video.extraction.windows import WINDOWED_EMBEDDER, embed_tracklet_windows
@@ -146,7 +151,7 @@ def identify_players(
     stem = video_path.stem
     events = load_events(stem)
     if not events:
-        return IdentifyResult(embedder=embedder, units=(), linkage=(), threshold=threshold_calibration(embedder))
+        return IdentifyResult(embedder=embedder, units=(), linkage=(), threshold=threshold_calibration(embedder), feet={})
 
     person_action_checkpoint = fusion_checkpoint.with_name("person_action.pt")
     if not person_action_checkpoint.is_file():
@@ -202,6 +207,7 @@ def identify_players(
     else:
         embed_video(stem, models=[embedder], on_progress=_banded(on_progress, "embedding"))
 
+    feet = actor_feet(stem, events)
     if on_progress:
         on_progress(_BANDS["clustering"][0], 100, "creating pairing suggestions...")
     unit_links = links.track_keys(stem)
@@ -232,6 +238,7 @@ def identify_players(
         if tree is not None
         else (),
         threshold={key: float(value) for key, value in calibration.items()},
+        feet=feet,
     )
 
 
@@ -437,6 +444,10 @@ def _main() -> None:
             }
             for u in result.units
         ],
+        "feet": {
+            eid: foot if isinstance(foot, str) else [round(v, 4) for v in foot]
+            for eid, foot in result.feet.items()
+        },
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
