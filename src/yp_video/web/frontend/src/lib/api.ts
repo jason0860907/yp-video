@@ -266,9 +266,6 @@ export const API = {
     videos: '/actor-association/videos',
     fix: (name: string) => `/actor-association/fix/${encodeURIComponent(name)}`,
     confirm: (name: string) => `/actor-association/confirm/${encodeURIComponent(name)}`,
-    status: '/actor-association/status',
-    performance: '/actor-association/performance',
-    predict: '/actor-association/predict',
     done: (name: string) => `/actor-association/done/${encodeURIComponent(name)}`,
   },
 } as const;

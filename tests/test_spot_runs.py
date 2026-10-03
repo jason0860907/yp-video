@@ -36,17 +36,17 @@ class SpotTaskMetricsProgressTest(unittest.TestCase):
             headline_pattern=r"Val mAP:\s*([0-9.]+)%",
         )
         tasks = {
-            "actor": {
-                "primary_metric": "player_top1",
+            "winner": {
+                "primary_metric": "winner_top1",
                 "train": {
                     "loss": 1.0,
-                    "metrics": {"player_top1": 0.7},
-                    "counts": {"player_events": 10},
+                    "metrics": {"winner_top1": 0.7},
+                    "counts": {"rallies": 10},
                 },
                 "validation": {
                     "loss": 0.8,
-                    "metrics": {"player_top1": 0.75},
-                    "counts": {"player_events": 20},
+                    "metrics": {"winner_top1": 0.75},
+                    "counts": {"rallies": 20},
                     "breakdown": {
                         "kinds": [
                             {"kind": "track", "events": 20, "correct": 15, "rate": 0.75}
@@ -66,7 +66,7 @@ class SpotTaskMetricsProgressTest(unittest.TestCase):
         self.assertEqual(ctx.best_task_metrics, tasks)
         # The breakdown rides inside the task payload — no second protocol line.
         self.assertEqual(
-            ctx.best_task_metrics["actor"]["validation"]["breakdown"]["kinds"][0]["kind"],
+            ctx.best_task_metrics["winner"]["validation"]["breakdown"]["kinds"][0]["kind"],
             "track",
         )
 
@@ -100,19 +100,19 @@ def _write_run(root: Path, epochs: list[dict], definitions: dict) -> Path:
     return run_dir
 
 
-def _epoch(epoch: int, harmonic: float, player: float) -> dict:
+def _epoch(epoch: int, harmonic: float, winner: float) -> dict:
     return {
         "epoch": epoch,
         "tasks": {
             "action": {"validation": {"metrics": {"harmonic_mAP": harmonic}}},
-            "actor": {"validation": {"metrics": {"player_top1": player}}},
+            "winner": {"validation": {"metrics": {"winner_top1": winner}}},
         },
     }
 
 
 FUSION_TASKS = {
     "action": {"primary_metric": "harmonic_mAP"},
-    "actor": {"primary_metric": "player_top1"},
+    "winner": {"primary_metric": "winner_top1"},
 }
 
 
@@ -169,10 +169,10 @@ class BestEpochsPerTaskTest(unittest.TestCase):
             best = best_epochs_per_task(run_dir)
 
         self.assertEqual(best["action"]["epoch"], 1)
-        self.assertEqual(best["actor"]["epoch"], 0)
+        self.assertEqual(best["winner"]["epoch"], 0)
         # The winning epoch's full metrics ride along, so pickers never have
         # to re-read the metrics file to describe a package.
-        self.assertEqual(best["actor"]["metrics"], {"player_top1": 0.6})
+        self.assertEqual(best["winner"]["metrics"], {"winner_top1": 0.6})
 
     def test_an_undeclared_or_unvalidated_task_is_absent(self):
         with tempfile.TemporaryDirectory() as raw_dir:
@@ -184,8 +184,8 @@ class BestEpochsPerTaskTest(unittest.TestCase):
             self.assertEqual(best_epochs_per_task(run_dir), {})
 
     def test_a_run_without_task_definitions_selects_nothing(self):
-        """The independent association trainer's config has no task
-        definitions — the mechanism must be a no-op there, not a crash."""
+        """A config without task definitions — the mechanism must be a
+        no-op there, not a crash."""
         with tempfile.TemporaryDirectory() as raw_dir:
             run_dir = _write_run(Path(raw_dir), [_epoch(0, 0.1, 0.6)], {})
             self.assertEqual(best_epochs_per_task(run_dir), {})
@@ -213,27 +213,27 @@ class ExportBestPerTaskTest(unittest.TestCase):
             run_dir=run_dir,
             package_dir=package_dir,
             checkpoints_root=root / "checkpoints",
-            label_subdirs=("action-annotations", "actor-candidates"),
+            label_subdirs=("action-annotations", "rally-annotations"),
             training={},
             cmd=[],
-            serveable_tasks=("action", "actor"),
-            tasks=("action", "location", "actor"),
-            recipe="association_action",
+            serveable_tasks=("action", "winner"),
+            tasks=("action", "location", "winner"),
+            recipe="action_rally_winner",
         )
         return package_dir, summary
 
-    def test_actor_best_gets_its_own_file_action_shares_the_headline(self):
+    def test_winner_best_gets_its_own_file_action_shares_the_headline(self):
         with tempfile.TemporaryDirectory() as raw_dir:
             package_dir, summary = self._export(Path(raw_dir))
             per_task = summary["best_per_task"]
 
             self.assertEqual(per_task["action"]["file"], "checkpoint_best.pt")
             self.assertEqual(
-                per_task["actor"]["file"], "checkpoint_best_actor.pt"
+                per_task["winner"]["file"], "checkpoint_best_winner.pt"
             )
-            # The actor file IS epoch 0's weights, not another copy of best.
+            # The winner file IS epoch 0's weights, not another copy of best.
             self.assertEqual(
-                (package_dir / "checkpoint_best_actor.pt").read_bytes(),
+                (package_dir / "checkpoint_best_winner.pt").read_bytes(),
                 b"checkpoint_000.pt",
             )
             manifest = json.loads(
@@ -243,7 +243,7 @@ class ExportBestPerTaskTest(unittest.TestCase):
 
     def test_picker_label_names_every_serveable_best(self):
         """A label showing only the headline metric misdescribes every other
-        task — the actor head's quality is not the action mAP."""
+        task — the winner head's quality is not the action mAP."""
         with tempfile.TemporaryDirectory() as raw_dir:
             root = Path(raw_dir)
             self._export(root)
@@ -254,7 +254,7 @@ class ExportBestPerTaskTest(unittest.TestCase):
                 checkpoint_package_options(root / "checkpoints", tasks=("rally",)), []
             )
             self.assertEqual(
-                option["label"], "run (action mAP 0.300 · actor Top-1 0.600)"
+                option["label"], "run (action mAP 0.300 · winner winner Top-1 0.600)"
             )
 
 

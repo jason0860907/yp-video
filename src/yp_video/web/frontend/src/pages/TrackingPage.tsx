@@ -83,8 +83,8 @@ export function TrackingPage() {
         subtitle={<Prereqs stages={['rallies']} />}
         actions={
           <>
-            <Button size="sm" onClick={() => navigate('/association-predict')}>
-              Open Association Predict
+            <Button size="sm" onClick={() => navigate('/inference')}>
+              Open Inference
             </Button>
             <Button intent="primary" onClick={run} disabled={Boolean(blocked)}>
               Run Rally Tracking

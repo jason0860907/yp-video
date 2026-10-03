@@ -25,7 +25,7 @@ import { useVideoKeys } from './useVideoKeys';
 import { useFrameClock } from './useFrameClock';
 import type { ReidPlayers, ReidRecord } from '@/types/api';
 import { OUTSIDE, RallySidebar } from './RallySidebar';
-import { canConfirm, fmtTime, hintOf, rallyOf, trackColor, trackKeyOf, verdictOf, VERDICT, type ActorFix, type ActorHint, type ActorVerdict, type Rally, type SidebarAction, type TrackData, type TrackMasks } from './shared';
+import { canConfirm, fmtTime, rallyOf, trackColor, trackKeyOf, verdictOf, VERDICT, type ActorFix, type ActorVerdict, type Rally, type SidebarAction, type TrackData, type TrackMasks } from './shared';
 import {
   buildFrameRows,
   buildFrameSilhouettes,
@@ -249,16 +249,6 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
     () => new Set(records.filter((r) => r.actor_review_unresolved).map((r) => r.id)),
     [records],
   );
-  // Only the events the automatic policy declined WITH a reason land here, so
-  // the map is small and the sidebar can look up by id without filtering.
-  const hints = useMemo<ReadonlyMap<string, ActorHint>>(() => {
-    const out = new Map<string, ActorHint>();
-    for (const record of records) {
-      const hint = hintOf(record);
-      if (hint) out.set(record.id, hint);
-    }
-    return out;
-  }, [records]);
 
   // The same actions carrying their tracklet (null = not linked). EVERY
   // action occupies a slot, so an unlinked one means "no box right now"
@@ -795,9 +785,6 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
                         title={
                           verdictOf(pickTarget) === 'confirmed_auto'
                             ? 'Already confirmed'
-                            : pickTarget.resolution === 'unresolved' &&
-                                pickTarget.association?.kind === 'occluded'
-                              ? 'The model is right that no actor is visible — record Occluded'
                             : pickTarget.resolution !== 'auto'
                               ? 'No automatic pick to confirm — this event already has a human verdict'
                               : 'The automatic pick is the right person — record that verdict and move on'
@@ -846,7 +833,6 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
           fps={fps}
           matches={matches}
           verdicts={verdicts}
-          hints={hints}
           unresolvedIds={unresolvedIds}
           activeRallyId={currentRallyId}
           activeActionIds={activeActionIds}

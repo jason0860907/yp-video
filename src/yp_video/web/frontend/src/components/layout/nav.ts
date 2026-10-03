@@ -82,13 +82,6 @@ export const NAV: NavSection[] = [
     ],
   },
   {
-    title: 'Association',
-    collapsible: true,
-    items: [
-      { path: '/association-predict', label: 'Association Predict', icon: ICON.predict },
-    ],
-  },
-  {
     title: 'ReID',
     collapsible: true,
     items: [

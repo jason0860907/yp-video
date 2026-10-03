@@ -76,7 +76,7 @@ class DefaultsAreValidRequests(unittest.TestCase):
         payload = build_defaults(FusionTrainRequest, {"validation": "manual"})
         payload["validation_videos"] = ["match"]
         req = FusionTrainRequest.model_validate(payload)
-        self.assertEqual(req.recipe, "association_action")
+        self.assertEqual(req.recipe, "action_rally_winner")
 
     def test_every_recipe_default_set_validates(self) -> None:
         """The page resets the form to a recipe's defaults on switch; each

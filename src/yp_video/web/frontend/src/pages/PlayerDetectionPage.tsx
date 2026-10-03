@@ -79,8 +79,8 @@ export function PlayerDetectionPage() {
         subtitle={<Prereqs stages={['action']} />}
         actions={
           <>
-            <Button size="sm" onClick={() => navigate('/association-predict')}>
-              Open Association Predict
+            <Button size="sm" onClick={() => navigate('/inference')}>
+              Open Inference
             </Button>
             <Button intent="primary" onClick={run} disabled={Boolean(blocked)}>
               Run Player Detection

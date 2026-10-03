@@ -11,7 +11,6 @@ from fastapi import APIRouter
 
 from yp_video.action import rally as rally_spot
 from yp_video.action import training
-from yp_video.actor import labels as association_labels
 from yp_video.config import SPOT_CHECKPOINTS_DIR, SPOT_DIR, SPOT_PYTHON, cut_kind_of
 from yp_video.contracts.action import LABEL_FILE_SUFFIX, RECIPES, TASKS
 from yp_video.web.jobs import JobSummary, JobType, job_manager
@@ -26,12 +25,6 @@ router = APIRouter()
 @router.get("/status")
 def status() -> dict:
     annotation_stats = training.annotation_stats(resolve_cut)
-    reviewed = set(association_labels.labeled_stems())
-    per_video = [
-        {**row, "has_association_label": row["video"] in reviewed}
-        for row in annotation_stats["per_video"]
-    ]
-    joint_videos = sum(1 for row in per_video if row["has_association_label"])
     rally_items, rally_missing = rally_spot.select_training_items(resolve_cut, 0)
     # The saved val set (action-val-set.txt) names label files; mark rally
     # rows by the same membership so "Load saved val set" works for every
@@ -62,7 +55,7 @@ def status() -> dict:
             recipe.id: checkpoint_package_options(SPOT_CHECKPOINTS_DIR, tasks=recipe.tasks)
             for recipe in RECIPES.values()
         },
-        "action_annotations": {**annotation_stats, "per_video": per_video},
+        "action_annotations": annotation_stats,
         "rally_annotations": {
             **rally_spot.rally_stats(),
             "with_video": len(rally_items),
@@ -75,11 +68,6 @@ def status() -> dict:
                 }
                 for _ann, video in rally_items
             ],
-        },
-        "supervision": {
-            "action_videos": len(per_video),
-            "joint_videos": joint_videos,
-            "action_only_videos": len(per_video) - joint_videos,
         },
         "active_job": active.to_dict() if (active := job_manager.active_job(JobType.SPOT_TRAIN)) else None,
     }

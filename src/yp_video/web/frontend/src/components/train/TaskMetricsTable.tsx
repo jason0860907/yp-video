@@ -17,11 +17,8 @@ function formatMetric(value: number | null, metric: string): string {
     : `${(value * 100).toFixed(2)}%`;
 }
 
-function denominator(phase: TaskMetricPhase, metric: string): number | null {
-  const preferred =
-    metric === 'player_top1'
-      ? phase.counts.player_events
-      : phase.counts.events ?? phase.counts.samples;
+function denominator(phase: TaskMetricPhase): number | null {
+  const preferred = phase.counts.events ?? phase.counts.samples;
   return typeof preferred === 'number' && Number.isFinite(preferred)
     ? preferred
     : null;
@@ -91,7 +88,7 @@ export function TaskMetricsTable({
                       : task.validation.loss.toFixed(4)}
                   </td>
                   <td className="px-3 py-2 text-right font-mono tabular-nums text-text-muted">
-                    {denominator(task.validation, metric)?.toLocaleString() ?? '—'}
+                    {denominator(task.validation)?.toLocaleString() ?? '—'}
                   </td>
                 </tr>
               );

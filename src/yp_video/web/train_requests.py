@@ -46,7 +46,6 @@ RecipeId = Literal[
     "rally",
     "rally_winner",
     "action",
-    "association_action",
     "action_rally_winner",
 ]
 
@@ -65,7 +64,7 @@ class FusionTrainRequest(StrictModel):
     """
 
     recipe: RecipeId = Field(
-        default="association_action",
+        default="action_rally_winner",
         description="Which task heads share the one checkpoint.",
     )
     run_name: str | None = Field(
@@ -104,14 +103,6 @@ class FusionTrainRequest(StrictModel):
     split_seed: int = Field(
         default=42,
         description="Seed for the train/val video shuffle — keep it fixed to compare runs.",
-    )
-    dataset_scope: Literal["joint_only", "partial_labels"] = Field(
-        default="joint_only",
-        description=(
-            "association_action: joint_only trains on videos with both action "
-            "and association labels; partial_labels also uses action-only "
-            "videos (their actor head sees no supervision)."
-        ),
     )
     include_predictions: bool = Field(
         default=False,
@@ -256,17 +247,11 @@ class FusionTrainRequest(StrictModel):
     def _consistent(self) -> "FusionTrainRequest":
         if self.validation == "manual" and not self.validation_videos:
             raise ValueError("manual validation needs at least one validation video")
-        if self.include_predictions:
-            if self.validation != "manual":
-                raise ValueError(
-                    "include_predictions requires validation='manual' so "
-                    "validation stays human-labeled"
-                )
-            if self.recipe == "association_action" and self.dataset_scope != "partial_labels":
-                raise ValueError(
-                    "include_predictions requires dataset_scope='partial_labels'; "
-                    "prediction-only videos carry no association labels"
-                )
+        if self.include_predictions and self.validation != "manual":
+            raise ValueError(
+                "include_predictions requires validation='manual' so "
+                "validation stays human-labeled"
+            )
         if self.batch_size % self.acc_grad_iter:
             raise ValueError(
                 f"batch_size ({self.batch_size}) must be divisible by "

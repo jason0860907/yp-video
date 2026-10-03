@@ -42,10 +42,10 @@ from __future__ import annotations
 import queue
 import threading
 import time
+from collections.abc import Sequence
 from pathlib import Path
 
 from yp_video.actor.labels import ActorLabel, ActorVerdict
-from yp_video.actor.policy import EventContext, RulePolicy, contact_point
 from yp_video.actor.resolution import ActorResolution, actor_resolution
 from yp_video.contracts.action import event_id as action_event_id
 from yp_video.core.jsonl import read_jsonl, read_jsonl_cached, write_jsonl
@@ -53,7 +53,6 @@ from yp_video.core.person_boxes import DETECTOR_NAME as FUSION_DETECTOR_NAME
 from yp_video.core.person_boxes import PersonBoxes, person_boxes_path
 from yp_video.core.progress import ProgressFn
 from yp_video.extraction.cropping import (
-    CropTarget,
     clamp_box,
     cut,
     label_target,
@@ -83,6 +82,16 @@ from yp_video.reid.store import (
     save_embedding_matrix,
 )
 from yp_video.tracklets.store import load_span_detections
+
+
+def contact_point(
+    xy: Sequence[float] | None, width: float, height: float
+) -> tuple[float, float] | None:
+    """The annotated contact point in pixels, or None without full geometry —
+    a normalized point with no frame size is no point at all."""
+    if not xy or not width or not height:
+        return None
+    return (float(xy[0]) * width, float(xy[1]) * height)
 
 
 def load_events(stem: str) -> list[dict]:
@@ -480,8 +489,8 @@ def apply_actor_fix(
     The verdict drives everything: ``MANUAL`` crops the labeled box (snapped
     by IoU onto a stored segmentation detection when possible);
     ``OCCLUDED`` clears the crop and embedding, dropping the event out of
-    clustering and matching; ``None`` reverts to the automatic pick, re-run
-    from the stored detections. Persisting the label is the caller's job —
+    clustering and matching; ``None`` clears it back to undecided, for the
+    next association run to re-decide. Persisting the label is the caller's job —
     this only patches the derived jsonl.
 
     ``label.frame`` marks a CROSS-FRAME pick: the actor went undetected on
@@ -528,7 +537,10 @@ def _apply_actor_fix(
         ActorResolution.OCCLUDED,
     )
     if revert:
-        record.pop("auto_box", None)
+        # Back to undecided: the next association run (Inference, identify)
+        # re-decides it. The stale automatic answer goes with the fix.
+        for key in ("auto_box", "association", "track"):
+            record.pop(key, None)
         record["resolution"] = ActorResolution.UNRESOLVED.value
     else:
         if not human_picked:  # first fix stashes the auto pick
@@ -546,26 +558,7 @@ def _apply_actor_fix(
 
     target = label_target(stem, record, label) if label is not None else None
     src_frame = target.frame if target is not None else record["frame"]
-    person = None
-    n_candidates = record.get("candidates", 0)
-    if revert:
-        # Re-run the automatic pick through the production policy. On an
-        # unusable contact point (no point, or an invisible ball) it
-        # abstains — revert then just clears back to miss.
-        pick = RulePolicy().decide(
-            EventContext.for_event(record, width=frame_w, height=frame_h)
-        )
-        if pick.diagnostic:
-            record["association"] = pick.diagnostic
-        n_candidates = pick.candidates
-        record["candidates"] = n_candidates
-        if pick.box is not None:
-            # The pick's box IS one of the stored detections; snap recovers it.
-            person = person_for(
-                record, CropTarget(pick.box, record["frame"], snap=True)
-            )
-    elif target is not None:
-        person = person_for(record, target)
+    person = person_for(record, target) if target is not None else None
 
     crop = None
     if person is not None:
@@ -578,7 +571,7 @@ def _apply_actor_fix(
         if not ok:
             raise ValueError(f"Could not decode frame {src_frame} of {stem}")
         bx0, by0 = int(person.xyxy[0]), int(person.xyxy[1])
-        suffix = "" if revert else f"_fix_{src_frame}_{bx0}_{by0}"  # per-pick name busts browser cache
+        suffix = f"_fix_{src_frame}_{bx0}_{by0}"  # per-pick name busts browser cache
         crop = cut(
             record,
             frame_img,
@@ -591,11 +584,7 @@ def _apply_actor_fix(
         )
         if crop is None:
             raise ValueError("Degenerate person box")
-        if revert:
-            record["status"] = "ok" if n_candidates == 1 else "multi"
-            record["resolution"] = ActorResolution.AUTO.value
-        else:
-            record["status"] = "ok"
+        record["status"] = "ok"
 
     write_jsonl(path, meta, records)
     return dict(record)

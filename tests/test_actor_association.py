@@ -5,77 +5,17 @@ import tempfile
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
 from fastapi import HTTPException
 from pydantic import TypeAdapter
 
 from yp_video.actor import labels as actor_labels
-from yp_video.actor import review as actor_review
 from yp_video.actor.labels import ActorLabel, ActorVerdict
-from yp_video.actor.policy import EventContext, RulePolicy
-from yp_video.actor.ranking import DecisionReason, rule_decision
-from yp_video.contracts.action import SPOT_PACKAGE_TYPE
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import write_jsonl
 from yp_video.extraction import actor_fix, done
-from yp_video.person.detector import PersonBox
 from yp_video.web.routers import actor_association as router
-
-
-def _person(
-    *,
-    score: float,
-    box: tuple[float, float, float, float],
-) -> PersonBox:
-    return PersonBox(xyxy=box, score=score)
-
-
-class RulePolicyTests(unittest.TestCase):
-    """The rule, which is now the only thing in ranking.py.
-
-    It decides and it gates. The wide candidate SET that used to live beside
-    it — everyone above the detector floor, geometry as a negative feature —
-    existed only to feed a learned box ranker and went with it.
-    """
-
-    def test_the_rule_takes_the_best_confident_candidate(self) -> None:
-        actor = _person(score=0.9, box=(30, 20, 70, 120))
-
-        decision = rule_decision([actor], 50, 20)
-
-        self.assertIs(decision.selected, actor)
-        self.assertEqual(decision.reason, DecisionReason.SELECTED)
-        self.assertEqual(decision.version, "rule-based")
-
-    def test_the_rule_ignores_a_low_confidence_person(self) -> None:
-        """The 0.1-0.5 band exists to give the human picker more boxes."""
-        faint = _person(score=0.2, box=(30, 20, 70, 120))
-
-        self.assertEqual(rule_decision([faint], 50, 20).ranked, ())
-        self.assertIsNone(rule_decision([faint], 50, 20).selected)
-
-    def test_the_rule_gates_on_geometry_and_says_so(self) -> None:
-        """Out of reach of the padded box is NO_CANDIDATE, not a bad pick."""
-        far = _person(score=0.9, box=(400, 400, 450, 550))
-
-        decision = rule_decision([far], 10, 10)
-
-        self.assertEqual(decision.ranked, ())
-        self.assertEqual(decision.reason, DecisionReason.NO_CANDIDATE)
-
-    def test_candidates_are_ordered_best_first(self) -> None:
-        near = _person(score=0.8, box=(30, 20, 70, 120))
-        also = _person(score=0.8, box=(45, 20, 85, 120))
-
-        decision = rule_decision([also, near], 50, 20)
-
-        self.assertIs(decision.ranked[0].person, near)
-        self.assertLess(
-            decision.ranked[0].geometry_cost,
-            decision.ranked[1].geometry_cost,
-        )
 
 
 class ActorLabelStoreTests(unittest.TestCase):
@@ -170,35 +110,6 @@ class ActorLabelStoreTests(unittest.TestCase):
             self.assertFalse(labels["untouched"].overrides_auto)
 
 
-class AssociationReviewProgressTests(unittest.TestCase):
-    def test_summary_is_done_over_done_plus_in_progress(self) -> None:
-        rows = [
-            actor_review.ReviewProgress(3, 3, 0, {"manual": 3}),
-            actor_review.ReviewProgress(3, 1, 2, {"occluded": 1}),
-            actor_review.ReviewProgress(3, 0, 3, {}),
-        ]
-        with tempfile.TemporaryDirectory() as raw_dir:
-            records = Path(raw_dir) / "records.jsonl"
-            records.touch()
-            with (
-                patch.object(
-                    actor_review, "records_path", return_value=records
-                ),
-                patch.object(
-                    actor_review, "read_jsonl_header", return_value={}
-                ),
-                patch.object(
-                    actor_review, "review_progress", side_effect=rows
-                ),
-            ):
-                summary = actor_review.review_summary(
-                    ["done", "in-progress", "unlabeled"]
-                )
-
-        self.assertEqual(summary.done, 1)
-        self.assertEqual(summary.started, 2)
-
-
 class DoneConfirmationTests(unittest.TestCase):
     def test_done_confirms_only_assigned_automatic_actors(self) -> None:
         records = [
@@ -234,203 +145,6 @@ class DoneConfirmationTests(unittest.TestCase):
             ActorLabel(
                 ActorVerdict.CONFIRMED_AUTO, box=(1.0, 2.0, 3.0, 4.0), frame=10
             ),
-        )
-
-
-class NeuralAssociationTrainTests(unittest.IsolatedAsyncioTestCase):
-    def test_predict_contract_no_longer_accepts_a_linear_checkpoint(self) -> None:
-        adapter = TypeAdapter(router.PredictRequest)
-        with self.assertRaises(ValueError):
-            adapter.validate_python(
-                {"videos": ["a.mp4"], "checkpoint": "linear-model"}
-            )
-
-
-class SpotActorInferenceContractTests(unittest.TestCase):
-    @staticmethod
-    def _declare_fusion(package: Path) -> None:
-        (package / "config.json").write_text(
-            json.dumps({"tasks": ["action", "location", "actor"], "audio_backend": "logmel"}),
-            encoding="utf-8",
-        )
-        (package / "manifest.json").write_text(
-            json.dumps(
-                {
-                    "type": SPOT_PACKAGE_TYPE,
-                    "tasks": ["action", "location", "actor"],
-                    "holdout": "held-out-video",
-                    "actor_targets": {"track": 12},
-                    "holdout_metrics": {"all_top1": 0.84},
-                }
-            ),
-            encoding="utf-8",
-        )
-
-    def test_picker_lists_a_fusion_actor_head_with_its_family(self) -> None:
-        with tempfile.TemporaryDirectory() as raw_dir:
-            package = Path(raw_dir) / "yp_actor_only"
-            package.mkdir()
-            checkpoint = package / "checkpoint_best.pt"
-            checkpoint.touch()
-            self._declare_fusion(package)
-            with patch.object(
-                router.spot_associate.prelabel,
-                "list_checkpoints",
-                return_value=[{"path": str(checkpoint), "epoch": 4, "mtime": 123.0}],
-            ):
-                listed = router.spot_associate.list_association_checkpoints()
-
-        self.assertEqual(len(listed), 1)
-        self.assertEqual(listed[0]["name"], "yp_actor_only")
-        self.assertEqual(listed[0]["family"], "fusion-actor-head")
-        self.assertEqual(listed[0]["metrics"]["all_top1"], 0.84)
-        self.assertEqual(listed[0]["validation_videos"], ["held-out-video"])
-        self.assertEqual(listed[0]["actor_targets"], {"track": 12})
-
-    def test_picker_exposes_joint_actor_validation_metrics(self) -> None:
-        with tempfile.TemporaryDirectory() as raw_dir:
-            package = Path(raw_dir) / "yp_fusion_joint"
-            package.mkdir()
-            checkpoint = package / "checkpoint_best.pt"
-            checkpoint.touch()
-            self._declare_fusion(package)
-            manifest = json.loads(
-                (package / "manifest.json").read_text(encoding="utf-8")
-            )
-            manifest["best"] = {
-                "task_metrics": {
-                    "actor": {
-                        "validation": {
-                            "metrics": {
-                                "player_top1": 0.72,
-                                "overall_top1": 0.68,
-                                "occluded_recall": 0.5,
-                                "untracked_recall": 0.25,
-                            }
-                        }
-                    }
-                }
-            }
-            (package / "manifest.json").write_text(
-                json.dumps(manifest),
-                encoding="utf-8",
-            )
-            with patch.object(
-                router.spot_associate.prelabel,
-                "list_checkpoints",
-                return_value=[{"path": str(checkpoint), "epoch": 4, "mtime": 123.0}],
-            ):
-                listed = router.spot_associate.list_association_checkpoints()
-
-        self.assertEqual(listed[0]["metrics"]["player_top1"], 0.72)
-        self.assertEqual(listed[0]["metrics"]["overall_exact"], 0.68)
-        self.assertEqual(listed[0]["metrics"]["occluded_recall"], 0.5)
-        self.assertEqual(listed[0]["metrics"]["untracked_recall"], 0.25)
-
-    def test_submit_validation_accepts_fusion_actor_weights(self) -> None:
-        with tempfile.TemporaryDirectory() as raw_dir:
-            package = Path(raw_dir) / "yp_actor_only"
-            package.mkdir()
-            checkpoint = package / "checkpoint_best.pt"
-            checkpoint.touch()
-            self._declare_fusion(package)
-            with patch(
-                "torch.load",
-                return_value={"model._pred_actor.weight": object()},
-            ):
-                reason = router.spot_associate.rejection(checkpoint)
-
-        self.assertIsNone(reason)
-
-    def test_fusion_actor_head_uses_the_original_inference_contract(self) -> None:
-        with tempfile.TemporaryDirectory() as raw_dir:
-            root = Path(raw_dir)
-            package = root / "yp_actor_only"
-            package.mkdir()
-            checkpoint = package / "checkpoint_best.pt"
-            checkpoint.touch()
-            self._declare_fusion(package)
-            label_file = root / "video_actions.jsonl"
-            label_file.touch()
-            predictions = root / "video_predictions.json"
-            audio_dir = root / "audio"
-            captured: list[str] = []
-
-            def run_subprocess(command, **_kwargs):
-                captured.extend(command)
-                output = Path(command[command.index("--out") + 1])
-                output.write_text(
-                    json.dumps(
-                        {
-                            "events": [
-                                {
-                                    "id": "event",
-                                    "track": "1:1",
-                                    "confidence": 0.8,
-                                    "kind": "track",
-                                }
-                            ]
-                        }
-                    ),
-                    encoding="utf-8",
-                )
-                return SimpleNamespace(returncode=0, stdout="", stderr="")
-
-            with (
-                patch.object(
-                    router.spot_associate,
-                    "action_label_path",
-                    return_value=label_file,
-                ),
-                patch.object(
-                    router.spot_associate,
-                    "read_jsonl",
-                    return_value=({}, [{"id": "event"}]),
-                ),
-                patch.object(
-                    router.spot_associate.candidates,
-                    "candidates_only",
-                    return_value=[{"id": "event", "frame": 10}],
-                ),
-                patch.object(
-                    router.spot_associate,
-                    "ensure_action_frame_cache",
-                ),
-                patch.object(
-                    router.spot_associate,
-                    "_ensure_fusion_audio",
-                    return_value=audio_dir,
-                ),
-                patch.object(
-                    router.spot_associate.subprocess,
-                    "run",
-                    side_effect=run_subprocess,
-                ),
-                patch.object(
-                    router.spot_associate,
-                    "ACTOR_PREDICTIONS_DIR",
-                    predictions.parent,
-                ),
-                patch.object(
-                    router.spot_associate,
-                    "predictions_path",
-                    return_value=predictions,
-                ),
-            ):
-                answers = router.spot_associate.run(
-                    root / "video.mp4",
-                    checkpoint,
-                )
-
-        self.assertEqual(answers["event"].track.key, "1:1")
-        self.assertIn("yp_spot.associate", captured)
-        self.assertEqual(
-            captured[captured.index("--checkpoint_path") + 1],
-            str(checkpoint),
-        )
-        self.assertEqual(
-            captured[captured.index("--audio_dir") + 1],
-            str(audio_dir),
         )
 
 
@@ -589,19 +303,14 @@ class ConfirmEndpointTests(unittest.TestCase):
             response = router.confirm("match.mp4", router.ConfirmRequest())
             labels = actor_labels.load("match")
 
-        self.assertEqual(
-            response["confirmed"],
-            {"auto-a": "confirmed_auto", "model-occluded": "occluded"},
-        )
+        self.assertEqual(response["confirmed"], {"auto-a": "confirmed_auto"})
         self.assertEqual(labels["auto-a"].verdict, ActorVerdict.CONFIRMED_AUTO)
         self.assertEqual(labels["auto-a"].box, (1.0, 2.0, 3.0, 4.0))
         self.assertEqual(labels["auto-b"].verdict, ActorVerdict.OCCLUDED)
-        self.assertEqual(
-            labels["model-occluded"].verdict, ActorVerdict.OCCLUDED
-        )
-        self.assertIsNone(labels["model-occluded"].box)
-        # A manual fix already had a label; a miss has no box to agree with.
+        # A manual fix already had a label; an unresolved event has no box to
+        # agree with, whatever its diagnostic says.
         self.assertNotIn("miss", labels)
+        self.assertNotIn("model-occluded", labels)
 
     def test_confirming_twice_is_a_no_op(self) -> None:
         with self._video():
@@ -610,27 +319,22 @@ class ConfirmEndpointTests(unittest.TestCase):
 
         self.assertEqual(
             first["confirmed"],
-            {
-                "auto-a": "confirmed_auto",
-                "auto-b": "confirmed_auto",
-                "model-occluded": "occluded",
-            },
+            {"auto-a": "confirmed_auto", "auto-b": "confirmed_auto"},
         )
         self.assertEqual(second["confirmed"], {})
 
-    def test_confirming_model_occluded_returns_the_occluded_verdict(self) -> None:
-        """The UI must not turn its `Model: occluded?` hint into Confirmed."""
+    def test_a_model_occluded_diagnostic_is_not_confirmable(self) -> None:
+        """Only a pick can be endorsed; an occlusion needs a human verdict."""
         with self._video():
-            response = router.confirm(
-                "match.mp4",
-                router.ConfirmRequest(event_ids=["model-occluded"]),
-            )
-            label = actor_labels.load("match")["model-occluded"]
+            with self.assertRaises(HTTPException) as caught:
+                router.confirm(
+                    "match.mp4",
+                    router.ConfirmRequest(event_ids=["model-occluded"]),
+                )
+            self.assertEqual(actor_labels.load("match"), {})
 
-        self.assertEqual(
-            response["confirmed"], {"model-occluded": "occluded"}
-        )
-        self.assertEqual(label.verdict, ActorVerdict.OCCLUDED)
+        self.assertEqual(caught.exception.status_code, 400)
+        self.assertIn("model-occluded", str(caught.exception.detail))
 
     def test_a_miss_cannot_be_confirmed(self) -> None:
         """It needs a real verdict; reporting success would be a lie."""
@@ -643,29 +347,6 @@ class ConfirmEndpointTests(unittest.TestCase):
 
         self.assertEqual(caught.exception.status_code, 400)
         self.assertIn("miss", str(caught.exception.detail))
-
-
-class LearnedAssociationTests(unittest.TestCase):
-    """The learned path lives in yp-spot; extraction never activates it."""
-
-    def test_extraction_associates_on_the_rule_alone(self) -> None:
-        """Extraction associates from detection boxes, before tracking has
-        necessarily run, so the geometric question is the only one answerable
-        there. The learned path answers a tracklet question and is reached by
-        naming it in Association Predict, not by activating anything here."""
-        context = EventContext(
-            frame=0,
-            contact=(50.0, 20.0),
-            visible=True,
-            event_id="e",
-            detections=[{"box": [30, 20, 70, 120], "score": 0.9}],
-        )
-
-        pick = RulePolicy().decide(context)
-
-        self.assertEqual(tuple(pick.box), (30, 20, 70, 120))
-        self.assertEqual(pick.candidates, 1)
-        self.assertEqual(pick.diagnostic["version"], "rule-based")
 
 
 if __name__ == "__main__":

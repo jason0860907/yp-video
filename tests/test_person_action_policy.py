@@ -7,7 +7,7 @@ from yp_video.tracklets.geometry import TrackRef
 
 
 def context(event_id):
-    return EventContext(frame=7, contact=None, visible=False, event_id=event_id)
+    return EventContext(frame=7, event_id=event_id)
 
 
 def test_box_uses_source_aspect_ratio_without_contact_or_tracks():

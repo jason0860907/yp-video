@@ -46,7 +46,6 @@ from yp_video.extraction.store import (
 from yp_video.tracklets.store import (
     TrackMasks,
     open_track_masks,
-    tracklet_index,
     tracks_path,
 )
 
@@ -160,7 +159,6 @@ def reassociate_video(
     if not path.exists():
         raise FileNotFoundError(f"No extraction records for {stem}")
 
-    tracks_index = None
     masks = None
     if policy.needs_tracklets:
         tracks = tracks_path(stem)
@@ -168,7 +166,6 @@ def reassociate_video(
             raise FileNotFoundError(
                 f"{policy.name} needs tracklets; {stem} has not been tracked"
             )
-        tracks_index = tracklet_index(stem)
         # Held open for the whole video: every event reads the same archive,
         # and a policy that ignores outlines never unpacks a single entry.
         masks = open_track_masks(stem)
@@ -223,14 +220,7 @@ def reassociate_video(
             # right", so computing it is what honouring the label means;
             # skipping it would leave the video's endorsed picks blank.
 
-            context = EventContext.for_event(
-                record,
-                action=action,
-                width=frame_w,
-                height=frame_h,
-                tracks=tracks_index,
-                masks=masks,
-            )
+            context = EventContext.for_event(record, action=action)
             pick = policy.decide(context)
             dirty |= _update(
                 record,

@@ -75,22 +75,6 @@ class RequestValidationTests(unittest.TestCase):
         )
         self.assertTrue(request.include_predictions)
 
-    def test_fusion_predictions_also_need_partial_scope(self) -> None:
-        with self.assertRaises(ValidationError):
-            FusionTrainRequest(
-                dataset_scope="joint_only",
-                validation="manual",
-                validation_videos=["match"],
-                include_predictions=True,
-            )
-        request = FusionTrainRequest(
-            dataset_scope="partial_labels",
-            validation="manual",
-            validation_videos=["match"],
-            include_predictions=True,
-        )
-        self.assertTrue(request.include_predictions)
-
     def test_manual_validation_needs_videos(self) -> None:
         with self.assertRaises(ValidationError):
             FusionTrainRequest(validation="manual", validation_videos=[])

@@ -36,7 +36,7 @@ function recipeToken(tasks: string[]): string {
   if (tasks.includes('action') && tasks.includes('rally')) {
     return tasks.includes('winner') ? 'act_ral_win' : 'act_ral';
   }
-  if (tasks.includes('action')) return tasks.includes('actor') ? 'ass_act' : 'act';
+  if (tasks.includes('action')) return 'act';
   return tasks.includes('winner') ? 'ral_win' : 'ral';
 }
 
@@ -118,18 +118,13 @@ export function FusionTrainPage() {
     kind: CutKind;
     events: number;
     is_val?: boolean;
-    has_association_label?: boolean;
   };
   const validationChoices: ValidationChoice[] = isRally
     ? (rallyAnnotations?.per_video ?? [])
         .filter((video) => values.camera_view === 'all' || video.view === values.camera_view)
         .map((video) => ({ name: video.video, kind: video.view as CutKind, events: 0, is_val: video.is_val }))
     : (actionAnnotations?.per_video ?? [])
-        .filter(
-          (video) =>
-            (values.camera_view === 'all' || video.view === values.camera_view) &&
-            (!tasks.includes('actor') || values.dataset_scope === 'partial_labels' || video.has_association_label),
-        )
+        .filter((video) => values.camera_view === 'all' || video.view === values.camera_view)
         .map((video) => ({ ...video, name: video.video, kind: video.view as CutKind }));
   const eligibleVideos = validationChoices.length;
   const eligibleEvents = validationChoices.reduce((total, video) => total + video.events, 0);
@@ -212,33 +207,6 @@ export function FusionTrainPage() {
                 label="Camera view"
                 optionLabels={{ all: 'All Views', broadcast: 'Broadcast', sideline: 'Sideline' }}
               />
-              {visible.has('dataset_scope') && (
-                <FieldShell label="Dataset scope" className="col-span-3">
-                  <select
-                    value={values.dataset_scope}
-                    onChange={(event) => {
-                      const scope = event.target.value as FusionForm['dataset_scope'];
-                      set('dataset_scope', scope);
-                      // Predictions carry no association labels — the joint-only
-                      // scope can never include them.
-                      if (scope === 'joint_only') set('include_predictions', false);
-                    }}
-                    className={cn(fieldCls, 'cursor-pointer appearance-none')}
-                  >
-                    <option value="joint_only">
-                      Joint supervision only — Action ∩ Association ({status?.supervision.joint_videos ?? 0} videos)
-                    </option>
-                    <option value="partial_labels">
-                      Partial-label union — all Action videos ({status?.supervision.action_videos ?? 0} videos)
-                    </option>
-                  </select>
-                  <span className="block text-[10px] leading-relaxed text-text-muted">
-                    {values.dataset_scope === 'joint_only'
-                      ? 'Every training video must produce actor targets; missing Association supervision fails the run.'
-                      : `${status?.supervision.action_only_videos ?? 0} Action-only videos update the shared backbone and Action head, while their actor loss is masked.`}
-                  </span>
-                </FieldShell>
-              )}
               <SchemaSearchSelectField
                 name="init_checkpoint"
                 label="Init checkpoint"
@@ -352,14 +320,7 @@ export function FusionTrainPage() {
                     ]}
                     renderMeta={(video) =>
                       isRally ? null : (
-                        <>
-                          {video.has_association_label ? (
-                            <Badge tone="success">association</Badge>
-                          ) : (
-                            <Badge tone="warning">action only</Badge>
-                          )}
-                          <span className="font-mono text-[10px] tabular-nums text-text-muted">{video.events}</span>
-                        </>
+                        <span className="font-mono text-[10px] tabular-nums text-text-muted">{video.events}</span>
                       )
                     }
                     maxHeightClass="max-h-64"
@@ -379,12 +340,11 @@ export function FusionTrainPage() {
               </p>
             )}
 
-            {visible.has('include_predictions') &&
-              (!visible.has('dataset_scope') || values.dataset_scope === 'partial_labels') && (
-                <div className="mt-4">
-                  <SchemaCheckboxField name="include_predictions" label="Include predictions" />
-                </div>
-              )}
+            {visible.has('include_predictions') && (
+              <div className="mt-4">
+                <SchemaCheckboxField name="include_predictions" label="Include predictions" />
+              </div>
+            )}
           </SchemaForm>
           <div className="mt-4 flex items-center gap-2">
             <Button intent="primary" onClick={() => void startTrain()} disabled={!canTrain} className="flex-1">
@@ -405,11 +365,9 @@ export function FusionTrainPage() {
                   ['Cuts', `${usableRally} vid (${rallyAnnotations?.missing_videos ?? 0} missing)`],
                 ]
               : [
-                  ['Scope', tasks.includes('actor') && values.dataset_scope === 'joint_only' ? 'Action ∩ Association' : 'Action union'],
                   ['View', values.camera_view === 'all' ? 'all views' : values.camera_view],
                   ['Eligible', `${eligibleVideos} vid / ${eligibleEvents.toLocaleString()} events`],
                   ['Validation', isManual ? `${selectedValidation.length} vid` : values.validation],
-                  ['Action only', `${status?.supervision.action_only_videos ?? 0} videos in corpus`],
                 ]
             ).map(([label, value]) => (
               <div key={label} className="flex items-center gap-3">

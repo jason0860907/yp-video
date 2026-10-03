@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from fastapi import HTTPException
 
-from yp_video.actor import training_labels
+from yp_video.action import training_labels
 from yp_video.contracts.action import RECIPES
 from yp_video.core.jsonl import write_jsonl
 from yp_video.web import spot_training
@@ -36,7 +36,6 @@ class FusionModelStatusTests(unittest.TestCase):
                 fusion_model, "checkpoint_package_options",
                 side_effect=lambda _dir, tasks: [{"label": ",".join(tasks), "value": "x"}],
             ),
-            patch.object(fusion_model.association_labels, "labeled_stems", return_value=["joint"]),
             patch.object(fusion_model.rally_spot, "select_training_items", return_value=([], [])),
             patch.object(fusion_model.rally_spot, "rally_stats", return_value={"videos": 0}),
         ):
@@ -50,7 +49,7 @@ class FusionModelStatusTests(unittest.TestCase):
         self.assertEqual(recipes["rally_winner"]["defaults"]["sample_fps"], 5.0)
         self.assertEqual(
             recipes["action_rally_winner"]["tasks"],
-            ["action", "location", "actor", "rally", "winner", "person"],
+            ["action", "location", "rally", "winner", "person"],
         )
         self.assertEqual(
             recipes["action_rally_winner"]["defaults"]["action_sample_fps"],
@@ -60,13 +59,8 @@ class FusionModelStatusTests(unittest.TestCase):
             recipes["action_rally_winner"]["defaults"]["rally_sample_fps"],
             5.0,
         )
-        self.assertEqual(recipes["association_action"]["serveable_tasks"], ["action", "actor"])
         self.assertEqual(payload["init_checkpoints"]["rally"], [{"label": "rally", "value": "x"}])
         self.assertEqual(payload["task_labels"]["winner"], "Winner")
-        self.assertEqual(
-            payload["supervision"],
-            {"action_videos": 2, "joint_videos": 1, "action_only_videos": 1},
-        )
 
 
 class BuildCommandTests(unittest.TestCase):
@@ -96,29 +90,6 @@ class BuildCommandTests(unittest.TestCase):
         self.assertIn("--label_dir /run/labels/x --val_ratio 0.1 --split_seed 42", joined)
         self.assertNotIn("--predict", joined)
 
-    def test_association_action_manual_validation_command(self) -> None:
-        req = FusionTrainRequest(
-            recipe="association_action", validation="manual", validation_videos=["a"],
-            sample_fps=30, acc_grad_iter=2, batch_size=8, audio_backend="logmel",
-            action_dilate_len=2,
-        )
-        cmd = spot_training.build_command(
-            req, RECIPES["association_action"],
-            self._prepared("yp_actions", ["--actor_dir", "/run/labels/actor-candidates"]),
-            save_dir=Path("/run"), init_checkpoint=None, audio_dir=Path("/audio"),
-        )
-        joined = " ".join(cmd)
-        self.assertIn("--tasks action,location,actor", joined)
-        self.assertIn("--actor_dir /run/labels/actor-candidates", joined)
-        self.assertIn("--audio_backend logmel --actor_dir", joined)
-        self.assertIn("--audio_dir /audio", joined)
-        self.assertIn("--sample_fps 30.0 --dilate_len 2", joined)
-        self.assertIn(
-            "--train_labels /run/label-splits/action/train "
-            "--val_labels /run/label-splits/action/val",
-            joined,
-        )
-
     def test_multi_fps_command_has_independent_streams(self) -> None:
         req = FusionTrainRequest(
             recipe="action_rally_winner",
@@ -139,7 +110,6 @@ class BuildCommandTests(unittest.TestCase):
             label_subdirs=("action-annotations", "rally-annotations"),
             frame_dir=Path("/frames"),
             dataset="yp_action_rally",
-            extra_args=["--actor_dir", "/run/labels/actor-candidates"],
         )
         cmd = spot_training.build_command(
             req,
@@ -150,7 +120,7 @@ class BuildCommandTests(unittest.TestCase):
             audio_dir=None,
         )
         joined = " ".join(cmd)
-        self.assertIn("--tasks action,location,actor,rally,winner,person", joined)
+        self.assertIn("--tasks action,location,rally,winner,person", joined)
         self.assertIn("--task_sample_fps action=30.0", joined)
         self.assertIn("--task_sample_fps rally=5.0", joined)
         self.assertIn("--task_sample_fps winner=5.0", joined)
@@ -159,7 +129,6 @@ class BuildCommandTests(unittest.TestCase):
         self.assertIn("--task_learning_rate winner=3e-05", joined)
         self.assertIn("--task_audio_backend action=logmel", joined)
         self.assertIn("--task_audio_backend rally=none", joined)
-        self.assertIn("--actor_dir /run/labels/actor-candidates", joined)
         self.assertIn("--task_fg_upsample action=0.5", joined)
         self.assertIn("--task_dilate_len action=1", joined)
         self.assertNotIn("--dilate_len", joined)
@@ -174,7 +143,6 @@ class BuildCommandTests(unittest.TestCase):
 
     def test_run_name_token_per_recipe(self) -> None:
         self.assertEqual(spot_training.recipe_token(RECIPES["rally_winner"]), "ral_win")
-        self.assertEqual(spot_training.recipe_token(RECIPES["association_action"]), "ass_act")
         self.assertEqual(spot_training.recipe_token(RECIPES["action"]), "act")
         self.assertEqual(
             spot_training.recipe_token(RECIPES["action_rally_winner"]),
@@ -206,68 +174,7 @@ class SupervisionGateTests(unittest.TestCase):
         check_task_supervision(RECIPES["rally_winner"], self._prepared({"rallies_with_winner": 3}))
         check_task_supervision(RECIPES["rally"], self._prepared({"rallies_with_winner": 0}))
 
-    def test_actor_head_needs_actor_targets(self) -> None:
-        with self.assertRaises(RuntimeError):
-            check_task_supervision(
-                RECIPES["association_action"], self._prepared({"actor_targets": {"track": 0}})
-            )
-        check_task_supervision(RECIPES["action"], self._prepared({"actor_targets": {"track": 0}}))
-
-
 class FusionLabelScopeTests(unittest.TestCase):
-    def test_joint_only_snapshot_fails_when_a_video_has_no_actor_targets(self) -> None:
-        with tempfile.TemporaryDirectory() as raw_dir:
-            root = Path(raw_dir)
-            label = root / "match_actions.jsonl"
-            video = root / "match.mp4"
-            video.touch()
-            write_jsonl(
-                label,
-                {"video": "match", "num_frames": 100, "fps": 30},
-                [{"id": "event", "frame": 10, "label": "spike"}],
-            )
-            with (
-                patch.object(training_labels, "inspect_action_frame_cache", return_value={"frame_count": 100}),
-                patch.object(training_labels, "cut_kind_of", return_value="sideline"),
-                patch.object(training_labels.candidates, "build", return_value=([], {})),
-            ):
-                with self.assertRaises(RuntimeError) as caught:
-                    training_labels.prepare_action_training_labels(
-                        items=[(label, video)],
-                        frame_dir=root / "frames",
-                        save_dir=root / "run",
-                        tasks=("action", "location", "actor"),
-                        require_actor_targets=True,
-                    )
-
-        self.assertIn("produced no usable actor targets", str(caught.exception))
-
-    def test_action_only_recipe_writes_no_actor_sidecar(self) -> None:
-        with tempfile.TemporaryDirectory() as raw_dir:
-            root = Path(raw_dir)
-            label = root / "match_actions.jsonl"
-            video = root / "match.mp4"
-            video.touch()
-            write_jsonl(
-                label,
-                {"video": "match", "num_frames": 100, "fps": 30},
-                [{"id": "event", "frame": 10, "label": "spike"}],
-            )
-            with (
-                patch.object(training_labels, "inspect_action_frame_cache", return_value={"frame_count": 100}),
-                patch.object(training_labels, "cut_kind_of", return_value="sideline"),
-                patch.object(training_labels.candidates, "build") as build,
-            ):
-                summary = training_labels.prepare_action_training_labels(
-                    items=[(label, video)],
-                    frame_dir=root / "frames",
-                    save_dir=root / "run",
-                    tasks=("action", "location"),
-                )
-            build.assert_not_called()
-            self.assertFalse((root / "run" / "labels" / "actor-candidates").exists())
-            self.assertEqual(summary["videos"], 1)
-
     def test_snapshot_carries_rally_spans_for_scoring(self) -> None:
         with tempfile.TemporaryDirectory() as raw_dir:
             root = Path(raw_dir)
@@ -290,7 +197,6 @@ class FusionLabelScopeTests(unittest.TestCase):
                     items=[(label, video)],
                     frame_dir=root / "frames",
                     save_dir=root / "run",
-                    tasks=("action",),
                 )
             written = next((root / "run" / "labels").rglob("match_actions.jsonl"))
             meta = json.loads(written.read_text().splitlines()[0])

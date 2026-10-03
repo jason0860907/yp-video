@@ -37,7 +37,7 @@ def list_checkpoints(
 
     ``task`` keeps only packages whose manifest serves it, and points the row
     at that task's own best-epoch weights (``best_per_task[task].file``) —
-    a fusion run's action-best and actor-best epochs rarely coincide, and
+    a fusion run's action-best and rally-best epochs rarely coincide, and
     serving a task its selection-criterion epoch quietly hands it a
     compromised head.
     """

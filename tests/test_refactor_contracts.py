@@ -18,6 +18,7 @@ from yp_video.contracts.reid import (
     CHECKPOINT_TYPE,
     REID_CONTRACT_VERSION,
 )
+from yp_video.core.jsonl import read_jsonl, write_jsonl
 from yp_video.extraction import actor_fix, cropping, pipeline
 from yp_video.reid import checkpoints, store
 from yp_video.web.jobs import MAX_LOG_LINES, Job, JobManager, JobStatus, JobType
@@ -461,7 +462,7 @@ class StagesStopWhereTheyShouldTests(unittest.TestCase):
             sorted(params), ["on_progress", "person_boxes", "video_path"]
         )
         source = inspect.getsource(pipeline.detect_video)
-        for forbidden in ("cut(", "RulePolicy", "rule_decision", "embed_video"):
+        for forbidden in ("cut(", "embed_video"):
             self.assertNotIn(forbidden, source, f"detection must not {forbidden}")
 
     def test_retired_detector_output_is_queued_for_migration(self) -> None:
@@ -545,6 +546,50 @@ class StagesStopWhereTheyShouldTests(unittest.TestCase):
         self.assertEqual(result.refreshing_models, ())
 
 
+class ActorFixRevertTests(unittest.TestCase):
+    def test_reverting_clears_the_event_back_to_unresolved(self) -> None:
+        """No rule re-picks on revert: the event goes back to undecided, with
+        the stale automatic answer gone, for the next association run."""
+        with tempfile.TemporaryDirectory() as raw_dir:
+            records = Path(raw_dir) / "match.jsonl"
+            write_jsonl(
+                records,
+                {"frame_size": [1920, 1080]},
+                [
+                    {
+                        "id": "e1",
+                        "frame": 10,
+                        "xy": [0.5, 0.5],
+                        "status": "ok",
+                        "resolution": "manual",
+                        "box": [1, 2, 3, 4],
+                        "actor_box": [1, 2, 3, 4],
+                        "auto_box": [5, 6, 7, 8],
+                        "association": {"decision": "selected"},
+                        "track": "1:2",
+                        "score": 0.9,
+                        "crop": "e1_fix.jpg",
+                        "crop_schema": 1,
+                        "actor_revision": 2,
+                    }
+                ],
+            )
+            with patch.object(pipeline, "records_path", return_value=records):
+                returned = pipeline._apply_actor_fix(
+                    "match", "/nonexistent/match.mp4", "e1", None
+                )
+            [record] = read_jsonl(records)[1]
+
+        self.assertEqual(returned, record)
+        self.assertEqual(record["status"], "miss")
+        self.assertEqual(record["resolution"], "unresolved")
+        self.assertEqual(record["actor_revision"], 3)
+        for key in ("box", "actor_box", "score", "crop"):
+            self.assertIsNone(record[key], key)
+        for key in ("auto_box", "association", "track", "crop_schema"):
+            self.assertNotIn(key, record)
+
+
 class ConfirmableAnswerTests(unittest.TestCase):
     """What a human is allowed to endorse, and what endorsing it records."""
 
@@ -555,30 +600,21 @@ class ConfirmableAnswerTests(unittest.TestCase):
         self.assertEqual(out["e1"].verdict, ActorVerdict.CONFIRMED_AUTO)
         self.assertEqual(out["e1"].box, (1.0, 2.0, 3.0, 4.0))
 
-    def test_an_explicit_occlusion_becomes_the_occluded_verdict(self) -> None:
-        """The model said nobody is visible; agreeing with that IS a verdict,
-        and it is the training truth the NONE head is scored on."""
-        out = actor_labels.confirmations_for([
-            {
-                "id": "e1", "frame": 10, "resolution": "unresolved",
-                "association": {"decision": "abstained", "kind": "occluded"},
-            },
-        ])
-        self.assertEqual(out["e1"].verdict, ActorVerdict.OCCLUDED)
-        self.assertIsNone(out["e1"].box)
-
-    def test_untracked_is_not_endorsable(self) -> None:
-        """It says somebody DID act and tracking lost them — re-running
-        tracking may fix it, and a verdict would bury it."""
-        self.assertEqual(
-            actor_labels.confirmations_for([
-                {
-                    "id": "e1", "frame": 10, "resolution": "unresolved",
-                    "association": {"decision": "abstained", "kind": "untracked"},
-                },
-            ]),
-            {},
-        )
+    def test_an_abstention_diagnostic_is_not_endorsable(self) -> None:
+        """Only a pick can be endorsed. Whatever the diagnostic claims —
+        nobody visible, or tracking lost them — an unresolved event needs a
+        human verdict, not a confirmation."""
+        for kind in ("occluded", "untracked"):
+            with self.subTest(kind=kind):
+                self.assertEqual(
+                    actor_labels.confirmations_for([
+                        {
+                            "id": "e1", "frame": 10, "resolution": "unresolved",
+                            "association": {"decision": "abstained", "kind": kind},
+                        },
+                    ]),
+                    {},
+                )
 
     def test_a_bare_abstention_is_not_endorsable(self) -> None:
         """No `kind` at all — the geometry simply found nobody, which is not

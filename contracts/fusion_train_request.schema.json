@@ -5,13 +5,12 @@
   "description": "One SPOT training run: a recipe (which heads) plus how to train it.\n\nFields outside the chosen recipe's ``fields`` (contract ``RECIPES``) are\naccepted and ignored \u2014 the form sends every field with its default \u2014 so\na rally run carries ``audio_backend`` harmlessly and an action run\n``video_limit``.",
   "properties": {
     "recipe": {
-      "default": "association_action",
+      "default": "action_rally_winner",
       "description": "Which task heads share the one checkpoint.",
       "enum": [
         "rally",
         "rally_winner",
         "action",
-        "association_action",
         "action_rally_winner"
       ],
       "title": "Recipe",
@@ -86,16 +85,6 @@
       "description": "Seed for the train/val video shuffle \u2014 keep it fixed to compare runs.",
       "title": "Split Seed",
       "type": "integer"
-    },
-    "dataset_scope": {
-      "default": "joint_only",
-      "description": "association_action: joint_only trains on videos with both action and association labels; partial_labels also uses action-only videos (their actor head sees no supervision).",
-      "enum": [
-        "joint_only",
-        "partial_labels"
-      ],
-      "title": "Dataset Scope",
-      "type": "string"
     },
     "include_predictions": {
       "default": false,

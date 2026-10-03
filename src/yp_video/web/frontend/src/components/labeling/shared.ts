@@ -21,45 +21,6 @@ export const VERDICT: Record<ActorVerdict, { label: string; glyph: string; title
   occluded: { label: 'Occluded', glyph: '⊘', title: 'Nobody in frame is the actor' },
 };
 
-/** What the automatic policy thought, for an event nobody has ruled on yet.
- *
- *  A model's abstention is stored as `unresolved` — the same state as "the
- *  geometry found nobody" — because only a human may write the `occluded`
- *  VERDICT. That keeps a guess from ever looking like a conclusion, but it
- *  also means the model's reason is invisible unless something reads it back
- *  out of the diagnostic. This is that something.
- *
- *  It is a HINT: it tells the reviewer where to look, never what to record. */
-export const HINT: Record<string, { label: string; title: string }> = {
-  occluded: {
-    label: 'Model: occluded?',
-    title: 'The model saw no visible player performing this — confirm or override',
-  },
-  untracked: {
-    label: 'Model: not tracked',
-    title:
-      'The model believes someone acted but tracking has no box for them here. ' +
-      'Re-running Rally Tracking may fix this; relabelling will not.',
-  },
-};
-
-export interface ActorHint {
-  label: string;
-  title: string;
-  confidence?: number;
-}
-
-export const hintOf = (
-  r: Pick<ReidRecord, 'actor_review' | 'association'>,
-): ActorHint | null => {
-  if (verdictOf(r) !== 'unreviewed') return null;
-  const kind = r.association?.kind;
-  if (!kind || kind === 'track') return null;
-  const hint = HINT[kind];
-  if (!hint) return null;
-  return { ...hint, confidence: r.association?.confidence ?? undefined };
-};
-
 export interface Rally {
   rally_id: number;
   start: number;
@@ -107,18 +68,10 @@ export interface TrackMasks {
   tracks: Record<string, string>;
 }
 
-/** Whether a human could endorse the policy's answer here.
- *
- *  Two answers are endorsable and they land as different verdicts: a PICK
- *  becomes `confirmed_auto`, and an explicit "nobody is visible" becomes
- *  `occluded`. Merely abstaining is neither — `untracked` says somebody acted
- *  and tracking lost them, which re-running tracking may fix. */
-export const canConfirm = (
-  r: Pick<ReidRecord, 'resolution' | 'actor_review' | 'association'>,
-) =>
-  verdictOf(r) === 'unreviewed' &&
-  (r.resolution === 'auto' ||
-    (r.resolution === 'unresolved' && r.association?.kind === 'occluded'));
+/** Whether a human could endorse the policy's answer here: an automatic pick
+ *  nobody has ruled on, which lands as `confirmed_auto`. */
+export const canConfirm = (r: Pick<ReidRecord, 'resolution' | 'actor_review'>) =>
+  verdictOf(r) === 'unreviewed' && r.resolution === 'auto';
 
 /** The rally an event falls in, or null when it sits between rallies.
  *

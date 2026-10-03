@@ -1,4 +1,4 @@
-"""Actor association: the labeling work list, the fix endpoint, and learning.
+"""Actor association: the labeling work list, the done flag, confirm and fix.
 
 Serves the Association Label page — which video still has unreviewed actors,
 and the one write that answers "this person performed this action". Player
@@ -8,8 +8,6 @@ extraction records they both read.
 
 from __future__ import annotations
 
-import asyncio
-import logging
 from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import unquote
@@ -17,44 +15,23 @@ from urllib.parse import unquote
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
-from yp_video.action import prelabel
-from yp_video.actor import dataset as actor_dataset
-from yp_video.actor import evaluate as actor_evaluate
 from yp_video.actor import labels as actor_labels
-from yp_video.actor import policy as actor_policy
-from yp_video.actor import spot_associate, spot_predictions
-from yp_video.actor.ranking import RULE_BASED
-from yp_video.config import (
-    ACTION_FRAMES_DIR,
-    SPOT_DIR,
-    SPOT_PYTHON,
-)
 from yp_video.core import label_done
-from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import read_jsonl_cached
-from yp_video.extraction import actor_fix, links, reassociate
+from yp_video.extraction import actor_fix, links
 from yp_video.extraction import done as extraction_done
 from yp_video.extraction import store as extraction_store
 from yp_video.tracklets import store as tracks_store
 from yp_video.tracklets.geometry import TrackRef
 from yp_video.web import audit, worklists
-from yp_video.web.job_helpers import (
-    init_batch_items,
-    spawn_batch_video_job,
-)
-from yp_video.web.jobs import JobSummary, JobType, job_manager
 from yp_video.web.r2_client import (
     cut_frame_source,
-    materialized_cut,
     resolve_cut,
     sync_to_r2,
 )
 from yp_video.web.schemas import StrictModel
 
-log = logging.getLogger(__name__)
 router = APIRouter()
-
-_evaluation_cache: StatCache = StatCache()
 
 
 @router.get("/videos")
@@ -83,154 +60,6 @@ def set_done(name: str, req: DoneRequest) -> dict:
     return {"done": flags["association"], "confirmed": confirmed}
 
 
-@router.get("/status")
-def status() -> dict:
-    """Which fusion actor heads exist.
-
-    Cheap on purpose, and it must stay that way: this is the single query the
-    Association Predict pickers wait on. It used to also return the training
-    corpus summary, which meant building the dataset — decompressing a
-    silhouette archive per labelled video — before anyone could choose a
-    model. The corpus belongs to /performance, which is already the slow,
-    cached one and is read by the page that actually wants it.
-    """
-    association_checkpoints = spot_associate.list_association_checkpoints()
-    return {
-        # Visual models answer by looking at pixels and choosing among the
-        # tracked candidates; this also includes fusion actor heads.
-        "association_checkpoints": association_checkpoints,
-        "spot_available": SPOT_DIR.exists() and SPOT_PYTHON.exists(),
-        "frame_dir": str(ACTION_FRAMES_DIR),
-    }
-
-
-@router.get("/performance")
-async def performance() -> dict:
-    """Every policy that can answer, on the reviewed events, sliced.
-
-    The rule and persisted yp-actor answers are scored on the same reviewed
-    events. The `hard` and `manual` slices are the point: the aggregate is
-    dominated by events the rule already gets right, so a model can move it
-    without touching a single case anyone cares about.
-
-    Note the yp-spot column is scored on answers ALREADY on disk from an
-    earlier Association Predict run, not by re-running the head — scoring
-    would mean a GPU pass per video from inside a web request.
-    """
-    stems = list(actor_labels.labeled_stems())
-    spot_runs = sorted(spot_predictions.available_runs(stems))
-
-    sources = [
-        *actor_dataset.source_paths(stems),
-        spot_predictions.ACTOR_PREDICTIONS_DIR,
-    ]
-
-    def compute() -> dict:
-        dataset = actor_dataset.load_track_dataset(stems)
-        builders: dict = {RULE_BASED: lambda _stem: actor_policy.RulePolicy()}
-        for run in spot_runs:
-            builders[f"spot:{run}"] = (
-                lambda stem, r=run: spot_predictions.policy_for(stem, r)
-            )
-        return {
-            "dataset": dataset.payload(),
-            "slices": list(actor_evaluate.SLICES),
-            "policies": actor_evaluate.evaluate_policies(builders, stems),
-            "candidates": {},
-        }
-
-    return await asyncio.to_thread(
-        _evaluation_cache.get,
-        ("actor-association", tuple(stems)),
-        sources,
-        compute,
-    )
-
-
-class PredictRequest(StrictModel):
-    model_config = ConfigDict(extra="forbid")
-
-    videos: list[str]
-    #: A fusion actor-head checkpoint package. None selects the rule.
-    association_checkpoint: str | None = None
-
-
-def _associate(path: Path, plan: actor_policy.PolicyPlan, on_progress) -> dict:
-    # The spot head reads the frame cache and the re-crop reads the video;
-    # both want the cut's bytes in the layout.
-    with materialized_cut(path):
-        return reassociate.reassociate_video(
-            path, plan.build(path, on_progress), on_progress=on_progress
-        )
-
-
-@router.post("/predict", response_model=JobSummary)
-async def predict(req: PredictRequest) -> dict:
-    """Re-decide the automatic actor picks, without re-detecting anybody.
-
-    Every human verdict survives untouched — see extraction/reassociate.py.
-    """
-    if req.association_checkpoint:
-        try:
-            association_checkpoint = prelabel.resolve_checkpoint(
-                req.association_checkpoint
-            )
-        except (FileNotFoundError, ValueError) as exc:
-            raise HTTPException(404, str(exc)) from exc
-        reason = spot_associate.rejection(association_checkpoint)
-        if reason is not None:
-            raise HTTPException(400, reason)
-        plan: actor_policy.PolicyPlan = actor_policy.SpotPlan(
-            association_checkpoint
-        )
-    else:
-        plan = actor_policy.RulePolicy()
-
-    video_paths: list[Path] = []
-    for name in req.videos:
-        path = resolve_cut(name)
-        if path is None:
-            raise HTTPException(404, f"Video not found: {name}")
-        if not extraction_store.records_path(path.stem).exists():
-            raise HTTPException(
-                400, f"No extraction records for: {name} — run ReID Predict first"
-            )
-        if plan.needs_tracklets and not tracks_store.tracks_path(path.stem).exists():
-            raise HTTPException(
-                400,
-                f"{plan.name} picks among tracklets, and {name} has not been "
-                "tracked — run Rally Tracking first",
-            )
-        video_paths.append(path)
-    if not video_paths:
-        raise HTTPException(400, "Select at least one video")
-
-    job = job_manager.create_job(
-        JobType.ACTOR_ASSOCIATION_PREDICT,
-        {
-            "policy": plan.name,
-            "videos": [p.name for p in video_paths],
-            "items": init_batch_items([p.name for p in video_paths]),
-        },
-        name=f"Association Predict ({len(video_paths)} videos · {plan.name})",
-    )
-    spawn_batch_video_job(
-        job,
-        video_paths,
-        # Whether the policy exists yet is the plan's business: the rule and
-        # the ranker hand back themselves, the spot head scores the video
-        # first (see actor/policy.SpotPlan).
-        work=lambda path, cb: _associate(path, plan, cb),
-        done_message=lambda c: (
-            f"{c['changed']} moved · {c['unchanged']} unchanged · "
-            f"{c['labeled']} labeled kept"
-            + (f" · {c['confirmed']} auto-confirmed (video marked done)" if c.get("confirmed") else "")
-        ),
-        start_message="re-deciding actors...",
-    )
-    return job.to_dict()
-
-
 class ConfirmRequest(StrictModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -240,11 +69,8 @@ class ConfirmRequest(StrictModel):
 
 @router.post("/confirm/{name}")
 def confirm(name: str, req: ConfirmRequest) -> dict:
-    """Endorse the policy's answer: "it already got these right".
-
-    Two answers are endorsable and land as different verdicts — a pick
-    becomes ``confirmed_auto``, an explicit "nobody is visible" becomes
-    ``occluded`` (see actor/labels.confirmations_for).
+    """Endorse the policy's picks: "it already got these right" — each lands
+    as ``confirmed_auto`` (see actor/labels.confirmations_for).
 
     Purely an annotation write — the record, the crop and every embedding
     stay exactly as they are, because agreeing with a pick changes nothing
@@ -272,15 +98,12 @@ def confirm(name: str, req: ConfirmRequest) -> dict:
             # happen; a miss needs a real verdict, not a confirmation.
             raise HTTPException(
                 400,
-                "Nothing to endorse — the policy neither picked anybody nor "
-                f"called it occluded: {', '.join(unknown[:5])}"
+                "Nothing to endorse — the policy picked nobody for: "
+                f"{', '.join(unknown[:5])}"
                 + (f" (+{len(unknown) - 5} more)" if len(unknown) > 5 else ""),
             )
         confirmable = {k: v for k, v in confirmable.items() if k in wanted}
 
-    # Which VERDICT each event got, not just that it landed: endorsing a
-    # pick and endorsing an occlusion are two different answers, and a caller
-    # that assumes one of them shows the wrong badge for the other.
     before = _actor_rows(actor_labels.load(stem))
     landed = actor_labels.confirm_auto(stem, confirmable)
     # A bulk endorsement writes many durable verdicts at once. Not folded into

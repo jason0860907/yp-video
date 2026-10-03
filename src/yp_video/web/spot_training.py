@@ -1,6 +1,6 @@
 """The one SPOT training launcher behind Fusion Train.
 
-Every recipe — rally, rally + winner, action, association + action — is the
+Every recipe — rally, rally + winner, action, action + rally + winner + person — is the
 same trainer with a different task list. This module owns the run naming,
 the command builder and ``start_training_job`` once; which labels a recipe
 draws from is ``label_sources``, and what the recipe trains is the contract
@@ -80,7 +80,7 @@ def recipe_token(recipe: Recipe) -> str:
     if "action" in tasks and "rally" in tasks:
         return "act_ral_win" if "winner" in tasks else "act_ral"
     if "action" in tasks:
-        return "ass_act" if "actor" in tasks else "act"
+        return "act"
     return "ral_win" if "winner" in tasks else "ral"
 
 
@@ -447,10 +447,9 @@ async def start_training_job(req: FusionTrainRequest) -> dict:
                         else str(SPOT_DIR)
                     ),
                     "CUDA_VISIBLE_DEVICES": str(req.gpu),
-                    # The actor head allocates a different amount per
-                    # batch (event count varies), which fragments the
-                    # caching allocator: the 2026-09-02 ass_act run died
-                    # at epoch 24 with 12 GiB reserved-but-unallocated.
+                    # Variable per-batch allocations fragment the caching
+                    # allocator (a 2026-09-02 run died at epoch 24 with
+                    # 12 GiB reserved-but-unallocated).
                     "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
                     ACTION_CONTRACT_VERSION_ENV: ACTION_CONTRACT_VERSION,
                 }

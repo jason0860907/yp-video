@@ -74,21 +74,6 @@
       "serveable": false,
       "loss_weight": 5.0
     },
-    "actor": {
-      "name": "actor",
-      "label": "Actor",
-      "kind": "aux",
-      "label_subdir": "actor-candidates",
-      "label_glob": "*_actor_candidates.jsonl",
-      "event_fields": [],
-      "requires": [
-        "action",
-        "location"
-      ],
-      "primary_metric": "player_top1",
-      "serveable": true,
-      "loss_weight": 1.0
-    },
     "person": {
       "name": "person",
       "label": "Person",
@@ -175,40 +160,12 @@
         "action_dilate_len": 0
       }
     },
-    "association_action": {
-      "id": "association_action",
-      "name": "Association + Action",
-      "tasks": [
-        "action",
-        "location",
-        "actor"
-      ],
-      "description": "Touch spotting plus which player acted, from the actor-candidate sidecar.",
-      "fields": [
-        "sample_fps",
-        "acc_grad_iter",
-        "audio_backend",
-        "action_dilate_len",
-        "include_predictions",
-        "dataset_scope"
-      ],
-      "defaults": {
-        "batch_size": 64,
-        "acc_grad_iter": 32,
-        "num_epochs": 50,
-        "warm_up_epochs": 3,
-        "learning_rate": 3e-05,
-        "audio_backend": "logmel",
-        "action_dilate_len": 0
-      }
-    },
     "action_rally_winner": {
       "id": "action_rally_winner",
-      "name": "Association + Action + Rally + Winner + Person",
+      "name": "Action + Rally + Winner + Person",
       "tasks": [
         "action",
         "location",
-        "actor",
         "rally",
         "winner",
         "person"
@@ -220,7 +177,6 @@
         "winner_sample_fps",
         "video_limit",
         "audio_backend",
-        "dataset_scope",
         "action_learning_rate",
         "rally_learning_rate",
         "winner_learning_rate",
@@ -240,7 +196,6 @@
         "warm_up_epochs": 3,
         "learning_rate": 3e-05,
         "audio_backend": "logmel",
-        "dataset_scope": "partial_labels",
         "action_learning_rate": 3e-05,
         "rally_learning_rate": 3e-05,
         "winner_learning_rate": 3e-05,
@@ -349,7 +304,7 @@
       "type": "object"
     },
     "CourtSide": {
-      "description": "Where a court side sits in camera-frame terms.\n\nThe value space of the ``winner`` task: which side of the frame the team\nthat WON the rally was playing on. Sideline footage uses left/right,\nbroadcast/baseline footage near/far \u2014 one 4-class vocabulary so a single\nhead serves both camera setups. The winning side, not where the ball\nlanded: an out ball lands on the loser's side.",
+      "description": "Where a court side sits in camera-frame terms.\n\nThe value space of the ``winner`` task: which side of the frame the team\nthat WON the rally was playing on. Broadcast footage uses left/right,\nsideline (amateur) footage near/far \u2014 one 4-class vocabulary so a single\nhead serves both camera setups. The winning side, not where the ball\nlanded: an out ball lands on the loser's side.",
       "enum": [
         "left",
         "right",

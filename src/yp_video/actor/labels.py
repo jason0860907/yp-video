@@ -265,21 +265,9 @@ def save(stem: str, event_id: str, label: ActorLabel | None) -> None:
 def confirmations_for(
     records: Iterable[Mapping[str, object]],
 ) -> dict[str, ActorLabel]:
-    """Every automatic answer a human could endorse, as the label it would be.
-
-    A policy gives two kinds of answer worth agreeing with, and agreeing with
-    each means a different verdict:
-
-    - it PICKED somebody → ``confirmed_auto``. The box is snapshotted so a
-      later re-extraction cannot quietly reinterpret what was endorsed.
-    - it said NOBODY IS VISIBLE → ``occluded``. That is a real verdict, not a
-      confirmation of a pick, because there is no pick to confirm — and it is
-      the training truth the NONE head is scored on.
-
-    Only an explicit occlusion counts, never a mere abstention: ``untracked``
-    means the model believes somebody acted and tracking has no box for them,
-    which re-running tracking may fix and a verdict would bury. A rule policy
-    that never abstains produces neither.
+    """Every automatic pick a human could endorse, as the ``confirmed_auto``
+    label it would be. The box is snapshotted so a later re-extraction cannot
+    quietly reinterpret what was endorsed.
 
     WHO may endorse them is the caller's question, and the two labeling pages
     answer it differently: naming the crop (ReID Label) and reviewing the
@@ -301,17 +289,7 @@ def confirmations_for(
                 box=box,
                 frame=frame if isinstance(frame, int) else None,
             )
-        elif resolution is ActorResolution.UNRESOLVED and _says_occluded(record):
-            out[str(record["id"])] = ActorLabel(ActorVerdict.OCCLUDED)
     return out
-
-
-def _says_occluded(record: Mapping[str, object]) -> bool:
-    """Whether the policy's own answer was "nobody is visible here"."""
-    diagnostic = record.get("association")
-    return (
-        isinstance(diagnostic, Mapping) and diagnostic.get("kind") == "occluded"
-    )
 
 
 def confirm_auto(stem: str, confirmations: dict[str, ActorLabel]) -> list[str]:

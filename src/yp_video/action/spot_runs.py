@@ -31,8 +31,8 @@ def spot_run_name(*, view: str, task: str, feature_arch: str) -> str:
     Mirrors yp-spot's ``RunName`` (its env is separate, so importing it is
     not an option): the model token is the backbone base with any temporal
     suffix stripped, and the "all" view is spelled out as "all_view".
-    Tasks: ``act`` action spotting, ``ass_act`` +actor, ``ral`` rally,
-    ``ral_win`` +winner.
+    Tasks: ``act`` action spotting, ``ral`` rally, ``ral_win`` +winner,
+    ``act_ral_win`` all three.
     """
     model = feature_arch
     for suffix in ("_tsm", "_gsm"):
@@ -102,7 +102,6 @@ _METRIC_LABELS = {
     "harmonic_mAP": "mAP",
     "segment_mAP": "seg mAP",
     "spatial_mAP": "loc mAP",
-    "player_top1": "Top-1",
     "winner_top1": "winner Top-1",
 }
 
@@ -111,9 +110,9 @@ def _package_label(run_dir: Path, manifest: object) -> str:
     """One line describing a package by what it can actually serve.
 
     A multi-task package is labelled with EVERY serveable task's own best —
-    ``(action mAP 0.225 · actor Top-1 0.628)`` — because a picker showing
+    ``(action mAP 0.225 · rally segment mAP 0.81)`` — because a picker showing
     only the headline metric silently misdescribes every other task (the
-    actor head's quality is not the action mAP). Packages without a
+    rally head's quality is not the action mAP). Packages without a
     ``best_per_task`` record fall back to the headline metric.
     """
     per_task = (
@@ -274,7 +273,7 @@ def export_checkpoint_package(
     config = load_json_file(run_dir / "config.json")
 
     # One best PER TASK, not one per run: a fusion run's action-best and
-    # actor-best epochs rarely coincide, and shipping only the selection
+    # rally-best epochs rarely coincide, and shipping only the selection
     # criterion's epoch quietly serves every other task a compromised model.
     # ``file`` decouples the logical best from the physical weights, so a
     # task whose best IS the headline epoch points at checkpoint_best.pt

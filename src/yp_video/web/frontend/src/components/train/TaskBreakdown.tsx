@@ -1,8 +1,7 @@
 import { useState } from 'react';
 import { cn } from '@/lib/cn';
-import { ACTOR_KIND_LABELS, METRIC_LABELS, TASK_LABELS, TASK_ORDER } from '@/components/train/metricLabels';
+import { METRIC_LABELS, TASK_LABELS, TASK_ORDER } from '@/components/train/metricLabels';
 import type {
-  ActorBreakdown,
   LocationBreakdown,
   SpottingBreakdown,
   TaskMetricSnapshot,
@@ -80,7 +79,7 @@ export function TaskBreakdownPanel({ best, latest }: { best?: TaskSnapshot; late
 function TaskSection({ task, snapshot }: { task: string; snapshot: TaskMetricSnapshot }) {
   const validation = snapshot.validation;
   const primary = snapshot.primary_metric;
-  const n = primary === 'player_top1' ? validation.counts.player_events : validation.counts.events;
+  const n = validation.counts.events;
   const noun = task === 'rally' ? 'rallies' : 'events';
   const breakdown = validation.breakdown!;
   return (
@@ -98,8 +97,6 @@ function TaskSection({ task, snapshot }: { task: string; snapshot: TaskMetricSna
       <div className="mt-1.5 grid grid-cols-1 items-start gap-3 xl:grid-cols-[auto_minmax(0,1fr)]">
         {task === 'winner' ? (
           <WinnerView bd={breakdown as WinnerBreakdown} majority={validation.metrics.majority_baseline} />
-        ) : task === 'actor' ? (
-          <ActorView bd={breakdown as ActorBreakdown} />
         ) : task === 'location' ? (
           <LocationView bd={breakdown as LocationBreakdown} />
         ) : (
@@ -257,34 +254,6 @@ function WinnerView({ bd, majority }: { bd: WinnerBreakdown; majority: number | 
                 </td>
               ))}
               <td className={cn(NUM, 'border-l border-border text-text-primary')}>{pct(bd.recall[side])}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function ActorView({ bd }: { bd: ActorBreakdown }) {
-  return (
-    <div className={BOX}>
-      <div className={CAPTION}>By target kind</div>
-      <table className={TABLE}>
-        <thead>
-          <tr className="text-text-muted">
-            <th className={HEAD}>Kind</th>
-            <th className={NUM_HEAD}>events</th>
-            <th className={NUM_HEAD}>correct</th>
-            <th className={NUM_HEAD}>rate</th>
-          </tr>
-        </thead>
-        <tbody>
-          {bd.kinds.map((row) => (
-            <tr key={row.kind}>
-              <td className="py-0.5 pr-2 text-left text-text-secondary">{ACTOR_KIND_LABELS[row.kind] ?? row.kind}</td>
-              <td className={cn(NUM, 'text-text-secondary')}>{row.events.toLocaleString()}</td>
-              <td className={cn(NUM, 'text-text-secondary')}>{row.correct.toLocaleString()}</td>
-              <td className={cn(NUM, 'text-text-primary')}>{pct(row.rate)}</td>
             </tr>
           ))}
         </tbody>

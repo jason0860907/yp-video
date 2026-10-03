@@ -1,11 +1,5 @@
-"""Exporting "who acted" as a CHOICE among tracked players.
-
-The unit of supervision is the candidate set plus an index into it, because
-that is what the model is asked to produce. The tests are mostly about which
-of the three target kinds a given verdict lands in — getting that wrong is
-silent, and the failure mode is teaching the model that a tracking failure
-means nobody acted.
-"""
+"""The tracklets near an action event: the candidate set the joint
+person/action head is asked to choose from."""
 
 from __future__ import annotations
 
@@ -14,27 +8,20 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from yp_video.actor import candidates as actor_labels
-from yp_video.actor import labels as verdict_labels
-from yp_video.actor.labels import ActorLabel, ActorVerdict
-from yp_video.contracts.action import ACTOR_WINDOW_OFFSETS
-from yp_video.core.cache import StatCache
+from yp_video.actor import candidates as actor_candidates
 from yp_video.core.jsonl import write_jsonl
-from yp_video.tracklets.geometry import TrackRef
 
 STEM = "match"
 FRAME_SIZE = [1000, 500]
 EVENT_FRAME = 100
 
 
-class ActorCandidateExportTests(unittest.TestCase):
+class CandidateSetTests(unittest.TestCase):
     def setUp(self) -> None:
         self._dir = tempfile.TemporaryDirectory()
         root = Path(self._dir.name)
         self.records = root / "match.jsonl"
         self.tracks = root / "match_tracks.jsonl"
-        self.verdicts = root / "match_actors.json"
-
         write_jsonl(self.records, {"frame_size": FRAME_SIZE}, [])
         write_jsonl(
             self.tracks,
@@ -73,10 +60,8 @@ class ActorCandidateExportTests(unittest.TestCase):
             ],
         )
         self._patches = [
-            patch.object(actor_labels, "records_path", return_value=self.records),
-            patch.object(actor_labels, "tracks_path", return_value=self.tracks),
-            patch.object(verdict_labels, "actors_path", return_value=self.verdicts),
-            patch.object(verdict_labels._store, "_cache", StatCache()),
+            patch.object(actor_candidates, "records_path", return_value=self.records),
+            patch.object(actor_candidates, "tracks_path", return_value=self.tracks),
         ]
         for item in self._patches:
             item.start()
@@ -86,102 +71,17 @@ class ActorCandidateExportTests(unittest.TestCase):
             item.stop()
         self._dir.cleanup()
 
-    def _build(self, event_id: str, label: ActorLabel | None) -> dict:
-        if label is not None:
-            verdict_labels.save(STEM, event_id, label)
-        rows, self.tally = actor_labels.build(
-            STEM, [{"id": event_id, "frame": EVENT_FRAME}]
-        )
-        return rows[0] if rows else {}
-
-    def test_raw_label_events_derive_their_id_from_the_frame(self) -> None:
-        """Prediction reads the action label file, whose records carry only a
-        frame — no explicit id. Falling through to str(None) gave every event
-        the same key, so a whole video's answers collapsed onto one row and
-        ReID found nobody to cluster."""
-        rows = actor_labels.candidates_only(
-            STEM, [{"frame": EVENT_FRAME}, {"frame": EVENT_FRAME, "id": "act_7"}]
-        )
-        self.assertEqual([row["id"] for row in rows], [f"f{EVENT_FRAME}", "act_7"])
-
     def test_the_candidate_set_is_who_was_tracked_around_the_event_frame(self) -> None:
         """Within ±3 frames, so a stride-2 gap on the event frame (2:9) keeps
         its player; no wider, so one who left 10 frames earlier (2:11) is not
         asked about."""
-        row = self._build("a", ActorLabel(ActorVerdict.MANUAL, track=TrackRef(2, 7)))
-        self.assertEqual([c["track"] for c in row["candidates"]], ["2:3", "2:7", "2:9"])
-
-    def test_a_tracklet_verdict_points_at_its_candidate(self) -> None:
-        row = self._build("a", ActorLabel(ActorVerdict.MANUAL, track=TrackRef(2, 7)))
-        self.assertEqual(row["target_kind"], "track")
-        self.assertEqual(row["candidates"][row["target"]]["track"], "2:7")
-
-    def test_an_occluded_verdict_is_its_own_answer(self) -> None:
-        """Occluded does NOT mean an empty court: these events carry a median
-        of ten other tracked players. It means the one who acted is not among
-        them."""
-        row = self._build("a", ActorLabel(ActorVerdict.OCCLUDED))
-        self.assertEqual(row["target_kind"], "occluded")
-        self.assertNotIn("target", row)
-
-    def test_a_tracklet_absent_around_the_event_frame_is_untracked(self) -> None:
-        """Track 2:11 left 10 frames before the event. The answer is genuinely
-        not in the candidate set, and calling that 'occluded' would train the
-        model to read a tracking gap as a player it could not see."""
-        row = self._build("a", ActorLabel(ActorVerdict.MANUAL, track=TrackRef(2, 11)))
-        self.assertEqual(row["target_kind"], "untracked")
-        self.assertNotIn("target", row)
-
-    def test_a_box_verdict_resolves_to_the_tracklet_it_sits_on(self) -> None:
-        """A verdict naming a person by box alone — a legacy hand-drawn pick,
-        or a confirm snapshot of the rule's box — resolves by the same overlap
-        rule production and evaluation use, so the exporter answers the
-        tracklet question rather than dropping real supervision."""
-        row = self._build(
-            "a", ActorLabel(ActorVerdict.MANUAL, box=(105.0, 55.0, 205.0, 255.0))
+        paths = actor_candidates.track_paths(STEM)
+        self.assertEqual(
+            actor_candidates.candidates_on(paths, EVENT_FRAME), ["2:3", "2:7", "2:9"]
         )
-        self.assertEqual(row["target_kind"], "track")
-        self.assertEqual(row["candidates"][row["target"]]["track"], "2:7")
 
-    def test_a_box_on_nobody_is_dropped_not_reinterpreted(self) -> None:
-        """No tracklet sits under this box. Calling it 'untracked' would teach
-        the model that the label FORMAT is a visual condition, and there is
-        nothing in the frame to learn that from."""
-        row = self._build(
-            "b", ActorLabel(ActorVerdict.MANUAL, box=(10.0, 10.0, 40.0, 60.0))
-        )
-        self.assertEqual(row, {})
-        self.assertEqual(self.tally["unresolved_box"], 1)
-
-    def test_an_unreviewed_event_produces_no_row(self) -> None:
-        """This file carries supervision. An event's absence from it is what
-        'nobody has looked at this yet' means."""
-        verdict_labels.save("match", "b", ActorLabel(ActorVerdict.OCCLUDED))
-        rows, tally = actor_labels.build(
-            STEM, [{"id": "unreviewed", "frame": EVENT_FRAME}]
-        )
-        self.assertEqual(rows, [])
-        self.assertEqual(tally["unlabelled"], 1)
-
-    def test_each_candidate_carries_its_path_through_the_window(self) -> None:
-        """One box per window offset, aligned with it, so the model sees the
-        player MOVE rather than a frozen pose. A null is not a hole to be
-        filled: it says this player was not being tracked then."""
-        row = self._build("a", ActorLabel(ActorVerdict.MANUAL, track=TrackRef(2, 7)))
-        for candidate in row["candidates"]:
-            self.assertEqual(len(candidate["boxes"]), len(ACTOR_WINDOW_OFFSETS))
-            for box in candidate["boxes"]:
-                if box is None:
-                    continue
-                self.assertTrue(all(0.0 <= v <= 1.0 for v in box), box)
-                self.assertLess(box[0], box[2])
-                self.assertLess(box[1], box[3])
-        at_event = ACTOR_WINDOW_OFFSETS.index(0)
-        walker = next(c for c in row["candidates"] if c["track"] == "2:7")
-        self.assertEqual(walker["boxes"][at_event], [0.1, 0.1, 0.2, 0.5])
-        # Tracked only at 98/100/102: offsets 0 and ±4 reach a box within 3
-        # frames, every farther offset is a gap.
-        self.assertEqual(sum(b is not None for b in walker["boxes"]), 3)
+    def test_the_frame_size_comes_from_the_detection_records(self) -> None:
+        self.assertEqual(actor_candidates.frame_size(STEM), (1000, 500))
 
 
 class ContractTests(unittest.TestCase):
@@ -201,26 +101,6 @@ class ContractTests(unittest.TestCase):
                 )
                 return
         self.fail("yp-spot contract.py declares no CONTRACT_VERSION")
-
-    def test_a_track_target_must_index_a_candidate(self) -> None:
-        from yp_video.contracts.action import ActorCandidateEvent
-
-        event = ActorCandidateEvent(
-            id="a",
-            frame=1,
-            candidates=[
-                {"track": "1:1", "boxes": [[0.1, 0.1, 0.2, 0.5]] * len(ACTOR_WINDOW_OFFSETS)}
-            ],
-            target_kind="track",
-            target=0,
-        )
-        self.assertEqual(event.target, 0)
-
-        for kind in ("occluded", "untracked"):
-            abstention = ActorCandidateEvent(
-                id="a", frame=1, candidates=[], target_kind=kind
-            )
-            self.assertIsNone(abstention.target)
 
 
 if __name__ == "__main__":

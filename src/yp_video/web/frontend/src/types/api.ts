@@ -152,7 +152,6 @@ export interface ActionAnnotationStats {
     frames: number;
     view: string;
     is_val?: boolean;
-    has_association_label?: boolean;
   }>;
 }
 
@@ -160,9 +159,8 @@ export type FusionRecipeId =
   | 'rally'
   | 'rally_winner'
   | 'action'
-  | 'association_action'
   | 'action_rally_winner';
-export type SpotTask = 'rally' | 'winner' | 'action' | 'location' | 'actor';
+export type SpotTask = 'rally' | 'winner' | 'action' | 'location' | 'person';
 
 /** One entry of the contract's task-set registry (yp_video.contracts.action.RECIPES). */
 export interface FusionRecipe {
@@ -193,11 +191,6 @@ export interface FusionModelStatus {
     missing_videos?: number;
     per_video?: Array<{ video: string; view: string; is_val?: boolean }>;
   };
-  supervision: {
-    action_videos: number;
-    joint_videos: number;
-    action_only_videos: number;
-  };
   active_job: Job | null;
 }
 
@@ -226,12 +219,7 @@ export interface WinnerBreakdown {
   recall: Record<string, number | null>;
 }
 
-/** Actor selection per target kind (tracked player / occluded / untracked). */
-export interface ActorBreakdown {
-  kinds: Array<{ kind: string; events: number; correct: number; rate: number | null }>;
-}
-
-export type TaskBreakdown = SpottingBreakdown | LocationBreakdown | WinnerBreakdown | ActorBreakdown;
+export type TaskBreakdown = SpottingBreakdown | LocationBreakdown | WinnerBreakdown;
 
 export interface TaskMetricPhase {
   loss: number | null;
@@ -498,26 +486,11 @@ export interface ReidRecord {
    *  tracklet today (links.unresolved_labels) — tracklet training skips such
    *  an event until the player is re-picked or tracking improves. */
   actor_review_unresolved?: boolean;
-  /** What decided this actor, in that policy's own terms. `version` names
-   *  which one — the rule, `learned:<checkpoint>`, or `spot:<run>` — and the
-   *  optional fields are the ones only some policies can fill. */
+  /** What decided this actor: the policy (`source`) and whether it found a
+   *  candidate (`status`). */
   association?: {
-    version: string;
-    decision: 'selected' | 'ambiguous' | 'no_candidate' | 'abstained';
-    candidate_count: number;
-    margin?: number | null;
-    confidence?: number | null;
-    none_probability?: number | null;
-    /** Only a yp-spot policy sets this: which of the three answers it gave.
-     *  An abstention lands in the records as `unresolved` either way, so this
-     *  is the only place the model's REASON survives. */
-    kind?: 'track' | 'occluded' | 'untracked';
-    top?: {
-      box?: [number, number, number, number];
-      cost?: number;
-      detection_score?: number;
-      track?: string;
-    } | null;
+    source: string;
+    status: 'selected' | 'no_candidate';
   };
   box?: [number, number, number, number] | null;
   score?: number | null;
@@ -694,84 +667,6 @@ export interface AssociationVideo {
   done: boolean;
   status: LabelStatus;
   pipeline: PipelineState;
-}
-
-export interface ReidAssociationMetrics {
-  reviewed: number;
-  positive: number;
-  occluded: number;
-  /** Verdicts naming no tracklet directly — legacy box picks and confirm
-   *  snapshots. Not answerable in tracklet terms, so they are excluded from
-   *  every rate rather than counted as failures. */
-  unscorable?: number;
-  top1_accuracy: number | null;
-  auto_coverage: number | null;
-  selective_accuracy: number | null;
-  occluded_rejection_rate: number | null;
-  threshold?: number;
-}
-
-/** Every policy scored on the same reviewed events, per slice.
- *
- *  Read the slices, not the aggregate: `all` is dominated by events the rule
- *  already gets right, so a model can move it without touching a single case
- *  worth moving. `hard` is where more than one tracklet contains the contact
- *  point; `manual` is where a human overruled the rule. */
-export interface ReidAssociationPerfData {
-  /** The training corpus this scoreboard was computed over. Lives here and
-   *  not on /status because building it is expensive, and /status is what
-   *  the Association Predict model pickers wait on. */
-  dataset: ReidAssociationDatasetSummary;
-  slices: string[];
-  policies: Record<string, Record<string, ReidAssociationMetrics>>;
-  /** Each trained candidate's own grouped out-of-fold metrics, from its
-   *  manifest. Not comparable line-for-line with `policies`: those are
-   *  measured on every reviewed video, these on held-out folds only. */
-  candidates?: Record<string, ReidAssociationMetrics | null>;
-}
-
-export interface ReidAssociationDatasetSummary {
-  examples: number;
-  stems: number;
-  labels: Record<string, number>;
-  skipped: Record<string, number>;
-}
-
-/** A visual association checkpoint accepted by Association Predict. */
-export interface AssociationCheckpoint {
-  path: string;
-  name: string;
-  family: 'fusion-actor-head';
-  epoch: number | null;
-  mtime: number | null;
-  holdout: string | null;
-  metrics: {
-    player_top1?: number | null;
-    player_coverage?: number | null;
-    selective_accuracy?: number | null;
-    overall_exact?: number | null;
-    occluded_recall?: number | null;
-    untracked_recall?: number | null;
-    all_top1?: number | null;
-    hard_top1?: number | null;
-    manual_top1?: number | null;
-    rule_manual_top1?: number | null;
-  };
-  validation_videos?: string[];
-  actor_targets?: Record<string, number>;
-  best?: {
-    criterion?: string;
-    epoch?: number;
-    value?: number;
-    overall_exact?: number;
-  } | null;
-  note: string | null;
-}
-
-export interface ReidAssociationStatus {
-  association_checkpoints: AssociationCheckpoint[];
-  spot_available?: boolean;
-  frame_dir?: string;
 }
 
 export interface ReidDatasetInfo {
