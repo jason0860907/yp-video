@@ -68,8 +68,11 @@ MIN_TRACK_FRAMES = 5
 # McByte++ over RF-DETR boxes extends tracks from detections above this in its
 # first association and starts new ones from this + 0.1. Its published 0.6
 # left players RF-DETR scores below 0.7 untracked; 0.4 (new tracks from 0.5)
-# picked up the half-occluded and far-side players on review (10-03).
-RFDETR_MCBYTE_TRACK_THRESH = 0.4
+# picked up the half-occluded and far-side players on review (10-03). 0.3
+# (new tracks from 0.4) then resolved 7 of the 9 human actor labels 0.4 still
+# left without a tracklet on 0427小窩季打 11 (10-04), at +17% tracklets with
+# the same median length — players picked up, not players split.
+RFDETR_MCBYTE_TRACK_THRESH = 0.3
 
 # The traced fp16 graph bakes the batch dimension in, so every call must be
 # exactly this size — partial final batches are padded and sliced.
