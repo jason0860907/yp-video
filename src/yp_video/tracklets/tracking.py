@@ -57,22 +57,19 @@ from yp_video.tracklets.store import (
 # Detection floor for the dense pass — even lower than extraction's 0.1:
 # ByteTrack's second association stage recovers these low-score detections
 # along confident tracks, and heavily occluded players (the ones remote
-# picking exists for) live down here.
+# picking exists for) live down here. McByte++'s second association takes
+# the same floor (upstream: a fixed 0.1): it only lets these extend tracks
+# that already exist.
 TRACK_SCORE_THRESHOLD = 0.05
 
 # Tracklets shorter than this many detections are detector flicker, not a player.
 MIN_TRACK_FRAMES = 5
 
-# McByte++ extends tracks from detections above this in its first association
-# and starts new ones from this + 0.1. Its published 0.6 left players RF-DETR
-# scores below 0.7 untracked; 0.4 (new tracks from 0.5) picked up the
-# half-occluded and far-side players on review (10-03).
-MCBYTE_TRACK_THRESH = 0.4
-# ...and its second association recovers lost tracks from detections above
-# this (upstream: a fixed 0.1); nothing below reaches it, masks included.
-# Matches the dense pass's own floor: occluded players live down at 0.05–0.1,
-# and this stage only lets them extend tracks that already exist.
-MCBYTE_MIN_SCORE = 0.05
+# McByte++ over RF-DETR boxes extends tracks from detections above this in its
+# first association and starts new ones from this + 0.1. Its published 0.6
+# left players RF-DETR scores below 0.7 untracked; 0.4 (new tracks from 0.5)
+# picked up the half-occluded and far-side players on review (10-03).
+RFDETR_MCBYTE_TRACK_THRESH = 0.4
 
 # The traced fp16 graph bakes the batch dimension in, so every call must be
 # exactly this size — partial final batches are padded and sliced.
@@ -196,9 +193,12 @@ def track_video(
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
         raise ValueError(f"Cannot open video: {video_path}")
-    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    fps = cap.get(cv2.CAP_PROP_FPS)
     frame_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    if not fps > 0 or frame_w <= 0 or frame_h <= 0:
+        cap.release()
+        raise ValueError(f"Invalid video geometry: {video_path}")
 
     spans = [
         (r["rally_id"], int(round(r["start"] * fps)), int(round(r["end"] * fps)))
@@ -312,12 +312,11 @@ def track_video(
                         (det.xyxy, det.confidence[:, None]), axis=1
                     ).astype(np.float32)
                 if tracker == "mcbyte":
-                    keep = det.confidence > MCBYTE_MIN_SCORE
                     frame_detections[frame_idx] = np.concatenate(
-                        (det.xyxy[keep], det.confidence[keep, None]), axis=1
+                        (det.xyxy, det.confidence[:, None]), axis=1
                     ).astype(np.float32)
                     frame_masks[frame_idx] = [
-                        _pack_mask(m, xyxy / box_scale) for m, xyxy in zip(det.mask[keep], det.xyxy[keep])
+                        _pack_mask(m, xyxy / box_scale) for m, xyxy in zip(det.mask, det.xyxy)
                     ]
                     detected += 1
                     if on_progress:
@@ -398,8 +397,9 @@ def _mcbyte_tracks(
 ) -> tuple[list[dict], dict[str, np.ndarray]]:
     """McByte++ over the collected detections; masks re-attached by det index."""
     tracklets = mcbyte.track(
-        video_path, detections, spans, stride=stride, track_thresh=MCBYTE_TRACK_THRESH,
-        low_thresh=MCBYTE_MIN_SCORE, cmc=moving_camera, on_progress=on_progress,
+        video_path, detections, spans, stride=stride, track_thresh=RFDETR_MCBYTE_TRACK_THRESH,
+        low_thresh=TRACK_SCORE_THRESHOLD, min_frames=MIN_TRACK_FRAMES, cmc=moving_camera,
+        on_progress=on_progress,
     )
     records: list[dict] = []
     masks_store: dict[str, np.ndarray] = {}

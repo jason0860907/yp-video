@@ -11,7 +11,6 @@ from pathlib import Path
 
 import numpy as np
 
-from yp_video.config import cut_kind_of
 from yp_video.core.jsonl import read_jsonl_header, write_jsonl
 from yp_video.core.person_boxes import DETECTOR_NAME, PersonBoxes, person_boxes_path
 from yp_video.core.progress import ProgressFn
@@ -28,14 +27,24 @@ from yp_video.tracklets.tracking import MIN_TRACK_FRAMES
 
 # Fusion boxes score lower than RF-DETR's: at 0.4 they leave as many boxes per
 # frame (~9) as RF-DETR does at McByte++'s default 0.6 (measured 2026-10-01).
-MCBYTE_TRACK_THRESH = 0.4
+FUSION_MCBYTE_TRACK_THRESH = 0.4
 #: McByte++'s published second-association floor; fusion boxes were only
 #: ever evaluated with it.
-MCBYTE_LOW_THRESH = 0.1
+FUSION_MCBYTE_LOW_THRESH = 0.1
+#: McByte++ tracks every this-many-th fusion sample: on three human-named
+#: videos it was faster and no worse than every sample (pairwise F1 0.44 vs
+#: 0.39, 2026-10-01).
+MCBYTE_SAMPLE_STEP = 2
 
 
 def fusion_tracks_current(stem: str, tracker: Tracker) -> bool:
-    if not tracks_current(stem) or tracks_tracker(stem) != tracker:
+    """Fresh fusion tracks, cut by ``tracker``."""
+    return tracks_tracker(stem) == tracker and fusion_tracks_fresh(stem)
+
+
+def fusion_tracks_fresh(stem: str) -> bool:
+    """Tracks cut from today's fusion person boxes and rallies, by either tracker."""
+    if not tracks_current(stem):
         return False
     boxes_path = person_boxes_path(stem)
     if not boxes_path.exists():
@@ -48,11 +57,17 @@ def fusion_tracks_current(stem: str, tracker: Tracker) -> bool:
 
 
 def track_person_boxes(
-    video_path: Path, *, tracker: Tracker = "bytetrack", on_progress: ProgressFn | None = None
+    video_path: Path,
+    *,
+    moving_camera: bool,
+    tracker: Tracker = "bytetrack",
+    on_progress: ProgressFn | None = None,
 ) -> dict:
     """Track every rally over the sampled person boxes, empty frames included.
 
-    ByteTrack consumes every sample; McByte++ every ``mcbyte.STRIDE``-th.
+    ByteTrack consumes every sample; McByte++ every ``MCBYTE_SAMPLE_STEP``-th,
+    with camera motion compensation when ``moving_camera`` (the caller knows
+    the shot; see tracking.track_video).
     """
     import cv2
     import supervision as sv
@@ -81,8 +96,8 @@ def track_person_boxes(
         for r in rallies
     ]
     if tracker == "mcbyte":
-        records, done = _mcbyte_tracks(video_path, people, spans, width, height, on_progress)
-        stride = people.stride * mcbyte.STRIDE
+        records, done = _mcbyte_tracks(video_path, people, spans, width, height, moving_camera, on_progress)
+        stride = people.stride * MCBYTE_SAMPLE_STEP
         source = mcbyte.SOURCE
     else:
         records, done = _bytetrack_tracks(people, spans, fps, width, height, on_progress)
@@ -136,21 +151,22 @@ def _bytetrack_tracks(people, spans, fps, width, height, on_progress) -> tuple[l
     return records, done
 
 
-def _mcbyte_tracks(video_path, people, spans, width, height, on_progress) -> tuple[list[dict], int]:
-    """McByte++ over every ``mcbyte.STRIDE``-th sample of each rally."""
+def _mcbyte_tracks(
+    video_path, people, spans, width, height, moving_camera, on_progress
+) -> tuple[list[dict], int]:
+    """McByte++ over every ``MCBYTE_SAMPLE_STEP``-th sample of each rally."""
     detections, rally_spans = {}, []
     for rally_id, start, end in spans:
-        indices = range(int(start), int(end), mcbyte.STRIDE)
+        indices = range(int(start), int(end), MCBYTE_SAMPLE_STEP)
         if not indices:
             continue
         for index in indices:
             detections[int(people.frames[index])] = people.pixels(index, width, height)
         rally_spans.append((rally_id, int(people.frames[indices[0]]), int(people.frames[indices[-1]])))
     tracklets = mcbyte.track(
-        video_path, detections, rally_spans, stride=people.stride * mcbyte.STRIDE,
-        track_thresh=MCBYTE_TRACK_THRESH, low_thresh=MCBYTE_LOW_THRESH,
-        # A fixed sideline camera gains nothing from motion compensation.
-        cmc=cut_kind_of(video_path) == "broadcast", on_progress=on_progress,
+        video_path, detections, rally_spans, stride=people.stride * MCBYTE_SAMPLE_STEP,
+        track_thresh=FUSION_MCBYTE_TRACK_THRESH, low_thresh=FUSION_MCBYTE_LOW_THRESH,
+        min_frames=MIN_TRACK_FRAMES, cmc=moving_camera, on_progress=on_progress,
     )
     for t in tracklets:
         del t["det_index"]  # box-only: nothing per detection to carry over

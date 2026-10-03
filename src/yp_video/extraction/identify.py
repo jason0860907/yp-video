@@ -175,6 +175,7 @@ def identify_players(
             on_progress=(lambda done, total, msg: tracking_cb(80 + int(20 * done / max(total, 1)), 100, msg))
             if tracking_cb else None,
         )
+            moving_camera=False,
         detect_video(video_path, person_boxes=person_boxes_path(stem),
                      on_progress=_banded(on_progress, "detecting"))
     cap = cv2.VideoCapture(str(video_path))

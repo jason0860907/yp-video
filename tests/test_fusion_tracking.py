@@ -15,6 +15,7 @@ from yp_video.extraction import pipeline
 from yp_video.extraction import store as extraction_store
 from yp_video.tracklets import fusion
 from yp_video.tracklets import store as tracks_store
+from yp_video.tracklets import tracking
 from yp_video.web import fusion_inference as fi
 
 
@@ -60,7 +61,7 @@ def test_bytetrack_keeps_native_frames_resets_per_rally_and_removes_old_masks(la
     ])
     masks = tracks_store.tracks_masks_path(video.stem)
     masks.touch()
-    counts = fusion.track_person_boxes(video)
+    counts = fusion.track_person_boxes(video, moving_camera=False)
     header, records = read_jsonl(tracks_store.tracks_path(video.stem))
     assert counts == {"rallies": 2, "frames": 30, "tracklets": 2}
     assert [(r["rally_id"], r["track_id"]) for r in records] == [(3, 1), (7, 1)]
@@ -88,13 +89,13 @@ def test_mcbyte_takes_every_second_sample_and_marks_its_tracks(layout, monkeypat
                  "boxes": [[100, 100, 300, 400]] * 5, "scores": [0.9] * 5, "det_index": [0] * 5}]
 
     monkeypatch.setattr(fusion.mcbyte, "track", track)
-    monkeypatch.setattr(fusion, "cut_kind_of", lambda p: "sideline")  # fixed camera: no CMC
-    counts = fusion.track_person_boxes(video, tracker="mcbyte")
+    counts = fusion.track_person_boxes(video, moving_camera=False, tracker="mcbyte")
     header, records = read_jsonl(tracks_store.tracks_path(video.stem))
     # Samples every 2 native frames; McByte++ tracks every 2nd sample.
     assert sorted(seen["detections"]) == list(range(0, 31, 4))
     assert seen["spans"] == [(3, 0, 28)] and seen["stride"] == 4
-    assert seen["track_thresh"] == fusion.MCBYTE_TRACK_THRESH and seen["cmc"] is False
+    assert seen["track_thresh"] == fusion.FUSION_MCBYTE_TRACK_THRESH and seen["cmc"] is False
+    assert seen["min_frames"] == tracking.MIN_TRACK_FRAMES
     assert counts["tracklets"] == 1 and "det_index" not in records[0]
     assert header["stride"] == 4 and header["source"]["tracker"].startswith("McByte++")
     assert tracks_store.tracks_tracker(video.stem) == "mcbyte"
@@ -212,7 +213,8 @@ def test_full_pipeline_uses_one_spot_pass_and_new_boxes_even_when_labels_exist(l
     options = dict(
         video=video, checkpoint=checkpoint, clip_checkpoint=checkpoint,
         rally=RallyOptions(0.5, 2, 4),
-        spot=SpotOptions(4, 0, 64), tracker="bytetrack", overwrite=False, on_progress=lambda *args: None,
+        spot=SpotOptions(4, 0, 64), tracker="bytetrack", moving_camera=False, overwrite=False,
+        on_progress=lambda *args: None,
     )
     result = fi.run_video(**options)
     assert result.tracklets == 1 and result.detections == 1

@@ -12,7 +12,15 @@ spawns yp-track, and the consumer fails loud on a mismatch. Bump the version
 whenever any layout below changes — and update both sides.
 
 ``python -m yp_track.mcbyte --video <mp4> --detections <npz> --spans <json>
---out <jsonl> --stride N --track-thresh T --cmc orb|none``
+--out <jsonl> --stride N --track-thresh T --low-thresh L --min-frames M
+--threads K --cmc orb|none``
+
+- ``--track-thresh``: first association above T, new tracks above T + 0.1;
+  ``--low-thresh``: the second association recovers lost tracks above L.
+- ``--min-frames``: tracklets with fewer frames are dropped (yp-video's
+  ``tracking.MIN_TRACK_FRAMES``, the one floor every tracker shares).
+- ``--threads``: CPU threads for each of the process's pools (torch,
+  OpenCV, BLAS), so parallel workers share the cores.
 
 - ``--detections``: npz, key ``"<native frame>"`` → ``(n, 5)`` float32
   ``x0 y0 x1 y1 score`` in frame pixels. A frame without a key has none.
@@ -26,6 +34,6 @@ whenever any layout below changes — and update both sides.
 - stdout: progress lines ``TRACK_PROGRESS {"done": int, "total": int}``.
 """
 
-TRACK_CONTRACT_VERSION = "1.1.0"
+TRACK_CONTRACT_VERSION = "1.2.0"
 TRACK_CONTRACT_VERSION_ENV = "YP_TRACK_CONTRACT_VERSION"
 TRACK_PROGRESS_PREFIX = "TRACK_PROGRESS "

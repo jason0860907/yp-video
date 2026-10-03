@@ -230,9 +230,11 @@ def association_skip(stem: str, *, events: bool) -> str | None:
 
 
 def run_tracking_stage(
-    *, video: Path, tracker: Tracker, on_progress: StageProgress
+    *, video: Path, tracker: Tracker, moving_camera: bool, on_progress: StageProgress
 ) -> dict:
-    return track_person_boxes(video, tracker=tracker, on_progress=_fractional(on_progress))
+    return track_person_boxes(
+        video, moving_camera=moving_camera, tracker=tracker, on_progress=_fractional(on_progress)
+    )
 
 
 def run_detection_stage(*, video: Path, on_progress: StageProgress) -> dict:
@@ -302,11 +304,13 @@ def run_video(
     rally: RallyOptions,
     spot: SpotOptions,
     tracker: Tracker,
+    moving_camera: bool,
     overwrite: bool,
     on_progress: BatchProgress,
 ) -> VideoResult:
     """Every stage for one video, in order. ``video`` is the cut's canonical
-    path; its bytes are materialized there for the duration."""
+    path; its bytes are materialized there for the duration. ``moving_camera``
+    says whether the shot pans (broadcast) — tracking compensates for it."""
     total = _UNITS_PER_STAGE * len(STAGES)
 
     def stage_progress(first: int, count: int = 1) -> StageProgress:
@@ -351,7 +355,7 @@ def run_video(
             result.skipped["tracking"] = skip
         else:
             counts = run_tracking_stage(
-                video=video, tracker=tracker, on_progress=stage_progress(2),
+                video=video, tracker=tracker, moving_camera=moving_camera, on_progress=stage_progress(2),
             )
             result.tracklets = counts["tracklets"]
 
