@@ -1,6 +1,6 @@
 import pytest
 
-from yp_video.actor.candidates import boxes_on
+from yp_video.actor.candidates import boxes_on, normalized_paths
 from yp_video.actor.person_action import policy_from_answers
 from yp_video.actor.policy import EventContext
 from yp_video.tracklets.geometry import TrackRef
@@ -77,3 +77,10 @@ def test_boxes_on_takes_each_tracklets_nearest_box_within_reach():
              "1:4": {10: [900, 0, 1100, 200]}, "1:5": {10: [1010, 0, 1100, 200]}}
     assert boxes_on(paths, 10, 1000, 1000) == [
         ("1:1", [0.0, 0.0, 0.1, 0.2]), ("1:2", [0.2, 0.0, 0.3, 0.2]), ("1:4", [0.9, 0.0, 1.0, 0.2])]
+
+
+def test_normalized_paths_carry_the_named_tracklets_in_frame_order():
+    paths = {"1:1": {12: [0, 0, 100, 200], 10: [100, 0, 200, 200], 14: [1010, 0, 1100, 200]},
+             "1:2": {10: [0, 0, 1, 1]}}
+    assert normalized_paths(paths, ["1:1"], 1000, 1000) == {
+        "1:1": {"frames": [10, 12], "boxes": [[0.1, 0.0, 0.2, 0.2], [0.0, 0.0, 0.1, 0.2]]}}

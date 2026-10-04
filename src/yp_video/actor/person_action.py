@@ -15,7 +15,7 @@ import tempfile
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-from yp_video.actor.candidates import boxes_on
+from yp_video.actor.candidates import boxes_on, normalized_paths
 from yp_video.actor.policy import ActorPick, EventContext
 from yp_video.config import SPOT_DIR, SPOT_PYTHON
 from yp_video.contracts.action import event_id
@@ -41,7 +41,8 @@ def build_policy(video: Path, checkpoint: Path, events: list[dict], *,
                  tracks: Mapping[str, Mapping[int, Sequence[float]]] | None = None,
                  on_progress: ProgressFn | None = None):
     """``tracks`` (``actor/candidates.track_paths``) switches the candidates
-    from the model's own proposals to each event's tracklets."""
+    from the model's own proposals to each event's tracklets, which the head
+    follows across its window (their paths go along as ``--tracks``)."""
     rows = [{"id": event_id(e), "frame": int(e["frame"]), "label": e["label"]}
             for e in events]
     keys = None
@@ -50,13 +51,18 @@ def build_policy(video: Path, checkpoint: Path, events: list[dict], *,
         for row in rows:
             near = boxes_on(tracks, row["frame"], width, height)
             keys[row["id"]] = [key for key, _ in near]
-            row["candidates"] = [box for _, box in near]
+            row["candidates"] = [{"track": key, "box": box} for key, box in near]
     with tempfile.TemporaryDirectory(prefix="fusion-association-") as scratch:
         source, output = Path(scratch) / "events.json", Path(scratch) / "answers.json"
         source.write_text(json.dumps(rows))
         command = [str(SPOT_PYTHON), "-m", "yp_spot.person_action.associate",
                    "--checkpoint", str(checkpoint), "--video", str(video),
                    "--events", str(source), "--out", str(output)]
+        if keys is not None:
+            paths = Path(scratch) / "tracks.json"
+            named = {key for options in keys.values() for key in options}
+            paths.write_text(json.dumps(normalized_paths(tracks, sorted(named), width, height)))
+            command += ["--tracks", str(paths)]
         tail = []
         with subprocess.Popen(command, cwd=SPOT_DIR, stdout=subprocess.PIPE,
                               stderr=subprocess.STDOUT, text=True) as process:

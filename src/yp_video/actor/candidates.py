@@ -80,6 +80,23 @@ def _box_near(boxes: Mapping[int, Sequence[float]], frame: int) -> Sequence[floa
     return found[0] if found is not None else None
 
 
+def normalized_paths(
+    paths: Mapping[str, Mapping[int, Sequence[float]]], keys, width: int, height: int
+) -> dict[str, dict[str, list]]:
+    """The named tracklets' whole paths, normalized — what the person/action
+    head follows a candidate along (yp-spot ``person_action.tracklets``)."""
+    out = {}
+    for key in keys:
+        frames, boxes = [], []
+        for frame, box in sorted(paths[key].items()):
+            normalized = _normalized(box, width, height)
+            if normalized is not None:
+                frames.append(frame)
+                boxes.append(normalized)
+        out[key] = {"frames": frames, "boxes": boxes}
+    return out
+
+
 def boxes_on(
     paths: Mapping[str, Mapping[int, Sequence[float]]], frame: int, width: int, height: int
 ) -> list[tuple[str, list[float]]]:
