@@ -155,6 +155,10 @@ def _honoured(
         return label.borne_out_by(
             index, int(record.get("crop_frame") or record["frame"]), stride=stride
         )
+    if label is not None and label.verdict is ActorVerdict.MANUAL:
+        # A hand-drawn box overrules the policy: re-derive from what they
+        # drew, never from the tracklet the policy had named for the event.
+        return None
     stored = record.get("track")
     named = TrackRef.parse(stored) if stored else None
     return named if named is not None and index.tracklet(named) is not None else None

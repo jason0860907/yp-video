@@ -301,6 +301,29 @@ class EventTrackPrecedenceTests(unittest.TestCase):
             )
             self.assertEqual(links._event_tracks("match")["e1"], TrackRef(1, 2))
 
+    def _with_policy_track(self, track: str):
+        record = {**self.RECORD, "track": track}
+        read = patch.object(links, "read_jsonl_cached")
+        mock = read.start()
+        self.addCleanup(read.stop)
+        mock.side_effect = lambda p: (
+            ({"stride": 1}, [self.ACTOR, self.BYSTANDER]) if p.name == "t.jsonl" else ({}, [record])
+        )
+
+    def test_a_hand_drawn_box_overrules_the_policys_tracklet(self) -> None:
+        """The policy named the bystander; the person drew the actor's box and
+        named no tracklet — the box decides, not the stale policy pick."""
+        label = ActorLabel(ActorVerdict.MANUAL, box=(100, 100, 140, 200))
+        with self._video({"e1": label}):
+            self._with_policy_track("1:2")
+            self.assertEqual(links._event_tracks("match")["e1"], TrackRef(1, 1))
+
+    def test_an_endorsed_policy_pick_keeps_its_tracklet(self) -> None:
+        label = ActorLabel(ActorVerdict.CONFIRMED_AUTO, box=(104, 100, 148, 200))
+        with self._video({"e1": label}):
+            self._with_policy_track("1:2")
+            self.assertEqual(links._event_tracks("match")["e1"], TrackRef(1, 2))
+
     def test_a_named_tracklet_that_no_longer_exists_falls_back(self) -> None:
         """Re-tracking renumbers every id — honouring a stale name would point
         at whoever inherited the number.
