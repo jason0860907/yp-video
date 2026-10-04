@@ -2,30 +2,25 @@ import pytest
 
 from yp_video.actor.candidates import boxes_on, normalized_paths
 from yp_video.actor.person_action import policy_from_answers
-from yp_video.actor.policy import EventContext
 from yp_video.tracklets.geometry import TrackRef
-
-
-def context(event_id):
-    return EventContext(frame=7, event_id=event_id)
 
 
 def test_box_uses_source_aspect_ratio_without_contact_or_tracks():
     row = {"id": "f7", "frame": 7, "label": "set"}
     answer = {**row, "box": [.1, .2, .3, .8], "pick": 3, "num_candidates": 12, "status": "selected"}
     policy = policy_from_answers([row], [answer], width=1920, height=1080)
-    pick = policy.decide(context("f7"))
+    pick = policy.decide("f7")
     assert pick.box == (192, 216, 576, 864)
     assert not policy.needs_tracklets
     with pytest.raises(KeyError):
-        policy.decide(context("missing"))
+        policy.decide("missing")
 
 
 def test_no_detection_abstains():
     row = {"id": "f7", "frame": 7, "label": "set"}
     answer = {**row, "box": None, "pick": None, "num_candidates": 0, "status": "no_candidate"}
     policy = policy_from_answers([row], [answer], width=1920, height=1080)
-    assert not policy.decide(context("f7")).decided
+    assert not policy.decide("f7").decided
 
 
 @pytest.mark.parametrize("change", [
@@ -57,9 +52,9 @@ def test_tracklet_pick_names_the_tracklet_not_a_box():
     policy = policy_from_answers(rows, answers, width=1920, height=1080,
                                  keys={"f7": ["3:1", "3:4"], "f9": []})
     assert policy.needs_tracklets and policy.name == "fusion-person-action:tracklet"
-    pick = policy.decide(context("f7"))
+    pick = policy.decide("f7")
     assert pick.track == TrackRef(3, 4) and pick.box is None
-    assert not policy.decide(context("f9")).decided
+    assert not policy.decide("f9").decided
 
 
 @pytest.mark.parametrize("change", [{"pick": 2}, {"pick": -1}, {"pick": 1.0}, {"num_candidates": 3, "pick": 2}])

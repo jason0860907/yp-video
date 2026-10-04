@@ -17,23 +17,6 @@ Box = tuple[float, float, float, float]
 
 
 @dataclass(frozen=True)
-class EventContext:
-    """The action event a policy decides for."""
-
-    frame: int
-    #: The extraction event id — the frame is not unique, two actions can
-    #: share one.
-    event_id: str | None = None
-
-    @classmethod
-    def for_event(cls, record: dict, *, action: dict | None = None) -> "EventContext":
-        """``record`` carries the event id; ``action`` the current frame and
-        defaults to ``record`` itself."""
-        action = record if action is None else action
-        return cls(frame=int(action["frame"]), event_id=str(record.get("id")))
-
-
-@dataclass(frozen=True)
 class ActorPick:
     """A policy's answer. Both references may be absent — that is an abstention,
     which is a decision, not a failure."""
@@ -59,4 +42,4 @@ class ActorPolicy(Protocol):
     @property
     def needs_tracklets(self) -> bool: ...
 
-    def decide(self, context: EventContext) -> ActorPick: ...
+    def decide(self, event_id: str) -> ActorPick: ...

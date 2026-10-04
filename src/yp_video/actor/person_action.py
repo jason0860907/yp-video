@@ -16,7 +16,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from yp_video.actor.candidates import boxes_on, normalized_paths
-from yp_video.actor.policy import ActorPick, EventContext
+from yp_video.actor.policy import ActorPick
 from yp_video.config import SPOT_DIR, SPOT_PYTHON
 from yp_video.contracts.action import event_id
 from yp_video.core.progress import ProgressFn
@@ -32,8 +32,8 @@ class PersonActionPolicy:
         #: Tracklet answers resolve through the tracks and their masks.
         self.needs_tracklets = needs_tracklets
 
-    def decide(self, context: EventContext) -> ActorPick:
-        return self.picks[context.event_id]
+    def decide(self, event_id: str) -> ActorPick:
+        return self.picks[event_id]
 
 
 def build_policy(video: Path, checkpoint: Path, events: list[dict], *,

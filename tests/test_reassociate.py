@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from yp_video.actor import labels as actor_labels
 from yp_video.actor.labels import ActorLabel, ActorVerdict
-from yp_video.actor.policy import ActorPick, EventContext
+from yp_video.actor.policy import ActorPick
 from yp_video.core import label_done
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import read_jsonl, write_jsonl
@@ -28,12 +28,11 @@ class _StubPolicy:
     name = "stub"
     needs_tracklets = False
 
-    def __init__(self, picks: dict[str, ActorPick], frames: dict[int, str]):
+    def __init__(self, picks: dict[str, ActorPick]):
         self._picks = picks
-        self._frames = frames
 
-    def decide(self, context: EventContext) -> ActorPick:
-        return self._picks.get(self._frames[context.frame], ActorPick())
+    def decide(self, event_id: str) -> ActorPick:
+        return self._picks.get(event_id, ActorPick())
 
 
 class ReassociationTests(unittest.TestCase):
@@ -130,7 +129,6 @@ class ReassociationTests(unittest.TestCase):
             _StubPolicy(
                 # A pick that WOULD move the human event, if it were consulted.
                 {"human": ActorPick(box=(0, 0, 50, 50)), "auto": ActorPick()},
-                {100: "human", 200: "auto"},
             )
         )
 
@@ -157,7 +155,6 @@ class ReassociationTests(unittest.TestCase):
         counts = self._run(
             _StubPolicy(
                 {"auto": ActorPick(box=(410, 510, 510, 690))},
-                {100: "human", 200: "auto"},
             )
         )
 
@@ -170,7 +167,7 @@ class ReassociationTests(unittest.TestCase):
         self,
     ) -> None:
         counts = self._run(
-            _StubPolicy({}, {100: "human", 200: "auto"})  # abstains everywhere
+            _StubPolicy({})  # abstains everywhere
         )
 
         record = read_jsonl(self.records)[1][1]
@@ -186,8 +183,7 @@ class ReassociationTests(unittest.TestCase):
             counts = self._run(
                 _StubPolicy(
                     {"auto": ActorPick(track=TrackRef(3, 7))},
-                    {100: "human", 200: "auto"},
-                )
+                    )
             )
 
         self.assertEqual(counts["unresolvable"], 1)
@@ -204,7 +200,7 @@ class ReassociationTests(unittest.TestCase):
 
         counts = self._run(
             _StubPolicy(
-                {"auto": ActorPick(box=(0, 0, 50, 50))}, {100: "human", 200: "auto"}
+                {"auto": ActorPick(box=(0, 0, 50, 50))}
             )
         )
 
@@ -220,7 +216,6 @@ class ReassociationTests(unittest.TestCase):
         counts = self._run(
             _StubPolicy(
                 {"auto": ActorPick(box=(410, 510, 510, 690))},
-                {100: "human", 200: "auto"},
             )
         )
 
@@ -234,7 +229,6 @@ class ReassociationTests(unittest.TestCase):
         counts = self._run(
             _StubPolicy(
                 {"auto": ActorPick(box=(410, 510, 510, 690))},
-                {100: "human", 200: "auto"},
             )
         )
 
@@ -242,7 +236,7 @@ class ReassociationTests(unittest.TestCase):
         self.assertNotIn("auto", actor_labels.load("match"))
 
     def test_the_policy_name_is_recorded_in_the_header(self) -> None:
-        self._run(_StubPolicy({}, {100: "human", 200: "auto"}))
+        self._run(_StubPolicy({}))
         self.assertEqual(read_jsonl(self.records)[0]["association_policy"], "stub")
 
     def test_progress_speaks_the_shared_worker_contract(self) -> None:
@@ -254,7 +248,6 @@ class ReassociationTests(unittest.TestCase):
             Path("/nonexistent/match.mp4"),
             _StubPolicy(
                 {"auto": ActorPick(box=(100, 100, 200, 300))},
-                {100: "human", 200: "auto"},
             ),
             on_progress=lambda *args: calls.append(args),
         )

@@ -23,7 +23,7 @@ from pathlib import Path
 
 from yp_video.actor import labels as actor_labels
 from yp_video.actor.labels import ActorVerdict
-from yp_video.actor.policy import ActorPick, ActorPolicy, EventContext
+from yp_video.actor.policy import ActorPick, ActorPolicy
 from yp_video.actor.resolution import ActorResolution
 from yp_video.core.jsonl import read_jsonl, write_jsonl
 from yp_video.core.progress import ProgressFn
@@ -220,8 +220,7 @@ def reassociate_video(
             # right", so computing it is what honouring the label means;
             # skipping it would leave the video's endorsed picks blank.
 
-            context = EventContext.for_event(record, action=action)
-            pick = policy.decide(context)
+            pick = policy.decide(str(record.get("id")))
             dirty |= _update(
                 record,
                 association=pick.diagnostic or _ABSENT,
