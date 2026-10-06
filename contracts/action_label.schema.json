@@ -74,6 +74,38 @@
       "serveable": false,
       "loss_weight": 5.0
     },
+    "side": {
+      "name": "side",
+      "label": "Side",
+      "kind": "aux",
+      "label_subdir": "action-annotations",
+      "label_glob": "*_actions.jsonl",
+      "event_fields": [
+        "side"
+      ],
+      "requires": [
+        "action"
+      ],
+      "primary_metric": "side_top1",
+      "serveable": false,
+      "loss_weight": 1.0
+    },
+    "jump": {
+      "name": "jump",
+      "label": "Jump",
+      "kind": "aux",
+      "label_subdir": "action-annotations",
+      "label_glob": "*_actions.jsonl",
+      "event_fields": [
+        "jump"
+      ],
+      "requires": [
+        "action"
+      ],
+      "primary_metric": "jump_balanced_accuracy",
+      "serveable": false,
+      "loss_weight": 1.0
+    },
     "person": {
       "name": "person",
       "label": "Person",
@@ -140,9 +172,11 @@
       "name": "Action",
       "tasks": [
         "action",
-        "location"
+        "location",
+        "side",
+        "jump"
       ],
-      "description": "Touch spotting with the contact-point location head.",
+      "description": "Touch spotting with the contact-point, actor side and jump heads.",
       "fields": [
         "sample_fps",
         "acc_grad_iter",
@@ -166,11 +200,13 @@
       "tasks": [
         "action",
         "location",
+        "side",
+        "jump",
         "rally",
         "winner",
         "person"
       ],
-      "description": "One backbone; Action uses audio and geometry supervision, Rally/Winner are visual-only, Person distils the tracker's boxes on the rally stream.",
+      "description": "One backbone; Action uses audio and geometry supervision plus the actor's side and jump, Rally/Winner are visual-only, Person distils the tracker's boxes on the rally stream.",
       "fields": [
         "action_sample_fps",
         "rally_sample_fps",
@@ -257,6 +293,31 @@
           "default": null,
           "description": "Model confidence; present on machine pre-annotations only",
           "title": "Score"
+        },
+        "side": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CourtSide"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Court side the touching player stood on (camera-frame). None = no stored value; training derives one where the rules can."
+        },
+        "jump": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Whether the touching player was off the floor. None = no stored value; training falls back to the label's default.",
+          "title": "Jump"
         }
       },
       "required": [
@@ -304,7 +365,7 @@
       "type": "object"
     },
     "CourtSide": {
-      "description": "Where a court side sits in camera-frame terms.\n\nThe value space of the ``winner`` task: which side of the frame the team\nthat WON the rally was playing on. Broadcast footage uses left/right,\nsideline (amateur) footage near/far \u2014 one 4-class vocabulary so a single\nhead serves both camera setups. The winning side, not where the ball\nlanded: an out ball lands on the loser's side.",
+      "description": "Where a court side sits in camera-frame terms.\n\nThe value space of the ``winner`` task \u2014 which side of the frame the team\nthat WON the rally was playing on \u2014 and of the ``side`` task, which side\nthe player making a touch stood on. Broadcast footage uses left/right,\nsideline (amateur) footage near/far \u2014 one 4-class vocabulary so a single\nhead serves both camera setups. The winning side, not where the ball\nlanded: an out ball lands on the loser's side.",
       "enum": [
         "left",
         "right",

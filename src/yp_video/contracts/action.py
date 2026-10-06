@@ -11,8 +11,10 @@ side. ``contracts/action_label.schema.json`` is generated from the models here
 ``yp_spot/contract.py``. The two copies are kept honest by a version handshake:
 yp-video exports ``ACTION_CONTRACT_VERSION`` through the
 ``YP_ACTION_CONTRACT_VERSION`` env var when it spawns yp-spot, and the consumer
-fails loud if its compiled-in version differs. Bump the version whenever the
-field layout, frame layout, or label set below changes — and update both sides.
+fails loud if its compiled-in version differs. Bump the version on a breaking
+change to the field layout, frame layout or label set — and update both sides.
+Adding an optional field is not one: a reader that predates it never sees it,
+and checkpoint packages stamped with the version stay loadable.
 """
 
 from __future__ import annotations
@@ -123,6 +125,21 @@ TASKS: dict[str, TaskSpec] = {
         TaskSpec(
             "location", "Location", "aux", "action-annotations", "*_actions.jsonl",
             ("xy",), ("action",), "spatial_mAP", False, loss_weight=5.0,
+        ),
+        # Which court side the touching player stood on, camera-frame like
+        # winner. Labels are mostly derived by the touch-order rules from
+        # the previous rally's winner (action/attributes.py), a stored
+        # ``side`` overriding; touches the rules cannot place stay unsupervised.
+        TaskSpec(
+            "side", "Side", "aux", "action-annotations", "*_actions.jsonl",
+            ("side",), ("action",), "side_top1", False,
+        ),
+        # Whether the touching player was off the floor. Spikes and blocks
+        # default to airborne and receives to grounded; a stored ``jump``
+        # overrides, and serves/sets supervise only when one is stored.
+        TaskSpec(
+            "jump", "Jump", "aux", "action-annotations", "*_actions.jsonl",
+            ("jump",), ("action",), "jump_balanced_accuracy", False,
         ),
         # Where the people are, per frame: the model's own boxes, distilled
         # from the tracker (actor/person_labels.py writes the sidecar from
@@ -264,16 +281,17 @@ RECIPES: dict[str, Recipe] = {
             _RALLY_FIELDS, _RALLY_DEFAULTS,
         ),
         Recipe(
-            "action", "Action", ("action", "location"),
-            "Touch spotting with the contact-point location head.",
+            "action", "Action", ("action", "location", "side", "jump"),
+            "Touch spotting with the contact-point, actor side and jump heads.",
             _ACTION_FIELDS, _ACTION_DEFAULTS,
         ),
         Recipe(
             "action_rally_winner",
             "Action + Rally + Winner + Person",
-            ("action", "location", "rally", "winner", "person"),
-            "One backbone; Action uses audio and geometry supervision, Rally/Winner are "
-            "visual-only, Person distils the tracker's boxes on the rally stream.",
+            ("action", "location", "side", "jump", "rally", "winner", "person"),
+            "One backbone; Action uses audio and geometry supervision plus the actor's "
+            "side and jump, Rally/Winner are visual-only, Person distils the tracker's "
+            "boxes on the rally stream.",
             _MULTI_FPS_FIELDS,
             _MULTI_FPS_DEFAULTS,
         ),
@@ -308,8 +326,9 @@ ACTION_LABELS = frozenset(ACTION_LABELS_ORDERED)
 class CourtSide(str, Enum):
     """Where a court side sits in camera-frame terms.
 
-    The value space of the ``winner`` task: which side of the frame the team
-    that WON the rally was playing on. Broadcast footage uses left/right,
+    The value space of the ``winner`` task — which side of the frame the team
+    that WON the rally was playing on — and of the ``side`` task, which side
+    the player making a touch stood on. Broadcast footage uses left/right,
     sideline (amateur) footage near/far — one 4-class vocabulary so a single
     head serves both camera setups. The winning side, not where the ball
     landed: an out ball lands on the loser's side.
@@ -350,6 +369,20 @@ class ActionEvent(BaseModel):
         ge=0.0,
         le=1.0,
         description="Model confidence; present on machine pre-annotations only",
+    )
+    side: CourtSide | None = Field(
+        default=None,
+        description=(
+            "Court side the touching player stood on (camera-frame). "
+            "None = no stored value; training derives one where the rules can."
+        ),
+    )
+    jump: bool | None = Field(
+        default=None,
+        description=(
+            "Whether the touching player was off the floor. None = no stored "
+            "value; training falls back to the label's default."
+        ),
     )
 
 
