@@ -1,4 +1,4 @@
-from yp_video.action.rules import attacks, rally_outcomes
+from yp_video.action.rules import attacks, rally_outcomes, touch_sides
 
 
 def _events(*touches: tuple[str, float]) -> list[dict]:
@@ -102,3 +102,41 @@ def test_rally_membership_is_inclusive_without_tolerance() -> None:
     events = _events(("spike", 0.99), ("spike", 1.0), ("spike", 3.0), ("spike", 3.01))
 
     assert [a["event_indices"] for a in attacks(rallies, events)] == [[1], [2]]
+
+
+def _touches(*labels: str) -> list[dict]:
+    return [{"label": label} for label in labels]
+
+
+def test_touch_sides_cross_after_serve_and_spike() -> None:
+    sides = touch_sides(
+        _touches("serve", "receive", "set", "spike", "receive", "spike", "score"), "near"
+    )
+
+    assert sides == ["near", "far", "far", "far", "near", "near", None]
+
+
+def test_touch_sides_block_answers_the_spike_then_stops() -> None:
+    """After a block the ball can land on either side — nothing after it is
+    placed."""
+    sides = touch_sides(_touches("serve", "receive", "set", "spike", "block", "receive"), "left")
+
+    assert sides == ["left", "right", "right", "right", "left", None]
+
+
+def test_touch_sides_stop_at_a_mid_possession_receive() -> None:
+    """A second receive means a free ball came over or a second pass — the
+    order cannot tell which."""
+    sides = touch_sides(_touches("serve", "receive", "set", "receive", "spike"), "far")
+
+    assert sides == ["far", "near", "near", None, None]
+
+
+def test_touch_sides_need_the_serve_first() -> None:
+    assert touch_sides(_touches("receive", "set", "spike"), "near") == [None, None, None]
+
+
+def test_touch_sides_stop_at_a_fourth_touch() -> None:
+    sides = touch_sides(_touches("serve", "receive", "set", "set", "set"), "near")
+
+    assert sides == ["near", "far", "far", "far", None]

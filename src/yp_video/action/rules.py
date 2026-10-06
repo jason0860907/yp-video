@@ -34,6 +34,11 @@ RALLY_PLAY = {"set", "spike", "block"}
 
 Event = Mapping[str, Any]
 
+#: The other team's half, per camera-frame court side.
+OPPOSITE_SIDE = {"left": "right", "right": "left", "near": "far", "far": "near"}
+#: Touches one team makes in a row before the ball must cross.
+TEAM_TOUCHES = 3
+
 
 def kind(event: Event) -> str:
     return KINDS.get(str(event["label"]).lower(), "other")
@@ -139,3 +144,48 @@ def rally_outcomes(
             }
         )
     return out
+
+
+def touch_sides(events: Sequence[Event], serve_side: str) -> list[str | None]:
+    """Which court side each touch of ONE rally was made on, given the side
+    that served; ``events`` are that rally's touches in time order.
+
+    The ball crosses after a serve and after a spike; receive / set / spike
+    of one possession share a side; a block stands opposite the spike it
+    answers. Where the order stops determining sides the walk stops and the
+    rest stay None: a block (the ball may come back to either side), a
+    receive in mid-possession (a free ball came over — or a second pass), a
+    fourth touch. Whistles name no side. A rally not opening with its serve
+    yields all None.
+    """
+    sides: list[str | None] = [None] * len(events)
+    touches = [i for i, event in enumerate(events) if kind(event) != "score"]
+    if not touches or kind(events[touches[0]]) != "serve":
+        return sides
+    side, touched, crossing, previous = serve_side, 0, False, None
+    for i in touches:
+        current = kind(events[i])
+        if current == "serve":
+            if previous is not None:
+                break
+            sides[i] = side
+            crossing = True
+        elif current == "block":
+            if previous != "spike":
+                break
+            sides[i] = OPPOSITE_SIDE[side]
+            break
+        elif current in STAGE:
+            if crossing:
+                side, touched, crossing = OPPOSITE_SIDE[side], 0, False
+            elif current == "receive" and touched:
+                break
+            touched += 1
+            if touched > TEAM_TOUCHES:
+                break
+            sides[i] = side
+            crossing = current == "spike"
+        else:
+            break
+        previous = current
+    return sides

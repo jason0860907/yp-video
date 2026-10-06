@@ -1,5 +1,6 @@
 """Write the run-local action label snapshot SPOT trains on: the action
-labels with frame counts matched to the extracted frame cache."""
+labels with frame counts matched to the extracted frame cache and the
+per-touch side / jump attributes filled in (action/attributes.py)."""
 
 from __future__ import annotations
 
@@ -7,12 +8,13 @@ import json
 import logging
 from pathlib import Path
 
+from yp_video.action.attributes import with_attributes
 from yp_video.action.frames import inspect_action_frame_cache
 from yp_video.action.training import rally_match_span
 from yp_video.config import ACTION_ANNOTATIONS_DIR, cut_kind_of
-from yp_video.contracts.action import TASKS
-from yp_video.core.rallies import load_rallies
+from yp_video.contracts.action import DEFAULT_FPS, TASKS
 from yp_video.core.jsonl import read_jsonl, write_jsonl
+from yp_video.core.rallies import load_rallies
 
 log = logging.getLogger(__name__)
 
@@ -43,6 +45,9 @@ def prepare_action_training_labels(
     total_frames = 0
     span_frames = 0
     adjusted: list[dict] = []
+    side_events = 0
+    jump_events = 0
+    side_skipped: dict[str, str] = {}
     for path, video_path in items:
         try:
             meta, records = read_jsonl(path)
@@ -93,9 +98,8 @@ def prepare_action_training_labels(
                 "training_num_frames": cache_frames,
             })
 
-        match_span = rally_match_span(
-            stem, fps=float(meta.get("fps") or 30.0), num_frames=cache_frames
-        )
+        fps = float(meta.get("fps") or DEFAULT_FPS)
+        match_span = rally_match_span(stem, fps=fps, num_frames=cache_frames)
         if match_span is not None:
             training_meta["sample_spans"] = [list(match_span)]
             span_frames += match_span[1] - match_span[0]
@@ -106,6 +110,12 @@ def prepare_action_training_labels(
         rallies = load_rallies(stem)
         if rallies:
             training_meta["rally_spans"] = [[r["start"], r["end"]] for r in rallies]
+
+        records, side_report = with_attributes(stem, fps, records)
+        if side_report["status"] != "ok":
+            side_skipped[stem] = side_report["status"]
+        side_events += sum("side" in event for event in records)
+        jump_events += sum("jump" in event for event in records)
 
         write_jsonl(label_dir / path.name, training_meta, records)
         videos += 1
@@ -125,4 +135,8 @@ def prepare_action_training_labels(
         "frames": total_frames,
         "sample_frames": span_frames,
         "adjusted": adjusted,
+        "side_events": side_events,
+        "jump_events": jump_events,
+        # Videos whose rallies could not anchor any touch side, and why.
+        "side_skipped": side_skipped,
     }
