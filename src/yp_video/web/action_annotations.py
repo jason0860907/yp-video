@@ -162,12 +162,26 @@ PERSISTED_EVENT_FIELDS = ("id", "frame", "label", "xy", "visible")
 #: A machine pre-annotation also keeps the model's confidence, so later
 #: selection, review triage and pseudo-label training can use it.
 PREDICTED_EVENT_FIELDS = (*PERSISTED_EVENT_FIELDS, "score")
+#: Per-touch attributes (the actor's court side, whether they jumped), kept
+#: only when set: an absent one is unknown, and training fills it from the
+#: rules (action/attributes.py) instead.
+ATTRIBUTE_EVENT_FIELDS = ("side", "jump")
 
 
 def persistable_events(
     events: list[dict], fields: tuple[str, ...] = PERSISTED_EVENT_FIELDS
 ) -> list[dict]:
-    return [{key: event[key] for key in fields} for event in events]
+    return [
+        {
+            **{key: event[key] for key in fields},
+            **{
+                key: event[key]
+                for key in ATTRIBUTE_EVENT_FIELDS
+                if event.get(key) is not None
+            },
+        }
+        for event in events
+    ]
 
 
 def truthy_event_visible(value: object) -> bool:

@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { formatActionTime } from '@/lib/actionEditorModel';
-import type { ActionEvent } from '@/types/api';
+import { cn } from '@/lib/cn';
+import { COURT_SIDES, SIDE_DISPLAY } from '@/lib/courtSide';
+import type { ActionAttributeDefaults, ActionEvent, CourtSide } from '@/types/api';
 import { ActionDot, EventRows } from './RallyRows';
 
 /** Inline frame editor. Typing only moves a local draft — Enter or leaving the
@@ -39,10 +41,62 @@ function FrameCell({ frame, onCommit }: { frame: number; onCommit: (frame: numbe
   );
 }
 
+const JUMP_DISPLAY = { true: '跳', false: '站' } as const;
+/** Hand-set jump cycles unset (the default applies) → jumped → grounded. */
+const nextJump = (jump: boolean | undefined) => (jump === undefined ? true : jump ? false : undefined);
+
+/** The actor's court side and whether they jumped. A hand-set value shows
+ *  bright; otherwise the muted value is what training assumes. */
+function AttributeCell({
+  event,
+  defaults,
+  onEdit,
+}: {
+  event: ActionEvent;
+  defaults: ActionAttributeDefaults | undefined;
+  onEdit: (patch: Partial<ActionEvent>) => void;
+}) {
+  const derivedSide = defaults?.side;
+  const jump = event.jump ?? defaults?.jump ?? null;
+  return (
+    <span className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+      <select
+        value={event.side ?? ''}
+        onChange={(e) => onEdit({ side: (e.target.value || undefined) as CourtSide | undefined })}
+        title="Actor 在哪一側 — 「自」= 交給規則推導"
+        className={cn(
+          'w-full min-w-0 rounded-lg border border-border bg-surface-100 px-0.5 py-1 text-xs',
+          event.side ? 'text-text-primary' : 'text-text-muted',
+        )}
+      >
+        <option value="">{derivedSide ? `自${SIDE_DISPLAY[derivedSide]}` : '自'}</option>
+        {COURT_SIDES.map((side) => (
+          <option key={side} value={side}>
+            {SIDE_DISPLAY[side]}
+          </option>
+        ))}
+      </select>
+      <button
+        type="button"
+        onClick={() => onEdit({ jump: nextJump(event.jump) })}
+        title="有沒有跳 — 點擊切換：預設 → 跳 → 站"
+        className={cn(
+          'w-5 shrink-0 text-xs',
+          event.jump === undefined ? 'text-text-muted' : 'font-bold text-primary-light',
+        )}
+      >
+        {jump === null ? '–' : JUMP_DISPLAY[`${jump}`]}
+      </button>
+    </span>
+  );
+}
+
 interface ActionEventPanelProps {
   entries: ActionEvent[];
   empty: string;
   labels: string[];
+  /** Per event id: what training assumes when nothing is stored. */
+  attributeDefaults: Record<string, ActionAttributeDefaults>;
   selectedId: string | null;
   fps: number;
   /** Current playhead frame — rows within ±½ s light up. */
@@ -56,6 +110,7 @@ export function ActionEventPanel({
   entries,
   empty,
   labels,
+  attributeDefaults,
   selectedId,
   fps,
   frame,
@@ -68,7 +123,7 @@ export function ActionEventPanel({
     <EventRows
       entries={entries}
       empty={empty}
-      columns="minmax(5rem,1fr) 3.6rem 2.6rem 2.4rem"
+      columns="minmax(5rem,1fr) 3.6rem 3.6rem 2.6rem 2.4rem"
       selectedId={selectedId}
       isActive={(e) => Math.abs(e.frame - frame) <= windowFrames}
       onJump={(e) => onJump(e.id)}
@@ -96,6 +151,11 @@ export function ActionEventPanel({
               ))}
             </select>
           </span>
+          <AttributeCell
+            event={e}
+            defaults={attributeDefaults[e.id]}
+            onEdit={(patch) => onEdit(e.id, patch)}
+          />
           <FrameCell frame={e.frame} onCommit={(f) => onEdit(e.id, { frame: f })} />
           <span className="text-center font-heading text-[10px] tabular-nums text-text-muted">
             {formatActionTime(e.frame / (fps || 30))}

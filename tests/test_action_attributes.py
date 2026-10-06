@@ -83,3 +83,14 @@ def test_jump_defaults_cover_spike_block_receive_only() -> None:
     defaults, _ = attribute_defaults([], events, FPS)
 
     assert [d["jump"] for d in defaults] == [None, False, None, True, True, None]
+
+
+def test_only_set_attributes_are_persisted() -> None:
+    from yp_video.web.action_annotations import persistable_events
+
+    base = {"id": "a", "frame": 1, "label": "set", "xy": [0.5, 0.5], "visible": True}
+
+    assert persistable_events([{**base, "side": None, "jump": None}]) == [base]
+    assert persistable_events([{**base, "side": "far", "jump": True}]) == [
+        {**base, "side": "far", "jump": True}
+    ]

@@ -333,6 +333,9 @@ export interface ActionVideo {
   rally_sources?: string[];
 }
 
+/** Camera-frame court side: left/right on broadcast, near/far on sideline. */
+export type CourtSide = 'left' | 'right' | 'near' | 'far';
+
 /** Action-label editor data (one video's rallies + action events). */
 export interface ActionRally {
   rally_id: number;
@@ -349,6 +352,15 @@ export interface ActionEvent {
   label: string;
   xy: [number, number];
   visible: boolean;
+  /** Court side the touching player stood on; absent = not set by hand. */
+  side?: CourtSide;
+  /** Whether the touching player was off the floor; absent = not set by hand. */
+  jump?: boolean;
+}
+/** What training assumes for an event with nothing stored (null = unknown). */
+export interface ActionAttributeDefaults {
+  side: CourtSide | null;
+  jump: boolean | null;
 }
 export interface ActionAnnotationData {
   video?: string;
@@ -361,6 +373,8 @@ export interface ActionAnnotationData {
   num_frames?: number;
   rallies?: Array<{ rally_id?: unknown; start?: unknown; end?: unknown; label?: string }>;
   events?: Array<Record<string, unknown>>;
+  /** Per event id; never saved. */
+  attribute_defaults?: Record<string, ActionAttributeDefaults>;
 }
 
 /** Decoded audio envelope for the Action Label waveform lane. */

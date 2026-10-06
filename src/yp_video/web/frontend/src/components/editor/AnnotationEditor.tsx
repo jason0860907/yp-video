@@ -10,6 +10,8 @@ import { SectionLabel } from '@/components/ui/SectionLabel';
 import { toast } from '@/components/feedback/toast';
 import { hasRealTime, seekWhenSeekable, usePlayheadHandover } from '@/lib/playheadHandover';
 import { useVideoRecovery } from '@/lib/useVideoRecovery';
+import { COURT_SIDES, SIDE_DISPLAY } from '@/lib/courtSide';
+import type { CourtSide } from '@/types/api';
 import { DownloadClipsModal } from './DownloadClipsModal';
 import { RallyTimeline } from './RallyTimeline';
 
@@ -59,9 +61,6 @@ function TimeField({ seconds, onCommit }: { seconds: number; onCommit: (value: n
   );
 }
 
-export type CourtSide = 'left' | 'right' | 'near' | 'far';
-const COURT_SIDES: CourtSide[] = ['left', 'right', 'near', 'far'];
-const SIDE_DISPLAY: Record<CourtSide, string> = { left: '左', right: '右', near: '近', far: '遠' };
 
 /** Which pair of sides this video's camera angle offers. One axis per video —
  *  picking it once up top keeps each row to two buttons instead of four. */

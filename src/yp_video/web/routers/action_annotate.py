@@ -15,6 +15,7 @@ from fastapi.responses import Response
 from pydantic import Field, field_validator
 
 from yp_video.action import prelabel
+from yp_video.action.attributes import attribute_defaults
 from yp_video.action.segments import pad_and_merge_spans
 from yp_video.config import (
     ACTION_ANNOTATIONS_DIR,
@@ -27,6 +28,7 @@ from yp_video.contracts.action import (
     ACTION_LABELS_ORDERED,
     LABEL_FILE_GLOB,
     SPOT_PROGRESS_PREFIX,
+    CourtSide,
     event_id,
 )
 from yp_video.core import label_done
@@ -81,6 +83,8 @@ class ActionEvent(StrictModel):
     label: str
     xy: tuple[float, float]
     visible: bool = True
+    side: CourtSide | None = None
+    jump: bool | None = None
 
     @field_validator("label")
     @classmethod
@@ -313,6 +317,12 @@ async def get_annotations(
         )
         ann["num_events"] = len(ann["events"])
         ann["duration"] = meta["duration"]
+        # What training assumes for an event with no stored side / jump —
+        # shown beside the editor's own value, never saved.
+        defaults, _ = attribute_defaults(rallies, ann["events"], float(ann["fps"]))
+        ann["attribute_defaults"] = {
+            event["id"]: default for event, default in zip(ann["events"], defaults)
+        }
         return ann
 
     return {
@@ -325,6 +335,7 @@ async def get_annotations(
         "num_events": 0,
         "rallies": rallies,
         "events": [],
+        "attribute_defaults": {},
     }
 
 

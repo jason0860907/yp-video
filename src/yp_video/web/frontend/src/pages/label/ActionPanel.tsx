@@ -720,7 +720,7 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, registerGu
                         // Collapse if open; otherwise select + expand + seek to the rally start.
                         onToggle={() => (isOpen ? setExpanded(null) : selectRally(rally.rally_id))}
                       />
-                      {isOpen && <ActionEventPanel entries={entries} empty="No actions in this rally" {...{ labels, selectedId, fps: ed.fps, frame, onEdit: editEvent, onDelete: deleteEvent, onJump: jumpToEvent }} />}
+                      {isOpen && <ActionEventPanel entries={entries} empty="No actions in this rally" {...{ labels, attributeDefaults: ed.attributeDefaults, selectedId, fps: ed.fps, frame, onEdit: editEvent, onDelete: deleteEvent, onJump: jumpToEvent }} />}
                     </div>
                   );
                 })}
@@ -732,7 +732,7 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, registerGu
                       open={expanded === OUTSIDE_RALLY_KEY}
                       onToggle={() => setExpanded(expanded === OUTSIDE_RALLY_KEY ? null : OUTSIDE_RALLY_KEY)}
                     />
-                    {expanded === OUTSIDE_RALLY_KEY && <ActionEventPanel entries={outside} empty="No outside actions" {...{ labels, selectedId, fps: ed.fps, frame, onEdit: editEvent, onDelete: deleteEvent, onJump: jumpToEvent }} />}
+                    {expanded === OUTSIDE_RALLY_KEY && <ActionEventPanel entries={outside} empty="No outside actions" {...{ labels, attributeDefaults: ed.attributeDefaults, selectedId, fps: ed.fps, frame, onEdit: editEvent, onDelete: deleteEvent, onJump: jumpToEvent }} />}
                   </div>
                 )}
               </>

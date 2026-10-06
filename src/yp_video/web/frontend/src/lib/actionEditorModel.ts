@@ -1,4 +1,12 @@
-import type { ActionAnnotationData, ActionEvent, ActionRally, ActionVideo } from '@/types/api';
+import { COURT_SIDES } from '@/lib/courtSide';
+import type {
+  ActionAnnotationData,
+  ActionAttributeDefaults,
+  ActionEvent,
+  ActionRally,
+  ActionVideo,
+  CourtSide,
+} from '@/types/api';
 
 export const DEFAULT_ACTION_LABELS = ['serve', 'receive', 'set', 'spike', 'block', 'score'];
 export const OUTSIDE_RALLY_KEY = '__outside__';
@@ -10,6 +18,9 @@ export interface ActionEditor {
   numFrames: number;
   rallies: ActionRally[];
   events: ActionEvent[];
+  /** What training assumes per event id when nothing is stored — as loaded;
+   *  events added or moved since show none. */
+  attributeDefaults: Record<string, ActionAttributeDefaults>;
   dirty: boolean;
 }
 
@@ -20,6 +31,7 @@ export const EMPTY_ACTION_EDITOR: ActionEditor = {
   numFrames: 0,
   rallies: [],
   events: [],
+  attributeDefaults: {},
   dirty: false,
 };
 
@@ -110,6 +122,7 @@ export function normalizeActionEditor(
     numFrames: Number(data.num_frames) || 0,
     rallies,
     events: [],
+    attributeDefaults: data.attribute_defaults ?? {},
     dirty: false,
   };
   editor.events = sortActionEvents(
@@ -135,6 +148,8 @@ export function normalizeActionEditor(
             clamp(Number(xy[1] ?? 0.5), 0, 1),
           ],
           visible: raw.visible !== false,
+          ...(COURT_SIDES.includes(raw.side as CourtSide) ? { side: raw.side as CourtSide } : {}),
+          ...(typeof raw.jump === 'boolean' ? { jump: raw.jump } : {}),
         },
         editor,
       );

@@ -256,6 +256,9 @@ def normalize_event(event: dict, *, num_frames: int) -> dict | None:
         xy = [0.5, 0.5]
     x = _clamp(_finite_float(xy[0], default=0.5), 0.0, 1.0)
     y = _clamp(_finite_float(xy[1], default=0.5), 0.0, 1.0)
+    # The side / jump heads' predictions stay out: a saved annotation keeps
+    # every field it loaded, so a model guess would land in the human store
+    # as a hand-set value and override the touch-order rules in training.
     return {
         "frame": frame,
         "label": label,
