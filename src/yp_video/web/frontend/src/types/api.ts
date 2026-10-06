@@ -211,15 +211,16 @@ export interface LocationBreakdown {
   per_video: Array<{ video: string; spatial: number; events: number }>;
 }
 
-/** Court-side confusion: rows are ground truth, columns predictions, both in
- *  `classes` order; `recall` is the diagonal over the row total. */
-export interface WinnerBreakdown {
+/** Class confusion (winner / actor side / jump): rows are ground truth,
+ *  columns predictions, both in `classes` order; `recall` is the diagonal
+ *  over the row total. */
+export interface ConfusionBreakdown {
   classes: string[];
   confusion: number[][];
   recall: Record<string, number | null>;
 }
 
-export type TaskBreakdown = SpottingBreakdown | LocationBreakdown | WinnerBreakdown;
+export type TaskBreakdown = SpottingBreakdown | LocationBreakdown | ConfusionBreakdown;
 
 export interface TaskMetricPhase {
   loss: number | null;

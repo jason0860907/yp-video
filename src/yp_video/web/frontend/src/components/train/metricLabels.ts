@@ -6,6 +6,9 @@ export const METRIC_LABELS: Record<string, string> = {
   temporal_mAP: 'Temporal mAP',
   spatial_mAP: 'Spatial mAP',
   winner_top1: 'Winner Top-1',
+  side_top1: 'Side Top-1',
+  jump_balanced_accuracy: 'Jump balanced acc.',
+  accuracy: 'Accuracy',
   majority_baseline: 'Majority baseline',
   loss: 'Loss',
 };
@@ -15,7 +18,9 @@ export const TASK_LABELS: Record<string, string> = {
   winner: 'Winner',
   action: 'Action',
   location: 'Location',
+  side: 'Side',
+  jump: 'Jump',
 };
 
 /** Fixed task order so every run lists and colors its tasks the same way. */
-export const TASK_ORDER = ['action', 'rally', 'winner', 'location'] as const;
+export const TASK_ORDER = ['action', 'rally', 'winner', 'location', 'side', 'jump'] as const;

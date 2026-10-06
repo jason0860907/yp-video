@@ -18,7 +18,11 @@ from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 
-from yp_video.contracts.action import ACTION_CONTRACT_VERSION, SPOT_PACKAGE_TYPE
+from yp_video.contracts.action import (
+    ACTION_CONTRACT_VERSION,
+    SPOT_PACKAGE_TYPE,
+    spotting_tasks,
+)
 
 log = logging.getLogger(__name__)
 
@@ -73,10 +77,12 @@ def checkpoint_package_options(
 ) -> list[dict]:
     """Selectable init-checkpoint options: packaged runs under ``checkpoints_dir``.
 
-    Eligible packages carry every head the recipe trains (a superset is fine:
-    unused heads are skipped on load; a missing one would leave that head
-    randomly initialized while looking like a fine-tune). A package with no
-    readable manifest is excluded: what it contains cannot be verified.
+    Eligible packages carry every spotting head the recipe trains (a
+    superset is fine: unused heads are skipped on load). Auxiliary heads the
+    package lacks start from random weights, which is how a new head joins a
+    trained model — the label names them, so such an init never passes for a
+    plain fine-tune. A package with no readable manifest is excluded: what it
+    contains cannot be verified.
     """
     options: list[dict] = []
     if checkpoints_dir.exists():
@@ -87,13 +93,16 @@ def checkpoint_package_options(
             manifest = load_json_file(run_dir / "manifest.json")
             if not isinstance(manifest, dict):
                 continue
-            if manifest.get("type") != SPOT_PACKAGE_TYPE or not set(tasks) <= set(
-                manifest.get("tasks") or ()
-            ):
+            if manifest.get("type") != SPOT_PACKAGE_TYPE:
                 continue
-            options.append(
-                {"label": _package_label(run_dir, manifest), "value": str(ckpt)}
-            )
+            carried = set(manifest.get("tasks") or ())
+            if not set(spotting_tasks(tasks)) <= carried:
+                continue
+            label = _package_label(run_dir, manifest)
+            new_heads = [task for task in tasks if task not in carried]
+            if new_heads:
+                label += f" + new {', '.join(new_heads)}"
+            options.append({"label": label, "value": str(ckpt)})
     return options
 
 

@@ -257,6 +257,17 @@ class ExportBestPerTaskTest(unittest.TestCase):
                 option["label"], "run (action mAP 0.300 · winner winner Top-1 0.600)"
             )
 
+    def test_picker_names_heads_the_package_lacks(self):
+        """A recipe adding aux heads still inits from a trained package, and
+        the label says which heads start from scratch."""
+        with tempfile.TemporaryDirectory() as raw_dir:
+            root = Path(raw_dir)
+            self._export(root)
+            [option] = checkpoint_package_options(
+                root / "checkpoints", tasks=("action", "location", "side", "jump")
+            )
+            self.assertTrue(option["label"].endswith(" + new side, jump"))
+
 
 if __name__ == "__main__":
     unittest.main()

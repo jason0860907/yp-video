@@ -6,7 +6,7 @@ import type {
   SpottingBreakdown,
   TaskMetricSnapshot,
   TaskMetrics,
-  WinnerBreakdown,
+  ConfusionBreakdown,
 } from '@/types/api';
 
 /** One epoch's task metrics, as the panel wants them. */
@@ -31,7 +31,7 @@ const hasBreakdown = (tasks: TaskMetrics) =>
 
 /** Per-task validation detail for one epoch: per-class / per-tolerance /
  *  per-video tables for the spotting heads, the confusion matrix for winner,
- *  per-kind accuracy for actor. Shows the best checkpoint's epoch by default
+ *  actor side and jump. Shows the best checkpoint's epoch by default
  *  and lets the reader flip to the latest one. */
 export function TaskBreakdownPanel({ best, latest }: { best?: TaskSnapshot; latest?: TaskSnapshot }) {
   const [which, setWhich] = useState<'best' | 'latest'>('best');
@@ -95,8 +95,8 @@ function TaskSection({ task, snapshot }: { task: string; snapshot: TaskMetricSna
         )}
       </div>
       <div className="mt-1.5 grid grid-cols-1 items-start gap-3 xl:grid-cols-[auto_minmax(0,1fr)]">
-        {task === 'winner' ? (
-          <WinnerView bd={breakdown as WinnerBreakdown} majority={validation.metrics.majority_baseline} />
+        {task === 'winner' || task === 'side' || task === 'jump' ? (
+          <ConfusionView bd={breakdown as ConfusionBreakdown} majority={validation.metrics.majority_baseline} />
         ) : task === 'location' ? (
           <LocationView bd={breakdown as LocationBreakdown} />
         ) : (
@@ -220,8 +220,8 @@ function LocationView({ bd }: { bd: LocationBreakdown }) {
   );
 }
 
-function WinnerView({ bd, majority }: { bd: WinnerBreakdown; majority: number | null | undefined }) {
-  // A camera view supervises only two of the four sides; drop sides that
+function ConfusionView({ bd, majority }: { bd: ConfusionBreakdown; majority: number | null | undefined }) {
+  // A camera view supervises only two of the four sides; drop classes that
   // never appear as truth or prediction so the matrix shows what was scored.
   const live = bd.classes
     .map((side, i) => ({ side, i }))
