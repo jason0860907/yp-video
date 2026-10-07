@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "VolleyIQ Rally Detector Wire Contract",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "description": "Source of truth for the request/response shape between the iOS app and any rally-detection backend. Generated from yp_video/contracts/detector.py via make_schema.py \u2014 do not edit by hand.",
   "$defs": {
     "Attack": {
@@ -243,7 +243,7 @@
       "type": "object"
     },
     "SegmentEvent": {
-      "description": "One spotted touch (serve / receive / set / spike / block / score).\n\nMirrors ``yp_video.action.segments._public``: a stable event id, label,\ntimestamp and source frame, with normalized court location when known.\nDistinct from ``contracts.action.ActionEvent`` (the frame-indexed label\nrecord yp-spot emits) \u2014 this is the seconds-based, app-facing shape.\n\n``id`` is the join key player identification points back at\n(``IdentifyUnit.event_ids``), so it is also what a clip, a per-touch\nplayer override and a per-player stat are all keyed by.",
+      "description": "One spotted touch (serve / receive / set / spike / block / score).\n\nMirrors ``yp_video.action.segments._public``: a stable event id, label,\ntimestamp and source frame, with the ball point and whether it was seen.\nDistinct from ``contracts.action.ActionEvent`` (the frame-indexed label\nrecord yp-spot emits) \u2014 this is the seconds-based, app-facing shape.\n\n``id`` is the join key player identification points back at\n(``IdentifyUnit.event_ids``), so it is also what a clip, a per-touch\nplayer override and a per-player stat are all keyed by.",
       "properties": {
         "id": {
           "description": "Stable extraction id, normally f<source frame>",
@@ -268,29 +268,28 @@
           "type": "integer"
         },
         "xy": {
-          "anyOf": [
-            {
-              "items": {
-                "type": "number"
-              },
-              "maxItems": 2,
-              "minItems": 2,
-              "type": "array"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Normalized [x, y] court location, each in [0, 1]",
-          "title": "Xy"
+          "description": "Normalized [x, y] ball point at contact in the frame, each in [0, 1]",
+          "items": {
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "title": "Xy",
+          "type": "array"
+        },
+        "visible": {
+          "description": "Whether the ball point was seen; false marks an estimated (off-screen or occluded) point",
+          "title": "Visible",
+          "type": "boolean"
         }
       },
       "required": [
         "id",
         "label",
         "time",
-        "frame"
+        "frame",
+        "xy",
+        "visible"
       ],
       "title": "SegmentEvent",
       "type": "object"

@@ -17,7 +17,6 @@ class Event(Artifact):
     label: str
     time: float = Field(ge=0)
     frame: int = Field(ge=0)
-    xy: tuple[float, float] | None = None
 
 
 Side = Literal["left", "right", "near", "far"]

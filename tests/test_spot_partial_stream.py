@@ -110,10 +110,10 @@ class SpotPartialReaderTests(unittest.TestCase):
 class NormalizeEventParityTests(unittest.TestCase):
     def test_partial_normalization_matches_final_annotation(self):
         raw = [
-            {"label": "SPIKE", "frame": 7, "score": 0.9, "xy": [0.2, 1.4]},
-            {"label": "not-a-label", "frame": 8, "score": 0.9},
-            {"label": "score", "frame": 9, "score": 0.05},
-            {"label": "serve", "frame": 999, "score": 0.8, "visible": False},
+            {"label": "SPIKE", "frame": 7, "score": 0.9, "xy": [0.2, 1.4], "visible": True},
+            {"label": "not-a-label", "frame": 8, "score": 0.9, "xy": [0.5, 0.5], "visible": True},
+            {"label": "score", "frame": 9, "score": 0.05, "xy": [0.5, 0.5], "visible": True},
+            {"label": "serve", "frame": 999, "score": 0.8, "xy": [0.9, 0.3], "visible": False},
         ]
         final = prelabel.predictions_to_annotation(
             [{"video": "v", "events": raw}],

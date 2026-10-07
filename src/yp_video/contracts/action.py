@@ -448,7 +448,7 @@ SPOT_PROGRESS_PREFIX = "SPOT_PROGRESS "
 # events, ``{"frame","score"}`` plus ``winner_probs`` on winner-head checkpoints —
 # with ``cumulative=false``: the reader accumulates them. Postprocessed
 # (action) runs stream the postprocessed events of the whole settled prefix,
-# ``{"label","frame","score"}`` plus ``xy``/``visible`` when predicted, with
+# ``{"label","frame","score","xy","visible"}`` (plus side / jump when predicted), with
 # ``cumulative=true``: each line REPLACES all previous ones (NMS is only
 # stable when re-run over the full prefix). Optional and additive — a yp-spot
 # build that never emits it degrades to the all-at-once behaviour. Only the

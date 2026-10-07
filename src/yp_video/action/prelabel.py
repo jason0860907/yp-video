@@ -251,11 +251,11 @@ def normalize_event(event: dict, *, num_frames: int) -> dict | None:
     frame = int(round(_finite_float(event.get("frame"), default=0)))
     if num_frames > 0:
         frame = max(0, min(frame, num_frames - 1))
-    xy = event.get("xy") or [event.get("x", 0.5), event.get("y", 0.5)]
-    if not isinstance(xy, (list, tuple)) or len(xy) < 2:
-        xy = [0.5, 0.5]
-    x = _clamp(_finite_float(xy[0], default=0.5), 0.0, 1.0)
-    y = _clamp(_finite_float(xy[1], default=0.5), 0.0, 1.0)
+    xy = [float(v) for v in event["xy"]]
+    if len(xy) != 2 or not all(math.isfinite(v) for v in xy):
+        raise ValueError(f"Invalid action xy at frame {event.get('frame')}: {event['xy']}")
+    x = _clamp(xy[0], 0.0, 1.0)
+    y = _clamp(xy[1], 0.0, 1.0)
     # The side / jump heads' predictions stay out: a saved annotation keeps
     # every field it loaded, so a model guess would land in the human store
     # as a hand-set value and override the touch-order rules in training.
@@ -263,9 +263,7 @@ def normalize_event(event: dict, *, num_frames: int) -> dict | None:
         "frame": frame,
         "label": label,
         "xy": [round(x, 4), round(y, 4)],
-        # Visibility-head checkpoints predict the flag; older ones emit
-        # events without it, and an unannotated contact defaults visible.
-        "visible": bool(event.get("visible", True)),
+        "visible": bool(event["visible"]),
         "score": round(score, 4),
     }
 

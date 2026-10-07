@@ -40,9 +40,9 @@ def _public(ev: dict | None) -> dict | None:
         "label": ev.get("label"),
         "time": round(ev["_t"], 2),
         "frame": int(frame),
+        "xy": ev["xy"],
+        "visible": bool(ev["visible"]),
     }
-    if ev.get("xy") is not None:
-        out["xy"] = ev["xy"]
     return out
 
 
@@ -85,7 +85,7 @@ def pad_and_merge_spans(
 
 
 def event_timeline(events: Sequence[dict], *, fps: float) -> list[dict]:
-    """Flat ``[{id, label, time, frame, xy?}]`` of every spotted event,
+    """Flat ``[{id, label, time, frame, xy, visible}]`` of every spotted event,
     seconds-based and time sorted.
 
     Carries *all* labels — serve / receive / set / spike / block / score. This

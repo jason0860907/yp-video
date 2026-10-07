@@ -76,7 +76,7 @@ class SegmentEvent(BaseModel):
     """One spotted touch (serve / receive / set / spike / block / score).
 
     Mirrors ``yp_video.action.segments._public``: a stable event id, label,
-    timestamp and source frame, with normalized court location when known.
+    timestamp and source frame, with the ball point and whether it was seen.
     Distinct from ``contracts.action.ActionEvent`` (the frame-indexed label
     record yp-spot emits) — this is the seconds-based, app-facing shape.
 
@@ -89,9 +89,12 @@ class SegmentEvent(BaseModel):
     label: str = Field(description="Touch label, e.g. receive / set / spike")
     time: float = Field(ge=0, description="Seconds from video start")
     frame: int = Field(ge=0, description="Source frame index")
-    xy: list[float] | None = Field(
-        default=None, min_length=2, max_length=2,
-        description="Normalized [x, y] court location, each in [0, 1]",
+    xy: list[float] = Field(
+        min_length=2, max_length=2,
+        description="Normalized [x, y] ball point at contact in the frame, each in [0, 1]",
+    )
+    visible: bool = Field(
+        description="Whether the ball point was seen; false marks an estimated (off-screen or occluded) point",
     )
 
 

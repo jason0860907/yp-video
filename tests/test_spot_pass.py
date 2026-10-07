@@ -24,7 +24,7 @@ SPOT = SpotOptions(batch_size=4, num_workers=0, clip_len=64)
 
 def _rally_events(start_s: float, end_s: float, step: int = 6) -> list[dict]:
     return [
-        {"frame": f, "score": 0.9}
+        {"frame": f, "score": 0.9, "xy": [0.5, 0.5], "visible": True}
         for f in range(int(start_s * FPS), int(end_s * FPS) + 1, step)
     ]
 
@@ -32,10 +32,10 @@ def _rally_events(start_s: float, end_s: float, step: int = 6) -> list[dict]:
 # One rally 10–20 s, another 40–50 s (both longer than min_duration_s).
 RALLY_RECORDS = [{"video": "v", "events": _rally_events(10, 20) + _rally_events(40, 50)}]
 ACTION_RECORDS = [{"video": "v", "events": [
-    {"frame": 330, "label": "serve", "score": 0.9},    # 11 s, inside rally 1
-    {"frame": 900, "label": "spike", "score": 0.9},    # 30 s, dead time
-    {"frame": 1230, "label": "set", "score": 0.9},     # 41 s, inside rally 2
-    {"frame": 1545, "label": "score", "score": 0.9},   # 51.5 s, inside the 2 s pad
+    {"frame": 330, "label": "serve", "score": 0.9, "xy": [0.5, 0.5], "visible": True},    # 11 s, inside rally 1
+    {"frame": 900, "label": "spike", "score": 0.9, "xy": [0.5, 0.5], "visible": True},    # 30 s, dead time
+    {"frame": 1230, "label": "set", "score": 0.9, "xy": [0.5, 0.5], "visible": True},     # 41 s, inside rally 2
+    {"frame": 1545, "label": "score", "score": 0.9, "xy": [0.5, 0.5], "visible": True},   # 51.5 s, inside the 2 s pad
 ]}]
 
 
@@ -83,8 +83,8 @@ class JointPassTests(unittest.TestCase):
         rallies_seen, actions_seen = [], []
         script = [
             ("rally", _rally_events(10, 20)),                          # one rally: held back
-            ("action", [{"frame": 330, "label": "serve", "score": 0.9},
-                        {"frame": 900, "label": "spike", "score": 0.9}]),
+            ("action", [{"frame": 330, "label": "serve", "score": 0.9, "xy": [0.5, 0.5], "visible": True},
+                        {"frame": 900, "label": "spike", "score": 0.9, "xy": [0.5, 0.5], "visible": True}]),
             ("rally", _rally_events(10, 20) + _rally_events(40, 50)),  # two: first one settles
         ]
         self._run(script=script, on_rallies=rallies_seen.append, on_action_events=actions_seen.append)

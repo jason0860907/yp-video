@@ -84,8 +84,8 @@ class PreAnnotationScoreTests(unittest.TestCase):
                 video=Path("match.mp4"),
                 meta={"fps": 30.0, "num_frames": 100},
                 predictions=[{"video": "match", "events": [
-                    {"frame": 10, "label": "spike", "score": 0.91234, "xy": [0.2, 0.3]},
-                    {"frame": 40, "label": "block", "score": 0.02},
+                    {"frame": 10, "label": "spike", "score": 0.91234, "xy": [0.2, 0.3], "visible": True},
+                    {"frame": 40, "label": "block", "score": 0.02, "xy": [0.5, 0.5], "visible": False},
                 ]}],
                 checkpoint=Path("ckpt.pt"),
             )
