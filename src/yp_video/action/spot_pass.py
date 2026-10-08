@@ -73,6 +73,7 @@ def run_spot_pass(
     on_rallies: Callable[[list[dict]], None] | None = None,
     on_action_events: Callable[[list[dict]], None] | None = None,
     person_output: Path | None = None,
+    actor_output: Path | None = None,
 ) -> SpotPassResult:
     """Run the heads in ``tasks`` (a non-empty subset of ``rally``/``action``)
     over ``source`` in one yp-spot subprocess.
@@ -101,6 +102,8 @@ def run_spot_pass(
         raise ValueError("rallies can only seed an action-only pass; the rally head produces its own")
     if person_output is not None and set(tasks) != set(SPOT_TASKS):
         raise ValueError("Person output requires a whole-video rally + action pass")
+    if actor_output is not None and "action" not in tasks:
+        raise ValueError("Actor picks come from the action head")
 
     try:
         meta = probe_video_metadata(source)
@@ -161,6 +164,7 @@ def run_spot_pass(
         on_progress=on_progress,
         on_events=_on_events if (on_rallies or on_action_events) else None,
         person_output=person_output,
+        actor_output=actor_output,
     )
 
     merged = None

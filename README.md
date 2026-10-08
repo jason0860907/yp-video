@@ -15,10 +15,12 @@
 
 SPOT 模型本體住在獨立的 `~/yp-spot` repo（自己的 venv），yp-video 透過 subprocess + JSON 檔案跨進程呼叫它——這裡只負責組指令、解析 checkpoint、轉換輸出格式。
 
-Dashboard 的完整 **Inference** 使用含 `rally`、`action`、`person` 的 fusion
-checkpoint：一次解碼產生回合、事件與人物框，再以 ByteTrack 串成回合內的
-tracklet，最後由 package 裡的 person/action head（`person_action.pt`）從每個事件附近的
-tracklet 選 actor——和 App 進階分析同一條呼叫（`actor/person_action.build_policy`）。人物框保留在
+Dashboard 的完整 **Inference** 使用含 `rally`、`action`、`person`、`actor` 的 fusion
+checkpoint（單一檔案）：一次解碼產生回合、事件與人物框，再以 ByteTrack 串成回合內的
+tracklet，最後由同一個 checkpoint 的 actor head 從每個事件附近的
+tracklet 選 actor——和 App 進階分析同一條呼叫（`actor/person_action.build_policy`）。
+App 標準分析則直接用 SPOT pass 在偵測事件時順便挑的人（`tracks/<stem>_actor_picks.json`，
+見 `core/actor_picks.py`），不再重跑骨幹。人物框保留在
 `tracks/<stem>_persons.npz`，tracking 與事件候選都讀同一份框，不會另跑
 RF-DETR。框保留原始 frame 編號與取樣 stride；這條路徑沒有 instance mask。
 RF-DETR 的獨立 tracking／detection 工具仍供離線標註使用。

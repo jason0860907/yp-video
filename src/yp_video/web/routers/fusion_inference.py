@@ -33,7 +33,7 @@ router = APIRouter()
 
 class InferenceRequest(StrictModel):
     videos: list[str] = Field(min_length=1)
-    #: Fusion package for rally + action + person (+ person_action.pt); empty = newest.
+    #: Fusion package for rally + action + person + actor; empty = newest.
     checkpoint: str = ""
     rally_min_score: float = Field(default=0.5, ge=0.0, le=1.0)
     max_gap_s: float = Field(default=2.0, ge=0.0, le=30.0)
@@ -79,9 +79,8 @@ def spot_info() -> dict:
     info["default_checkpoint"] = fusion_inference.default_checkpoint()
     if not checkpoints:
         info["error"] = (
-            f"No package under {SPOT_CHECKPOINTS_DIR} serves rally, action and person "
-            f"together with a {fusion_inference.PERSON_ACTION_FILE}; package a fusion "
-            "model with its person/action head first."
+            f"No package under {SPOT_CHECKPOINTS_DIR} serves rally, action, person and "
+            "actor together; package a joint run with yp_spot.person_action.package first."
         )
     return info
 

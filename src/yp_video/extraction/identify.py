@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import math
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -102,6 +103,7 @@ def identify_players(
     embedder: str | None = None,
     fusion_checkpoint: Path,
     person_boxes: Path | None = None,
+    actor_picks: Path | None = None,
     advanced: bool = False,
     reps_per_unit: int = 3,
     on_progress: ProgressFn | None = None,
@@ -112,14 +114,19 @@ def identify_players(
     spans (core/rallies.py) and an action annotation file
     (extraction/store.action_annotation_path). Raises when either is missing.
 
-    ``fusion_checkpoint`` pins one package: the temporal/person base weights
-    and its companion ``person_action.pt`` joint checkpoint.
+    ``fusion_checkpoint`` pins one package: the fusion model with its person
+    and actor heads.
+
+    Standard identify takes the analysis's own SPOT pass outputs —
+    ``person_boxes`` and ``actor_picks``, both or neither; without them it
+    runs that pass itself. The actor head already picked who touched the
+    ball at each event it spotted (core/actor_picks.py).
 
     ``advanced`` swaps the fast perception (fusion person boxes + ByteTrack)
     for dense RF-DETR Seg + McByte++ at stride 2: tracklets hold one person
     far longer (pairwise F1 0.26 → 0.49 on labeled sideline video) for
     ~10 extra GPU minutes per video. It reads no fusion boxes, so
-    ``person_boxes`` must be None. Those tracklets also carry the identity
+    ``person_boxes`` and ``actor_picks`` must be None. Those tracklets also carry the identity
     vectors: advanced embeds with extraction/windows.py (masked crops averaged
     over ±1 s of the actor's tracklet), so it takes no ``embedder`` — standard
     identify requires one. And they are
@@ -133,7 +140,8 @@ def identify_players(
 
     from yp_video.action.spot_pass import RallyOptions, SpotOptions, run_spot_pass
     from yp_video.actor.candidates import track_paths
-    from yp_video.actor.person_action import build_policy
+    from yp_video.actor.person_action import build_policy, policy_from_spot_picks
+    from yp_video.core.actor_picks import actor_picks_path, load_actor_picks
     from yp_video.core.person_boxes import person_boxes_path, save_person_boxes
     from yp_video.extraction import links
     from yp_video.extraction.feet import actor_feet
@@ -153,13 +161,12 @@ def identify_players(
     if not events:
         return IdentifyResult(embedder=embedder, units=(), linkage=(), threshold=threshold_calibration(embedder), feet={})
 
-    person_action_checkpoint = fusion_checkpoint.with_name("person_action.pt")
-    if not person_action_checkpoint.is_file():
-        raise FileNotFoundError(f"Missing joint person/action weights: {person_action_checkpoint}")
+    if (person_boxes is None) != (actor_picks is None):
+        raise ValueError("person_boxes and actor_picks come from one SPOT pass: pass both or neither")
     tracking_cb = _banded(on_progress, "tracking")
     if advanced:
         if person_boxes is not None:
-            raise ValueError("advanced identify runs its own detector; person_boxes must be None")
+            raise ValueError("advanced identify runs its own detector and picker; pass no SPOT outputs")
         # Uploads are filmed by a phone fixed on the sideline: no camera motion.
         track_video(
             video_path, moving_camera=False, stride=ADVANCED_STRIDE, tracker="mcbyte",
@@ -169,12 +176,14 @@ def identify_players(
     else:
         if person_boxes is not None:
             save_person_boxes(person_boxes, person_boxes_path(stem), fusion_checkpoint)
+            shutil.copyfile(actor_picks, actor_picks_path(stem))
         else:
             run_spot_pass(
                 video_path, checkpoint=fusion_checkpoint, tasks=("rally", "action"),
                 rally=RallyOptions(min_score=0.5, max_gap_s=2.0, min_duration_s=4.0),
                 spot=SpotOptions(batch_size=1, num_workers=0, clip_len=64), rally_pad_s=2.0,
                 person_output=person_boxes_path(stem),
+                actor_output=actor_picks_path(stem),
                 on_progress=(lambda fraction: tracking_cb(int(fraction * 80), 100, "fusion person boxes"))
                 if tracking_cb else None,
             )
@@ -195,11 +204,13 @@ def identify_players(
     if width <= 0 or height <= 0:
         raise ValueError(f"Invalid video geometry: {video_path}")
     associate_cb = _banded(on_progress, "associating")
-    # Advanced: the model picks among the McByte++ tracklets themselves.
-    policy = build_policy(video_path, person_action_checkpoint, events,
-                          width=width, height=height,
-                          tracks=track_paths(stem) if advanced else None,
-                          on_progress=associate_cb)
+    if advanced:
+        # The actor head picks among the McByte++ tracklets themselves.
+        policy = build_policy(video_path, fusion_checkpoint, events, width=width, height=height,
+                              tracks=track_paths(stem), on_progress=associate_cb)
+    else:
+        policy = policy_from_spot_picks(events, load_actor_picks(actor_picks_path(stem)),
+                                        width=width, height=height)
     reassociate_video(video_path, policy, on_progress=_banded(on_progress, "cropping"))
 
     if advanced:
@@ -408,6 +419,7 @@ def _main() -> None:
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--fusion-checkpoint", type=Path, required=True)
     parser.add_argument("--person-boxes", type=Path, help="Reuse whole-video Fusion boxes from this analysis")
+    parser.add_argument("--actor-picks", type=Path, help="Reuse the actor picks of that same SPOT pass")
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--embedder", help="Standard identify: fusion boxes + ByteTrack, embedded with this model")
     mode.add_argument("--advanced", action="store_true",
@@ -423,6 +435,7 @@ def _main() -> None:
         embedder=args.embedder,
         fusion_checkpoint=args.fusion_checkpoint,
         person_boxes=args.person_boxes,
+        actor_picks=args.actor_picks,
         advanced=args.advanced,
         reps_per_unit=args.reps_per_unit,
         on_progress=report,

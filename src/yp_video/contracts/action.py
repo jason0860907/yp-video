@@ -149,6 +149,15 @@ TASKS: dict[str, TaskSpec] = {
             "person", "Person", "aux", "person-boxes", "*_person.npz",
             (), ("rally",), "person_ap50", False,
         ),
+        # Who touched the ball, per action event: the person/action head
+        # scoring the event's candidate boxes (the SPOT pass picks among the
+        # person head's own; advanced identify among McByte++ tracklets).
+        # Supervised by the association annotations through
+        # yp_spot.person_action.joint, never by Fusion Train.
+        TaskSpec(
+            "actor", "Actor", "aux", "actor-annotations", "*_actors.json",
+            (), ("action", "location", "person"), "actor_hit", False,
+        ),
     )
 }
 

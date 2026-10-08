@@ -131,7 +131,7 @@ export function InferencePage() {
         subtitle={
           <Prereqs
             extras={[
-              { label: 'Fusion Checkpoint', hint: 'A rally + action + person package with its person_action.pt' },
+              { label: 'Fusion Checkpoint', hint: 'A rally + action + person + actor package' },
             ]}
           />
         }

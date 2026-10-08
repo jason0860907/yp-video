@@ -119,6 +119,22 @@
       "primary_metric": "person_ap50",
       "serveable": false,
       "loss_weight": 1.0
+    },
+    "actor": {
+      "name": "actor",
+      "label": "Actor",
+      "kind": "aux",
+      "label_subdir": "actor-annotations",
+      "label_glob": "*_actors.json",
+      "event_fields": [],
+      "requires": [
+        "action",
+        "location",
+        "person"
+      ],
+      "primary_metric": "actor_hit",
+      "serveable": false,
+      "loss_weight": 1.0
     }
   },
   "x-recipes": {

@@ -22,7 +22,6 @@ class AdvancedIdentifyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             checkpoint = Path(tmp) / "checkpoint_best.pt"
             checkpoint.write_bytes(b"")
-            (Path(tmp) / "person_action.pt").write_bytes(b"")
             events = [{"frame": 120}, {"frame": 300}]
             with (
                 patch.object(pipeline, "load_events", return_value=events),
@@ -52,13 +51,15 @@ class AdvancedIdentifyTests(unittest.TestCase):
 
         track_video.assert_not_called()
         run_spot_pass.assert_called_once()
+        self.assertIsNotNone(run_spot_pass.call_args.kwargs["actor_output"])
         track_person_boxes.assert_called_once()
         self.assertIs(track_person_boxes.call_args.kwargs["moving_camera"], False)
         self.assertIsNotNone(detect_video.call_args.kwargs["person_boxes"])
 
     def _associate(self, **kwargs):
-        """Run up to the person/action call and return its kwargs."""
+        """Run up to the actor policy and return (tracklet call kwargs, SPOT-pick call args)."""
         from yp_video.actor import candidates, person_action
+        from yp_video.core import actor_picks
 
         class _Capture:
             def get(self, prop):
@@ -70,7 +71,6 @@ class AdvancedIdentifyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             checkpoint = Path(tmp) / "checkpoint_best.pt"
             checkpoint.write_bytes(b"")
-            (Path(tmp) / "person_action.pt").write_bytes(b"")
             with (
                 patch.object(pipeline, "load_events", return_value=[{"frame": 120}]),
                 patch.object(tracking, "track_video"),
@@ -79,17 +79,31 @@ class AdvancedIdentifyTests(unittest.TestCase):
                 patch.object(pipeline, "detect_video"),
                 patch.object(candidates, "track_paths", return_value={"1:1": {120: [0, 0, 9, 9]}}),
                 patch("cv2.VideoCapture", return_value=_Capture()),
+                patch.object(actor_picks, "load_actor_picks", return_value={"picks": 1}),
                 patch.object(person_action, "build_policy", side_effect=_StopAfterDetection) as build,
+                patch.object(person_action, "policy_from_spot_picks", side_effect=_StopAfterDetection) as spot,
                 self.assertRaises(_StopAfterDetection),
             ):
                 identify.identify_players(Path(tmp) / "match.mp4", fusion_checkpoint=checkpoint, **kwargs)
-            return build.call_args.kwargs
+            return build, spot, checkpoint
 
     def test_advanced_picks_actors_among_tracklets(self):
-        self.assertEqual(self._associate(advanced=True)["tracks"], {"1:1": {120: [0, 0, 9, 9]}})
+        build, spot, checkpoint = self._associate(advanced=True)
+        spot.assert_not_called()
+        self.assertEqual(build.call_args.args[1], checkpoint)
+        self.assertEqual(build.call_args.kwargs["tracks"], {"1:1": {120: [0, 0, 9, 9]}})
 
-    def test_standard_picks_among_model_proposals(self):
-        self.assertIsNone(self._associate(embedder="clip-reident")["tracks"])
+    def test_standard_reads_the_spot_pass_picks(self):
+        build, spot, _ = self._associate(embedder="clip-reident")
+        build.assert_not_called()
+        self.assertEqual(spot.call_args.args[1], {"picks": 1})
+
+    def test_standard_takes_both_spot_outputs_or_neither(self):
+        with patch.object(pipeline, "load_events", return_value=[{"frame": 1}]), self.assertRaises(ValueError):
+            identify.identify_players(
+                Path("/tmp/m.mp4"), embedder="clip-reident", fusion_checkpoint=Path("/tmp/c.pt"),
+                person_boxes=Path("/tmp/persons.npz"),
+            )
 
     def test_mode_decides_the_embedder(self):
         for kwargs in ({"advanced": True, "embedder": "clip-reident"}, {}):
@@ -100,7 +114,6 @@ class AdvancedIdentifyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             checkpoint = Path(tmp) / "checkpoint_best.pt"
             checkpoint.write_bytes(b"")
-            (Path(tmp) / "person_action.pt").write_bytes(b"")
             with (
                 patch.object(pipeline, "load_events", return_value=[{"frame": 1}]),
                 self.assertRaises(ValueError),

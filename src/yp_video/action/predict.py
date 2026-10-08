@@ -28,6 +28,7 @@ from yp_video.contracts.action import (
     SPOT_PARTIAL_PREFIX,
     SPOT_PROGRESS_PREFIX,
 )
+from yp_video.core.actor_picks import save_actor_picks
 from yp_video.core.person_boxes import save_person_boxes
 
 
@@ -95,6 +96,7 @@ def run_spot_inference(
     on_progress: Callable[[float], None] | None = None,
     on_events: Callable[[str, list[dict]], None] | None = None,
     person_output: Path | None = None,
+    actor_output: Path | None = None,
 ) -> dict[str, list[dict]]:
     """Run one yp-spot inference subprocess — one decode pass over the video
     for every head in ``tasks`` — and return ``{task: predictions}``.
@@ -111,6 +113,8 @@ def run_spot_inference(
 
     ``person_output`` retains the fusion person's whole-video boxes. A
     missing head or incomplete archive fails instead of running another detector.
+    ``actor_output`` retains the actor head's pick at every spotted action
+    event (core/actor_picks.py); a checkpoint without the head fails.
 
     Raises:
         SpotInferenceError: yp-spot is not installed, or its inference
@@ -225,4 +229,13 @@ def run_spot_inference(
                 save_person_boxes(person_file, person_output, checkpoint)
             except (KeyError, ValueError) as exc:
                 raise SpotInferenceError(f"Invalid fusion person output: {exc}") from exc
-        return {task: prelabel.load_predictions(path) for task, path in pred_files.items()}
+        predictions = {task: prelabel.load_predictions(path) for task, path in pred_files.items()}
+        if actor_output is not None:
+            events = [e for record in predictions["action"] for e in record.get("events") or []]
+            if any(e["label"] != "score" and "actor" not in e for e in events):
+                raise SpotInferenceError("Fusion checkpoint picked no actors; an actor head is required")
+            try:
+                save_actor_picks(predictions["action"], actor_output, checkpoint)
+            except (KeyError, TypeError, ValueError) as exc:
+                raise SpotInferenceError(f"Invalid fusion actor output: {exc}") from exc
+        return predictions
