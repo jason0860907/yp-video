@@ -239,6 +239,7 @@ class ReassociationTests(unittest.TestCase):
         self._run(_StubPolicy({}))
         self.assertEqual(read_jsonl(self.records)[0]["association_policy"], "stub")
 
+
     def test_progress_speaks_the_shared_worker_contract(self) -> None:
         """``core.progress.ProgressFn`` — (done, total, message). This module
         used to report (message, fraction) instead, which every batch job

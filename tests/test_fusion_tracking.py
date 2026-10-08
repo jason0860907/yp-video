@@ -107,12 +107,14 @@ def test_detection_uses_fusion_frames_outside_rallies_and_preserves_picks(layout
     events = [{"frame": 11, "label": "serve"}, {"frame": 12, "label": "set"}]
     monkeypatch.setattr(pipeline, "load_events", lambda stem: events)
     picked = {"frame": 11, "id": "f11", "status": "ok", "box": [1, 2, 3, 4]}
-    write_jsonl(extraction_store.records_path(video.stem), {}, [picked])
+    write_jsonl(extraction_store.records_path(video.stem), {"association_policy": "p", "ok": 9}, [picked])
     result = pipeline.detect_video(video, person_boxes=path)
     meta, records = read_jsonl(extraction_store.records_path(video.stem))
     assert result == {"events": 2, "detections": 1, "undecodable": 0}
     assert records[0]["detections"][0]["box"] == [100, 100, 300, 400]
     assert records[0]["box"] == picked["box"]
+    # The carried pick keeps its policy; the counts follow the carried rows.
+    assert (meta["association_policy"], meta["ok"], meta["miss"]) == ("p", 1, 1)
     assert records[1]["detections"] == []
     assert meta["source"]["detector"] == boxes.DETECTOR_NAME
     assert meta["source"]["stride"] == 2

@@ -181,8 +181,9 @@ def detect_video(
 
     path = records_path(stem)
     previous: dict[str, dict] = {}
+    previous_meta: dict = {}
     if path.exists():
-        _meta, existing = read_jsonl(path)
+        previous_meta, existing = read_jsonl(path)
         previous = {str(r["id"]): r for r in existing}
 
     cap = cv2.VideoCapture(str(video_path))
@@ -323,6 +324,12 @@ def detect_video(
         "created_at": time.time(),
         **counts,
     }
+    # The picks carried over above keep the policy that made them, and its
+    # outcome counts follow the carried rows.
+    if "association_policy" in previous_meta:
+        header["association_policy"] = previous_meta["association_policy"]
+        for key in ("ok", "multi", "miss"):
+            header[key] = sum(1 for r in records if r["status"] == key)
     RECORDS_DIR.mkdir(parents=True, exist_ok=True)
     write_jsonl(path, header, records)
     return counts
