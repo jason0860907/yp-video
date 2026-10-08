@@ -14,7 +14,6 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { NumberInput } from '@/components/form/Field';
-import { TRACKER_LABEL, TrackerSelect } from '@/components/form/TrackerSelect';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { PipelineChips, Prereqs, STAGE_HINT } from '@/components/video/PipelineChips';
 import { SectionLabel } from '@/components/ui/SectionLabel';
@@ -23,7 +22,7 @@ import { VideoMultiSelectList } from '@/components/video/VideoMultiSelectList';
 import { LiveJob } from '@/components/job/LiveJob';
 import { toast } from '@/components/feedback/toast';
 import { useTypedJobs } from '@/lib/useTypedJobs';
-import type { ExtractionVideo, Job, Tracker } from '@/types/api';
+import type { ExtractionVideo, Job } from '@/types/api';
 
 
 const TRACKING_JOB_TYPE = 'player_tracking';
@@ -32,13 +31,8 @@ export function TrackingPage() {
   const navigate = useNavigate();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [overwrite, setOverwrite] = useState(false);
-  const [stride, setStride] = useState(1);
-  const [tracker, setTracker] = useState<Tracker>('bytetrack');
-  // McByte++ measured best (and ~2.5× faster) on every 2nd frame.
-  const chooseTracker = (t: Tracker) => {
-    setTracker(t);
-    setStride(t === 'mcbyte' ? 2 : 1);
-  };
+  // Every 2nd frame tracked as well as every frame, at half the detection cost.
+  const [stride, setStride] = useState(2);
   const { jobs, upsertJob } = useTypedJobs([TRACKING_JOB_TYPE]);
 
   // The extraction listing is the one that carries every cut with its
@@ -48,8 +42,8 @@ export function TrackingPage() {
     queryFn: () => apiFetch<ExtractionVideo[]>(API.extraction.videos),
   });
   const videos = videosQuery.data ?? [];
-  // Tracks only count when the selected tracker cut them.
-  const isTracked = (v: ExtractionVideo) => v.tracks_current && v.tracker === tracker;
+  // Tracks only count once GTA has refined them.
+  const isTracked = (v: ExtractionVideo) => v.tracks_current && v.tracks_refined === true;
   const tracked = videos.filter(isTracked);
 
   const chosen = videos.filter((v) => selected.has(v.name));
@@ -68,7 +62,7 @@ export function TrackingPage() {
     try {
       const job = await apiFetch<Job>(API.tracklets.run, {
         method: 'POST',
-        body: { videos: names, overwrite, stride, tracker },
+        body: { videos: names, overwrite, stride },
       });
       upsertJob(job);
       toast.success(`Started Rally Tracking for ${names.length} video(s)`);
@@ -104,11 +98,11 @@ export function TrackingPage() {
         <Card>
           <SectionLabel>Config</SectionLabel>
           <p className="mb-3 text-xs leading-relaxed text-text-muted">
-            Dense RF-DETR Seg detection over every rally span, linked into tracklets — one tracker per
-            rally. Needs rally spans only, so it can run while actions are still being labeled.
+            Dense RF-DETR Seg detection over every rally span, linked into tracklets by ByteTrack and
+            repaired by GTA (appearance) — one tracker per rally. Needs rally spans only, so it can run
+            while actions are still being labeled.
           </p>
           <div className="space-y-2">
-            <TrackerSelect value={tracker} onChange={chooseTracker} />
             <label className="block text-xs text-text-secondary">
               <span className="mb-1 block">
                 Stride <span className="text-text-muted">— detect every Nth rally frame</span>
@@ -162,7 +156,7 @@ export function TrackingPage() {
             renderMeta={(v) => (
               <>
                 <PipelineChips pipeline={v.pipeline} />
-                {v.tracks_current && v.tracker && <Badge tone="neutral">{TRACKER_LABEL[v.tracker]}</Badge>}
+                {v.tracks_current && v.tracks_refined === false && <Badge tone="neutral">unrefined</Badge>}
               </>
             )}
             emptySubtitle="Label some rallies first — tracking runs on rally spans"

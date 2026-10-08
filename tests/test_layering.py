@@ -160,7 +160,7 @@ ROUTER_SURFACES = {
         "/crop/{name}/{crop_file}",
     },
     # Who is on court over time. Depends on rally spans and nothing else.
-    "/api/tracklets": {"/trackers", "/run", "/{name}", "/masks/{name}"},
+    "/api/tracklets": {"/run", "/{name}", "/masks/{name}"},
 }
 
 

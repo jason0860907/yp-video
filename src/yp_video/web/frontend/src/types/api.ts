@@ -298,17 +298,15 @@ export interface InferenceVideo {
   /** Machine action pre-annotation exists (action/pre-annotations). */
   has_action_pre: boolean;
   /** Tracklets exist AND were cut against the video's current rallies; an
-   *  Inference run keeps tracking only when this holds for its tracker. */
+   *  Inference run keeps tracking only when they are also GTA-refined. */
   tracks_current: boolean;
-  /** Which tracker cut those tracks; null when there are none. */
-  tracker: Tracker | null;
+  /** Whether GTA refined those tracks; null when there are none. */
+  tracks_refined: boolean | null;
   pipeline: PipelineState;
 }
 
 export type CutKind = 'broadcast' | 'sideline';
 
-/** The association step that linked detections into tracklets. */
-export type Tracker = 'bytetrack' | 'mcbyte';
 
 /** A <select> option as the backend serves it (checkpoints). */
 export interface SelectOption {
@@ -441,8 +439,9 @@ export interface ExtractionVideo {
   /** Tracklets exist, carry masks, and were cut against the video's current
    *  rallies. Tracking without Overwrite redoes everything else. */
   tracks_current: boolean;
-  /** Which tracker cut those tracks; null when there are none. */
-  tracker: Tracker | null;
+  /** Whether GTA refined those tracks (ByteTrack + GTA, the one tracker);
+   *  null when there are none. */
+  tracks_refined: boolean | null;
   pipeline: PipelineState;
 }
 

@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { API, apiFetch, errMsg } from '@/lib/api';
-import { TRACKER_LABEL, TrackerSelect } from '@/components/form/TrackerSelect';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -20,7 +19,7 @@ import { useSpotStatus } from '@/components/spot/useSpotStatus';
 import { toast } from '@/components/feedback/toast';
 import { confirm } from '@/components/feedback/confirm';
 import { useTypedJobs } from '@/lib/useTypedJobs';
-import type { InferenceVideo, Job, Tracker } from '@/types/api';
+import type { InferenceVideo, Job } from '@/types/api';
 
 interface PredSettings {
   checkpoint: string;
@@ -30,7 +29,6 @@ interface PredSettings {
   batch_size: number;
   clip_len: number;
   num_workers: number;
-  tracker: Tracker;
   overwrite: boolean;
 }
 const DEFAULTS: PredSettings = {
@@ -41,7 +39,6 @@ const DEFAULTS: PredSettings = {
   batch_size: 1,
   clip_len: 64,
   num_workers: 1,
-  tracker: 'bytetrack',
   overwrite: false,
 };
 
@@ -57,7 +54,7 @@ const NUM_FIELDS: Array<NumField<PredSettings>> = [
 const hasDetections = (v: InferenceVideo) => v.pipeline.has_records;
 
 /** Fusion supplies rallies, actions and person boxes in one decode.
- *  ByteTrack or McByte++ links the boxes; the person/action head picks who acted
+ *  ByteTrack links the boxes and GTA repairs them; the actor head picks who acted
  *  among each event's tracklets, as App advanced identify does. */
 export function InferencePage() {
   const navigate = useNavigate();
@@ -75,8 +72,8 @@ export function InferencePage() {
   );
 
   const ready = spotReady;
-  // Tracks only count as done when the selected tracker cut them.
-  const tracked = (v: InferenceVideo) => v.tracks_current && v.tracker === settings.tracker;
+  // Tracks only count as done once GTA has refined them.
+  const tracked = (v: InferenceVideo) => v.tracks_current && v.tracks_refined === true;
   const complete = (v: InferenceVideo) =>
     v.has_rally_spot && v.has_action_pre && tracked(v) && hasDetections(v);
   const videos = videosQuery.data ?? [];
@@ -114,7 +111,6 @@ export function InferencePage() {
           batch_size: settings.batch_size,
           clip_len: settings.clip_len,
           num_workers: settings.num_workers,
-          tracker: settings.tracker,
           overwrite: settings.overwrite,
         },
       });
@@ -167,14 +163,7 @@ export function InferencePage() {
           runDisabled={!ready}
           onRun={run}
           runLabel="Run Inference"
-        >
-          <div className="col-span-2">
-            <TrackerSelect
-              value={settings.tracker}
-              onChange={(tracker) => setSettings((s) => ({ ...s, tracker }))}
-            />
-          </div>
-        </PredictConfigCard>
+        />
 
         <Card>
           <VideoMultiSelectList
@@ -198,9 +187,9 @@ export function InferencePage() {
                 {v.has_rally_spot && <Badge tone="accent">rally</Badge>}
                 {v.has_action_pre && <Badge tone="accent">action</Badge>}
                 {tracked(v) ? (
-                  <Badge tone="accent">tracks · {TRACKER_LABEL[settings.tracker]}</Badge>
-                ) : v.tracks_current && v.tracker ? (
-                  <Badge tone="neutral">tracks · {TRACKER_LABEL[v.tracker]}</Badge>
+                  <Badge tone="accent">tracks</Badge>
+                ) : v.tracks_current ? (
+                  <Badge tone="neutral">tracks · unrefined</Badge>
                 ) : (
                   v.pipeline.has_tracks && <Badge tone="neutral">tracks outdated</Badge>
                 )}

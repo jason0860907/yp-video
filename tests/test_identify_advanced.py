@@ -1,4 +1,4 @@
-"""Advanced identify swaps perception: dense RF-DETR Seg + McByte++ instead
+"""Advanced identify swaps perception: dense RF-DETR Seg + ByteTrack + GTA instead
 of fusion person boxes + ByteTrack, and never runs the SPOT pass."""
 
 from __future__ import annotations
@@ -34,14 +34,12 @@ class AdvancedIdentifyTests(unittest.TestCase):
                 identify.identify_players(Path(tmp) / "match.mp4", fusion_checkpoint=checkpoint, **kwargs)
             return track_video, track_person_boxes, run_spot_pass, detect_video
 
-    def test_advanced_tracks_with_mcbyte_and_detects_from_its_sidecar(self):
+    def test_advanced_tracks_with_gta_and_detects_from_its_sidecar(self):
         track_video, track_person_boxes, run_spot_pass, detect_video = self._run(advanced=True)
 
         track_video.assert_called_once()
-        self.assertEqual(track_video.call_args.kwargs["tracker"], "mcbyte")
         self.assertEqual(track_video.call_args.kwargs["stride"], identify.ADVANCED_STRIDE)
         self.assertEqual(track_video.call_args.kwargs["event_frames"], {120, 300})
-        self.assertIs(track_video.call_args.kwargs["moving_camera"], False)
         self.assertIsNone(detect_video.call_args.kwargs.get("person_boxes"))
         track_person_boxes.assert_not_called()
         run_spot_pass.assert_not_called()
@@ -53,7 +51,7 @@ class AdvancedIdentifyTests(unittest.TestCase):
         run_spot_pass.assert_called_once()
         self.assertIsNotNone(run_spot_pass.call_args.kwargs["actor_output"])
         track_person_boxes.assert_called_once()
-        self.assertIs(track_person_boxes.call_args.kwargs["moving_camera"], False)
+        self.assertIs(track_person_boxes.call_args.kwargs["refine"], False)
         self.assertIsNotNone(detect_video.call_args.kwargs["person_boxes"])
 
     def _associate(self, **kwargs):

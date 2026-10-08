@@ -104,7 +104,7 @@ class PerceptionPlanTests(unittest.TestCase):
     inputs exist."""
 
     def test_tracking_needs_rallies_and_keeps_only_matching_tracks(self):
-        skip = lambda **kw: fi.tracking_skip("m", tracker="bytetrack", **kw)  # noqa: E731
+        skip = lambda **kw: fi.tracking_skip("m", **kw)  # noqa: E731
         self.assertEqual(skip(overwrite=False, rallies=False), "no rallies")
         with patch.object(fi, "fusion_tracks_current", return_value=True):
             self.assertEqual(skip(overwrite=False, rallies=True), "kept existing tracks")

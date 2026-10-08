@@ -45,8 +45,8 @@ _BANDS = {
 }
 
 
-#: Advanced tracking detects every 2nd frame: McByte++'s F1 held (0.44 vs
-#: 0.39 at stride 1) while the dense pass costs 2.5× less.
+#: Advanced tracking detects every 2nd frame: tracking F1 held (0.44 vs 0.39
+#: at stride 1, measured with McByte++) while the dense pass costs 2.5× less.
 ADVANCED_STRIDE = 2
 
 
@@ -123,9 +123,9 @@ def identify_players(
     ball at each event it spotted (core/actor_picks.py).
 
     ``advanced`` swaps the fast perception (fusion person boxes + ByteTrack)
-    for dense RF-DETR Seg + McByte++ at stride 2: tracklets hold one person
-    far longer (pairwise F1 0.26 → 0.49 on labeled sideline video) for
-    ~10 extra GPU minutes per video. It reads no fusion boxes, so
+    for dense RF-DETR Seg + ByteTrack + GTA at stride 2: tracklets hold one
+    person far longer (pairwise F1 .477 → .633 over plain ByteTrack on six
+    labeled sideline videos) for a few extra GPU minutes per video. It reads no fusion boxes, so
     ``person_boxes`` and ``actor_picks`` must be None. Those tracklets also carry the identity
     vectors: advanced embeds with extraction/windows.py (masked crops averaged
     over ±1 s of the actor's tracklet), so it takes no ``embedder`` — standard
@@ -167,9 +167,8 @@ def identify_players(
     if advanced:
         if person_boxes is not None:
             raise ValueError("advanced identify runs its own detector and picker; pass no SPOT outputs")
-        # Uploads are filmed by a phone fixed on the sideline: no camera motion.
         track_video(
-            video_path, moving_camera=False, stride=ADVANCED_STRIDE, tracker="mcbyte",
+            video_path, stride=ADVANCED_STRIDE,
             event_frames={e["frame"] for e in events}, on_progress=tracking_cb,
         )
         detect_video(video_path, on_progress=_banded(on_progress, "detecting"))
@@ -189,7 +188,7 @@ def identify_players(
             )
         track_person_boxes(
             video_path,
-            moving_camera=False,
+            refine=False,
             on_progress=(lambda done, total, msg: tracking_cb(80 + int(20 * done / max(total, 1)), 100, msg))
             if tracking_cb else None,
         )
@@ -205,7 +204,7 @@ def identify_players(
         raise ValueError(f"Invalid video geometry: {video_path}")
     associate_cb = _banded(on_progress, "associating")
     if advanced:
-        # The actor head picks among the McByte++ tracklets themselves.
+        # The actor head picks among the GTA-refined tracklets themselves.
         policy = build_policy(video_path, fusion_checkpoint, events, width=width, height=height,
                               tracks=track_paths(stem), on_progress=associate_cb)
     else:
@@ -423,7 +422,7 @@ def _main() -> None:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--embedder", help="Standard identify: fusion boxes + ByteTrack, embedded with this model")
     mode.add_argument("--advanced", action="store_true",
-                      help="RF-DETR Seg + McByte++ tracking and tracklet-window embeddings")
+                      help="RF-DETR Seg + ByteTrack + GTA tracking and tracklet-window embeddings")
     parser.add_argument("--reps-per-unit", type=int, default=3)
     args = parser.parse_args()
 

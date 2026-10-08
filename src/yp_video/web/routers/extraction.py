@@ -78,7 +78,7 @@ def list_videos() -> list[dict]:
             # What the tracking page keys on: tracklets that still serve
             # (see tracklets/store.tracks_current), not merely a file.
             "tracks_current": tracks_store.tracks_current(f.stem),
-            "tracker": tracks_store.tracks_tracker(f.stem),
+            "tracks_refined": tracks_store.tracks_refined(f.stem),
             "pipeline": prerequisites(f.stem).payload(),
         })
     return results

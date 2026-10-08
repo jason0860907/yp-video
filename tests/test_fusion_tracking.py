@@ -15,7 +15,6 @@ from yp_video.extraction import pipeline
 from yp_video.extraction import store as extraction_store
 from yp_video.tracklets import fusion
 from yp_video.tracklets import store as tracks_store
-from yp_video.tracklets import tracking
 from yp_video.web import fusion_inference as fi
 
 
@@ -61,7 +60,7 @@ def test_bytetrack_keeps_native_frames_resets_per_rally_and_removes_old_masks(la
     ])
     masks = tracks_store.tracks_masks_path(video.stem)
     masks.touch()
-    counts = fusion.track_person_boxes(video, moving_camera=False)
+    counts = fusion.track_person_boxes(video, refine=False)
     header, records = read_jsonl(tracks_store.tracks_path(video.stem))
     assert counts == {"rallies": 2, "frames": 30, "tracklets": 2}
     assert [(r["rally_id"], r["track_id"]) for r in records] == [(3, 1), (7, 1)]
@@ -70,37 +69,35 @@ def test_bytetrack_keeps_native_frames_resets_per_rally_and_removes_old_masks(la
     assert 12 not in records[0]["frames"] and 16 in records[0]["frames"]
     assert header["stride"] == 2 and "mask_res" not in header
     assert not masks.exists()
-    assert fusion.fusion_tracks_current(video.stem, "bytetrack")
-    assert not fusion.fusion_tracks_current(video.stem, "mcbyte")
+    assert tracks_store.tracks_refined(video.stem) is False
+    assert fusion.fusion_tracks_current(video.stem, refined=False)
+    assert not fusion.fusion_tracks_current(video.stem, refined=True)
     write_boxes(path, stride=2)
-    assert not fusion.fusion_tracks_current(video.stem, "bytetrack")
+    assert not fusion.fusion_tracks_current(video.stem, refined=False)
 
 
-def test_mcbyte_takes_every_second_sample_and_marks_its_tracks(layout, monkeypatch):
+def test_refine_hands_bytetrack_tracklets_to_gta_and_marks_its_tracks(layout, monkeypatch):
     video = layout / "match.mp4"
     path = boxes.person_boxes_path(video.stem)
     write_boxes(path, stride=2)
     monkeypatch.setattr(fusion, "load_rallies", lambda stem: [{"rally_id": 3, "start": 0, "end": 1}])
     seen = {}
 
-    def track(video_path, detections, spans, **kw):
-        seen.update(detections=detections, spans=spans, **kw)
-        return [{"rally_id": 3, "track_id": 1, "frames": [0, 4, 8, 12, 16],
-                 "boxes": [[100, 100, 300, 400]] * 5, "scores": [0.9] * 5, "det_index": [0] * 5}]
+    def refine(video_path, records, masks, **kw):
+        seen.update(records=records, masks=masks)
+        return [{**records[0], "track_id": 1}], None
 
-    monkeypatch.setattr(fusion.mcbyte, "track", track)
-    counts = fusion.track_person_boxes(video, moving_camera=False, tracker="mcbyte")
+    monkeypatch.setattr(fusion.gta, "refine", refine)
+    counts = fusion.track_person_boxes(video, refine=True)
     header, records = read_jsonl(tracks_store.tracks_path(video.stem))
-    # Samples every 2 native frames; McByte++ tracks every 2nd sample.
-    assert sorted(seen["detections"]) == list(range(0, 31, 4))
-    assert seen["spans"] == [(3, 0, 28)] and seen["stride"] == 4
-    assert seen["track_thresh"] == fusion.FUSION_MCBYTE_TRACK_THRESH and seen["cmc"] is False
-    assert seen["min_frames"] == tracking.MIN_TRACK_FRAMES
-    assert counts["tracklets"] == 1 and "det_index" not in records[0]
-    assert header["stride"] == 4 and header["source"]["tracker"].startswith("McByte++")
-    assert tracks_store.tracks_tracker(video.stem) == "mcbyte"
-    assert fusion.fusion_tracks_current(video.stem, "mcbyte")
-    assert not fusion.fusion_tracks_current(video.stem, "bytetrack")
+    # GTA sees ByteTrack's tracklets over the samples (frames 2 apart); box-only, so no masks.
+    (handed,) = seen["records"]
+    assert handed["frames"] == list(range(handed["frames"][0], 31, 2)) and seen["masks"] is None
+    assert counts["tracklets"] == 1 and header["stride"] == 2
+    assert header["source"]["tracker"].endswith(fusion.gta.SOURCE_SUFFIX)
+    assert tracks_store.tracks_refined(video.stem) is True
+    assert fusion.fusion_tracks_current(video.stem, refined=True)
+    assert not fusion.fusion_tracks_current(video.stem, refined=False)
 
 
 def test_detection_uses_fusion_frames_outside_rallies_and_preserves_picks(layout, monkeypatch):
@@ -206,14 +203,15 @@ def test_full_pipeline_uses_one_spot_pass_and_new_boxes_even_when_labels_exist(l
     def associate(**kwargs):
         _, records = read_jsonl(extraction_store.records_path(video.stem))
         assert records[0]["detections"]
-        assert fusion.fusion_tracks_current(video.stem, "bytetrack")
+        assert fusion.fusion_tracks_current(video.stem, refined=True)
         return {"changed": 1}
 
     monkeypatch.setattr(fi, "run_association_stage", associate)
+    monkeypatch.setattr(fusion.gta, "refine", lambda video_path, records, masks, **kw: (records, masks))
     options = dict(
         video=video, checkpoint=checkpoint,
         rally=RallyOptions(0.5, 2, 4),
-        spot=SpotOptions(4, 0, 64), tracker="bytetrack", moving_camera=False, overwrite=False,
+        spot=SpotOptions(4, 0, 64), overwrite=False,
         on_progress=lambda *args: None,
     )
     result = fi.run_video(**options)

@@ -8,7 +8,7 @@ by the production segmenter, and embedded by the base clip-reident model.
 
 Measured on six labeled sideline videos with McByte++ tracks (cross-tracklet
 mAP): single masked crop 0.608 → this window 0.711. It needs tracklets that
-hold one person, which is why only advanced identify (McByte++) uses it.
+hold one person, which is why only advanced identify (ByteTrack + GTA) uses it.
 
 An event with no linked tracklet has a window of one: its own actor box on
 its own frame. An event nobody acted in keeps a NaN row, as in embed_video.

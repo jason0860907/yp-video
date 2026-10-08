@@ -1,9 +1,9 @@
 """Fusion person boxes → per-rally tracklets, without a detector.
 
 RF-DETR tracking remains the offline label producer; the full Inference
-page uses this consumer of the same SPOT pass that spotted its actions.
-ByteTrack needs only the boxes; McByte++ also decodes the frames it tracks
-(EdgeTAM masks, re-ID crops).
+page and standard identify use this consumer of the same SPOT pass that
+spotted their actions. ByteTrack needs only the boxes; GTA, when asked for,
+also decodes the frames it embeds (tracklets/gta.py).
 """
 
 import time
@@ -15,35 +15,18 @@ from yp_video.core.jsonl import read_jsonl_header, write_jsonl
 from yp_video.core.person_boxes import DETECTOR_NAME, PersonBoxes, person_boxes_path
 from yp_video.core.progress import ProgressFn
 from yp_video.core.rallies import load_rallies, rally_fingerprint
-from yp_video.tracklets import mcbyte
-from yp_video.tracklets.store import (
-    Tracker,
-    tracks_current,
-    tracks_masks_path,
-    tracks_path,
-    tracks_tracker,
-)
+from yp_video.tracklets import gta
+from yp_video.tracklets.store import tracks_current, tracks_masks_path, tracks_path, tracks_refined
 from yp_video.tracklets.tracking import MIN_TRACK_FRAMES
 
-# Fusion boxes score lower than RF-DETR's: at 0.4 they leave as many boxes per
-# frame (~9) as RF-DETR does at McByte++'s default 0.6 (measured 2026-10-01).
-FUSION_MCBYTE_TRACK_THRESH = 0.4
-#: McByte++'s published second-association floor; fusion boxes were only
-#: ever evaluated with it.
-FUSION_MCBYTE_LOW_THRESH = 0.1
-#: McByte++ tracks every this-many-th fusion sample: on three human-named
-#: videos it was faster and no worse than every sample (pairwise F1 0.44 vs
-#: 0.39, 2026-10-01).
-MCBYTE_SAMPLE_STEP = 2
 
-
-def fusion_tracks_current(stem: str, tracker: Tracker) -> bool:
-    """Fresh fusion tracks, cut by ``tracker``."""
-    return tracks_tracker(stem) == tracker and fusion_tracks_fresh(stem)
+def fusion_tracks_current(stem: str, *, refined: bool) -> bool:
+    """Fresh fusion tracks, GTA-refined or not as asked."""
+    return tracks_refined(stem) == refined and fusion_tracks_fresh(stem)
 
 
 def fusion_tracks_fresh(stem: str) -> bool:
-    """Tracks cut from today's fusion person boxes and rallies, by either tracker."""
+    """Tracks cut from today's fusion person boxes and rallies."""
     if not tracks_current(stem):
         return False
     boxes_path = person_boxes_path(stem)
@@ -59,15 +42,13 @@ def fusion_tracks_fresh(stem: str) -> bool:
 def track_person_boxes(
     video_path: Path,
     *,
-    moving_camera: bool,
-    tracker: Tracker = "bytetrack",
+    refine: bool,
     on_progress: ProgressFn | None = None,
 ) -> dict:
     """Track every rally over the sampled person boxes, empty frames included.
 
-    ByteTrack consumes every sample; McByte++ every ``MCBYTE_SAMPLE_STEP``-th,
-    with camera motion compensation when ``moving_camera`` (the caller knows
-    the shot; see tracking.track_video).
+    ``refine`` runs GTA over the ByteTrack tracklets: the Inference page wants
+    App advanced's tracklets; standard identify wants its speed.
     """
     import cv2
     import supervision as sv
@@ -95,14 +76,19 @@ def track_person_boxes(
          np.searchsorted(people.frames, round(r["end"] * fps), side="right"))
         for r in rallies
     ]
-    if tracker == "mcbyte":
-        records, done = _mcbyte_tracks(video_path, people, spans, width, height, moving_camera, on_progress)
-        stride = people.stride * MCBYTE_SAMPLE_STEP
-        source = mcbyte.SOURCE
-    else:
-        records, done = _bytetrack_tracks(people, spans, fps, width, height, on_progress)
-        stride = people.stride
-        source = f"supervision.ByteTrack {sv.__version__}"
+    scale = 2 if refine else 1
+    records, done = _bytetrack_tracks(
+        people, spans, fps, width, height,
+        (lambda d, n, msg: on_progress(d, n * scale, msg)) if on_progress else None,
+    )
+    source = f"supervision.ByteTrack {sv.__version__}"
+    if refine:
+        records, _ = gta.refine(
+            video_path, records, None,
+            on_progress=(lambda d, n, msg: on_progress(done + d * done // max(n, 1), done * scale, msg))
+            if on_progress else None,
+        )
+        source += gta.SOURCE_SUFFIX
 
     counts = {"rallies": len(rallies), "frames": done, "tracklets": len(records)}
     # A box-only model has no masks. Never pair new track IDs with old silhouettes.
@@ -114,7 +100,7 @@ def track_person_boxes(
             "person_boxes_mtime_ns": path.stat().st_mtime_ns,
             "tracker": source,
         },
-        "fps": fps, "frame_size": [width, height], "stride": stride,
+        "fps": fps, "frame_size": [width, height], "stride": people.stride,
         "rallies": {"count": len(rallies), "fingerprint": rally_fingerprint(stem)},
         "created_at": time.time(), "counts": counts,
     }, records)
@@ -149,25 +135,3 @@ def _bytetrack_tracks(people, spans, fps, width, height, on_progress) -> tuple[l
         )
 
     return records, done
-
-
-def _mcbyte_tracks(
-    video_path, people, spans, width, height, moving_camera, on_progress
-) -> tuple[list[dict], int]:
-    """McByte++ over every ``MCBYTE_SAMPLE_STEP``-th sample of each rally."""
-    detections, rally_spans = {}, []
-    for rally_id, start, end in spans:
-        indices = range(int(start), int(end), MCBYTE_SAMPLE_STEP)
-        if not indices:
-            continue
-        for index in indices:
-            detections[int(people.frames[index])] = people.pixels(index, width, height)
-        rally_spans.append((rally_id, int(people.frames[indices[0]]), int(people.frames[indices[-1]])))
-    tracklets = mcbyte.track(
-        video_path, detections, rally_spans, stride=people.stride * MCBYTE_SAMPLE_STEP,
-        track_thresh=FUSION_MCBYTE_TRACK_THRESH, low_thresh=FUSION_MCBYTE_LOW_THRESH,
-        min_frames=MIN_TRACK_FRAMES, cmc=moving_camera, on_progress=on_progress,
-    )
-    for t in tracklets:
-        del t["det_index"]  # box-only: nothing per detection to carry over
-    return tracklets, len(detections)

@@ -12,7 +12,7 @@ to know where the rallies are, not what happened inside them.
 
     store       where tracklets and their packed masks live
     geometry    resolving a box back to the tracklet it belongs to
-    tracking    the dense per-rally RF-DETR pass, linked by ByteTrack or McByte++
-    fusion      the same over the fusion model's person boxes
-    mcbyte      McByte++ association, run by the yp-track package
+    tracking    the dense per-rally RF-DETR pass, ByteTrack then GTA
+    fusion      ByteTrack over the fusion model's person boxes (GTA on request)
+    gta         GTA tracklet refinement, run by the yp-track package
 """

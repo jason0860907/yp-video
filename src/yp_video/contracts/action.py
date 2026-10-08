@@ -151,7 +151,7 @@ TASKS: dict[str, TaskSpec] = {
         ),
         # Who touched the ball, per action event: the person/action head
         # scoring the event's candidate boxes (the SPOT pass picks among the
-        # person head's own; advanced identify among McByte++ tracklets).
+        # person head's own; advanced identify among GTA-refined tracklets).
         # Supervised by the association annotations through
         # yp_spot.person_action.joint, never by Fusion Train.
         TaskSpec(

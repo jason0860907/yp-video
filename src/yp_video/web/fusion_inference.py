@@ -40,7 +40,7 @@ from yp_video.extraction import reassociate
 from yp_video.extraction.pipeline import detect_video, detections_current, load_events
 from yp_video.extraction.store import records_path
 from yp_video.tracklets.fusion import fusion_tracks_current, track_person_boxes
-from yp_video.tracklets.store import Tracker, tracks_path
+from yp_video.tracklets.store import tracks_path
 from yp_video.web.action_annotations import (
     pre_annotation_path,
     save_spot_pre_annotation,
@@ -194,11 +194,11 @@ def run_spot_stages(
 # ----------------------------------------------------- perception stages
 
 
-def tracking_skip(stem: str, *, overwrite: bool, rallies: bool, tracker: Tracker) -> str | None:
+def tracking_skip(stem: str, *, overwrite: bool, rallies: bool) -> str | None:
     """Why tracking does not run for this video, or None to run it."""
     if not rallies:
         return "no rallies"
-    if not overwrite and fusion_tracks_current(stem, tracker):
+    if not overwrite and fusion_tracks_current(stem, refined=True):
         return "kept existing tracks"
     return None
 
@@ -228,12 +228,9 @@ def association_skip(stem: str, *, events: bool) -> str | None:
     return None
 
 
-def run_tracking_stage(
-    *, video: Path, tracker: Tracker, moving_camera: bool, on_progress: StageProgress
-) -> dict:
-    return track_person_boxes(
-        video, moving_camera=moving_camera, tracker=tracker, on_progress=_fractional(on_progress)
-    )
+def run_tracking_stage(*, video: Path, on_progress: StageProgress) -> dict:
+    """ByteTrack + GTA over the fusion boxes: App advanced's tracklets."""
+    return track_person_boxes(video, refine=True, on_progress=_fractional(on_progress))
 
 
 def run_detection_stage(*, video: Path, on_progress: StageProgress) -> dict:
@@ -307,14 +304,11 @@ def run_video(
     checkpoint: Path,
     rally: RallyOptions,
     spot: SpotOptions,
-    tracker: Tracker,
-    moving_camera: bool,
     overwrite: bool,
     on_progress: BatchProgress,
 ) -> VideoResult:
     """Every stage for one video, in order. ``video`` is the cut's canonical
-    path; its bytes are materialized there for the duration. ``moving_camera``
-    says whether the shot pans (broadcast) — tracking compensates for it."""
+    path; its bytes are materialized there for the duration."""
     total = _UNITS_PER_STAGE * len(STAGES)
 
     def stage_progress(first: int, count: int = 1) -> StageProgress:
@@ -354,12 +348,12 @@ def run_video(
         events = load_events(stem)
 
         stage_progress(2)(0.0, "starting")
-        skip = tracking_skip(stem, overwrite=overwrite, rallies=bool(rallies), tracker=tracker)
+        skip = tracking_skip(stem, overwrite=overwrite, rallies=bool(rallies))
         if skip is not None:
             result.skipped["tracking"] = skip
         else:
             counts = run_tracking_stage(
-                video=video, tracker=tracker, moving_camera=moving_camera, on_progress=stage_progress(2),
+                video=video, on_progress=stage_progress(2),
             )
             result.tracklets = counts["tracklets"]
 
