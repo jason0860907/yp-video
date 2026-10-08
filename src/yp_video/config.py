@@ -85,6 +85,7 @@ RALLY_ANNOTATIONS_DIR = VIDEOS_DIR / "rally-spot" / "annotations"
 ACTION_ANNOTATIONS_DIR = VIDEOS_DIR / "action" / "annotations"
 ACTION_PRE_ANNOTATIONS_DIR = VIDEOS_DIR / "action" / "pre-annotations"
 PERSON_ANNOTATIONS_DIR = VIDEOS_DIR / "person" / "annotations"
+PERSON_DENSE_DIR = VIDEOS_DIR / "person" / "dense"
 # Court calibration: the court landmarks a user marked on each video's frame.
 COURT_ANNOTATIONS_DIR = VIDEOS_DIR / "court" / "annotations"
 ACTION_FRAMES_DIR = VIDEOS_DIR / "action" / "frames"

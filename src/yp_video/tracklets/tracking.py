@@ -34,8 +34,6 @@ extraction/links.py.
 
 from __future__ import annotations
 
-import queue
-import threading
 import time
 from pathlib import Path
 
@@ -45,7 +43,8 @@ from yp_video.core.jsonl import write_jsonl
 from yp_video.core.progress import ProgressFn
 from yp_video.core.rallies import load_rallies, rally_fingerprint
 from yp_video.person.detector import DETECTOR_NAME
-from yp_video.person.seg import PERSON_CLASS_ID, SEG_WEIGHTS
+from yp_video.person.seg import SEG_WEIGHTS
+from yp_video.person.seg_batch import BatchSegDetector, span_frames
 from yp_video.tracklets import mcbyte
 from yp_video.tracklets.store import (
     Tracker,
@@ -77,9 +76,6 @@ RFDETR_MCBYTE_TRACK_THRESH = 0.3
 # The traced fp16 graph bakes the batch dimension in, so every call must be
 # exactly this size — partial final batches are padded and sliced.
 BATCH_SIZE = 16
-# Producer→consumer buffer (in frames). Small: it only needs to bridge the
-# jitter between decode and inference, not hold a rally.
-_QUEUE_FRAMES = 4 * BATCH_SIZE
 
 # Stored mask resolution (box-crop space, tall like people). Sized for the
 # Pick Actor silhouettes — 48×96 upscales to a clean outline on 1080p while
@@ -101,55 +97,7 @@ def _pack_mask(mask: np.ndarray, box) -> np.ndarray:
     crop = cv2.resize(mask[y0:y1, x0:x1].astype(np.uint8), (MASK_W, MASK_H), interpolation=cv2.INTER_NEAREST)
     return np.packbits(crop.astype(bool))
 
-class _BatchDetector:
-    """fp16 batch-compiled RF-DETR Seg for the dense pass — person boxes,
-    scores and instance masks in one forward (~14.5 ms/frame at res 432 on
-    the 4090; the dense pass is bound by this, not by decoding).
-
-    Separate from PersonDetector on purpose: optimize_for_inference() halves
-    latency, and the compiled graph only accepts exactly BATCH_SIZE
-    pre-resized tensors.
-    """
-
-    def __init__(self):
-        self._model = None
-        self.resolution: int | None = None
-
-    def ensure(self) -> None:
-        if self._model is not None:
-            return
-        import torch
-        from rfdetr import RFDETRSegMedium
-
-        model = RFDETRSegMedium()
-        self.resolution = model.model_config.resolution
-        model.optimize_for_inference(dtype=torch.float16, batch_size=BATCH_SIZE)
-        self._model = model
-
-    def release(self) -> None:
-        """Free the compiled model's VRAM (~8 GB at BATCH_SIZE). The next
-        ensure() rebuilds it."""
-        if self._model is None:
-            return
-        import gc
-
-        import torch
-
-        self._model = None
-        gc.collect()
-        torch.cuda.empty_cache()
-
-    def predict_batch(self, tensors: list) -> list:
-        """≤BATCH_SIZE preprocessed (C, res, res) tensors → sv.Detections each
-        (person class only, masks included), boxes in resolution-pixel space
-        (callers scale back to frame pixels)."""
-        n = len(tensors)
-        padded = tensors + [tensors[-1]] * (BATCH_SIZE - n)
-        out = self._model.predict(padded, threshold=TRACK_SCORE_THRESHOLD, include_source_image=False)
-        return [det[det.class_id == PERSON_CLASS_ID] for det in out[:n]]
-
-
-_detector = _BatchDetector()
+_detector = BatchSegDetector("RFDETRSegMedium", BATCH_SIZE)
 
 
 def track_video(
@@ -183,7 +131,6 @@ def track_video(
     """
     import cv2
     import supervision as sv
-    import torch
 
     stem = video_path.stem
     rallies = load_rallies(stem)
@@ -218,50 +165,6 @@ def track_video(
     res = _detector.resolution
     box_scale = np.array([frame_w / res, frame_h / res, frame_w / res, frame_h / res])
 
-    # Producer: decode + resize + tensorize on a thread so the GPU never
-    # waits on ffmpeg or cv2. INTER_AREA tracks torchvision's antialiased
-    # downscale (matched-detection IoU 0.99 vs the in-model resize path).
-    frame_q: queue.Queue = queue.Queue(maxsize=_QUEUE_FRAMES)
-    stop = threading.Event()
-    producer_error: list[BaseException] = []
-
-    def _put(item) -> bool:
-        while not stop.is_set():
-            try:
-                frame_q.put(item, timeout=0.5)
-                return True
-            except queue.Full:
-                continue
-        return False
-
-    def produce() -> None:
-        try:
-            for rally_id, f0, f1 in spans:
-                cap.set(cv2.CAP_PROP_POS_FRAMES, f0)
-                for frame_idx in range(f0, f1 + 1):
-                    if stop.is_set() or not cap.grab():
-                        break
-                    if (frame_idx - f0) % stride:
-                        continue
-                    ok, frame = cap.retrieve()
-                    if not ok:
-                        break
-                    rgb = cv2.resize(
-                        cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), (res, res), interpolation=cv2.INTER_AREA
-                    )
-                    tensor = torch.from_numpy(rgb).permute(2, 0, 1).float().div_(255)
-                    if not _put((rally_id, frame_idx, tensor)):
-                        return
-                if stop.is_set():
-                    return
-        except BaseException as exc:  # noqa: BLE001 — surfaced to the consumer
-            producer_error.append(exc)
-        finally:
-            _put(None)
-
-    producer = threading.Thread(target=produce, name=f"track-decode-{stem}", daemon=True)
-    producer.start()
-
     records: list[dict] = []
     masks_store: dict[str, np.ndarray] = {}
     span_detections: dict[int, np.ndarray] = {}
@@ -283,68 +186,65 @@ def track_video(
         tracks.clear()
 
     try:
-        pending: list[tuple[int, int, object]] = []
-        exhausted = False
-        while not exhausted or pending:
-            while not exhausted and len(pending) < BATCH_SIZE:
-                item = frame_q.get()
-                if item is None:
-                    exhausted = True
+        with span_frames(cap, spans, stride=stride, resolution=res, name=f"track-decode-{stem}") as frames:
+            pending: list[tuple[int, int, object]] = []
+            exhausted = False
+            while not exhausted or pending:
+                while not exhausted and len(pending) < BATCH_SIZE:
+                    item = next(frames, None)
+                    if item is None:
+                        exhausted = True
+                        break
+                    pending.append(item)
+                if not pending:
                     break
-                pending.append(item)
-            if not pending:
-                break
-            detections = _detector.predict_batch([p[2] for p in pending])
-            for (rally_id, frame_idx, _), det in zip(pending, detections):
-                if tracker == "bytetrack" and rally_id != current_rally:
-                    # Rally boundary: batches may span it (detection is
-                    # stateless) but the tracker must not.
-                    flush_rally()
-                    current_rally = rally_id
-                    bytetrack = sv.ByteTrack(
-                        frame_rate=max(1, round(fps / stride)),
-                        # Two consecutive hits before a track exists — kills the
-                        # one-frame ghosts a 0.1 detection floor produces in a crowd.
-                        minimum_consecutive_frames=2,
-                    )
-                det.xyxy = det.xyxy * box_scale
-                if event_frames and frame_idx in event_frames:
-                    # Full frame-pixel candidate set, pre-tracker: the sparse
-                    # detect stage wants flicker too.
-                    span_detections[frame_idx] = np.concatenate(
-                        (det.xyxy, det.confidence[:, None]), axis=1
-                    ).astype(np.float32)
-                if tracker == "mcbyte":
-                    frame_detections[frame_idx] = np.concatenate(
-                        (det.xyxy, det.confidence[:, None]), axis=1
-                    ).astype(np.float32)
-                    frame_masks[frame_idx] = [
-                        _pack_mask(m, xyxy / box_scale) for m, xyxy in zip(det.mask, det.xyxy)
-                    ]
+                detections = _detector.predict_batch([p[2] for p in pending], TRACK_SCORE_THRESHOLD)
+                for (rally_id, frame_idx, _), det in zip(pending, detections):
+                    if tracker == "bytetrack" and rally_id != current_rally:
+                        # Rally boundary: batches may span it (detection is
+                        # stateless) but the tracker must not.
+                        flush_rally()
+                        current_rally = rally_id
+                        bytetrack = sv.ByteTrack(
+                            frame_rate=max(1, round(fps / stride)),
+                            # Two consecutive hits before a track exists — kills the
+                            # one-frame ghosts a 0.1 detection floor produces in a crowd.
+                            minimum_consecutive_frames=2,
+                        )
+                    det.xyxy = det.xyxy * box_scale
+                    if event_frames and frame_idx in event_frames:
+                        # Full frame-pixel candidate set, pre-tracker: the sparse
+                        # detect stage wants flicker too.
+                        span_detections[frame_idx] = np.concatenate(
+                            (det.xyxy, det.confidence[:, None]), axis=1
+                        ).astype(np.float32)
+                    if tracker == "mcbyte":
+                        frame_detections[frame_idx] = np.concatenate(
+                            (det.xyxy, det.confidence[:, None]), axis=1
+                        ).astype(np.float32)
+                        frame_masks[frame_idx] = [
+                            _pack_mask(m, xyxy / box_scale) for m, xyxy in zip(det.mask, det.xyxy)
+                        ]
+                        detected += 1
+                        if on_progress:
+                            on_progress(detected, total * scale, f"frame {detected}/{total} · rally {rally_id}")
+                        continue
+                    det = bytetrack.update_with_detections(det)  # masks ride along, aligned
+                    for i, (xyxy, score, tid) in enumerate(zip(det.xyxy, det.confidence, det.tracker_id)):
+                        t = tracks.setdefault(int(tid), {"frames": [], "boxes": [], "scores": [], "masks": []})
+                        t["frames"].append(frame_idx)
+                        # Whole pixels: every consumer (overlay, containment) is
+                        # pixel-grained, and the file holds ~100k boxes.
+                        t["boxes"].append([round(float(v)) for v in xyxy])
+                        t["scores"].append(round(float(score), 2))
+                        # Crop the res-space mask by the res-space box.
+                        t["masks"].append(_pack_mask(det.mask[i], xyxy / box_scale))
                     detected += 1
                     if on_progress:
-                        on_progress(detected, total * scale, f"frame {detected}/{total} · rally {rally_id}")
-                    continue
-                det = bytetrack.update_with_detections(det)  # masks ride along, aligned
-                for i, (xyxy, score, tid) in enumerate(zip(det.xyxy, det.confidence, det.tracker_id)):
-                    t = tracks.setdefault(int(tid), {"frames": [], "boxes": [], "scores": [], "masks": []})
-                    t["frames"].append(frame_idx)
-                    # Whole pixels: every consumer (overlay, containment) is
-                    # pixel-grained, and the file holds ~100k boxes.
-                    t["boxes"].append([round(float(v)) for v in xyxy])
-                    t["scores"].append(round(float(score), 2))
-                    # Crop the res-space mask by the res-space box.
-                    t["masks"].append(_pack_mask(det.mask[i], xyxy / box_scale))
-                detected += 1
-                if on_progress:
-                    on_progress(detected, total, f"frame {detected}/{total} · rally {rally_id}")
-            pending = []
-        flush_rally()
-        if producer_error:
-            raise producer_error[0]
+                        on_progress(detected, total, f"frame {detected}/{total} · rally {rally_id}")
+                pending = []
+            flush_rally()
     finally:
-        stop.set()
-        producer.join(timeout=5)
         cap.release()
 
     if tracker == "mcbyte":
