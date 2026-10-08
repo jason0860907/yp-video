@@ -44,7 +44,7 @@ from yp_video.core.progress import ProgressFn
 from yp_video.core.rallies import load_rallies, rally_fingerprint
 from yp_video.person.detector import DETECTOR_NAME
 from yp_video.person.seg import SEG_WEIGHTS
-from yp_video.person.seg_batch import BatchSegDetector, span_frames
+from yp_video.person.seg_batch import BatchSegDetector, SpanFrame, span_frames
 from yp_video.tracklets import mcbyte
 from yp_video.tracklets.store import (
     Tracker,
@@ -187,7 +187,7 @@ def track_video(
 
     try:
         with span_frames(cap, spans, stride=stride, resolution=res, name=f"track-decode-{stem}") as frames:
-            pending: list[tuple[int, int, object]] = []
+            pending: list[SpanFrame] = []
             exhausted = False
             while not exhausted or pending:
                 while not exhausted and len(pending) < BATCH_SIZE:
@@ -198,8 +198,8 @@ def track_video(
                     pending.append(item)
                 if not pending:
                     break
-                detections = _detector.predict_batch([p[2] for p in pending], TRACK_SCORE_THRESHOLD)
-                for (rally_id, frame_idx, _), det in zip(pending, detections):
+                detections = _detector.predict_batch([p.tensor for p in pending], TRACK_SCORE_THRESHOLD)
+                for (rally_id, frame_idx, _, _), det in zip(pending, detections):
                     if tracker == "bytetrack" and rally_id != current_rally:
                         # Rally boundary: batches may span it (detection is
                         # stateless) but the tracker must not.

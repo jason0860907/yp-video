@@ -12,6 +12,7 @@ from __future__ import annotations
 import queue
 import threading
 from contextlib import contextmanager
+from typing import NamedTuple
 
 from yp_video.person.seg import PERSON_CLASS_ID
 
@@ -100,9 +101,19 @@ class BatchSegDetector:
 
 
 
+class SpanFrame(NamedTuple):
+    rally_id: int
+    #: cv2's native frame index.
+    frame: int
+    #: The frame's presentation time (cv2 CAP_PROP_POS_MSEC), in seconds.
+    time: float
+    #: (C, res, res) float in [0, 1].
+    tensor: object
+
+
 @contextmanager
 def span_frames(cap, spans: list[tuple[int, int, int]], *, stride: int, resolution: int, name: str):
-    """Yield ``(rally_id, frame_idx, tensor)`` over the spans, decoded and
+    """Yield a ``SpanFrame`` per frame of the spans, decoded and
     preprocessed on a producer thread so the GPU never waits on ffmpeg or cv2.
 
     Frame indices are cv2's (seek + grab). INTER_AREA tracks torchvision's
@@ -142,7 +153,8 @@ def span_frames(cap, spans: list[tuple[int, int, int]], *, stride: int, resoluti
                         interpolation=cv2.INTER_AREA,
                     )
                     tensor = torch.from_numpy(rgb).permute(2, 0, 1).float().div_(255)
-                    if not _put((rally_id, frame_idx, tensor)):
+                    time = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000
+                    if not _put(SpanFrame(rally_id, frame_idx, time, tensor)):
                         return
                 if stop.is_set():
                     return

@@ -8,10 +8,16 @@ with its score, so the label threshold is chosen when the labels are written
 rather than baked in here.
 
 One ``<stem>_dense.npz`` per video in PERSON_DENSE_DIR: ``frames`` (int32,
-cv2 frame indices — the tracks' convention — of every rally-span frame),
-``counts`` (int32, boxes on that frame), ``boxes`` (float16, xyxy normalized
-to the frame), ``scores`` (float16) and ``meta`` (JSON: model, floor, fps,
-frame size, rally fingerprint). A frame with zero boxes is a real answer.
+cv2 frame indices — the tracks' convention — of the detected rally-span
+frames), ``times`` (float64, each frame's presentation time in seconds, so a
+reader can align to any other frame index), ``counts`` (int32, boxes on that
+frame), ``boxes`` (float16, xyxy normalized to the frame), ``scores``
+(float16) and ``meta`` (JSON: model, floor, fps, stride, frame size, rally
+fingerprint). A frame with zero boxes is a real answer.
+
+A source above DENSE_MAX_FPS is detected every ``stride``-th frame: its
+neighbours are 17 ms apart, so a label writer gives a skipped frame its
+neighbour's boxes instead of paying for both.
 """
 
 from __future__ import annotations
@@ -36,6 +42,8 @@ DENSE_BATCH_SIZE = 4
 # Low enough to keep the occluded players; the label writer picks the cut.
 DENSE_SCORE_FLOOR = 0.1
 DENSE_SUFFIX = "_dense.npz"
+# Detect at about this rate: a 59.94/60 fps source every 2nd frame.
+DENSE_MAX_FPS = 30.0
 
 _detector = BatchSegDetector(DENSE_VARIANT, DENSE_BATCH_SIZE)
 
@@ -79,18 +87,20 @@ def detect_dense(
     if not fps > 0 or width <= 0 or height <= 0:
         cap.release()
         raise ValueError(f"Invalid video geometry: {video_path}")
+    stride = max(1, round(fps / DENSE_MAX_FPS))
     spans = [(r["rally_id"], int(round(r["start"] * fps)), int(round(r["end"] * fps))) for r in rallies]
-    total = sum(f1 - f0 + 1 for _, f0, f1 in spans)
+    total = sum((f1 - f0) // stride + 1 for _, f0, f1 in spans)
 
     _detector.ensure()
     res = _detector.resolution
     scale = np.array([res, res, res, res], dtype=np.float32)
     frames: list[int] = []
+    times: list[float] = []
     counts: list[int] = []
     boxes: list[np.ndarray] = []
     scores: list[np.ndarray] = []
     try:
-        with span_frames(cap, spans, stride=1, resolution=res, name=f"dense-decode-{stem}") as items:
+        with span_frames(cap, spans, stride=stride, resolution=res, name=f"dense-decode-{stem}") as items:
             pending: list = []
             exhausted = False
             while not exhausted or pending:
@@ -106,10 +116,11 @@ def detect_dense(
                 if not pending:
                     break
                 # Boxes only: the masks rfdetr's predict() post-processes are ~90% of its time.
-                for (_, frame_idx, _), (xyxy, confidence) in zip(
-                    pending, _detector.predict_boxes([p[2] for p in pending], DENSE_SCORE_FLOOR)
+                for (_, frame_idx, seconds, _), (xyxy, confidence) in zip(
+                    pending, _detector.predict_boxes([p.tensor for p in pending], DENSE_SCORE_FLOOR)
                 ):
                     frames.append(frame_idx)
+                    times.append(seconds)
                     counts.append(len(xyxy))
                     boxes.append((xyxy / scale).clip(0, 1).astype(np.float16))
                     scores.append(confidence.astype(np.float16))
@@ -124,6 +135,7 @@ def detect_dense(
         "model": DENSE_VARIANT,
         "score_floor": DENSE_SCORE_FLOOR,
         "fps": fps,
+        "stride": stride,
         "frame_size": [width, height],
         "rallies": {"count": len(spans), "fingerprint": rally_fingerprint(stem)},
         "created_at": time.time(),
@@ -134,6 +146,7 @@ def detect_dense(
     np.savez_compressed(
         part,
         frames=np.asarray(frames, dtype=np.int32),
+        times=np.asarray(times, dtype=np.float64),
         counts=np.asarray(counts, dtype=np.int32),
         boxes=np.concatenate(boxes) if boxes else np.zeros((0, 4), np.float16),
         scores=np.concatenate(scores) if scores else np.zeros((0,), np.float16),
