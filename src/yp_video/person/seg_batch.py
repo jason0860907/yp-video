@@ -61,6 +61,33 @@ class BatchSegDetector:
         gc.collect()
         torch.cuda.empty_cache()
 
+    def predict_boxes(self, tensors: list, threshold: float) -> list:
+        """``predict_batch`` without the masks: ``(xyxy, scores)`` numpy pairs
+        per tensor, person class only, boxes in resolution-pixel space.
+
+        rfdetr's ``predict`` always post-processes masks — every kept query
+        upsampled to the input resolution and copied to the host — which at
+        2XLarge's 768 px is most of a dense pass. This runs the same compiled
+        graph and the same post-processor, handed the box outputs alone.
+        """
+        import torch
+        import torchvision.transforms.functional as F
+
+        model = self._model
+        n = len(tensors)
+        padded = tensors + [tensors[-1]] * (self.batch_size - n)
+        batch = torch.stack([t.to(model.model.device) for t in padded])
+        batch = F.normalize(batch, model.means, model.stds)
+        with torch.no_grad():
+            raw = model.model.inference_model(batch.to(dtype=model._optimized_dtype))
+            sizes = torch.tensor([[self.resolution, self.resolution]] * len(padded), device=model.model.device)
+            results = model.model.postprocess({"pred_logits": raw[1], "pred_boxes": raw[0]}, target_sizes=sizes)
+        out = []
+        for result in results[:n]:
+            keep = (result["scores"] > threshold) & (result["labels"] == PERSON_CLASS_ID)
+            out.append((result["boxes"][keep].float().cpu().numpy(), result["scores"][keep].float().cpu().numpy()))
+        return out
+
     def predict_batch(self, tensors: list, threshold: float) -> list:
         """≤batch_size preprocessed (C, res, res) tensors → sv.Detections each
         (person class only, masks included), boxes in resolution-pixel space

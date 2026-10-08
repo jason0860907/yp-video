@@ -105,11 +105,14 @@ def detect_dense(
                     pending.append(item)
                 if not pending:
                     break
-                for (_, frame_idx, _), det in zip(pending, _detector.predict_batch([p[2] for p in pending], DENSE_SCORE_FLOOR)):
+                # Boxes only: the masks rfdetr's predict() post-processes are ~90% of its time.
+                for (_, frame_idx, _), (xyxy, confidence) in zip(
+                    pending, _detector.predict_boxes([p[2] for p in pending], DENSE_SCORE_FLOOR)
+                ):
                     frames.append(frame_idx)
-                    counts.append(len(det))
-                    boxes.append((det.xyxy / scale).clip(0, 1).astype(np.float16))
-                    scores.append(det.confidence.astype(np.float16))
+                    counts.append(len(xyxy))
+                    boxes.append((xyxy / scale).clip(0, 1).astype(np.float16))
+                    scores.append(confidence.astype(np.float16))
                 if on_progress:
                     on_progress(len(frames), total, f"frame {len(frames)}/{total}")
                 pending = []
