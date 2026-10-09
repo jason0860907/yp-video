@@ -153,10 +153,12 @@ TASKS: dict[str, TaskSpec] = {
         # Who touched the ball, per action event: the person/action head
         # scoring the event's candidate boxes (the SPOT pass picks among the
         # person head's own; advanced identify among GTA-refined tracklets).
-        # Supervised by the association annotations through
-        # yp_spot.person_action.joint, never by Fusion Train.
+        # Supervised by the association annotations: actor/training_labels.py
+        # writes one row per labelled event (the actor's box first, then the
+        # event frame's other 2XLarge boxes), and the trainer draws them as
+        # their own stream, split by the action stream's videos.
         TaskSpec(
-            "actor", "Actor", "aux", "actor-annotations", "*_actors.json",
+            "actor", "Actor", "aux", "actor-events", "*_actor_events.jsonl",
             (), ("action", "location", "person"), "actor_hit", False,
         ),
     )
@@ -331,6 +333,9 @@ class ActionLabel(str, Enum):
 # Canonical labels: ordered tuple for UI/display, frozenset for membership.
 ACTION_LABELS_ORDERED = tuple(label.value for label in ActionLabel)
 ACTION_LABELS = frozenset(ACTION_LABELS_ORDERED)
+#: Touches a player makes — the actor head's classes (yp_spot
+#: model/actor_head.CLASSES). A score has nobody to point at.
+ACTOR_LABELS = ACTION_LABELS - {ActionLabel.score.value}
 
 
 class CourtSide(str, Enum):

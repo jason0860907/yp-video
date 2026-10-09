@@ -12,6 +12,7 @@ Layout, lowest first:
     policy           what reassociation asks a policy and what it gets back
     candidates       tracklets near an event, as the head's candidate boxes
     person_action    the joint person/action head across the SPOT boundary
+    training_labels  the head's per-event training rows for Fusion Train
     review           review progress over the human verdicts
 
 Nothing in here imports ``yp_video.reid``.

@@ -32,7 +32,7 @@ The verdict IS the state, and says who chose the box:
 
 Only the first two override the automatic pick (``ActorLabel.overrides_auto``)
 — a confirmation agrees with it by definition. All three are training truth
-for the person/action head (yp-spot scripts/prepare_person_action.py).
+for the person/action head (actor/training_labels.py, through Fusion Train).
 
 Player identity is a different label with a different lifetime, and a
 different directory: ``videos/reid/annotations/<stem>_players.json`` (see
