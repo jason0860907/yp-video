@@ -90,26 +90,62 @@ def write_person_labels(
     return {"label_dir": str(label_dir), "min_score": PERSON_LABEL_MIN_SCORE, **counts}
 
 
+class DensePass:
+    """One video's dense pass (person/dense.py), read frame by frame.
+
+    ``at`` answers for any native frame without expanding the whole video —
+    a request needs a handful of frames, the label writer all of them. A
+    source the pass strode (above 30 fps) gives each skipped frame the boxes
+    of the detected frame before it — 17 ms apart — but only inside a span:
+    the next detected frame must be exactly one stride on."""
+
+    def __init__(self, path: Path) -> None:
+        with np.load(path, allow_pickle=False) as data:
+            self.meta: dict = json.loads(str(data["meta"]))
+            self.frames = data["frames"]
+            counts = data["counts"]
+            self._boxes, self._scores = data["boxes"].astype(np.float32), data["scores"]
+        self.fps = float(self.meta["fps"])
+        self.stride = int(self.meta.get("stride") or 1)
+        self._ends = np.cumsum(counts)
+        self._starts = self._ends - counts
+
+    def rows(self, frames: np.ndarray) -> np.ndarray:
+        """The detected row each frame takes its boxes from; -1 = not covered."""
+        frames = np.asarray(frames)
+        n = len(self.frames)
+        if not n:
+            return np.full(frames.shape, -1)
+        i = np.searchsorted(self.frames, frames, side="right") - 1
+        start = self.frames[np.maximum(i, 0)]
+        following = self.frames[np.minimum(i + 1, n - 1)]
+        strode = (frames - start < self.stride) & (i + 1 < n) & (following == start + self.stride)
+        return np.where((i >= 0) & ((frames == start) | strode), i, -1)
+
+    def row_boxes(self, row: int, min_score: float) -> tuple[list[list[float]], list[float]]:
+        """One detected row's normalized boxes and scores at or above ``min_score``."""
+        start, end = self._starts[row], self._ends[row]
+        kept = self._scores[start:end] >= min_score
+        return self._boxes[start:end][kept].tolist(), self._scores[start:end][kept].astype(float).tolist()
+
+    def at(self, frame: int, min_score: float) -> tuple[list[list[float]], list[float]] | None:
+        """``frame``'s boxes and scores, or None when the pass did not cover it."""
+        row = int(self.rows(np.array([frame]))[0])
+        return None if row < 0 else self.row_boxes(row, min_score)
+
+
 def dense_frame_boxes(path: Path, *, min_score: float) -> tuple[float, dict[int, list[list[float]]]]:
     """The pass's fps and ``{frame: [normalized xyxy, ...]}`` of its boxes at
-    or above ``min_score``, one entry per covered frame (empty = nobody).
-
-    A source the pass strode (above 30 fps) gives each skipped frame the
-    boxes of the detected frame before it — 17 ms apart — so the labels
-    cover every native frame of the span."""
-    with np.load(path, allow_pickle=False) as data:
-        meta = json.loads(str(data["meta"]))
-        frames, box_counts = data["frames"], data["counts"]
-        boxes, scores = data["boxes"].astype(np.float32), data["scores"]
-    stride = int(meta.get("stride") or 1)
-    ends = np.cumsum(box_counts)
-    out: dict[int, list[list[float]]] = {}
-    for i, frame in enumerate(frames.tolist()):
-        start = ends[i] - box_counts[i]
-        kept = boxes[start:ends[i]][scores[start:ends[i]] >= min_score].tolist()
-        out[frame] = kept
-        # Fill only inside a span: the next detected frame is one stride on.
-        if i + 1 < len(frames) and frames[i + 1] == frame + stride:
-            for skipped in range(frame + 1, frame + stride):
-                out[skipped] = kept
-    return float(meta["fps"]), out
+    or above ``min_score``, one entry per covered frame (empty = nobody),
+    strode frames included (see DensePass)."""
+    dense = DensePass(path)
+    if not len(dense.frames):
+        return dense.fps, {}
+    kept = [dense.row_boxes(row, min_score)[0] for row in range(len(dense.frames))]
+    candidates = np.arange(dense.frames[0], dense.frames[-1] + 1)
+    rows = dense.rows(candidates)
+    covered = rows >= 0
+    return dense.fps, {
+        frame: kept[row]
+        for frame, row in zip(candidates[covered].tolist(), rows[covered].tolist())
+    }

@@ -21,6 +21,7 @@ from pathlib import Path
 
 from yp_video.action.frames import inspect_action_frame_cache
 from yp_video.actor import review as actor_review
+from yp_video.actor.box_check import pending_count as box_check_pending
 from yp_video.config import cut_kind_of
 from yp_video.core import label_done
 from yp_video.core.jsonl import read_jsonl_header
@@ -170,6 +171,9 @@ def association_videos() -> list[dict]:
                 # The re-pick worklist (links.unresolved_labels): labels no
                 # tracklet can be derived for today, whatever their verdict.
                 "unresolved": len(links.unresolved_labels(path.stem)),
+                # The 2XLarge box-check queue (actor/box_check.py): label
+                # boxes the person-head snapshot cannot match to a dense box.
+                "box_check": box_check_pending(path.stem),
                 # The human "I'm finished" flag — a verdict counts can't
                 # derive, same as ReID's (see core/label_done.py).
                 "done": done,

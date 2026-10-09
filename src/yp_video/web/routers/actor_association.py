@@ -16,6 +16,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from yp_video.actor import labels as actor_labels
+from yp_video.actor.box_check import box_check
 from yp_video.core import label_done
 from yp_video.core.jsonl import read_jsonl_cached
 from yp_video.extraction import actor_fix, links
@@ -37,6 +38,14 @@ router = APIRouter()
 @router.get("/videos")
 def list_videos() -> list[dict]:
     return worklists.association_videos()
+
+
+@router.get("/box-check/{name}")
+def get_box_check(name: str) -> list[dict]:
+    """Every boxed actor label checked against the 2XLarge dense pass —
+    the snapshot's rule (actor/box_check.py), with the event frame's dense
+    boxes for the reviewer to pick from. Empty without a dense pass."""
+    return box_check(Path(unquote(name)).stem)
 
 
 class DoneRequest(StrictModel):
