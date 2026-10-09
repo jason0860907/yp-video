@@ -8,6 +8,11 @@ export const METRIC_LABELS: Record<string, string> = {
   winner_top1: 'Winner Top-1',
   side_top1: 'Side Top-1',
   jump_balanced_accuracy: 'Jump balanced acc.',
+  actor_hit: 'Actor hit',
+  joint_hit: 'Actor + action hit',
+  class_hit: 'Action hit',
+  proposal_hit: 'Actor proposed',
+  actor_same_person: 'Actor same person',
   accuracy: 'Accuracy',
   majority_baseline: 'Majority baseline',
   loss: 'Loss',
@@ -20,7 +25,8 @@ export const TASK_LABELS: Record<string, string> = {
   location: 'Location',
   side: 'Side',
   jump: 'Jump',
+  actor: 'Actor',
 };
 
 /** Fixed task order so every run lists and colors its tasks the same way. */
-export const TASK_ORDER = ['action', 'rally', 'winner', 'location', 'side', 'jump'] as const;
+export const TASK_ORDER = ['action', 'rally', 'winner', 'location', 'side', 'jump', 'actor'] as const;

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { cn } from '@/lib/cn';
 import { METRIC_LABELS, TASK_LABELS, TASK_ORDER } from '@/components/train/metricLabels';
 import type {
+  ActorBreakdown,
   LocationBreakdown,
   SpottingBreakdown,
   TaskMetricSnapshot,
@@ -99,6 +100,8 @@ function TaskSection({ task, snapshot }: { task: string; snapshot: TaskMetricSna
           <ConfusionView bd={breakdown as ConfusionBreakdown} majority={validation.metrics.majority_baseline} />
         ) : task === 'location' ? (
           <LocationView bd={breakdown as LocationBreakdown} />
+        ) : task === 'actor' ? (
+          <ActorView bd={breakdown as ActorBreakdown} />
         ) : (
           <SpottingView bd={breakdown as SpottingBreakdown} segment={task === 'rally'} noun={noun} />
         )}
@@ -217,6 +220,47 @@ function LocationView({ bd }: { bd: LocationBreakdown }) {
       </div>
       <PerVideoTable rows={bd.per_video.map((v) => ({ video: v.video, value: v.spatial, events: v.events }))} metric="mAP" noun="events" />
     </>
+  );
+}
+
+/** Per touch: whether the actor was among the person head's boxes, and
+ *  how often the head picked them (and the touch) — beside the pick among
+ *  the annotated boxes, the bound a perfect detector would allow. */
+function ActorView({ bd }: { bd: ActorBreakdown }) {
+  const served = bd.predicted_proposals;
+  const bound = bd.annotated_proposals;
+  const rows = [
+    { name: 'all', served, bound },
+    ...Object.entries(served.by_class ?? {}).map(([name, row]) => ({ name, served: row, bound: bound.by_class?.[name] })),
+  ];
+  return (
+    <div className={BOX}>
+      <div className={CAPTION}>Held-out events · served = person head boxes · bound = annotated boxes</div>
+      <table className={TABLE}>
+        <thead>
+          <tr className="text-text-muted">
+            <th className={HEAD}>touch</th>
+            <th className={NUM_HEAD}>events</th>
+            <th className={NUM_HEAD}>proposed</th>
+            <th className={NUM_HEAD}>actor</th>
+            <th className={NUM_HEAD}>actor + action</th>
+            <th className={cn(NUM_HEAD, 'border-l border-border')}>bound actor</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(({ name, served: row, bound: upper }) => (
+            <tr key={name}>
+              <td className="py-0.5 pr-2 text-left text-text-secondary">{name}</td>
+              <td className={cn(NUM, 'text-text-secondary')}>{row.events.toLocaleString()}</td>
+              <td className={cn(NUM, 'text-text-secondary')}>{pct(row.proposal_hit)}</td>
+              <td className={cn(NUM, 'text-text-primary')}>{pct(row.actor_hit)}</td>
+              <td className={cn(NUM, 'text-text-primary')}>{pct(row.joint_hit)}</td>
+              <td className={cn(NUM, 'border-l border-border text-text-secondary')}>{pct(upper?.actor_hit)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

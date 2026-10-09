@@ -221,7 +221,24 @@ export interface ConfusionBreakdown {
   recall: Record<string, number | null>;
 }
 
-export type TaskBreakdown = SpottingBreakdown | LocationBreakdown | ConfusionBreakdown;
+/** One event-metric summary of the actor head (yp-spot actor_training.EventMetrics). */
+export interface ActorEventSummary {
+  events: number;
+  proposal_hit: number | null;
+  actor_hit: number | null;
+  class_hit: number | null;
+  joint_hit: number | null;
+  by_class?: Record<string, Omit<ActorEventSummary, 'by_class'>>;
+}
+
+/** The actor head over held-out events: picking among the annotated boxes
+ *  (the upper bound) and among the person head's own (what is served). */
+export interface ActorBreakdown {
+  annotated_proposals: ActorEventSummary;
+  predicted_proposals: ActorEventSummary;
+}
+
+export type TaskBreakdown = SpottingBreakdown | LocationBreakdown | ConfusionBreakdown | ActorBreakdown;
 
 export interface TaskMetricPhase {
   loss: number | null;
