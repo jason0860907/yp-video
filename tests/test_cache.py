@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from yp_video.core.cache import StatCache
+from yp_video.core.cache import DiskStatCache, StatCache
 from yp_video.core.jsonl import write_jsonl
 from yp_video.tracklets.store import load_tracklets
 
@@ -101,3 +101,23 @@ class TrackletCacheTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DiskStatCacheTests(unittest.TestCase):
+    def test_a_value_survives_a_new_instance_until_its_source_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_dir:
+            root = Path(raw_dir)
+            source, store = root / "source", root / "cache.json"
+            source.write_text("a")
+            calls = []
+
+            def compute() -> int:
+                calls.append(1)
+                return len(calls)
+
+            self.assertEqual(DiskStatCache(store).get("k", [source], compute), 1)
+            # A restart: a fresh instance reads the file instead of computing.
+            self.assertEqual(DiskStatCache(store).get("k", [source], compute), 1)
+            source.write_text("changed")
+            self.assertEqual(DiskStatCache(store).get("k", [source], compute), 2)
+            self.assertEqual(len(calls), 2)

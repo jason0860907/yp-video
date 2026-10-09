@@ -16,12 +16,15 @@ against resident-memory measurements for that one value type.
 
 from __future__ import annotations
 
+import json
 import os
 import threading
 from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TypeVar
+
+from yp_video.core.jsonl import atomic_write
 
 T = TypeVar("T")
 
@@ -81,4 +84,35 @@ class StatCache:
             ):
                 _evicted_key, evicted = self._entries.popitem(last=False)
                 self._source_bytes -= evicted[2]
+        return value
+
+
+class DiskStatCache:
+    """StatCache for small JSON values that must survive a restart.
+
+    Same validity rule — an entry holds while every source path's
+    (st_mtime_ns, st_size) matches — persisted to one JSON file, so a value
+    whose derivation reads hundreds of MB is computed once per change rather
+    than once per process. For counts and other tiny values only: the whole
+    file is rewritten (atomically) on every miss.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self._path = path
+        self._entries: dict | None = None
+        self._lock = threading.Lock()
+
+    def get(self, key: str, paths: Sequence[Path], compute: Callable[[], T]) -> T:
+        stats = [[str(p), s.st_mtime_ns, s.st_size] for p, s in ((p, os.stat(p)) for p in paths)]
+        with self._lock:
+            if self._entries is None:
+                self._entries = json.loads(self._path.read_text()) if self._path.exists() else {}
+            hit = self._entries.get(key)
+            if hit is not None and hit["stats"] == stats:
+                return hit["value"]
+        value = compute()
+        with self._lock:
+            self._entries[key] = {"stats": stats, "value": value}
+            with atomic_write(self._path) as out:
+                json.dump(self._entries, out, ensure_ascii=False)
         return value

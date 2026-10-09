@@ -18,7 +18,7 @@ from yp_video.actor import labels as actor_labels
 from yp_video.actor.box_check import box_check, pending_count
 from yp_video.actor.labels import ActorLabel, ActorVerdict
 from yp_video.actor.person_labels import DensePass
-from yp_video.core.cache import StatCache
+from yp_video.core.cache import DiskStatCache, StatCache
 from yp_video.core.jsonl import write_jsonl
 from yp_video.extraction import done
 from yp_video.extraction import store as extraction_store
@@ -118,6 +118,7 @@ def scratch_video(actors: dict | None = None):
             patch.object(actor_labels, "actors_path", return_value=actors_file),
             patch.object(actor_labels._store, "_cache", StatCache()),
             patch.object(box_check_module, "_cache", StatCache()),
+            patch.object(box_check_module, "_pending", DiskStatCache(root / "pending.json")),
         ):
             yield
 

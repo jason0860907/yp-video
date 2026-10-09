@@ -15,6 +15,8 @@ pixels only for the one video a page asks for.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from yp_video.actor import labels as actor_labels
 from yp_video.actor.box_style import (
     SNAPPED,
@@ -24,11 +26,15 @@ from yp_video.actor.box_style import (
     resolve_target,
     settle,
 )
-from yp_video.core.cache import StatCache
+from yp_video.config import ASSOCIATION_DIR
+from yp_video.core.cache import DiskStatCache, StatCache
 from yp_video.extraction.store import action_source_paths, labelable_actions
 from yp_video.person.dense import DENSE_SCORE_FLOOR, dense_path
 
 _cache = StatCache()
+#: The work list's counts, kept across restarts: deriving them reads every
+#: video's dense pass (~20 s cold), which only changes when its files do.
+_pending = DiskStatCache(ASSOCIATION_DIR / "box-check-pending.json")
 
 
 def box_check(stem: str) -> list[dict]:
@@ -60,16 +66,32 @@ def box_check(stem: str) -> list[dict]:
 
 def pending_count(stem: str) -> int:
     """Events whose label box needs a look (a status other than SNAPPED)."""
-    checked = _checked(stem)
-    if checked is None:
+    sources = _sources(stem)
+    if sources is None:
         return 0
-    return sum(entry["status"] not in (None, SNAPPED) for entry in checked[1])
+    try:
+        return _pending.get(stem, sources, lambda: sum(
+            entry["status"] not in (None, SNAPPED) for entry in (_checked(stem) or (None, []))[1]
+        ))
+    except FileNotFoundError:
+        return 0  # deleted between exists() and stat
 
 
 def _checked(stem: str) -> tuple[tuple[int, int], list[dict]] | None:
     """The cached check: frame size and entries whose dense boxes stay
     normalized — the work list only counts statuses, and converting every
     box of every video to pixels was most of what its first build cost."""
+    sources = _sources(stem)
+    if sources is None:
+        return None
+    try:
+        return _cache.get(stem, sources, lambda: _check(stem))
+    except FileNotFoundError:
+        return None  # deleted between exists() and stat
+
+
+def _sources(stem: str) -> list[Path] | None:
+    """The files a video's check reads, or None when it has nothing to check."""
     sources = action_source_paths(stem)
     if not sources or not dense_path(stem).exists():
         return None
@@ -77,10 +99,7 @@ def _checked(stem: str) -> tuple[tuple[int, int], list[dict]] | None:
     labels = actor_labels.actors_path(stem)
     if labels.exists():
         sources.append(labels)
-    try:
-        return _cache.get(stem, sources, lambda: _check(stem))
-    except FileNotFoundError:
-        return None  # deleted between exists() and stat
+    return sources
 
 
 def _check(stem: str) -> tuple[tuple[int, int], list[dict]] | None:
