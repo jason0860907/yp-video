@@ -23,7 +23,7 @@ import { Card } from '@/components/ui/Card';
 import { STAGE_HINT } from '@/components/video/PipelineChips';
 import { toast } from '@/components/feedback/toast';
 import { EventVideoPlayer, type PlayerHandle } from '@/components/labeling/EventVideoPlayer';
-import { canConfirm, type ActorFix, type ActorVerdict, type TrackData } from '@/components/labeling/shared';
+import { canConfirm, type ActorFix, type ActorVerdict } from '@/components/labeling/shared';
 import { useVideoLabelingData } from '@/components/labeling/useVideoLabelingData';
 import type {
   AssociationVideo,
@@ -39,13 +39,11 @@ export const ASSOCIATION_MODE: ModeDescriptor = {
   label: 'Association',
   statusOptions: [
     ...STATUS_OPTIONS,
-    { value: 'unresolved', label: 'Needs re-pick' },
     { value: 'boxcheck', label: '2XL box check' },
   ],
   status: assocStatus,
   matches: (row, status) => {
     if (status === 'all') return true;
-    if (status === 'unresolved') return (row.assoc?.unresolved ?? 0) > 0;
     if (status === 'boxcheck') return (row.assoc?.box_check ?? 0) > 0;
     return assocStatus(row) === status;
   },
@@ -61,13 +59,8 @@ export const ASSOCIATION_MODE: ModeDescriptor = {
       <>
         <span className="shrink-0 font-mono text-[10px] tabular-nums text-text-muted">{v.event_count}ev</span>
         {v.reviewed > 0 && v.unreviewed > 0 && <Badge tone="warning">{v.unreviewed} left</Badge>}
-        {v.unresolved > 0 && (
-          <span title="Verdicts resolving to no tracklet — re-pick these players so tracklet training can use them">
-            <Badge tone="warning">{v.unresolved} re-pick</Badge>
-          </span>
-        )}
         {v.box_check > 0 && (
-          <span title="Actor boxes that match no 2XLarge box clearly — pick the right one in pick mode">
+          <span title="Actor boxes that are not a 2XLarge box on their event frame — pick the right one in pick mode">
             <Badge tone="info">{v.box_check} 2XL</Badge>
           </span>
         )}
@@ -89,17 +82,17 @@ export function AssociationPanel({ video, clock }: { video: string; clock?: Play
   });
   const videos = useMemo(() => videosQuery.data ?? [], [videosQuery.data]);
 
-  const { records, meta, tracksQuery, actionEvents } = useVideoLabelingData(video);
-  // The 2XLarge box-check queue: events whose label box the person-head
-  // snapshot cannot match to a dense box. Snapped events need nothing.
-  const boxCheckQuery = useQuery({
+  const { records, meta, tracksQuery, trackLinks, actionEvents } = useVideoLabelingData(video);
+  // Every event's 2XLarge boxes — what a pick clicks — and its label's box
+  // check (actor/box_check.py).
+  const eventBoxesQuery = useQuery({
     queryKey: ['association-box-check', video],
     queryFn: () => apiFetch<BoxCheckEntry[]>(API.association.boxCheck(video)),
     enabled: Boolean(video),
   });
-  const boxChecks = useMemo(
-    () => new Map((boxCheckQuery.data ?? []).filter((e) => e.status !== 'snapped').map((e) => [e.id, e])),
-    [boxCheckQuery.data],
+  const eventBoxes = useMemo(
+    () => new Map((eventBoxesQuery.data ?? []).map((e) => [e.id, e])),
+    [eventBoxesQuery.data],
   );
   const rallies = useMemo(() => meta.rallies ?? [], [meta.rallies]);
 
@@ -115,8 +108,8 @@ export function AssociationPanel({ video, clock }: { video: string; clock?: Play
         method: 'POST',
         body: { event_id: eventId, ...fix },
       });
-      // The POST returns the changed record and its one track link — patch
-      // the two large payloads locally instead of downloading them again.
+      // The POST returns the changed record — patch the large records
+      // payload locally instead of downloading it again.
       qc.setQueryData<{ meta: Record<string, unknown>; records: ReidRecord[] }>(
         ['extraction-records', video],
         (current) =>
@@ -127,13 +120,6 @@ export function AssociationPanel({ video, clock }: { video: string; clock?: Play
               }
             : current,
       );
-      qc.setQueryData<TrackData | null>(['tracklets', video], (current) => {
-        if (!current) return current;
-        const links = { ...current.links };
-        if (result.track_link) links[eventId] = result.track_link;
-        else delete links[eventId];
-        return { ...current, links };
-      });
       toast.success(
         fix.mode === 'occluded'
           ? 'Marked as occluded'
@@ -145,6 +131,7 @@ export function AssociationPanel({ video, clock }: { video: string; clock?: Play
       // are stale — ReID Label refetches them when it next mounts.
       void qc.invalidateQueries({ queryKey: ['association-videos'] });
       void qc.invalidateQueries({ queryKey: ['association-box-check', video] });
+      void qc.invalidateQueries({ queryKey: ['tracklet-links', video] });
       void qc.invalidateQueries({ queryKey: ['label-stats'] });
       void qc.invalidateQueries({ queryKey: ['reid-clusters', video], refetchType: 'none' });
       void qc.invalidateQueries({ queryKey: ['reid-players', video], refetchType: 'none' });
@@ -194,7 +181,11 @@ export function AssociationPanel({ video, clock }: { video: string; clock?: Play
               }
             : current,
       );
+      // A confirmed label's box (not the policy's tracklet) now decides its
+      // link, and is checked against the 2XLarge boxes.
       void qc.invalidateQueries({ queryKey: ['association-videos'] });
+      void qc.invalidateQueries({ queryKey: ['association-box-check', video] });
+      void qc.invalidateQueries({ queryKey: ['tracklet-links', video] });
       void qc.invalidateQueries({ queryKey: ['label-stats'] });
       const n = Object.keys(confirmed).length;
       const occluded = Object.values(confirmed).filter((v) => v === 'occluded').length;
@@ -241,8 +232,8 @@ export function AssociationPanel({ video, clock }: { video: string; clock?: Play
           confirmableIds={confirmableIds}
           onConfirmRally={(ids) => void confirmAuto(ids)}
           fixing={Boolean(fixingEvent)}
-          trackLinks={tracksQuery.data?.links ?? {}}
-          boxChecks={boxChecks}
+          trackLinks={trackLinks}
+          eventBoxes={eventBoxes}
         />
       )}
 

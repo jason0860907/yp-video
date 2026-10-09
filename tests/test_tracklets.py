@@ -19,7 +19,6 @@ from unittest.mock import patch
 import numpy as np
 
 from yp_video.actor.labels import ActorLabel, ActorVerdict
-from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import write_jsonl
 from yp_video.extraction import links
 from yp_video.extraction import store as extraction_store
@@ -238,17 +237,15 @@ class ResolveTrackTests(unittest.TestCase):
 
 
 class EventTrackPrecedenceTests(unittest.TestCase):
-    """A named tracklet outranks the one the box happens to sit on.
+    """Which tracklet an event's actor is: a human label's box, else the
+    policy's tracklet, else the policy's box.
 
-    Geometry is the fallback for a policy that answered with a BOX. Running it
-    over an answer that already named a tracklet is what made a deliberate
-    pick look like it did nothing: two overlapping players each resolve to a
-    box matching the other's tracklet, so the board kept showing the one you
-    had just clicked away from. Measured at 6.7% of picks on real data.
+    A label carries no tracklet — ``track_id`` restarts per rally and every
+    re-track renumbers — so its box finds the tracklet by geometry each time.
     """
 
     #: Two players standing on top of each other. The record's box matches
-    #: ACTOR geometrically; the human named the BYSTANDER.
+    #: ACTOR geometrically; the human picked the BYSTANDER.
     ACTOR = _tracklet(1, 1, [100], [100, 100, 140, 200])
     BYSTANDER = _tracklet(1, 2, [100], [104, 100, 148, 200])
     RECORD = {
@@ -259,7 +256,7 @@ class EventTrackPrecedenceTests(unittest.TestCase):
     }
 
     @contextmanager
-    def _video(self, labels, tracklets=None):
+    def _video(self, labels, tracklets=None, record=None):
         """``tracklets`` stands in for a re-tracking run that renumbered."""
         tracklets = [self.ACTOR, self.BYSTANDER] if tracklets is None else tracklets
         with tempfile.TemporaryDirectory() as raw_dir:
@@ -267,7 +264,7 @@ class EventTrackPrecedenceTests(unittest.TestCase):
             tracks, records = root / "t.jsonl", root / "r.jsonl"
             action = root / "match_actions.jsonl"
             write_jsonl(tracks, {"stride": 1}, tracklets)
-            write_jsonl(records, {"video": "match"}, [self.RECORD])
+            write_jsonl(records, {"video": "match"}, [record or self.RECORD])
             write_jsonl(action, {"video": "match"}, [{"id": "e1", "frame": 100}])
             with (
                 patch.object(links, "tracks_path", return_value=tracks),
@@ -279,281 +276,49 @@ class EventTrackPrecedenceTests(unittest.TestCase):
                     links, "tracklet_index", return_value=TrackletIndex(tracklets)
                 ),
                 patch.object(links.actor_labels, "load", return_value=labels),
+                patch("yp_video.actor.box_style.dense_pass", return_value=None),
             ):
                 yield
+
+    def _pick(self, verdict=ActorVerdict.MANUAL, frame=100):
+        return ActorLabel(verdict, frame=frame, box=(104, 100, 148, 200))
 
     def test_geometry_decides_when_nobody_named_a_tracklet(self) -> None:
         with self._video({}):
             self.assertEqual(links._event_tracks("match")["e1"], TrackRef(1, 1))
 
-    def test_a_human_pick_beats_the_box_it_resolved_to(self) -> None:
-        label = ActorLabel(ActorVerdict.MANUAL, track=TrackRef(1, 2), box=(104, 100, 148, 200))
-        with self._video({"e1": label}):
+    def test_a_policy_pick_beats_geometry(self) -> None:
+        with self._video({}, record={**self.RECORD, "track": "1:2"}):
             self.assertEqual(links._event_tracks("match")["e1"], TrackRef(1, 2))
 
-    def test_a_policy_pick_beats_geometry_too(self) -> None:
-        record = {**self.RECORD, "track": "1:2"}
-        with self._video({}), patch.object(links, "read_jsonl_cached") as read:
-            read.side_effect = lambda p: (
-                ({"stride": 1}, [self.ACTOR, self.BYSTANDER])
-                if p.name == "t.jsonl"
-                else ({}, [record])
-            )
-            self.assertEqual(links._event_tracks("match")["e1"], TrackRef(1, 2))
+    def test_a_label_box_overrules_the_policys_tracklet(self) -> None:
+        """The policy named the actor; the person picked the bystander's box
+        — manual or endorsed, the label's box decides."""
+        for verdict in (ActorVerdict.MANUAL, ActorVerdict.CONFIRMED_AUTO):
+            with self.subTest(verdict=verdict), self._video(
+                {"e1": self._pick(verdict)}, record={**self.RECORD, "track": "1:1"}
+            ):
+                self.assertEqual(links._event_tracks("match")["e1"], TrackRef(1, 2))
 
-    def _with_policy_track(self, track: str):
-        record = {**self.RECORD, "track": track}
-        read = patch.object(links, "read_jsonl_cached")
-        mock = read.start()
-        self.addCleanup(read.stop)
-        mock.side_effect = lambda p: (
-            ({"stride": 1}, [self.ACTOR, self.BYSTANDER]) if p.name == "t.jsonl" else ({}, [record])
-        )
-
-    def test_a_hand_drawn_box_overrules_the_policys_tracklet(self) -> None:
-        """The policy named the bystander; the person drew the actor's box and
-        named no tracklet — the box decides, not the stale policy pick."""
-        label = ActorLabel(ActorVerdict.MANUAL, box=(100, 100, 140, 200))
-        with self._video({"e1": label}):
-            self._with_policy_track("1:2")
+    def test_a_label_follows_its_person_through_a_re_track(self) -> None:
+        """ByteTrack numbers per rally and reuses the numbers, so a re-run can
+        hand 1:2 to the other player; the box still finds the bystander."""
+        swapped = [_tracklet(1, 2, [100], [100, 100, 140, 200]),
+                   _tracklet(1, 1, [100], [104, 100, 148, 200])]
+        with self._video({"e1": self._pick()}, tracklets=swapped):
             self.assertEqual(links._event_tracks("match")["e1"], TrackRef(1, 1))
 
-    def test_an_endorsed_policy_pick_keeps_its_tracklet(self) -> None:
-        label = ActorLabel(ActorVerdict.CONFIRMED_AUTO, box=(104, 100, 148, 200))
-        with self._video({"e1": label}):
-            self._with_policy_track("1:2")
+    def test_a_label_links_without_any_crop_behind_it(self) -> None:
+        miss = {"id": "e1", "frame": 100, "box": None}
+        with self._video({"e1": self._pick()}, record=miss):
             self.assertEqual(links._event_tracks("match")["e1"], TrackRef(1, 2))
 
-    def test_a_named_tracklet_that_no_longer_exists_falls_back(self) -> None:
-        """Re-tracking renumbers every id — honouring a stale name would point
-        at whoever inherited the number.
-
-        It falls back to the HUMAN's anchor, not the record's box: they
-        pointed at the bystander, so re-deriving hands them the bystander even
-        though the policy's box names the actor.
-        """
-        label = ActorLabel(ActorVerdict.MANUAL, track=TrackRef(9, 9), box=(104, 100, 148, 200))
-        with self._video({"e1": label}):
-            self.assertEqual(links._event_tracks("match")["e1"], TrackRef(1, 2))
-
-    def test_a_pick_survives_a_re_track_that_swapped_the_ids(self) -> None:
-        """The whole point: re-running tracking must not move a human's pick.
-
-        ByteTrack numbers per rally and reuses the numbers, so a re-run can
-        hand 1:2 to the other player. The stored pair still EXISTS — which is
-        why existence was never proof — but the anchor says it is somebody
-        else now, and the same anchor re-derives the person they picked under
-        whatever id that person wears today.
-        """
-        swapped = [_tracklet(1, 2, [100], [100, 100, 140, 200]),   # was the actor's id
-                   _tracklet(1, 1, [100], [104, 100, 148, 200])]   # bystander, renumbered
-        label = ActorLabel(ActorVerdict.MANUAL, track=TrackRef(1, 2), box=(104, 100, 148, 200))
-        with self._video({"e1": label}, tracklets=swapped):
-            self.assertEqual(links._event_tracks("match")["e1"], TrackRef(1, 1))
-
-    def test_a_re_track_that_kept_the_id_keeps_the_pick(self) -> None:
-        """The other half: an id that survived is honoured, untouched."""
-        label = ActorLabel(ActorVerdict.MANUAL, track=TrackRef(1, 2), box=(104, 100, 148, 200))
-        with self._video({"e1": label}):
-            self.assertEqual(links._event_tracks("match")["e1"], TrackRef(1, 2))
-
-    def test_a_re_derived_pick_refuses_a_near_tie(self) -> None:
-        """Two players a hair apart: re-deriving must not guess between them.
-
-        No answer sends the event to the re-pick worklist. A wrong one would
-        silently reassign a deliberate pick — the 6.7% this module exists to
-        stop.
-        """
-        twins = [_tracklet(1, 3, [100], [100, 100, 140, 200]),
-                 _tracklet(1, 4, [100], [101, 100, 141, 200])]
-        # 1:4 exists, so only the anchor can say it is the wrong player now.
-        label = ActorLabel(ActorVerdict.MANUAL, track=TrackRef(1, 4), box=(100, 100, 140, 200))
-        with self._video({"e1": label}, tracklets=twins):
-            self.assertNotIn("e1", links._event_tracks("match"))
-
-    def test_silence_is_not_grounds_to_overturn_a_pick(self) -> None:
-        """A tracklet not detected at the anchor frame proves nothing.
-
-        Absence of evidence would otherwise drop a working label: 1.6% of real
-        picks name a tracklet the anchor frame has no detection for.
-        """
-        elsewhere = [_tracklet(1, 2, [400], [104, 100, 148, 200]),
-                     _tracklet(1, 1, [400], [100, 100, 140, 200])]
-        label = ActorLabel(ActorVerdict.MANUAL, track=TrackRef(1, 2), box=(104, 100, 148, 200))
-        with self._video({"e1": label}, tracklets=elsewhere):
-            self.assertEqual(links._event_tracks("match")["e1"], TrackRef(1, 2))
-
-    def test_a_policy_box_still_takes_the_best_candidate(self) -> None:
-        """The margin is for human picks only — a policy answer wants an
-        answer, and nobody deliberated over it."""
-        twins = [_tracklet(1, 3, [100], [100, 100, 140, 200]),
-                 _tracklet(1, 4, [100], [101, 100, 141, 200])]
-        with self._video({}, tracklets=twins):
-            self.assertEqual(links._event_tracks("match")["e1"], TrackRef(1, 3))
-
-
-class LabelBorneOutTests(unittest.TestCase):
-    """The single rule the board, the crop and the candidate list share.
-
-    Testing it here rather than three times over: extraction/links,
-    extraction/cropping and actor/candidates all answer "who does this label
-    name TODAY" through ActorLabel.borne_out_by, so a second opinion about it
-    cannot exist to drift.
-    """
-
-    ACTOR = _tracklet(1, 1, [100], [100, 100, 140, 200])
-    BYSTANDER = _tracklet(1, 2, [100], [104, 100, 148, 200])
-    INDEX = TrackletIndex([ACTOR, BYSTANDER])
-
-    def _pick(self, track, box=(104, 100, 148, 200), frame=None):
-        return ActorLabel(ActorVerdict.MANUAL, track=track, box=box, frame=frame)
-
-    def test_an_anchor_that_still_fits_keeps_the_pick(self) -> None:
-        self.assertEqual(
-            self._pick(TrackRef(1, 2)).borne_out_by(self.INDEX, 100), TrackRef(1, 2)
-        )
-
-    def test_a_renumbered_id_loses_the_pick(self) -> None:
-        """The re-track: 1:2 still exists, wearing the other player."""
-        swapped = TrackletIndex(
-            [_tracklet(1, 2, [100], [100, 100, 140, 200]),
-             _tracklet(1, 1, [100], [104, 100, 148, 200])]
-        )
-        self.assertIsNone(self._pick(TrackRef(1, 2)).borne_out_by(swapped, 100))
-
-    def test_a_pair_that_is_gone_loses_the_pick(self) -> None:
-        self.assertIsNone(self._pick(TrackRef(9, 9)).borne_out_by(self.INDEX, 100))
-
-    def test_a_pick_with_no_box_has_nothing_to_check(self) -> None:
-        """Silence, not contradiction — the pick stands."""
-        self.assertEqual(
-            self._pick(TrackRef(1, 2), box=None).borne_out_by(self.INDEX, 100),
-            TrackRef(1, 2),
-        )
-
-    def test_a_frame_with_no_detections_is_silence_too(self) -> None:
-        self.assertEqual(
-            self._pick(TrackRef(1, 2)).borne_out_by(self.INDEX, 400), TrackRef(1, 2)
-        )
-
-    def test_a_cross_frame_pick_is_judged_on_its_own_frame(self) -> None:
-        """label.frame is where they clicked; the event frame would say 1:1."""
-        elsewhere = TrackletIndex(
-            [_tracklet(1, 1, [100, 400], [0, 0, 10, 10]),
-             _tracklet(1, 2, [400], [104, 100, 148, 200])]
-        )
-        pick = self._pick(TrackRef(1, 2), frame=400)
-        self.assertEqual(pick.borne_out_by(elsewhere, 100), TrackRef(1, 2))
-
-    def test_a_box_only_verdict_names_no_tracklet(self) -> None:
-        bare = ActorLabel(ActorVerdict.MANUAL, box=(104, 100, 148, 200))
-        self.assertIsNone(bare.borne_out_by(self.INDEX, 100))
-
-
-class CropFallsBackToTheClickTests(unittest.TestCase):
-    """A re-track must not send re-extraction to crop a stranger.
-
-    crop_target resolves a tracklet whenever it is given one, so the guard has
-    to be that label_target stops handing it a pick the anchor disowns — then
-    the fallback it already carries, the box the person actually clicked,
-    takes over.
-    """
-
-    def test_a_disowned_pick_crops_the_box_the_human_clicked(self) -> None:
-        from yp_video.extraction import cropping
-
-        swapped = TrackletIndex(
-            [_tracklet(1, 2, [100], [100, 100, 140, 200]),
-             _tracklet(1, 1, [100], [104, 100, 148, 200])]
-        )
-        record = {"id": "e1", "frame": 100, "box": [90, 90, 160, 210]}
-        label = ActorLabel(
-            ActorVerdict.MANUAL, track=TrackRef(1, 2), box=(104, 100, 148, 200)
-        )
-        with tempfile.TemporaryDirectory() as raw:
-            tracks = Path(raw) / "t.jsonl"
-            write_jsonl(tracks, {"stride": 1}, [])
-            with (
-                patch.object(links, "tracks_path", return_value=tracks),
-                patch.object(links, "tracklet_index", return_value=swapped),
-                patch.object(links, "tracks_stride", return_value=1),
-                patch.object(cropping, "resolve_track") as resolve,
-            ):
-                target = cropping.label_target("match", record, label)
-        resolve.assert_not_called()
-        self.assertEqual(list(target.box), [104, 100, 148, 200])
-
-
-class UnresolvedLabelsTests(unittest.TestCase):
-    """The re-pick worklist: a labeled event resolvable to no tracklet.
-
-    Membership is about what resolves TODAY, not what the label stored — a
-    confirm snapshot (box, no track key) that sits on a tracked player is
-    fine, and only a label the geometry can do nothing with is work.
-    """
-
-    ACTOR = _tracklet(1, 1, [100], [100, 100, 140, 200])
-    ON_TRACK = {
-        "id": "e1",
-        "frame": 100,
-        "box": [90, 90, 160, 210],
-        "actor_box": [100, 100, 140, 200],
-    }
-    ON_NOBODY = {
-        "id": "e1",
-        "frame": 100,
-        "box": [400, 90, 470, 210],
-        "actor_box": [410, 100, 450, 200],
-    }
-
-    @contextmanager
-    def _video(self, labels, record, tracked=True):
-        with tempfile.TemporaryDirectory() as raw_dir:
-            root = Path(raw_dir)
-            tracks, records = root / "t.jsonl", root / "r.jsonl"
-            action = root / "match_actions.jsonl"
-            if tracked:
-                write_jsonl(tracks, {"stride": 1}, [self.ACTOR])
-            write_jsonl(records, {"video": "match"}, [record])
-            write_jsonl(action, {"video": "match"}, [{"id": "e1", "frame": 100}])
-            with (
-                patch.object(links, "tracks_path", return_value=tracks),
-                patch.object(links, "records_path", return_value=records),
-                patch.object(
-                    extraction_store, "action_annotation_path", return_value=action
-                ),
-                patch.object(
-                    links,
-                    "tracklet_index",
-                    return_value=TrackletIndex([self.ACTOR]),
-                ),
-                patch.object(links.actor_labels, "load", return_value=labels),
-                patch.object(links, "_links_cache", StatCache()),
-            ):
-                yield
-
-    def test_a_confirm_snapshot_that_resolves_is_not_work(self) -> None:
-        label = ActorLabel(
-            ActorVerdict.CONFIRMED_AUTO, box=(100, 100, 140, 200)
-        )
-        with self._video({"e1": label}, self.ON_TRACK):
-            self.assertEqual(links.unresolved_labels("match"), set())
-
-    def test_a_label_resolving_to_nothing_is_the_worklist(self) -> None:
-        label = ActorLabel(ActorVerdict.MANUAL, box=(410, 100, 450, 200))
-        with self._video({"e1": label}, self.ON_NOBODY):
-            self.assertEqual(links.unresolved_labels("match"), {"e1"})
-
-    def test_occluded_is_a_full_answer_not_work(self) -> None:
-        with self._video({"e1": ActorLabel(ActorVerdict.OCCLUDED)}, self.ON_NOBODY):
-            self.assertEqual(links.unresolved_labels("match"), set())
-
-    def test_an_untracked_video_has_no_re_pick_work(self) -> None:
-        """Nothing resolves before tracking exists. The remedy is running
-        tracking, not re-picking players — that gap is the pipeline's."""
-        label = ActorLabel(ActorVerdict.MANUAL, box=(410, 100, 450, 200))
-        with self._video({"e1": label}, self.ON_NOBODY, tracked=False):
-            self.assertEqual(links.unresolved_labels("match"), set())
+    def test_occluded_and_lost_labels_never_link(self) -> None:
+        """Nobody to link, and a label an action edit moved off its frame
+        that no dense pass can follow back — never the policy's answer."""
+        for label in (ActorLabel(ActorVerdict.OCCLUDED), self._pick(frame=99)):
+            with self.subTest(label=label), self._video({"e1": label}):
+                self.assertNotIn("e1", links._event_tracks("match"))
 
 
 if __name__ == "__main__":

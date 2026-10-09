@@ -208,6 +208,7 @@ export const API = {
   tracklets: {
     run: '/tracklets/run',
     get: (name: string) => `/tracklets/${encodeURIComponent(name)}`,
+    links: (name: string) => `/tracklets/links/${encodeURIComponent(name)}`,
     masks: (name: string, rally: number) =>
       `/tracklets/masks/${encodeURIComponent(name)}?rally=${rally}`,
   },

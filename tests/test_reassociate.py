@@ -103,12 +103,13 @@ class ReassociationTests(unittest.TestCase):
             patch.object(actor_labels._store, "_cache", StatCache()),
             patch.object(done, "records_path", return_value=self.records),
             patch.object(label_done, "ledger", label_done.Ledger(root / "label-done.jsonl")),
+            patch("yp_video.actor.box_style.dense_pass", return_value=None),
         ]
         for item in self._patches:
             item.start()
         # The human's verdict on event "human".
         actor_labels.save(
-            "match", "human", ActorLabel(ActorVerdict.MANUAL, box=(910, 510, 980, 690))
+            "match", "human", ActorLabel(ActorVerdict.MANUAL, 100, (910, 510, 980, 690))
         )
 
     def tearDown(self) -> None:
@@ -141,13 +142,26 @@ class ReassociationTests(unittest.TestCase):
         """A saved verdict stays authoritative but its old pixels are rebuilt."""
         record = dict(self.rows[0])
         record.pop("crop_schema")
-        label = ActorLabel(
-            ActorVerdict.MANUAL,
-            box=(910, 510, 980, 690),
-        )
+        label = ActorLabel(ActorVerdict.MANUAL, 100, (910, 510, 980, 690))
         self.assertFalse(reassociate._is_materialized(record, label))
         record["crop_schema"] = reassociate.CROP_SCHEMA_VERSION
         self.assertTrue(reassociate._is_materialized(record, label))
+
+    def test_a_label_that_cannot_reach_its_event_frame_is_unresolved(self) -> None:
+        """An action edit moved the event off the frame the box was drawn on
+        and nothing can follow it back: the event is cleared, and the policy
+        does not get to overrule the human verdict in its place."""
+        # Re-detected since the pick, so nothing is cut for it yet.
+        write_jsonl(self.records, self.meta, [self.rows[0], {**self.rows[1], "crop": None}])
+        actor_labels.save("match", "auto", ActorLabel(ActorVerdict.MANUAL, 190, (410, 510, 510, 690)))
+
+        counts = self._run(_StubPolicy({"auto": ActorPick(box=(100, 100, 200, 300))}))
+
+        record = read_jsonl(self.records)[1][1]
+        self.assertEqual(counts["unresolvable"], 1)
+        self.assertIsNone(record["crop"])
+        self.assertEqual(record["resolution"], "unresolved")
+        self.assertNotIn("association", record)
 
     def test_an_unchanged_pick_costs_no_re_crop(self) -> None:
         """Re-running the same policy is idempotent: the crop file on disk is
@@ -194,7 +208,7 @@ class ReassociationTests(unittest.TestCase):
         that decides nothing must not touch the file — otherwise re-running on
         a finished video orders a full re-embed to produce identical vectors."""
         actor_labels.save(
-            "match", "auto", ActorLabel(ActorVerdict.CONFIRMED_AUTO, box=(1, 2, 3, 4))
+            "match", "auto", ActorLabel(ActorVerdict.CONFIRMED_AUTO, 200, (1, 2, 3, 4))
         )
         before = self.records.stat().st_mtime_ns
 

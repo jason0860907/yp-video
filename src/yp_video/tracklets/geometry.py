@@ -15,8 +15,8 @@ are dict lookups.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import NamedTuple, Sequence
 
 from yp_video.person.detector import iou
@@ -35,17 +35,10 @@ LINK_MIN_CONTAINMENT = 0.5
 #: policy's box answer before scoring it.
 BOX_MATCH_IOU = 0.3
 
-#: How far ahead of the runner-up a re-derived answer must be before it may
-#: stand in for one a person gave. Overlapping players each match the other's
-#: box (6.7% of picks — see extraction/links.py), and there a wrong answer is
-#: worse than none: it silently reassigns a deliberate pick, where no answer
-#: becomes visible re-pick work instead.
-LINK_MIN_MARGIN = 0.1
-
 #: How far from an event a tracklet's box still describes the person at it.
 #: Tracking at stride 2 leaves every other frame without boxes, so an event
 #: on a skipped frame must reach a neighbour; a tracklet with nothing this
-#: close counts as never reaching the action. Manual picks crop from this
+#: close counts as never reaching the action. Tracklet picks crop from this
 #: window (extraction/links.py) and the actor head's candidate sets are
 #: built from it (actor/candidates.py).
 EVENT_TRACK_MAX_DELTA = 3
@@ -97,11 +90,6 @@ class BoxQuery:
     anchor: list[float]
     #: The DISPLAY box — gates the winner by containment (see above).
     gate: list[float]
-    #: How far the winner must beat the runner-up by. Zero — the default —
-    #: takes the best candidate outright, which is what a policy's box answer
-    #: wants: some answer beats none. Re-deriving a pick a PERSON made sets
-    #: LINK_MIN_MARGIN instead, because there a near-tie is not an answer.
-    margin: float = 0.0
 
 
 def containment(track_box: Sequence[float], display_box: Sequence[float]) -> float:
@@ -216,40 +204,6 @@ class TrackletIndex:
         ]
 
 
-def anchor_names_another(
-    index: TrackletIndex,
-    ref: TrackRef,
-    frame: int,
-    box: Sequence[float],
-    *,
-    stride: int = 1,
-) -> bool:
-    """Whether the anchor positively names a tracklet OTHER than ``ref``.
-
-    The question a stored pick has to answer after a re-track: ``track_id``
-    restarts per rally and gets reused, so the pair almost always still
-    exists, wearing whoever inherited the number. Existence cannot tell those
-    apart. The anchor can — somebody pointed at a person, and those pixels did
-    not move.
-
-    Only a positive contradiction counts. A tracklet simply not detected at
-    the anchor frame, or an anchor nothing clears ``BOX_MATCH_IOU`` against,
-    is no evidence either way, and no evidence is not grounds to overturn a
-    pick a person made. Measured over the real labels that silence covers
-    1.6% of them, against 0.2% the anchor actually contradicts.
-
-    Best match rather than merely a passing one: two players standing on top
-    of each other both clear ``BOX_MATCH_IOU`` against either's box, so a
-    threshold alone would go on honouring a swapped id.
-    """
-    best, best_overlap = None, BOX_MATCH_IOU
-    for candidate, track_box in index.nearest(frame, window=stride):
-        overlap = iou(list(track_box), list(box))
-        if overlap >= best_overlap:
-            best, best_overlap = candidate, overlap
-    return best is not None and best != ref
-
-
 def link_boxes(
     index: TrackletIndex,
     queries: Sequence[BoxQuery],
@@ -259,21 +213,15 @@ def link_boxes(
     """Resolve each query to the tracklet its box sits on, where one does.
 
     A query resolves to nothing when no tracklet was detected near its frame,
-    when the best candidate is not contained in the gate box, or when it does
-    not beat the runner-up by the query's margin — an absent answer, never a
-    bad one.
+    or when the best candidate is not contained in the gate box — an absent
+    answer, never a bad one.
     """
     out: dict[str, TrackRef] = {}
     for query in queries:
         candidates = index.nearest(query.frame, window=stride)
         if not candidates:
             continue
-        ranked = sorted(candidates, key=lambda c: iou(c[1], query.anchor), reverse=True)
-        ref, box = ranked[0]
-        if query.margin:
-            runner_up = iou(ranked[1][1], query.anchor) if len(ranked) > 1 else 0.0
-            if iou(box, query.anchor) - runner_up < query.margin:
-                continue
+        ref, box = max(candidates, key=lambda c: iou(c[1], query.anchor))
         if containment(box, query.gate) >= LINK_MIN_CONTAINMENT:
             out[query.key] = ref
     return out

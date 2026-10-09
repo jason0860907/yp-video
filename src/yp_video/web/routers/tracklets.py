@@ -22,10 +22,9 @@ from pydantic import Field
 
 from yp_video.core.rallies import rally_sources
 from yp_video.extraction import links
-from yp_video.extraction import store as extraction_store
 from yp_video.extraction.pipeline import load_events
-from yp_video.tracklets import tracking
 from yp_video.tracklets import store as tracks_store
+from yp_video.tracklets import tracking
 from yp_video.web.job_helpers import init_batch_items, spawn_batch_video_job
 from yp_video.web.jobs import JobSummary, JobType, job_manager
 from yp_video.web.r2_client import materialized_cut, resolve_cut
@@ -129,17 +128,23 @@ def masks(name: str, rally: int) -> dict:
     return {"mask_hw": [h, w], "tracks": tracks}
 
 
+@router.get("/links/{name}")
+def event_links(name: str) -> dict:
+    """event → tracklet links (extraction/links.py) for crop badges, the
+    overlay's action colours and propagation. Apart from the tracklets
+    because they move with every actor fix, and the tracklets do not."""
+    stem = Path(unquote(name)).stem
+    return links.link_payload(stem)
+
+
 @router.get("/{name}")
 def tracklets(name: str) -> dict:
-    """Tracklets (for the video overlay) + event→tracklet links (for crop
-    badges and propagation). Scores stay server-side — the overlay only
-    draws boxes, and the payload holds ~286k of them (8.5 MB of JSON, but
-    ~1.5 MB over the wire once GZipMiddleware has had it)."""
+    """Tracklets for the video overlay. Scores stay server-side — the overlay
+    only draws boxes, and the payload holds ~286k of them (8.5 MB of JSON,
+    but ~1.5 MB over the wire once GZipMiddleware has had it)."""
     stem = Path(unquote(name)).stem
     if not tracks_store.tracks_path(stem).exists():
         raise HTTPException(404, f"No tracking for {stem} — run Rally Tracking first")
-    if not extraction_store.records_path(stem).exists():
-        raise HTTPException(404, f"No extraction records for {stem}")
 
     records = tracks_store.tracklet_data(stem).records
     return {
@@ -149,5 +154,4 @@ def tracklets(name: str) -> dict:
             {k: tracklet[k] for k in ("rally_id", "track_id", "frames", "boxes")}
             for tracklet in records
         ],
-        "links": links.link_payload(stem),
     }

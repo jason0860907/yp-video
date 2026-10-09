@@ -26,7 +26,6 @@ from yp_video.config import cut_kind_of
 from yp_video.core import label_done
 from yp_video.core.jsonl import read_jsonl_header
 from yp_video.core.rallies import RALLY_SOURCES, rally_sources
-from yp_video.extraction import links
 from yp_video.extraction import pipeline as extraction_pipeline
 from yp_video.extraction import store as extraction_store
 from yp_video.extraction.prerequisites import prerequisites
@@ -168,11 +167,8 @@ def association_videos() -> list[dict]:
                 "reviewed": progress.reviewed,
                 "unreviewed": progress.unreviewed,
                 "verdicts": progress.verdicts,
-                # The re-pick worklist (links.unresolved_labels): labels no
-                # tracklet can be derived for today, whatever their verdict.
-                "unresolved": len(links.unresolved_labels(path.stem)),
                 # The 2XLarge box-check queue (actor/box_check.py): label
-                # boxes the person-head snapshot cannot match to a dense box.
+                # boxes that are not a dense box on their event frame.
                 "box_check": box_check_pending(path.stem),
                 # The human "I'm finished" flag — a verdict counts can't
                 # derive, same as ReID's (see core/label_done.py).

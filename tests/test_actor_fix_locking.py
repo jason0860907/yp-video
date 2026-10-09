@@ -187,6 +187,7 @@ class LockOrderTests(unittest.TestCase):
                 ),
                 patch.object(actor_fix.actor_labels, "save"),
                 patch.object(actor_fix.store, "drop_assignment"),
+                patch.object(actor_fix, "_event_frame", return_value=9),
             ) as seen:
                 actor_fix.apply(
                     "match",

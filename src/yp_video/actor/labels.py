@@ -2,51 +2,39 @@
 
 One event, one label — ``videos/association/annotations/<stem>_actors.json``:
 
-    {"version": 2,
+    {"version": 3,
      "actors": {
-       "<e>": {"verdict": "manual", "track": "12:3", "box": [...], "frame": 812},
-       "<e>": {"verdict": "manual", "box": [x0,y0,x1,y1], "frame": 3011},
-       "<e>": {"verdict": "occluded"},
-       "<e>": {"verdict": "confirmed_auto", "track": "12:7", "box": [...], "frame": 40}
+       "<e>": {"verdict": "manual", "frame": 812, "box": [x0, y0, x1, y1]},
+       "<e>": {"verdict": "confirmed_auto", "frame": 40, "box": [...]},
+       "<e>": {"verdict": "occluded"}
      }}
 
-A label names a TRACKLET when one was picked, and a bare box otherwise. The
-tracklet is the better answer — it survives a box that jitters, it spans the
-frames where the actor is occluded, and it re-resolves deterministically on
-re-extraction instead of being IoU-matched back onto a fresh detection that
-may be somebody else. The box stays either way, but its job changes:
+A label answers one question: which person on screen performed this event.
+The answer is a box in pixels on ``frame`` — written on the event's own
+frame, and picked from the RF-DETR Seg 2XLarge dense pass (person/dense.py),
+the box style the person head learns. Nothing in it points at a tracklet or
+a detection: those are derived data that a re-run renumbers or replaces,
+while a box on a frame means the same person forever.
 
-- with ``track``  the box is the ANCHOR — where the human clicked. It is what
-                  re-resolves the label if tracking is ever re-run and the
-                  ids are renumbered (``track_id`` restarts per rally, so
-                  re-tracking WILL renumber).
-- without         the box is the answer itself: today's behaviour, kept for
-                  the events no tracklet reaches (~7%) and for videos tracked
-                  before instance masks existed.
+``frame`` is kept because an action annotation may later move its event a
+frame or two. A label whose frame is no longer its event's is followed there
+through the dense boxes (actor/box_style.event_box) — never taken as is, and
+never guessed when the walk loses the person.
 
-The verdict IS the state. Nothing infers "the user marked this occluded"
-from a missing box or "this was a manual pick" from the presence of one:
-those inversions are how two records of the same fact drift apart.
+The verdict IS the state, and says who chose the box:
 
-The three verdicts differ in who chose the box and whether extraction must
-act on it:
-
-- ``manual``          the user picked this person. Re-extraction replays it
-                      (see extraction/pipeline.py). For a box label, ``frame``
-                      set = the actor was undetected on the event frame and
-                      the user clicked them on a nearby one, and
-                      ``snap=False`` = embed the box exactly as drawn.
+- ``manual``          the user picked this person.
 - ``occluded``        nobody in frame is the actor. No box exists to record.
-- ``confirmed_auto``  the user endorsed the automatic pick by assigning the
-                      crop an identity and marking the video done. ``box``
-                      snapshots what they endorsed, so later re-extraction
-                      cannot silently reinterpret the endorsement.
+- ``confirmed_auto``  the user endorsed the automatic pick (by naming the
+                      crop, or reviewing the video). The box snapshots what
+                      they endorsed, so later re-extraction cannot silently
+                      reinterpret the endorsement.
 
 Only the first two override the automatic pick (``ActorLabel.overrides_auto``)
 — a confirmation agrees with it by definition. All three are training truth
-for the learned ranker (see actor/dataset.py).
+for the person/action head (yp-spot scripts/prepare_person_action.py).
 
-Player identity is a different label with a different lifetime, and now a
+Player identity is a different label with a different lifetime, and a
 different directory: ``videos/reid/annotations/<stem>_players.json`` (see
 reid/store.py). The two are written under separate locks, so naming a player
 never blocks fixing an actor.
@@ -54,25 +42,21 @@ never blocks fixing an actor.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
-from yp_video.actor.resolution import ActorResolution, actor_resolution
 from yp_video.config import ASSOCIATION_ANNOTATIONS_DIR
 from yp_video.core.sidecar import JsonSidecar
-from yp_video.tracklets.geometry import (
-    TrackletIndex,
-    TrackRef,
-    anchor_names_another,
-)
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 #: The name this package owns inside the shared annotations directory.
 #: Public so a caller can count or list actor-labelled videos without
 #: re-spelling the suffix and drifting from it.
 LABEL_SUFFIX = "_actors.json"
+
+Box = tuple[float, float, float, float]
 
 
 class ActorVerdict(str, Enum):
@@ -83,114 +67,59 @@ class ActorVerdict(str, Enum):
 
 @dataclass(frozen=True)
 class ActorLabel:
-    """One event's human actor verdict, and the truth behind it."""
+    """One event's human actor verdict, and the box behind it.
+
+    Occluded carries neither ``frame`` nor ``box``; the other verdicts carry
+    both. Constructing anything else raises, so no reader has to ask.
+    """
 
     verdict: ActorVerdict
-    #: The tracklet the human picked. When set, this is the answer and ``box``
-    #: is only the anchor that can re-derive it.
-    track: TrackRef | None = None
-    box: tuple[float, float, float, float] | None = None
-    #: Where the box was drawn. For a box label a value different from the
-    #: event's frame means a cross-frame pick.
+    #: The frame ``box`` is on — the event's when it was written.
     frame: int | None = None
-    #: False when no stored detection is this player, so an IoU snap could
-    #: only attach an occluder. Meaningless for a tracklet label — the track
-    #: already names the person.
-    snap: bool = True
+    #: The actor's pixel xyxy on ``frame``.
+    box: Box | None = None
 
-    def anchor_at(self, frame: int) -> tuple[int, list[float]] | None:
-        """Where the person pointed — (frame, box) — when they named a track.
-
-        None when there is nothing to check a name against: no pick, or a pick
-        with no box. That is silence, and silence overturns nothing.
-        """
-        if self.track is None or self.box is None:
-            return None
-        # A cross-frame pick was drawn on its own frame; look there.
-        return int(frame if self.frame is None else self.frame), list(self.box)
-
-    def borne_out_by(
-        self, index: TrackletIndex, frame: int, *, stride: int = 1
-    ) -> TrackRef | None:
-        """The tracklet this label names, once ``index`` bears it out.
-
-        None in the two ways a re-track invalidates a stored pick — the pair
-        is gone, or the anchor names somebody else — so every caller falls
-        back to the box instead of cropping, ranking or training on whoever
-        inherited the number.
-
-        Existence alone is not the test, which is the trap this exists for:
-        ``track_id`` restarts per rally and gets reused, so after a re-track
-        the stored pair almost always still resolves, just to somebody else.
-        The anchor is the durable half of the label; the id is a pointer.
-        """
-        if self.track is None or index.tracklet(self.track) is None:
-            return None
-        anchor = self.anchor_at(frame)
-        if anchor is None:
-            return self.track
-        if anchor_names_another(index, self.track, anchor[0], anchor[1], stride=stride):
-            return None
-        return self.track
+    def __post_init__(self) -> None:
+        occluded = self.verdict is ActorVerdict.OCCLUDED
+        if occluded != (self.box is None) or occluded != (self.frame is None):
+            raise ValueError(
+                f"A {self.verdict.value} label must carry "
+                + ("neither a frame nor a box" if occluded else "both a frame and a box")
+            )
 
     @property
     def overrides_auto(self) -> bool:
         """Whether extraction must replace the automatic pick with this."""
         return self.verdict is not ActorVerdict.CONFIRMED_AUTO
 
-    @property
-    def is_tracklet(self) -> bool:
-        return self.track is not None
-
     def payload(self) -> dict:
-        """The JSON form — defaults stay absent so the file reads clean."""
         out: dict = {"verdict": self.verdict.value}
-        if self.track is not None:
-            out["track"] = self.track.key
         if self.box is not None:
-            out["box"] = [round(float(value), 1) for value in self.box]
-        if self.frame is not None:
             out["frame"] = int(self.frame)
-        if not self.snap:
-            out["snap"] = False
+            out["box"] = [round(float(value), 1) for value in self.box]
         return out
 
     @classmethod
-    def from_payload(cls, payload: object) -> "ActorLabel | None":
-        """Parse one entry; None when it is unreadable, never a guess."""
-        if not isinstance(payload, dict):
-            return None
-        try:
-            verdict = ActorVerdict(str(payload.get("verdict")))
-        except ValueError:
-            return None
+    def from_payload(cls, payload: Mapping) -> "ActorLabel":
+        """Parse one entry; anything but the shape ``payload`` writes raises."""
+        extra = set(payload) - {"verdict", "frame", "box"}
+        if extra:
+            raise ValueError(f"Unknown actor label fields: {sorted(extra)}")
+        frame = payload.get("frame")
+        if frame is not None and (not isinstance(frame, int) or frame < 0):
+            raise ValueError(f"Invalid actor label frame: {frame!r}")
+        box = payload.get("box")
         return cls(
-            verdict=verdict,
-            track=_track_from(payload.get("track")),
-            box=box_from(payload.get("box")),
-            frame=(
-                int(payload["frame"])
-                if isinstance(payload.get("frame"), int)
-                else None
-            ),
-            snap=payload.get("snap") is not False,
+            verdict=ActorVerdict(payload["verdict"]),
+            frame=frame,
+            box=None if box is None else _box_from(box),
         )
 
 
-def _track_from(value: object) -> TrackRef | None:
-    """Parse a "rally:track" key; unreadable is absent, never a guess."""
-    if not isinstance(value, str):
-        return None
-    try:
-        return TrackRef.parse(value)
-    except (ValueError, TypeError):
-        return None
-
-
-def box_from(value: object) -> tuple[float, float, float, float] | None:
-    """A four-corner box from stored JSON, or None when it isn't one."""
+def _box_from(value: object) -> Box:
+    """A four-corner box from stored JSON; anything else raises."""
     if not isinstance(value, (list, tuple)) or len(value) != 4:
-        return None
+        raise ValueError(f"Not a box: {value!r}")
     x0, y0, x1, y1 = (float(v) for v in value)
     return x0, y0, x1, y1
 
@@ -218,12 +147,15 @@ write_transaction = _store.transaction
 
 
 def _parse(data: dict) -> dict[str, ActorLabel]:
-    labels = {}
-    for event_id, payload in (data.get("actors") or {}).items():
-        label = ActorLabel.from_payload(payload)
-        if label is not None:
-            labels[str(event_id)] = label
-    return labels
+    """Every label in one file ({} when absent); another schema raises."""
+    if not data:
+        return {}
+    if data.get("version") != SCHEMA_VERSION:
+        raise ValueError(f"Actor labels version {data.get('version')!r}, expected {SCHEMA_VERSION}")
+    return {
+        str(event_id): ActorLabel.from_payload(payload)
+        for event_id, payload in data["actors"].items()
+    }
 
 
 def _read(stem: str) -> dict[str, ActorLabel]:
@@ -260,36 +192,6 @@ def save(stem: str, event_id: str, label: ActorLabel | None) -> None:
         else:
             labels[event_id] = label
         _write(stem, labels)
-
-
-def confirmations_for(
-    records: Iterable[Mapping[str, object]],
-) -> dict[str, ActorLabel]:
-    """Every automatic pick a human could endorse, as the ``confirmed_auto``
-    label it would be. The box is snapshotted so a later re-extraction cannot
-    quietly reinterpret what was endorsed.
-
-    WHO may endorse them is the caller's question, and the two labeling pages
-    answer it differently: naming the crop (ReID Label) and reviewing the
-    video (Association Label) are both evidence a human looked.
-    """
-    out: dict[str, ActorLabel] = {}
-    for record in records:
-        try:
-            resolution = actor_resolution(record)
-        except ValueError:
-            continue  # unmigrated record; never guess what it was
-        if resolution is ActorResolution.AUTO:
-            box = box_from(record.get("actor_box"))
-            if box is None:
-                continue
-            frame = record.get("frame")
-            out[str(record["id"])] = ActorLabel(
-                verdict=ActorVerdict.CONFIRMED_AUTO,
-                box=box,
-                frame=frame if isinstance(frame, int) else None,
-            )
-    return out
 
 
 def confirm_auto(stem: str, confirmations: dict[str, ActorLabel]) -> list[str]:

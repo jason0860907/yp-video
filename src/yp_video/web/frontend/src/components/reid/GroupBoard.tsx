@@ -20,7 +20,7 @@ import { Badge } from '@/components/ui/Badge';
 import { CropImage } from '@/components/video/CropImage';
 import { toast } from '@/components/feedback/toast';
 import type { ReidRecord } from '@/types/api';
-import { trackColor, trackKeyOf, type TrackData } from '@/components/labeling/shared';
+import { trackColor, trackKeyOf, type TrackLinks } from '@/components/labeling/shared';
 import { MIN_CLUSTER_SIZE, type Group, type useGroupBoard } from './useGroupBoard';
 
 const STATUS_DOT: Record<ReidRecord['status'], string> = {
@@ -47,7 +47,7 @@ export interface GroupBoardProps {
   statusFilter: 'all' | ReidRecord['status'];
   /** Show the background-suppressed crops the masked embedders saw. */
   showMasked: boolean;
-  trackLinks: TrackData['links'];
+  trackLinks: TrackLinks;
   onSeekToEvent: (r: ReidRecord) => void;
 }
 

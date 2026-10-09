@@ -1,13 +1,13 @@
 """Turning "this person, on this frame" into the pixels a record points at.
 
-Four decisions end here and every one of them is the same three questions —
+Three decisions end here and every one of them is the same three questions —
 which detection does the answer really name, what should the crop be centred
 on, and was it cut from the event's own frame:
 
 - extraction's automatic pick (extraction/pipeline.py)
-- a saved label replayed on re-extraction (same file)
-- a fresh label applied by the fix endpoint (same file)
-- a re-decided automatic pick (extraction/reassociate.py)
+- a human label, applied by the fix endpoint (same file) or materialized by
+  reassociation (extraction/reassociate.py)
+- a re-decided automatic pick (same file)
 
 Each used to answer them with its own copy of the rules, and the copies had
 already drifted — one deleted the crop it superseded and the others leaked it,
@@ -23,8 +23,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from yp_video.actor.box_style import event_box
 from yp_video.actor.labels import ActorLabel
-from yp_video.extraction.links import borne_out_track, resolve_track
+from yp_video.extraction.links import resolve_track
 from yp_video.person.detector import PersonBox, iou, person_from_detection
 from yp_video.tracklets.geometry import TrackRef
 from yp_video.tracklets.store import TrackMasks
@@ -78,12 +79,13 @@ class CropTarget:
     """Where a decision says to cut, whoever made it."""
 
     box: Box
-    #: The frame to cut from — the event's, unless the actor was undetected
-    #: there and the answer points at a nearby one.
+    #: The frame to cut from — the event's, unless a policy's tracklet never
+    #: reaches it and the answer points at a nearby one.
     frame: int
-    #: Whether an IoU snap onto a stored detection may still apply. False when
-    #: no stored detection IS this player: snapping could then only attach the
-    #: occluder that the silhouettes just ruled out.
+    #: Whether an IoU snap onto a stored detection may still apply. False for
+    #: a human's box (it is the answer as clicked), and when no stored
+    #: detection IS this player: snapping could then only attach the occluder
+    #: that the silhouettes just ruled out.
     snap: bool
 
 
@@ -95,17 +97,15 @@ def crop_target(
     *,
     masks: TrackMasks | None = None,
 ) -> CropTarget | None:
-    """Where an answer says to crop, resolving a tracklet if that is the answer.
+    """Where a policy's answer says to crop, resolving its tracklet if it
+    named one.
 
     A tracklet is re-resolved from the tracklet every time (see
     extraction/links.resolve_track), so a re-extraction with fresh detections
-    self-heals instead of IoU-guessing which box the old answer meant. The
-    same function serves an automatic tracklet pick and a hand-placed one, so
-    the two cannot drift into cropping different pixels for one tracklet.
+    self-heals instead of IoU-guessing which box the old answer meant.
 
     ``fallback`` is what the answer means without a resolvable tracklet: the
-    box a human clicked (which stays meaningful — re-tracking renumbers every
-    ``track_id``), or nothing at all for a policy that can simply abstain.
+    policy's own box, or nothing at all — a policy can simply abstain.
     """
     if track is not None:
         pick = resolve_track(stem, record, track, masks=masks)
@@ -114,39 +114,17 @@ def crop_target(
     return fallback
 
 
-def label_target(
-    stem: str,
-    record: dict,
-    label: ActorLabel,
-    masks: TrackMasks | None = None,
-) -> CropTarget | None:
-    """Where a human's verdict says to crop.
+def label_target(stem: str, record: dict, label: ActorLabel) -> CropTarget | None:
+    """Where a human's verdict says to crop: exactly its box on the event frame.
 
-    Its box is only the anchor when it names a tracklet, and takes over when
-    the tracklet cannot be resolved — ``track_id`` restarts per rally, so
-    re-tracking renumbers everything. Falling back to what the human actually
-    clicked keeps the label meaningful; dropping it would not.
-
-    "Cannot be resolved" is borne_out_track's question, not "does the pair
-    exist": after a re-track it almost always does, wearing whoever inherited
-    the number, and cropping THAT is how a re-extraction would quietly cut a
-    stranger for every pick a person made.
+    The box IS the answer (actor/labels.py) — a 2XLarge box the person
+    clicked — so nothing snaps it onto a stored detection. None when there is
+    no box there: an occluded verdict, or a label an action edit moved off its
+    frame that the dense boxes cannot follow back (box_style.event_box). The
+    callers treat that as an unresolved event; guessing would crop a stranger.
     """
-    return crop_target(
-        stem,
-        record,
-        borne_out_track(stem, label, int(record.get("crop_frame") or record["frame"])),
-        (
-            CropTarget(
-                label.box,
-                label.frame if label.frame is not None else record["frame"],
-                label.snap,
-            )
-            if label.box is not None
-            else None
-        ),
-        masks=masks,
-    )
+    box = event_box(stem, label, record["frame"])
+    return None if box is None else CropTarget(box, record["frame"], snap=False)
 
 
 def person_for(record: dict, target: CropTarget) -> PersonBox:

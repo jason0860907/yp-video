@@ -39,26 +39,18 @@ export interface SidebarAction {
 
 /** Explicit actor-fix commands; invalid combinations are unrepresentable. */
 export type ActorFix =
-  | {
-      mode: 'pick';
-      box: [number, number, number, number];
-      /** The tracklet clicked, "{rally_id}:{track_id}". When set the box is
-       *  only an anchor — the server re-resolves the tracklet to a croppable
-       *  detection, so the crop stays reproducible from the label alone. */
-      track?: string;
-      /** Cross-frame pick: crop pixels from this frame. Box picks only. */
-      frame?: number;
-      /** False when no stored detection is this player. Box picks only. */
-      snap?: boolean;
-    }
+  /** A 2XLarge box on the event's own frame — the server stamps the frame. */
+  | { mode: 'pick'; box: [number, number, number, number] }
   | { mode: 'occluded' }
   | { mode: 'auto' };
 
-/** ByteTrack tracklets + which tracklet each event's actor sits on. */
+/** ByteTrack tracklets. */
 export interface TrackData {
   tracklets: { rally_id: number; track_id: number; frames: number[]; boxes: [number, number, number, number][] }[];
-  links: Record<string, { rally_id: number; track_id: number }>;
 }
+
+/** Which tracklet each event's actor sits on (extraction/links.py). */
+export type TrackLinks = Record<string, { rally_id: number; track_id: number }>;
 
 /** GET /tracklets/masks — one rally's masks, whole tracklets at once.
  *  Values are base64 packed bits (box-crop space, ``mask_hw`` grid), row i
@@ -88,7 +80,7 @@ export const rallyOf = <T extends { frame: number; time?: number | null }>(
 };
 
 /** The tracklet an event's actor sits on, as a stable "rally:track" key. */
-export const trackKeyOf = (links: TrackData['links'], id: string) => {
+export const trackKeyOf = (links: TrackLinks, id: string) => {
   const l = links[id];
   return l ? `${l.rally_id}:${l.track_id}` : null;
 };

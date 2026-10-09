@@ -10,7 +10,6 @@ from unittest.mock import patch
 import numpy as np
 from pydantic import TypeAdapter, ValidationError
 
-from yp_video.actor import labels as actor_labels
 from yp_video.actor.labels import ActorLabel, ActorVerdict
 from yp_video.actor.resolution import ActorResolution, actor_resolution
 from yp_video.contracts.reid import (
@@ -19,7 +18,7 @@ from yp_video.contracts.reid import (
     REID_CONTRACT_VERSION,
 )
 from yp_video.core.jsonl import read_jsonl, write_jsonl
-from yp_video.extraction import actor_fix, cropping, pipeline
+from yp_video.extraction import actor_fix, cropping, done, pipeline
 from yp_video.reid import checkpoints, store
 from yp_video.web.jobs import MAX_LOG_LINES, Job, JobManager, JobStatus, JobType
 from yp_video.web.routers.actor_association import (
@@ -81,8 +80,8 @@ class DiscriminatedRequestTests(unittest.TestCase):
                 {
                     "mode": "pick",
                     "event_id": "e1",
-                        "box": [1, 2, 3, 4],
-                    "frame": -1,
+                    "box": [1, 2, 3, 4],
+                    "frame": 7,
                 }
             )
 
@@ -207,6 +206,7 @@ class ActorFixTransactionTests(unittest.TestCase):
                 ) as apply_actor_fix,
                 patch.object(actor_fix.actor_labels, "save"),
                 patch.object(actor_fix.store, "drop_assignment"),
+                patch.object(actor_fix, "_event_frame", return_value=9),
             ):
                 result = actor_fix.apply(
                     "match",
@@ -233,8 +233,6 @@ class ActorFixTransactionTests(unittest.TestCase):
                 "mode": "pick",
                 "event_id": "e1",
                 "box": [1, 2, 3, 4],
-                "frame": 9,
-                "snap": False,
             },
             ("occluded", ActorVerdict.OCCLUDED): {
                 "mode": "occluded",
@@ -246,31 +244,39 @@ class ActorFixTransactionTests(unittest.TestCase):
             command = adapter.validate_python(payload).command
             self.assertEqual(command.mode, mode)
             self.assertEqual(command.event_id, "e1")
-            self.assertEqual(
-                command.label.verdict if command.label else None, verdict
-            )
+            label = command.label_on(9)
+            self.assertEqual(label.verdict if label else None, verdict)
 
     def test_each_command_carries_the_label_it_stands_for(self) -> None:
-        """One uniform write per fix — the mode never re-branches downstream."""
+        """One uniform write per fix — the mode never re-branches downstream,
+        and a pick lands on the event's frame."""
         self.assertEqual(
-            actor_fix.PickActor(
-                mode="pick",
-                event_id="e1",
-                box=(1, 2, 3, 4),
-                frame=9,
-                snap=False,
-            ).label,
-            ActorLabel(
-                ActorVerdict.MANUAL, box=(1, 2, 3, 4), frame=9, snap=False
-            ),
+            actor_fix.PickActor(mode="pick", event_id="e1", box=(1, 2, 3, 4)).label_on(9),
+            ActorLabel(ActorVerdict.MANUAL, 9, (1, 2, 3, 4)),
         )
         self.assertEqual(
-            actor_fix.MarkOccluded(mode="occluded", event_id="e1").label,
+            actor_fix.MarkOccluded(mode="occluded", event_id="e1").label_on(9),
             ActorLabel(ActorVerdict.OCCLUDED),
         )
         self.assertIsNone(
-            actor_fix.RevertActor(mode="auto", event_id="e1").label
+            actor_fix.RevertActor(mode="auto", event_id="e1").label_on(9)
         )
+
+    def test_a_pick_is_stamped_with_the_current_action_frame(self) -> None:
+        """The records may still carry the frame detection saw; the label
+        takes the action annotation's, which the picker was showing."""
+        with tempfile.TemporaryDirectory() as raw_dir:
+            root = Path(raw_dir)
+            records, action = root / "match.jsonl", root / "match_actions.jsonl"
+            write_jsonl(records, {}, [{"id": "e1", "frame": 10}])
+            write_jsonl(action, {}, [{"id": "e1", "frame": 12}])
+            with (
+                patch.object(actor_fix.extraction_store, "records_path", return_value=records),
+                patch.object(actor_fix.extraction_store, "action_annotation_path", return_value=action),
+            ):
+                self.assertEqual(actor_fix._event_frame("match", "e1"), 12)
+                with self.assertRaises(KeyError):
+                    actor_fix._event_frame("match", "gone")
 
     def test_derived_and_annotation_files_roll_back_together(self) -> None:
         with tempfile.TemporaryDirectory() as raw_dir:
@@ -345,6 +351,7 @@ class ActorFixTransactionTests(unittest.TestCase):
                 patch.object(
                     actor_fix.actor_labels, "save", side_effect=fail_label
                 ),
+                patch.object(actor_fix, "_event_frame", return_value=9),
             ):
                 with self.assertRaisesRegex(RuntimeError, "label write failed"):
                     actor_fix.apply(
@@ -366,11 +373,11 @@ class ActorFixTransactionTests(unittest.TestCase):
 
 
 class CroppingTests(unittest.TestCase):
-    """The rules the four crop callers used to each keep a copy of.
+    """The rules the crop callers used to each keep a copy of.
 
-    Extraction's automatic pick, a replayed label, the fix endpoint and
-    reassociation all cut pixels the same way; the copies had drifted on
-    exactly the two questions below.
+    Extraction's automatic pick, a human label and reassociation all cut
+    pixels the same way; the copies had drifted on exactly the two questions
+    below.
     """
 
     DETECTION = {"box": [100, 100, 140, 200], "score": 1.6}
@@ -431,6 +438,20 @@ class CroppingTests(unittest.TestCase):
         self.assertEqual(same.score, self.DETECTION["score"])
         self.assertEqual(across.xyxy, (102, 102, 138, 198))
         self.assertEqual(across.score, 0.0)
+
+    def test_a_label_crops_its_own_box_on_the_event_frame(self) -> None:
+        """The clicked 2XLarge box is the answer: no snap onto the Medium
+        detection that overlaps it, and nothing from another frame."""
+        record = self._record()
+        label = ActorLabel(ActorVerdict.MANUAL, 500, (102, 102, 138, 198))
+        target = cropping.label_target("match", record, label)
+        self.assertEqual(target, cropping.CropTarget((102, 102, 138, 198), 500, snap=False))
+        self.assertEqual(cropping.person_for(record, target).xyxy, (102, 102, 138, 198))
+        self.assertIsNone(cropping.label_target("match", record, ActorLabel(ActorVerdict.OCCLUDED)))
+        # Moved off its frame with no dense pass to follow it back.
+        with patch("yp_video.actor.box_style.dense_pass", return_value=None):
+            moved = ActorLabel(ActorVerdict.MANUAL, 498, (102, 102, 138, 198))
+            self.assertIsNone(cropping.label_target("match", record, moved))
 
     def test_a_vetoed_snap_embeds_the_box_as_drawn(self) -> None:
         """snap=False means no stored detection IS this player, so anything
@@ -535,6 +556,7 @@ class StagesStopWhereTheyShouldTests(unittest.TestCase):
                 ) as applied,
                 patch.object(actor_fix.actor_labels, "save"),
                 patch.object(actor_fix.store, "drop_assignment"),
+                patch.object(actor_fix, "_event_frame", return_value=9),
             ):
                 result = actor_fix.apply(
                     "match",
@@ -593,8 +615,13 @@ class ActorFixRevertTests(unittest.TestCase):
 class ConfirmableAnswerTests(unittest.TestCase):
     """What a human is allowed to endorse, and what endorsing it records."""
 
+    def setUp(self) -> None:
+        dense = patch("yp_video.actor.box_style.dense_pass", return_value=None)
+        dense.start()
+        self.addCleanup(dense.stop)
+
     def test_a_pick_becomes_confirmed_auto(self) -> None:
-        out = actor_labels.confirmations_for([
+        out = done.confirmations_for("match", [
             {"id": "e1", "frame": 10, "resolution": "auto", "actor_box": [1, 2, 3, 4]},
         ])
         self.assertEqual(out["e1"].verdict, ActorVerdict.CONFIRMED_AUTO)
@@ -607,7 +634,7 @@ class ConfirmableAnswerTests(unittest.TestCase):
         for kind in ("occluded", "untracked"):
             with self.subTest(kind=kind):
                 self.assertEqual(
-                    actor_labels.confirmations_for([
+                    done.confirmations_for("match", [
                         {
                             "id": "e1", "frame": 10, "resolution": "unresolved",
                             "association": {"decision": "abstained", "kind": kind},
@@ -620,7 +647,7 @@ class ConfirmableAnswerTests(unittest.TestCase):
         """No `kind` at all — the geometry simply found nobody, which is not
         the same claim as "nobody is visible"."""
         self.assertEqual(
-            actor_labels.confirmations_for([
+            done.confirmations_for("match", [
                 {"id": "e1", "frame": 10, "resolution": "unresolved"},
             ]),
             {},
@@ -629,7 +656,7 @@ class ConfirmableAnswerTests(unittest.TestCase):
     def test_a_human_verdict_is_never_re_endorsed(self) -> None:
         for resolution in ("manual", "occluded"):
             self.assertEqual(
-                actor_labels.confirmations_for([
+                done.confirmations_for("match", [
                     {
                         "id": "e1", "frame": 10, "resolution": resolution,
                         "actor_box": [1, 2, 3, 4],

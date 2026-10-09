@@ -37,10 +37,10 @@ from typing import Literal
 
 from yp_video.actor import labels as actor_labels
 from yp_video.actor.labels import ActorLabel, ActorVerdict
+from yp_video.core.jsonl import read_jsonl_cached
 from yp_video.extraction import pipeline
 from yp_video.extraction import store as extraction_store
 from yp_video.reid import store
-from yp_video.tracklets.geometry import TrackRef
 
 log = logging.getLogger(__name__)
 
@@ -49,22 +49,11 @@ log = logging.getLogger(__name__)
 class PickActor:
     mode: Literal["pick"]
     event_id: str
+    #: Pixels on the event's own frame — ``apply`` stamps the label with it.
     box: tuple[float, float, float, float]
-    #: The tracklet the user clicked, when they clicked one. Then the box is
-    #: only the anchor that can re-derive it (see actor/labels.py).
-    track: TrackRef | None = None
-    frame: int | None = None
-    snap: bool = True
 
-    @property
-    def label(self) -> ActorLabel:
-        return ActorLabel(
-            ActorVerdict.MANUAL,
-            track=self.track,
-            box=self.box,
-            frame=self.frame,
-            snap=self.snap,
-        )
+    def label_on(self, frame: int) -> ActorLabel:
+        return ActorLabel(ActorVerdict.MANUAL, frame=frame, box=self.box)
 
 
 @dataclass(frozen=True)
@@ -72,8 +61,7 @@ class MarkOccluded:
     mode: Literal["occluded"]
     event_id: str
 
-    @property
-    def label(self) -> ActorLabel:
+    def label_on(self, frame: int) -> ActorLabel:
         return ActorLabel(ActorVerdict.OCCLUDED)
 
 
@@ -82,20 +70,20 @@ class RevertActor:
     mode: Literal["auto"]
     event_id: str
 
-    @property
-    def label(self) -> None:
+    def label_on(self, frame: int) -> None:
         """Reverting states nothing about the actor — it withdraws the claim."""
         return None
 
 
-#: Each command carries the label it stands for, so applying one is the same
-#: three writes regardless of which it is.
+#: Each command names the label it stands for on the event's frame, so
+#: applying one is the same three writes regardless of which it is.
 ActorFixCommand = PickActor | MarkOccluded | RevertActor
 
 
 @dataclass(frozen=True)
 class ActorFixResult:
     record: dict
+    label: ActorLabel | None
     refreshing_models: tuple[str, ...]
     actor_revision: int
 
@@ -118,8 +106,6 @@ def _validate(command: ActorFixCommand) -> None:
             raise ValueError("Actor box coordinates must be finite")
         if x1 <= x0 or y1 <= y0:
             raise ValueError("Actor box must have positive width and height")
-        if command.frame is not None and command.frame < 0:
-            raise ValueError("Actor frame must be non-negative")
 
 
 def _snapshot(paths: list[Path]) -> list[_FileSnapshot]:
@@ -191,15 +177,17 @@ def apply(stem: str, frame_source: str, command: ActorFixCommand) -> ActorFixRes
         try:
             # Derived record first: it is the only step that can fail on the
             # video itself, and a failed fix must not leave a label behind.
+            label = command.label_on(_event_frame(stem, command.event_id))
             record = pipeline.apply_actor_fix(
-                stem, frame_source, command.event_id, command.label
+                stem, frame_source, command.event_id, label
             )
-            actor_labels.save(stem, command.event_id, command.label)
+            actor_labels.save(stem, command.event_id, label)
             # The crop now shows a different person (or nobody), so whatever
             # name was attached to the old one is no longer evidence.
             store.drop_assignment(stem, command.event_id)
             return ActorFixResult(
                 record=record,
+                label=label,
                 refreshing_models=refreshing_models,
                 actor_revision=int(record["actor_revision"]),
             )
@@ -213,6 +201,15 @@ def apply(stem: str, frame_source: str, command: ActorFixCommand) -> ActorFixRes
                     if created.is_file():
                         created.unlink(missing_ok=True)
             raise
+
+
+def _event_frame(stem: str, event_id: str) -> int:
+    """The event's current frame — the action annotation's, joined by id."""
+    _meta, records = read_jsonl_cached(extraction_store.records_path(stem))
+    for record in extraction_store.with_current_actions(records, stem):
+        if record["id"] == event_id:
+            return int(record["frame"])
+    raise KeyError(f"No current action event {event_id}")
 
 
 def refresh_deferred(

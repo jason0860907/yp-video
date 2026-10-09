@@ -99,7 +99,7 @@ def load_events(stem: str) -> list[dict]:
 
     Invisible events (and ones without a contact point) are INCLUDED: they
     can't auto-associate, but they become miss records the user assigns by
-    hand — usually with a cross-frame pick on a frame where the actor shows.
+    hand (or marks occluded).
     Only SKIP_LABELS (nobody to identify) stay out.
 
     Cached parse (list_videos calls this for EVERY cut on every page load);
@@ -493,17 +493,12 @@ def apply_actor_fix(
 ) -> dict:
     """Re-point one extracted event at the person a human named, in place.
 
-    The verdict drives everything: ``MANUAL`` crops the labeled box (snapped
-    by IoU onto a stored segmentation detection when possible);
-    ``OCCLUDED`` clears the crop and embedding, dropping the event out of
-    clustering and matching; ``None`` clears it back to undecided, for the
-    next association run to re-decide. Persisting the label is the caller's job —
-    this only patches the derived jsonl.
-
-    ``label.frame`` marks a CROSS-FRAME pick: the actor went undetected on
-    the event frame, so the user clicked them on a nearby frame — the crop is
-    cut from THAT frame (the pixels actually contain the actor) and no
-    detection snap applies (stored detections belong to the event frame).
+    The verdict drives everything: ``MANUAL`` crops the labeled box exactly,
+    on the event frame (cropping.label_target); ``OCCLUDED`` clears the crop
+    and embedding, dropping the event out of clustering and matching;
+    ``None`` clears it back to undecided, for the next association run to
+    re-decide. Persisting the label is the caller's job — this only patches
+    the derived jsonl.
 
     ``frame_source`` is what OpenCV opens for the crop: a local path or a
     presigned URL. No matrix is re-embedded here — each keeps an explicit
@@ -564,6 +559,8 @@ def _apply_actor_fix(
     record.pop("crop_frame", None)
 
     target = label_target(stem, record, label) if label is not None else None
+    if label is not None and label.box is not None and target is None:
+        raise ValueError("The picked box cannot be followed to the event's frame")
     src_frame = target.frame if target is not None else record["frame"]
     person = person_for(record, target) if target is not None else None
 

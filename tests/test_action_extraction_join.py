@@ -170,7 +170,7 @@ class AssociationProgressTests(unittest.TestCase):
                 actor_labels.save(
                     "match",
                     "reviewed",
-                    ActorLabel(ActorVerdict.CONFIRMED_AUTO),
+                    ActorLabel(ActorVerdict.CONFIRMED_AUTO, 30, (1, 2, 3, 4)),
                 )
                 # Old verdicts are durable, but do not count toward current
                 # progress or its verdict breakdown.

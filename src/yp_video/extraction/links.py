@@ -4,32 +4,19 @@ Tracklets know nothing about events and extraction records know nothing about
 tracklets — joining them needs both, so it happens here, in the one layer
 allowed to see both.
 
-Three answers, in this order, and the order is the whole point:
+Two answers, in this order:
 
-1. the tracklet a HUMAN named (actor/labels.py), when it still exists
-2. the tracklet a POLICY named (``record["track"]``)
-3. failing both, the tracklet the stored box geometrically sits on
+1. a HUMAN label's box (actor/labels.py), on the event frame
+2. the POLICY's pick — the tracklet it named (``record["track"]``) when that
+   still exists, else the box it cropped
 
-Geometry is the FALLBACK — it exists because the rule policy answers with a
-box and somebody still has to say which player that box is. Running it over
-an answer that already named a tracklet is how a deliberate pick got
-overwritten: two overlapping players resolve to boxes that each match the
-other's tracklet, so clicking the right one changed nothing on screen.
-Measured at 6.7% of picks, concentrated on exactly the overlapping players
-that get picked by hand in the first place.
+A box becomes a tracklet by geometry (tracklets/geometry.link_boxes). A label
+carries no tracklet on purpose: ``track_id`` restarts per rally, so every
+re-track renumbers, while a box on a frame means the same person forever.
 
 Nothing is stored. The answer is recomputed from the label file, the records
 and the tracklets, so re-running tracking can never leave a stale pointer
-behind — a name the anchor contradicts falls through to geometry rather than
-pointing at whoever inherited its id.
-
-"Contradicts" and not "no longer exists": ``track_id`` restarts per rally and
-gets reused, so after a re-track the stored pair almost always still
-resolves, just to somebody else. Existence cannot tell a surviving id from an
-inherited one. The ANCHOR can — the box whoever picked was pointing at, which
-no re-run moves — so a person's named tracklet stops being honoured once the
-anchor names somebody else (``anchor_names_another``), and is re-derived from
-that same anchor instead.
+behind.
 """
 
 from __future__ import annotations
@@ -38,7 +25,8 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from yp_video.actor import labels as actor_labels
-from yp_video.actor.labels import ActorLabel, ActorVerdict
+from yp_video.actor.box_style import event_box
+from yp_video.actor.labels import ActorVerdict
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import read_jsonl_cached
 from yp_video.extraction.store import (
@@ -46,13 +34,12 @@ from yp_video.extraction.store import (
     labelable,
     records_path,
 )
+from yp_video.person.dense import dense_path
 from yp_video.person.detector import iou
 from yp_video.tracklets.geometry import (
     BOX_MATCH_IOU,
     EVENT_TRACK_MAX_DELTA,
-    LINK_MIN_MARGIN,
     BoxQuery,
-    TrackletIndex,
     TrackRef,
     box_near,
     link_boxes,
@@ -64,12 +51,10 @@ from yp_video.tracklets.store import (
     tracklet_index,
     tracks_masks_path,
     tracks_path,
-    tracks_stride,
 )
 
 # Keyed by stem on its source files. Tiny values (one small dict per video).
 _links_cache: StatCache = StatCache()
-_unresolved_cache: StatCache = StatCache()
 
 
 def event_tracks(stem: str) -> dict[str, TrackRef]:
@@ -77,91 +62,21 @@ def event_tracks(stem: str) -> dict[str, TrackRef]:
 
     Events with no actor at all (a miss, or an occluded verdict) never link —
     there is nothing to resolve, which is an absent entry rather than an
-    error.
+    error. Neither does a label an action edit moved off its frame that the
+    dense boxes cannot follow back.
     """
     tracks = tracks_path(stem)
     records = records_path(stem)
     if not tracks.exists() or not records.exists():
         return {}
     sources = [tracks, records, *action_source_paths(stem)]
-    # The label file joins the cache key only once it exists. Before that
-    # there are no human answers to honour, and the write that creates it
-    # rewrites the records too (extraction/actor_fix.py), so the entry is
-    # invalidated either way.
-    labels = actor_labels.actors_path(stem)
-    if labels.exists():
-        sources.append(labels)
+    # The label file and the dense pass join the cache key only once they
+    # exist: before that there are no human answers to honour, or no frames
+    # to follow a moved one through.
+    for optional in (actor_labels.actors_path(stem), dense_path(stem)):
+        if optional.exists():
+            sources.append(optional)
     return _links_cache.get(stem, sources, lambda: _event_tracks(stem))
-
-
-def _anchor(label: ActorLabel | None, record: dict) -> tuple[int, list[float]]:
-    """(frame, box) the pick was made at — what re-derives it when ids move.
-
-    A person's own box outranks the record's. For a tracklet label the box IS
-    the anchor and not the answer (actor/labels.py): it is where they pointed,
-    while the record's box is the POLICY's answer to the same event and can
-    name the other player of an overlapping pair. Re-deriving from the record
-    would quietly hand the pick back to whoever the policy preferred — the
-    very thing naming a tracklet was for.
-    """
-    frame = int(record.get("crop_frame") or record["frame"])
-    anchor = label.anchor_at(frame) if label is not None else None
-    return anchor or (frame, list(record.get("actor_box") or record["box"]))
-
-
-def borne_out_track(stem: str, label: ActorLabel, frame: int) -> TrackRef | None:
-    """The tracklet this label names, once the tracklets bear it out.
-
-    None in the two ways a re-track invalidates a stored pick — the pair is
-    gone, or the anchor names somebody else — so a caller falls back to what
-    the person actually clicked rather than cropping, ranking or training on
-    whoever inherited the number.
-
-    The same question ``_event_tracks`` asks for the whole board, for the
-    callers that hold one label at a time. It lives here and not at each of
-    them because a second opinion about who a pick names is exactly how the
-    crop, the candidate list and the board come to disagree about one event.
-    """
-    if label.track is None or not tracks_path(stem).exists():
-        return None
-    return label.borne_out_by(
-        tracklet_index(stem), frame, stride=tracks_stride(stem)
-    )
-
-
-def _honoured(
-    index: TrackletIndex,
-    label: ActorLabel | None,
-    record: dict,
-    *,
-    stride: int,
-) -> TrackRef | None:
-    """The tracklet to take at face value here, or None to re-derive one.
-
-    A PERSON's pick answers through ``ActorLabel.borne_out_by``: the anchor
-    has to still bear the name out, because after a re-track the stored pair
-    resolves perfectly well — to whoever inherited the number. Their pick
-    outranks a policy's for the reason it does everywhere else: they looked.
-
-    A POLICY's pick is checked for existence, as it always was. It lives in
-    the records file, which extraction regenerates from the very tracklets it
-    would be compared against, so it is not a durable answer that has to
-    survive a re-run — and its box is the display box for the same event,
-    which for an overlapping pair can name the other player. Anchoring it
-    would reject answers that are merely the policy disagreeing with geometry,
-    and settling that disagreement is what naming a tracklet is for.
-    """
-    if label is not None and label.track is not None:
-        return label.borne_out_by(
-            index, int(record.get("crop_frame") or record["frame"]), stride=stride
-        )
-    if label is not None and label.verdict is ActorVerdict.MANUAL:
-        # A hand-drawn box overrules the policy: re-derive from what they
-        # drew, never from the tracklet the policy had named for the event.
-        return None
-    stored = record.get("track")
-    named = TrackRef.parse(stored) if stored else None
-    return named if named is not None and index.tracklet(named) is not None else None
 
 
 def _event_tracks(stem: str) -> dict[str, TrackRef]:
@@ -171,85 +86,38 @@ def _event_tracks(stem: str) -> dict[str, TrackRef]:
     index = tracklet_index(stem)
     verdicts = actor_labels.load(stem)
 
-    stride = int(tmeta.get("stride") or 1)
-
     out: dict[str, TrackRef] = {}
     queries: list[BoxQuery] = []
     for record in records:
-        if not record.get("box"):
-            continue
         event_id = record["id"]
         label = verdicts.get(str(event_id))
-        by_human = label is not None and label.track is not None
-        honoured = _honoured(index, label, record, stride=stride)
-        if honoured is not None:
-            out[event_id] = honoured
+        if label is not None:
+            if label.verdict is ActorVerdict.OCCLUDED:
+                continue
+            # The human box is tight and is its own gate: no display box
+            # stands between it and the tracklet it sits on.
+            box = event_box(stem, label, record["frame"])
+            if box is not None:
+                queries.append(BoxQuery(event_id, record["frame"], list(box), list(box)))
             continue
-        # A cross-frame pick's box lives on crop_frame, not the event frame
-        # (the actor was not trackable there) — look it up THERE.
-        frame, anchor = _anchor(label, record)
+        if not record.get("box"):
+            continue
+        stored = record.get("track")
+        named = TrackRef.parse(stored) if stored else None
+        if named is not None and index.tracklet(named) is not None:
+            out[event_id] = named
+            continue
+        # A policy pick cut from another frame has its box THERE.
         queries.append(
             BoxQuery(
-                key=event_id,
-                frame=frame,
-                anchor=anchor,
-                gate=record["box"],
-                # Re-deriving what a PERSON chose: a near-tie between two
-                # overlapping players is not an answer here. Refusing sends the
-                # event to unresolved_labels, which is already the re-pick
-                # worklist, instead of silently reassigning their pick.
-                margin=LINK_MIN_MARGIN if by_human else 0.0,
+                event_id,
+                int(record.get("crop_frame") or record["frame"]),
+                list(record.get("actor_box") or record["box"]),
+                record["box"],
             )
         )
-    out.update(link_boxes(index, queries, stride=stride))
+    out.update(link_boxes(index, queries, stride=int(tmeta.get("stride") or 1)))
     return out
-
-
-def unresolved_labels(stem: str) -> set[str]:
-    """The re-pick worklist: labeled events no tracklet can be derived for.
-
-    A verdict that names a person (so, not occluded) but resolves to no
-    tracklet TODAY — neither by the key it stored nor by the geometry
-    fallback. These are the labels tracklet training drops, whatever their
-    verdict: a legacy hand-drawn box, a detection-fallback pick, or a confirm
-    whose box no longer sits on anything tracked. Recomputed like the links
-    themselves, so a better tracking run shrinks the list by itself.
-
-    Empty while the video has no tracking run at all: nothing is resolvable
-    then, but the remedy is running tracking, not re-picking players — that
-    gap is the pipeline's to report.
-
-    Cached per file version — deriving it parses the full records file, and
-    the association work list asks for every extracted video on each page
-    load. The returned set is shared; callers only test membership.
-    """
-    tracks = tracks_path(stem)
-    records = records_path(stem)
-    if not tracks.exists() or not records.exists():
-        return set()
-    # Same sources as event_tracks, and for the same reason: the labels file
-    # joins the key only once it exists.
-    sources = [tracks, records, *action_source_paths(stem)]
-    labels = actor_labels.actors_path(stem)
-    if labels.exists():
-        sources.append(labels)
-    return _unresolved_cache.get(stem, sources, lambda: _unresolved_labels(stem))
-
-
-def _unresolved_labels(stem: str) -> set[str]:
-    meta, rows = read_jsonl_cached(records_path(stem))
-    current = {
-        str(row["id"])
-        for row in labelable(rows, stem, float(meta.get("fps") or 0))
-    }
-    linked = event_tracks(stem)
-    return {
-        event_id
-        for event_id, label in actor_labels.load(stem).items()
-        if event_id in current
-        and label.verdict is not ActorVerdict.OCCLUDED
-        and event_id not in linked
-    }
 
 
 def track_keys(stem: str) -> dict[str, str]:
@@ -267,11 +135,9 @@ def link_payload(stem: str) -> dict[str, dict]:
     return {event_id: ref.payload() for event_id, ref in event_tracks(stem).items()}
 
 
-# ── Resolving a picked tracklet back to a croppable box ───────────
-# The arbitration below used to live in the browser (masks.ts::resolveActorFix)
-# because that is where the masks were already decoded. It belongs here: the
-# crop it chooses feeds the embedder, so it has to be reproducible from the
-# label alone, long after the click.
+# ── Resolving a policy's tracklet pick back to a croppable box ────
+# The crop it chooses feeds the embedder, so it has to be reproducible from
+# the record alone, long after the pick.
 
 #: Coverage of the tracklet's mask a stored detection needs to be accepted as
 #: that player. Coverage, not IoU: a partially occluded player's mask is a
@@ -299,7 +165,7 @@ def _as_box(value: Sequence[float]) -> Box:
 
 @dataclass(frozen=True)
 class TrackPick:
-    """Where to crop for a tracklet label."""
+    """Where to crop for a policy's tracklet pick."""
 
     box: Box
     #: The frame to cut from — the event's, unless the track never reaches it.
@@ -396,8 +262,8 @@ def resolve_track(
 
     Prefers a stored detection — the extraction detector's box is what every
     automatic crop was cut from, and a tracklet's segmentation box runs wider,
-    so cropping it directly would give manual crops different statistics than
-    automatic ones and quietly poison the embedder.
+    so cropping it directly would give tracklet picks different statistics
+    than box picks and quietly poison the embedder.
 
     ``masks`` is the caller's already-open silhouette archive, when it has
     one; without it this opens the file itself, which is only affordable for

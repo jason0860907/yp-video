@@ -26,7 +26,7 @@ from yp_video.config import ACTION_FRAMES_DIR
 from yp_video.contracts.action import TASKS
 from yp_video.core.jsonl import read_jsonl
 from yp_video.person.annotations import apply_annotations, load
-from yp_video.person.dense import dense_path
+from yp_video.person.dense import DENSE_SCORE_FLOOR, dense_path
 
 PERSON_FILE_SUFFIX = TASKS["person"].label_glob.removeprefix("*")
 #: The dense pass keeps boxes from 0.1 so the cut is chosen here. 0.4 was
@@ -132,6 +132,15 @@ class DensePass:
         """``frame``'s boxes and scores, or None when the pass did not cover it."""
         row = int(self.rows(np.array([frame]))[0])
         return None if row < 0 else self.row_boxes(row, min_score)
+
+    def people(self, frames, min_score: float = DENSE_SCORE_FLOOR) -> dict[int, list[list[float]]]:
+        """``{frame: normalized boxes}`` over ``frames``, covered frames only."""
+        frames = np.asarray(list(frames))
+        return {
+            frame: self.row_boxes(row, min_score)[0]
+            for frame, row in zip(frames.tolist(), self.rows(frames).tolist())
+            if row >= 0
+        }
 
 
 def dense_frame_boxes(path: Path, *, min_score: float) -> tuple[float, dict[int, list[list[float]]]]:

@@ -39,12 +39,7 @@ class ActorLabelStoreTests(unittest.TestCase):
             actor_labels.save(
                 "match",
                 "manual-event",
-                ActorLabel(
-                    ActorVerdict.MANUAL,
-                    box=(1, 2, 3, 4),
-                    frame=812,
-                    snap=False,
-                ),
+                ActorLabel(ActorVerdict.MANUAL, frame=812, box=(1, 2, 3, 4)),
             )
             actor_labels.save(
                 "match", "occluded-event", ActorLabel(ActorVerdict.OCCLUDED)
@@ -53,25 +48,33 @@ class ActorLabelStoreTests(unittest.TestCase):
             labels = actor_labels.load("match")
             self.assertEqual(
                 labels["manual-event"],
-                ActorLabel(
-                    ActorVerdict.MANUAL,
-                    box=(1.0, 2.0, 3.0, 4.0),
-                    frame=812,
-                    snap=False,
-                ),
+                ActorLabel(ActorVerdict.MANUAL, frame=812, box=(1.0, 2.0, 3.0, 4.0)),
             )
             self.assertEqual(
                 labels["occluded-event"].verdict, ActorVerdict.OCCLUDED
             )
             self.assertTrue(labels["manual-event"].overrides_auto)
 
-            # Defaults stay out of the file; the verdict never does.
             stored = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(stored["version"], actor_labels.SCHEMA_VERSION)
-            self.assertNotIn("snap", stored["actors"]["occluded-event"])
+            self.assertEqual(
+                stored["actors"]["manual-event"],
+                {"verdict": "manual", "frame": 812, "box": [1.0, 2.0, 3.0, 4.0]},
+            )
             self.assertEqual(
                 stored["actors"]["occluded-event"], {"verdict": "occluded"}
             )
+
+    def test_a_label_must_carry_its_box_exactly_when_it_names_someone(self) -> None:
+        for bad in (
+            lambda: ActorLabel(ActorVerdict.MANUAL),
+            lambda: ActorLabel(ActorVerdict.MANUAL, box=(1, 2, 3, 4)),
+            lambda: ActorLabel(ActorVerdict.OCCLUDED, 3, (1, 2, 3, 4)),
+            lambda: ActorLabel.from_payload({"verdict": "manual", "frame": 3, "box": [1, 2, 3]}),
+            lambda: ActorLabel.from_payload({"verdict": "manual", "frame": 3, "box": [1, 2, 3, 4], "snap": False}),
+        ):
+            with self.assertRaises(ValueError):
+                bad()
 
     def test_reverting_clears_the_label_and_the_file(self) -> None:
         with self._store() as path:
@@ -93,10 +96,10 @@ class ActorLabelStoreTests(unittest.TestCase):
                 "match",
                 {
                     "fixed": ActorLabel(
-                        ActorVerdict.CONFIRMED_AUTO, box=(1, 2, 3, 4)
+                        ActorVerdict.CONFIRMED_AUTO, 1, (1, 2, 3, 4)
                     ),
                     "untouched": ActorLabel(
-                        ActorVerdict.CONFIRMED_AUTO, box=(5, 6, 7, 8)
+                        ActorVerdict.CONFIRMED_AUTO, 2, (5, 6, 7, 8)
                     ),
                 },
             )
@@ -136,15 +139,13 @@ class DoneConfirmationTests(unittest.TestCase):
             done.identity,
             "load_assignments",
             return_value={"auto-assigned": "A", "manual-assigned": "B"},
-        ):
+        ), patch("yp_video.actor.box_style.dense_pass", return_value=None):
             confirmable = done.confirmable_actors("match", records)
 
         self.assertEqual(list(confirmable), ["auto-assigned"])
         self.assertEqual(
             confirmable["auto-assigned"],
-            ActorLabel(
-                ActorVerdict.CONFIRMED_AUTO, box=(1.0, 2.0, 3.0, 4.0), frame=10
-            ),
+            ActorLabel(ActorVerdict.CONFIRMED_AUTO, 10, (1.0, 2.0, 3.0, 4.0)),
         )
 
 
@@ -168,15 +169,15 @@ class FixEndpointTests(unittest.TestCase):
                 self.scheduled.append((fn, args, kwargs))
 
         tasks = _Tasks()
-        result = actor_fix.ActorFixResult(
-            record={"id": "e1", "actor_revision": 3, "detections": [{"box": [1, 2, 3, 4], "score": 0.9}]},
-            refreshing_models=("clip-reid",),
-            actor_revision=3,
-        )
 
         def fake_apply(stem, frame_source, command):
             applied.append((command, frame_source))
-            return result
+            return actor_fix.ActorFixResult(
+                record={"id": "e1", "actor_revision": 3, "detections": [{"box": [1, 2, 3, 4], "score": 0.9}]},
+                label=command.label_on(7),
+                refreshing_models=("clip-reid",),
+                actor_revision=3,
+            )
 
         with tempfile.TemporaryDirectory() as raw_dir:
             records = Path(raw_dir) / "match.jsonl"
@@ -188,9 +189,6 @@ class FixEndpointTests(unittest.TestCase):
                     router.extraction_store, "records_path", return_value=records
                 ),
                 patch.object(router.actor_fix, "apply", side_effect=fake_apply),
-                patch.object(
-                    router.tracks_store, "tracks_path", return_value=Path(raw_dir) / "none"
-                ),
             ):
                 response = router.fix(
                     "match.mp4", adapter.validate_python(payload), tasks  # type: ignore[arg-type]
@@ -199,23 +197,16 @@ class FixEndpointTests(unittest.TestCase):
 
     def test_pick_reaches_the_service_as_a_manual_label(self) -> None:
         response, (command, frame_source), scheduled = self._fix(
-            {
-                "mode": "pick",
-                "event_id": "e1",
-                "box": [1, 2, 3, 4],
-                "frame": 7,
-                "snap": False,
-            }
+            {"mode": "pick", "event_id": "e1", "box": [1, 2, 3, 4]}
         )
 
         self.assertEqual(
-            command.label,
-            ActorLabel(ActorVerdict.MANUAL, box=(1, 2, 3, 4), frame=7, snap=False),
+            command, actor_fix.PickActor(mode="pick", event_id="e1", box=(1, 2, 3, 4))
         )
         # An R2-only cut is read over its URL, not required on disk.
         self.assertEqual(frame_source, "https://r2.test/match.mp4")
         self.assertEqual(response["record"]["actor_review"], "manual")
-        self.assertIsNone(response["track_link"])
+        self.assertNotIn("track_link", response)
         self.assertEqual(response["refreshing_models"], ("clip-reid",))
         # Every matrix is refreshed after the response; unscheduled, they'd
         # stay silently stale.
@@ -227,8 +218,16 @@ class FixEndpointTests(unittest.TestCase):
             {"mode": "auto", "event_id": "e1"}
         )
 
-        self.assertIsNone(command.label)
+        self.assertIsNone(command.label_on(7))
         self.assertEqual(response["record"]["actor_review"], "unreviewed")
+
+    def test_a_pick_names_only_its_box(self) -> None:
+        """The event frame is the server's to stamp; tracklets and snapping
+        are gone from the label altogether."""
+        adapter = TypeAdapter(router.ActorFixRequest)
+        for extra in ({"frame": 7}, {"track": "1:2"}, {"snap": False}):
+            with self.subTest(extra=extra), self.assertRaises(ValueError):
+                adapter.validate_python({"mode": "pick", "event_id": "e1", "box": [1, 2, 3, 4], **extra})
 
     def test_a_video_without_records_is_a_404(self) -> None:
         adapter = TypeAdapter(router.ActorFixRequest)
@@ -291,6 +290,7 @@ class ConfirmEndpointTests(unittest.TestCase):
                     actor_labels, "actors_path", return_value=root / "match_actors.json"
                 ),
                 patch.object(actor_labels._store, "_cache", StatCache()),
+                patch("yp_video.actor.box_style.dense_pass", return_value=None),
             ):
                 yield
 

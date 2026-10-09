@@ -32,7 +32,7 @@ from yp_video.config import cut_kind_of
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import read_jsonl, read_jsonl_cached
 from yp_video.core.rallies import load_rallies
-from yp_video.extraction import links, pipeline
+from yp_video.extraction import pipeline
 from yp_video.extraction import store as extraction_store
 from yp_video.extraction.prerequisites import prerequisites
 from yp_video.tracklets import store as tracks_store
@@ -186,19 +186,13 @@ def records(name: str) -> dict:
         stem, sources, lambda: _slim_records(path, stem)
     )
     labels = actor_labels.load(stem)
-    unresolved = links.unresolved_labels(stem)
-    records = []
-    for record in rows:
-        label = labels.get(record["id"])
-        row = {
+    records = [
+        {
             **record,
-            "actor_review": label.verdict.value if label else "unreviewed",
+            "actor_review": labels[record["id"]].verdict.value if record["id"] in labels else "unreviewed",
         }
-        # Sparse on purpose: present only where the verdict resolves to no
-        # tracklet today, so the label pages can flag what needs re-picking.
-        if record["id"] in unresolved:
-            row["actor_review_unresolved"] = True
-        records.append(row)
+        for record in rows
+    ]
     return {"meta": meta, "records": records}
 
 

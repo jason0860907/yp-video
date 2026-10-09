@@ -483,12 +483,10 @@ export interface ReidRecord {
   time?: number | null;
   label?: string;
   /** Contact point (normalized); null for invisible / point-less events —
-   *  those never auto-associate and are assigned via (cross-frame) picks. */
+   *  those never auto-associate and are assigned by hand. */
   xy: [number, number] | null;
   /** false = the action isn't visible on its frame. */
   visible?: boolean;
-  /** Set when the crop was cut from another frame (cross-frame pick). */
-  crop_frame?: number;
   /** ok = unique person box, multi = ranked pick among overlaps, miss = none. */
   status: 'ok' | 'multi' | 'miss';
   /** How the actor was resolved. Always explicit — never infer it from crop
@@ -496,10 +494,6 @@ export interface ReidRecord {
   resolution: 'unresolved' | 'auto' | 'manual' | 'occluded';
   /** The human verdict on this event's actor; drives association training. */
   actor_review?: 'unreviewed' | 'confirmed_auto' | 'manual' | 'occluded';
-  /** Present (true) only when the verdict names a person but resolves to no
-   *  tracklet today (links.unresolved_labels) — tracklet training skips such
-   *  an event until the player is re-picked or tracking improves. */
-  actor_review_unresolved?: boolean;
   /** What decided this actor: the policy (`source`) and whether it found a
    *  candidate (`status`). */
   association?: {
@@ -510,15 +504,10 @@ export interface ReidRecord {
   score?: number | null;
   candidates: number;
   crop?: string | null;
-  /** ALL person detections on the event frame — the actor picker's choices. */
-  detections?: { box: [number, number, number, number]; score: number }[];
-  /** The automatic pick, kept when a manual fix overrides it. */
-  auto_box?: [number, number, number, number] | null;
 }
 
 export interface ReidActorFixResponse {
   record: ReidRecord;
-  track_link: { rally_id: number; track_id: number } | null;
   /** Non-visible models refreshing after the response. */
   refreshing_models: string[];
 }
@@ -670,12 +659,9 @@ export interface AssociationVideo {
   unreviewed: number;
   /** verdict -> count; keys are absent when the count is zero. */
   verdicts: Partial<Record<'manual' | 'occluded' | 'confirmed_auto', number>>;
-  /** Reviewed verdicts resolving to no tracklet today — need re-picking (or
-   *  a better tracking run) before tracklet training can use them. Zero when
-   *  the video has no tracking run at all: that gap is the pipeline chip's. */
-  unresolved: number;
-  /** Boxed actor labels the 2XLarge box check does not snap (any status but
-   *  `snapped`) — the queue behind the "2XL box check" filter. */
+  /** Actor label boxes that are not a 2XLarge box on their event frame (a
+   *  status other than `snapped`) — the queue behind the "2XL box check"
+   *  filter. */
   box_check: number;
   /** What the automatic policy produced, for context on the remainder. */
   auto_counts: { ok: number; multi: number; miss: number };
@@ -687,19 +673,22 @@ export interface AssociationVideo {
 }
 
 /** Why a label box is (not) one of the 2XLarge dense boxes on its event
- *  frame — the actor snapshot's rule (actor/box_style.py). */
-export type BoxCheckStatus = 'snapped' | 'contested' | 'unmatched' | 'not_covered' | 'cross_frame_unresolved';
+ *  frame — the actor snapshot's rule (actor/box_style.py). `unresolved` = an
+ *  action edit moved the event and the box could not be followed there. */
+export type BoxCheckStatus = 'snapped' | 'contested' | 'unmatched' | 'not_covered' | 'unresolved';
 
-/** One boxed actor label checked against the dense pass (actor/box_check.py). */
+/** One labelable event's 2XLarge boxes and its label's box check
+ *  (actor/box_check.py). */
 export interface BoxCheckEntry {
   id: string;
   frame: number;
   label: string | null;
-  status: BoxCheckStatus;
-  /** The stored label box, pixels, drawn on ``label_frame`` (null = the event's). */
-  label_box: [number, number, number, number];
-  label_frame: number | null;
-  /** The event frame's 2XLarge boxes (score ≥ 0.1), pixels. */
+  /** null when the event has no label box (unreviewed or occluded). */
+  status: BoxCheckStatus | null;
+  /** The label's box on the event frame, pixels; null without one. */
+  label_box: [number, number, number, number] | null;
+  /** The event frame's 2XLarge boxes (score ≥ 0.1), pixels — the picker's
+   *  choices. Empty when the dense pass did not cover the frame. */
   boxes: { box: [number, number, number, number]; score: number }[];
 }
 

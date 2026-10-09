@@ -240,7 +240,7 @@ def track_video(
         # Which rallies these tracklets were cut from. A track key is
         # "{rally_id}:{track_id}" and rally_id is positional, so if the spans
         # move every key silently means something else — this is how a reader
-        # finds out instead of mis-resolving a human's tracklet label.
+        # finds out instead of mis-resolving a stored tracklet reference.
         "rallies": {"count": len(spans), "fingerprint": rally_fingerprint(stem)},
         "created_at": time.time(),
         "counts": counts,

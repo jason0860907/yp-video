@@ -132,9 +132,8 @@ export function ReidPanel({ video, registerGuard, clock }: { video: string; regi
   }, [optionsQuery.data]);
   const extracted = (videosQuery.data ?? []).filter((v) => v.pipeline.has_records);
 
-  const { resultsQuery, records, meta, tracksQuery, actionEvents } = useVideoLabelingData(video);
+  const { resultsQuery, records, meta, tracksQuery, trackLinks, actionEvents } = useVideoLabelingData(video);
   const recordById = useMemo(() => new Map(records.map((r) => [r.id, r])), [records]);
-  const trackLinks = useMemo(() => tracksQuery.data?.links ?? {}, [tracksQuery.data]);
 
   const clustersQuery = useQuery({
     queryKey: ['reid-clusters', video, threshold, embedder],

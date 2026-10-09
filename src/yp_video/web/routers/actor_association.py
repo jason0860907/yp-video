@@ -19,11 +19,9 @@ from yp_video.actor import labels as actor_labels
 from yp_video.actor.box_check import box_check
 from yp_video.core import label_done
 from yp_video.core.jsonl import read_jsonl_cached
-from yp_video.extraction import actor_fix, links
+from yp_video.extraction import actor_fix
 from yp_video.extraction import done as extraction_done
 from yp_video.extraction import store as extraction_store
-from yp_video.tracklets import store as tracks_store
-from yp_video.tracklets.geometry import TrackRef
 from yp_video.web import audit, worklists
 from yp_video.web.r2_client import (
     cut_frame_source,
@@ -42,9 +40,9 @@ def list_videos() -> list[dict]:
 
 @router.get("/box-check/{name}")
 def get_box_check(name: str) -> list[dict]:
-    """Every boxed actor label checked against the 2XLarge dense pass —
-    the snapshot's rule (actor/box_check.py), with the event frame's dense
-    boxes for the reviewer to pick from. Empty without a dense pass."""
+    """Every labelable event's 2XLarge boxes — what the picker clicks — and
+    whether its label box is one of them (actor/box_check.py). Empty without
+    a dense pass."""
     return box_check(Path(unquote(name)).stem)
 
 
@@ -79,7 +77,7 @@ class ConfirmRequest(StrictModel):
 @router.post("/confirm/{name}")
 def confirm(name: str, req: ConfirmRequest) -> dict:
     """Endorse the policy's picks: "it already got these right" — each lands
-    as ``confirmed_auto`` (see actor/labels.confirmations_for).
+    as ``confirmed_auto`` (see extraction/done.confirmations_for).
 
     Purely an annotation write — the record, the crop and every embedding
     stay exactly as they are, because agreeing with a pick changes nothing
@@ -98,7 +96,7 @@ def confirm(name: str, req: ConfirmRequest) -> dict:
     records = extraction_store.labelable(
         records, stem, float(meta.get("fps") or 0)
     )
-    confirmable = actor_labels.confirmations_for(records)
+    confirmable = extraction_done.confirmations_for(stem, records)
     if req.event_ids is not None:
         wanted = set(req.event_ids)
         unknown = sorted(wanted - set(confirmable))
@@ -107,7 +105,7 @@ def confirm(name: str, req: ConfirmRequest) -> dict:
             # happen; a miss needs a real verdict, not a confirmation.
             raise HTTPException(
                 400,
-                "Nothing to endorse — the policy picked nobody for: "
+                "Nothing to endorse — the policy picked nobody on the event frame for: "
                 f"{', '.join(unknown[:5])}"
                 + (f" (+{len(unknown) - 5} more)" if len(unknown) > 5 else ""),
             )
@@ -135,29 +133,12 @@ class ActorFixBase(BaseModel):
 
 class PickActorRequest(ActorFixBase):
     mode: Literal["pick"]
+    # The clicked 2XLarge box, pixels on the event's own frame.
     box: tuple[float, float, float, float]
-    # The tracklet clicked, as "{rally_id}:{track_id}". When present the box
-    # is only the anchor — the server re-resolves the tracklet to a croppable
-    # detection itself, so the crop is reproducible from the label alone.
-    track: str | None = Field(default=None, pattern=r"^\d+:\d+$")
-    # Cross-frame pick: the box lives on this frame, not the event's — the
-    # crop is cut from here (actor undetected on the event frame). Tracklet
-    # picks do not need it; the tracklet already spans frames.
-    frame: int | None = Field(default=None, ge=0)
-    # False = no stored detection is this player, so embed the box as drawn
-    # rather than IoU-snapping onto an occluder. Box picks only.
-    snap: bool = True
 
     @property
     def command(self) -> actor_fix.PickActor:
-        return actor_fix.PickActor(
-            mode="pick",
-            event_id=self.event_id,
-            box=self.box,
-            track=TrackRef.parse(self.track) if self.track else None,
-            frame=self.frame,
-            snap=self.snap,
-        )
+        return actor_fix.PickActor(mode="pick", event_id=self.event_id, box=self.box)
 
 
 class OccludedActorRequest(ActorFixBase):
@@ -225,17 +206,7 @@ def fix(
 
     current = extraction_store.with_current_actions([result.record], stem)
     record = current[0] if current else result.record
-    label = command.label
-    record["actor_review"] = label.verdict.value if label else "unreviewed"
-    # Sparse, recomputed AFTER the fix landed: present only when the fresh
-    # label still resolves to no tracklet (see links.unresolved_labels) — a
-    # box pick that lands on a tracked player clears the flag by resolving.
-    if label is not None and req.event_id in links.unresolved_labels(stem):
-        record["actor_review_unresolved"] = True
-    track_link = None
-    if tracks_store.tracks_path(stem).exists():
-        ref = links.event_tracks(stem).get(req.event_id)
-        track_link = ref.payload() if ref else None
+    record["actor_review"] = result.label.verdict.value if result.label else "unreviewed"
     # Association is labeling work like the other three panels: one call per
     # event the reviewer re-points. Folded into a session (see audit's
     # _COALESCING) so an afternoon of it reads as hours worked rather than as
@@ -256,6 +227,5 @@ def fix(
     )
     return {
         "record": record,
-        "track_link": track_link,
         "refreshing_models": result.refreshing_models,
     }

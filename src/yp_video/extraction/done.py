@@ -17,11 +17,50 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from yp_video.actor import labels as actor_labels
-from yp_video.actor.labels import ActorLabel
+from yp_video.actor.box_style import event_box, settle_box
+from yp_video.actor.labels import ActorLabel, ActorVerdict
+from yp_video.actor.resolution import ActorResolution, actor_resolution
 from yp_video.core import label_done
 from yp_video.core.jsonl import read_jsonl_cached
 from yp_video.extraction.store import labelable, records_path
 from yp_video.reid import identity
+
+
+def confirmations_for(stem: str, records: Sequence[dict]) -> dict[str, ActorLabel]:
+    """Every automatic pick a human could endorse, as the ``confirmed_auto``
+    label it would be.
+
+    The label snapshots the pick's box on the event frame, in the 2XLarge
+    style every actor label has (actor/box_style.py): the dense box it
+    clearly is, or the pick's own box when none is. A later re-extraction
+    cannot then quietly reinterpret what was endorsed. A pick cut from
+    another frame (the policy's tracklet never reached the event) is followed
+    to the event frame first, and is not endorsable when it cannot be.
+
+    WHO may endorse them is the caller's question, and the two labeling pages
+    answer it differently: naming the crop (ReID Label) and reviewing the
+    video (Association Label) are both evidence a human looked.
+    """
+    out: dict[str, ActorLabel] = {}
+    for record in records:
+        try:
+            resolution = actor_resolution(record)
+        except ValueError:
+            continue  # unmigrated record; never guess what it was
+        if resolution is not ActorResolution.AUTO or record.get("actor_box") is None:
+            continue
+        frame = int(record["frame"])
+        picked = ActorLabel(
+            ActorVerdict.CONFIRMED_AUTO,
+            frame=int(record.get("crop_frame") or frame),
+            box=tuple(float(v) for v in record["actor_box"]),
+        )
+        box = event_box(stem, picked, frame)
+        if box is not None:
+            out[str(record["id"])] = ActorLabel(
+                ActorVerdict.CONFIRMED_AUTO, frame=frame, box=settle_box(stem, box, frame)
+            )
+    return out
 
 
 def confirmable_actors(
@@ -39,7 +78,7 @@ def confirmable_actors(
     assignments = identity.load_assignments(stem)
     return {
         event_id: label
-        for event_id, label in actor_labels.confirmations_for(records).items()
+        for event_id, label in confirmations_for(stem, records).items()
         if event_id in assignments
     }
 
@@ -77,7 +116,7 @@ def confirm_reviewed(stem: str) -> int:
     meta, records = read_jsonl_cached(path)
     records = labelable(records, stem, float(meta.get("fps") or 0))
     return len(
-        actor_labels.confirm_auto(stem, actor_labels.confirmations_for(records))
+        actor_labels.confirm_auto(stem, confirmations_for(stem, records))
     )
 
 

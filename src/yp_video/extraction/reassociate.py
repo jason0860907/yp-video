@@ -85,7 +85,8 @@ class ReassociationCounts:
     unchanged: int = 0
     #: The policy declined to answer where the previous one had picked someone.
     abstained: int = 0
-    #: Decided, but the pick could not be turned into pixels.
+    #: Decided — by the policy or a human — but the pick could not be
+    #: turned into pixels on the event frame.
     unresolvable: int = 0
 
     def payload(self) -> dict:
@@ -207,13 +208,18 @@ def reassociate_video(
                 # A manual pick with nothing cut for it yet: detection stores
                 # no crop, so a freshly detected video arrives here with the
                 # verdict on file and no pixels behind it.
-                target = label_target(stem, record, label, masks)
+                target = label_target(stem, record, label)
                 if target is not None:
                     pending.append(
                         _Pending(row, record, target, ActorResolution.MANUAL, 1)
                     )
                     continue
-                counts.labeled += 1
+                # Its box was drawn before an action edit moved the event,
+                # and the dense boxes lose the person on the way: unresolved
+                # until somebody picks again — the policy does not get to
+                # overrule a human verdict it cannot see.
+                counts.unresolvable += 1
+                dirty |= _clear(record)
                 continue
             # Everything else runs the policy — INCLUDING a confirmed_auto
             # event with no crop. That verdict says "the automatic answer was

@@ -1,7 +1,8 @@
 /** Video player whose overlay mirrors the extraction records: the event box
  *  draws on its exact annotated frame, tracklets follow the previous/next
- *  action, and pick mode turns every stored detection into a clickable actor
- *  choice. Ships with the rally sidebar (same interaction as Action Label).
+ *  action, and pick mode parks on an event's frame and turns that frame's
+ *  2XLarge dense boxes into the actor choices. Ships with the rally sidebar
+ *  (same interaction as Action Label).
  *
  *  Shared by both labeling pages, and the ONLY difference between them is
  *  ``onFixActor``: Association Label passes it and gets the picker, ReID
@@ -9,7 +10,7 @@
  *  entry point entirely rather than disabling a visible control, so there is
  *  no path from that page to an actor write. */
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { API, apiFetch } from '@/lib/api';
 import { cn } from '@/lib/cn';
@@ -25,27 +26,13 @@ import { useVideoKeys } from './useVideoKeys';
 import { useFrameClock } from './useFrameClock';
 import type { BoxCheckEntry, ReidPlayers, ReidRecord } from '@/types/api';
 import { OUTSIDE, RallySidebar } from './RallySidebar';
-import { canConfirm, fmtTime, rallyOf, trackColor, trackKeyOf, verdictOf, VERDICT, type ActorFix, type ActorVerdict, type Rally, type SidebarAction, type TrackData, type TrackMasks } from './shared';
-import {
-  buildFrameRows,
-  buildFrameSilhouettes,
-  buildTrackBoxes,
-  nearestFrame,
-  pickableAt as resolvePickable,
-  resolveActorFix,
-  SilhouetteRenderer,
-  trackBoxNearEvent,
-  decodeMaskData,
-  type Box,
-} from './masks';
+import { canConfirm, fmtTime, rallyOf, trackColor, trackKeyOf, verdictOf, VERDICT, type ActorFix, type ActorVerdict, type Rally, type SidebarAction, type TrackData, type TrackLinks, type TrackMasks } from './shared';
+import { buildFrameRows, buildFrameSilhouettes, buildTrackBoxes, nearestFrame, SilhouetteRenderer, decodeMaskData } from './masks';
 
-// Detections below this score never win automatic association — they exist
-// only as manual-picker choices (mirrors reid/detector.AUTO_PICK_MIN_SCORE).
-const AUTO_PICK_MIN_SCORE = 0.5;
-// 2XLarge box-check boxes: the person head's label cut (actor/person_labels
+// The pickable 2XLarge boxes: the person head's label cut (actor/person_labels
 // PERSON_LABEL_MIN_SCORE) — weaker boxes draw dashed.
-const BOX_CHECK_LABEL_SCORE = 0.4;
-const BOX_CHECK_COLOR = '#67e8f9';
+const DENSE_LABEL_SCORE = 0.4;
+const DENSE_BOX_COLOR = '#67e8f9';
 const LABEL_BOX_COLOR = '#fbbf24';
 
 /** One keycap. Action Label spells these inline; naming it here keeps the
@@ -58,15 +45,17 @@ function Key({ children }: { children: React.ReactNode }) {
   );
 }
 
-const NO_BOX_CHECKS: ReadonlyMap<string, BoxCheckEntry> = new Map();
+const NO_EVENT_BOXES: ReadonlyMap<string, BoxCheckEntry> = new Map();
 /** Why an event is in the 2XLarge box-check queue (actor/box_style.py). */
-const BOX_CHECK_HINT: Record<BoxCheckEntry['status'], string> = {
+const BOX_CHECK_HINT: Record<NonNullable<BoxCheckEntry['status']>, string> = {
   snapped: 'The label box is a 2XLarge box.',
   contested: "Another person's 2XLarge box overlaps the label box about as well as the best one.",
   unmatched: 'No 2XLarge box overlaps the label box by IoU ≥ 0.5.',
-  not_covered: 'The dense 2XLarge pass did not cover this frame — nothing to pick; re-pick or mark occluded.',
-  cross_frame_unresolved: 'The label was drawn on another frame and could not be followed to the event frame.',
+  not_covered: 'The dense 2XLarge pass did not cover this frame — nothing to pick; mark occluded or revert.',
+  unresolved: 'The action was moved after the pick, and the box could not be followed to its new frame.',
 };
+/** Whether an event's label box needs a look: it is not a 2XLarge box. */
+const needsBoxCheck = (e: BoxCheckEntry) => e.status != null && e.status !== 'snapped';
 
 export interface PlayerHandle {
   /** Park the video on an event's frame, select + expand its rally, and pin
@@ -111,14 +100,14 @@ export interface EventVideoPlayerProps {
    *  the page has no board (Association Label). */
   onJumpToCrop?: (eventId: string) => void;
   /** Which tracklet each event's actor sits on (empty = no tracking run). */
-  trackLinks: TrackData['links'];
-  /** Events whose label box the 2XLarge box check does not snap, by id —
-   *  pick mode draws their event frame's dense boxes to pick from. */
-  boxChecks?: ReadonlyMap<string, BoxCheckEntry>;
+  trackLinks: TrackLinks;
+  /** Every event's 2XLarge boxes and label box check, by id — pick mode's
+   *  choices, and (status other than `snapped`) the box-check queue. */
+  eventBoxes?: ReadonlyMap<string, BoxCheckEntry>;
 }
 
 export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(function EventVideoPlayer(
-  { src, videoName, clock, tracklets, fps, frameSize, records, actionEvents, matches, rallies, selectedRally, onSelectRally, onFixActor, onConfirmActor, confirmableIds, onConfirmRally, fixing = false, onJumpToCrop, trackLinks, boxChecks = NO_BOX_CHECKS },
+  { src, videoName, clock, tracklets, fps, frameSize, records, actionEvents, matches, rallies, selectedRally, onSelectRally, onFixActor, onConfirmActor, confirmableIds, onConfirmRally, fixing = false, onJumpToCrop, trackLinks, eventBoxes = NO_EVENT_BOXES },
   ref,
 ) {
   const takeHandover = usePlayheadHandover(
@@ -140,9 +129,6 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   // Actor-picker mode: park on an event's frame, then click the right person.
   const [pickMode, setPickMode] = useState(false);
-  // Picker display floor: extraction stores every detection ≥ 0.1, this
-  // slider decides how deep into the low-confidence pile to show.
-  const [minDetScore, setMinDetScore] = useState(0.25);
   useEffect(() => {
     setExpanded(null);
     setSelectedEventId(null);
@@ -201,19 +187,32 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
     if (!canFix || !pickMode || !records.length) return null;
     return records.reduce((a, b) => (Math.abs(a.frame - frame) <= Math.abs(b.frame - frame) ? a : b));
   }, [canFix, pickMode, records, frame]);
-  // Near the action frame the record's stored detections are ALSO offered
-  // (they cover people without a tracklet, down to the score slider).
-  const nearEvent = pickTarget != null && Math.abs(pickTarget.frame - frame) <= 2;
-  // The target's box-check entry: its event frame's 2XLarge boxes are picked
-  // exactly as drawn (snap off, no tracklet), smallest on top so a player
-  // standing in front of another stays clickable.
-  const boxCheck = pickTarget ? boxChecks.get(pickTarget.id) : undefined;
-  const boxCheckBoxes = useMemo(
+  // A label is a box on the event's own frame, so picking happens there and
+  // nowhere else: the target's 2XLarge boxes are clickable only on it.
+  const onEventFrame = pickTarget != null && pickTarget.frame === frame;
+  // The target's entry: its event frame's 2XLarge boxes, smallest on top so
+  // a player standing in front of another stays clickable.
+  const targetBoxes = pickTarget ? eventBoxes.get(pickTarget.id) : undefined;
+  const pickBoxes = useMemo(
     () =>
-      [...(boxCheck?.boxes ?? [])].sort(
+      [...(targetBoxes?.boxes ?? [])].sort(
         (a, b) => (b.box[2] - b.box[0]) * (b.box[3] - b.box[1]) - (a.box[2] - a.box[0]) * (a.box[3] - a.box[1]),
       ),
-    [boxCheck],
+    [targetBoxes],
+  );
+  // Parked, pick mode lands on the target's frame — entering it, or the
+  // playhead crossing to the next action, seeks there.
+  const pickTargetId = pickTarget?.id;
+  const pickTargetFrame = pickTarget?.frame;
+  useEffect(() => {
+    const el = videoRef.current;
+    if (pickTargetFrame == null || playing || !el) return;
+    el.currentTime = (pickTargetFrame + 0.5) / fps;
+  }, [pickTargetId, pickTargetFrame, playing, fps, videoRef]);
+  // The box-check queue: events whose label box is not a 2XLarge box.
+  const boxCheckQueue = useMemo(
+    () => new Map([...eventBoxes].filter(([, e]) => needsBoxCheck(e))),
+    [eventBoxes],
   );
 
   // The rally under the playhead — masks are fetched per rally, whole
@@ -272,12 +271,6 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
     () => new Map(records.map((r) => [r.id, verdictOf(r)])),
     [records],
   );
-  // Verdicts resolving to no tracklet — the sidebar flags them for
-  // re-picking, since tracklet training cannot use them as they stand.
-  const unresolvedIds = useMemo<ReadonlySet<string>>(
-    () => new Set(records.filter((r) => r.actor_review_unresolved).map((r) => r.id)),
-    [records],
-  );
 
   // The same actions carrying their tracklet (null = not linked). EVERY
   // action occupies a slot, so an unlinked one means "no box right now"
@@ -327,60 +320,6 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
     [maskData, frameRows, trackBoxes, frame, activeTracks, renderer],
   );
 
-  /** Send the clicked player as an actor fix for the pinned event.
-   *  Which stored detection that tracklet IS gets decided server-side. */
-  const pickFromTrack = (key: string, clickedBox: Box) => {
-    const target = pickTarget;
-    if (!target) return;
-    onFixActor?.(
-      target.id,
-      resolveActorFix({
-        trackKey: key,
-        clickedBox,
-        clickedFrame: frame,
-        reachesEvent: trackBoxNearEvent(trackBoxes, key, target.frame) !== null,
-      }),
-    );
-  };
-
-  // Every tracked player at the playhead is a pick target on EVERY frame in
-  // pick mode: the whole box is clickable (silhouette bits only arbitrate
-  // overlaps), so a click near a player always does something.
-  const pickables = useMemo(() => {
-    if (!pickMode) return [];
-    const list = nearestFrame(trackBoxes, frame) ?? [];
-    return list.map((t) => ({ ...t, sil: frameSilhouettes.find((s) => s.key === t.key) ?? null }));
-  }, [pickMode, trackBoxes, frame, frameSilhouettes]);
-
-  // Pick targets are the segmentation boxes, one per player. Stored
-  // detections stand in ONLY where this frame has no segmentation box at all
-  // (outside a rally, or a tracklet too short to survive ByteTrack — measured
-  // 3.3% of events, up to 10% on some videos). Showing both would put two
-  // near-identical white rectangles on every player: the seg box runs ~1.4x
-  // wider than the detector's, so they never line up.
-  const detectionFallback = pickMode && !pickables.length;
-
-  /** Who a pointer event would pick, in frame coordinates. */
-  const pickableAt = (e: ReactMouseEvent<SVGElement>): string | null => {
-    const svg = e.currentTarget.ownerSVGElement;
-    if (!svg) return null;
-    const pt = svg.createSVGPoint();
-    pt.x = e.clientX;
-    pt.y = e.clientY;
-    const p = pt.matrixTransform(svg.getScreenCTM()!.inverse());
-    return resolvePickable(pickables, p.x, p.y);
-  };
-
-  // The player under the cursor — highlighted so it's obvious who a click
-  // would pick.
-  const [hoverKey, setHoverKey] = useState<string | null>(null);
-  const pickClick = (e: ReactMouseEvent<SVGElement>) => {
-    e.stopPropagation();
-    const key = pickableAt(e);
-    if (!key) return;
-    const t = pickables.find((x) => x.key === key);
-    if (t) pickFromTrack(key, t.box);
-  };
   // The action under the playhead (nearest by frame) — drives the sidebar
   // auto-scroll during playback.
   const currentActionId = useMemo(() => {
@@ -468,7 +407,7 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
   }, [frame]);
   const stepBoxCheck = useCallback(
     (dir: 1 | -1) => {
-      const queue = sidebarActions.filter((a) => boxChecks.has(a.id));
+      const queue = sidebarActions.filter((a) => boxCheckQueue.has(a.id));
       if (dir < 0) queue.reverse();
       const at = frameRef.current;
       const target = queue.find((a) => (dir > 0 ? a.frame > at : a.frame < at)) ?? queue[0];
@@ -477,7 +416,7 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
       scrollRallyTop(listRef.current, rally ? rally.rally_id : OUTSIDE);
       if (canFix) setPickMode(true);
     },
-    [sidebarActions, boxChecks, seekEvent, canFix],
+    [sidebarActions, boxCheckQueue, seekEvent, canFix],
   );
 
   const timelineAnnotations = useMemo<EditorAnnotation[]>(
@@ -525,10 +464,9 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
                 const sil = frameSilhouettes.find((s) => s.key === t.key);
                 return (
                   <g key={t.key} opacity={ev ? 0.95 : 0.85}>
-                    {sil && !pickMode && (
+                    {sil && (
                       // The player's instance mask, riding the box every
-                      // frame — same lifetime as the box itself. (Pick mode
-                      // renders its own clickable silhouettes.)
+                      // frame — same lifetime as the box itself.
                       <image
                         href={sil.url}
                         x={x0}
@@ -566,48 +504,6 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
                   </g>
                 );
               })}
-              {/* Pick surface — identical on every frame: each tracked
-                  player's whole box is clickable, silhouettes render on top
-                  when stored, hover brightens the resolved player. The pick
-                  follows the clicked track back to the target event. */}
-              {pickables.map((t) => (
-                <g
-                  key={`pick-${t.key}`}
-                  className={
-                    fixing
-                      ? 'pointer-events-none opacity-40'
-                      : cn('pointer-events-auto', hoverKey === t.key ? 'cursor-pointer' : 'cursor-default')
-                  }
-                  onClick={pickClick}
-                  onMouseMove={(e) => setHoverKey(pickableAt(e))}
-                  onMouseLeave={() => setHoverKey(null)}
-                >
-                  <rect
-                    x={t.box[0]}
-                    y={t.box[1]}
-                    width={t.box[2] - t.box[0]}
-                    height={t.box[3] - t.box[1]}
-                    fill="transparent"
-                    stroke="#fff"
-                    strokeOpacity={hoverKey === t.key ? 0.95 : 0.4}
-                    strokeWidth={hoverKey === t.key ? 2.5 : 1.5}
-                    strokeDasharray={t.sil ? undefined : '3 4'}
-                    vectorEffect="non-scaling-stroke"
-                  />
-                  {t.sil && (
-                    <image
-                      href={t.sil.url}
-                      x={t.sil.box[0]}
-                      y={t.sil.box[1]}
-                      width={t.sil.box[2] - t.sil.box[0]}
-                      height={t.sil.box[3] - t.sil.box[1]}
-                      preserveAspectRatio="none"
-                      opacity={hoverKey === t.key ? 0.9 : 0.5}
-                    />
-                  )}
-                  <title>Click to set this player as the actor — the pick follows their track back to the action</title>
-                </g>
-              ))}
               {visible.map((r) => {
                 const [x0, y0, x1, y1] = r.box!;
                 const m = matches[r.id];
@@ -647,70 +543,28 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
                   </g>
                 );
               })}
-              {/* Fallback picker: this frame has no segmentation box, so the
-                  extraction's stored detections are the only way to point at
-                  anybody. Score slider decides how deep to show. */}
-              {detectionFallback && nearEvent &&
-                pickTarget?.detections?.filter((d) => d.score >= minDetScore).map((d, i) => {
-                  const [x0, y0, x1, y1] = d.box;
-                  return (
-                    <rect
-                      key={`det-${i}`}
-                      x={x0}
-                      y={y0}
-                      width={x1 - x0}
-                      height={y1 - y0}
-                      fill="transparent"
-                      stroke="#fff"
-                      strokeOpacity={d.score >= AUTO_PICK_MIN_SCORE ? 0.9 : 0.45}
-                      strokeWidth={1.5}
-                      strokeDasharray={d.score >= AUTO_PICK_MIN_SCORE ? undefined : '3 5'}
-                      vectorEffect="non-scaling-stroke"
-                      className={fixing ? 'pointer-events-none opacity-40' : 'pointer-events-auto cursor-pointer hover:fill-white/20'}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        // A bare detection, no tracklet behind it.
-                        onFixActor?.(pickTarget.id, { mode: 'pick', box: d.box });
-                      }}
-                    >
-                      <title>{`person · score ${d.score.toFixed(2)} — click to set as the actor`}</title>
-                    </rect>
-                  );
-                })}
-              {/* 2XLarge box check: the label as stored (amber) next to the
-                  event frame's dense boxes (cyan) — clicking one stores that
-                  exact box, so the next snapshot snaps it. */}
-              {boxCheck && nearEvent && (
-                <g className="pointer-events-none">
-                  <rect
-                    x={boxCheck.label_box[0]}
-                    y={boxCheck.label_box[1]}
-                    width={boxCheck.label_box[2] - boxCheck.label_box[0]}
-                    height={boxCheck.label_box[3] - boxCheck.label_box[1]}
-                    fill="none"
-                    stroke={LABEL_BOX_COLOR}
-                    strokeWidth={2}
-                    strokeDasharray="8 4"
-                    vectorEffect="non-scaling-stroke"
-                  />
-                  <text
-                    x={boxCheck.label_box[0] + 3}
-                    y={boxCheck.label_box[3] + Math.round(h / 40)}
-                    fill={LABEL_BOX_COLOR}
-                    stroke="#000"
-                    strokeWidth={4}
-                    paintOrder="stroke"
-                    fontSize={Math.round(h / 52)}
-                    fontFamily="ui-monospace, SF Mono, Menlo"
-                  >
-                    label{boxCheck.label_frame != null && boxCheck.label_frame !== boxCheck.frame ? ` @f${boxCheck.label_frame}` : ''}
-                  </text>
-                </g>
+              {/* Pick surface: on the target's own frame, its label box as it
+                  stands (amber) under the frame's 2XLarge boxes (cyan) —
+                  clicking one stores exactly that box. Tracklets stay
+                  context only. */}
+              {onEventFrame && targetBoxes?.label_box && (
+                <rect
+                  className="pointer-events-none"
+                  x={targetBoxes.label_box[0]}
+                  y={targetBoxes.label_box[1]}
+                  width={targetBoxes.label_box[2] - targetBoxes.label_box[0]}
+                  height={targetBoxes.label_box[3] - targetBoxes.label_box[1]}
+                  fill="none"
+                  stroke={LABEL_BOX_COLOR}
+                  strokeWidth={2}
+                  strokeDasharray="8 4"
+                  vectorEffect="non-scaling-stroke"
+                />
               )}
-              {boxCheck && nearEvent &&
-                boxCheckBoxes.map((d, i) => {
+              {onEventFrame &&
+                pickBoxes.map((d, i) => {
                   const [x0, y0, x1, y1] = d.box;
-                  const strong = d.score >= BOX_CHECK_LABEL_SCORE;
+                  const strong = d.score >= DENSE_LABEL_SCORE;
                   return (
                     <rect
                       key={`2xl-${i}`}
@@ -719,7 +573,7 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
                       width={x1 - x0}
                       height={y1 - y0}
                       fill="transparent"
-                      stroke={BOX_CHECK_COLOR}
+                      stroke={DENSE_BOX_COLOR}
                       strokeOpacity={strong ? 0.95 : 0.6}
                       strokeWidth={strong ? 2 : 1.5}
                       strokeDasharray={strong ? undefined : '4 4'}
@@ -727,12 +581,10 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
                       className={fixing ? 'pointer-events-none opacity-40' : 'pointer-events-auto cursor-pointer hover:fill-cyan-300/20'}
                       onClick={(e) => {
                         e.stopPropagation();
-                        // Exactly this box on the event frame: no tracklet,
-                        // no snap onto a stored Medium detection.
-                        onFixActor?.(boxCheck.id, { mode: 'pick', box: d.box, snap: false });
+                        onFixActor?.(pickTarget.id, { mode: 'pick', box: d.box });
                       }}
                     >
-                      <title>{`2XLarge person · score ${d.score.toFixed(2)} — click to store this exact box as the actor`}</title>
+                      <title>{`2XLarge person · score ${d.score.toFixed(2)} — click to set as the actor`}</title>
                     </rect>
                   );
                 })}
@@ -837,59 +689,34 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
                     Picking player for <strong>{pickTarget.label}</strong> f{pickTarget.frame}
                     {fixing
                       ? ' — applying…'
-                      : detectionFallback
-                        ? ' — no tracking on this frame; click one of the stored detections'
-                        : ' — click the right player; the pick follows their track back to the action'}
+                      : !onEventFrame
+                        ? ` — boxes are pickable on f${pickTarget.frame} only`
+                        : pickBoxes.length
+                          ? " — click the right person's 2XLarge box"
+                          : ' — no 2XLarge boxes on this frame; mark occluded or revert'}
                   </span>
                   {/* What this event already says, so the buttons below read
                       as a change of state rather than a guess. */}
                   <span
-                    title={
-                      pickTarget.actor_review_unresolved
-                        ? `${VERDICT[verdictOf(pickTarget)].title} — but it resolves to no tracklet, so tracklet training skips this event. Re-pick the player to fix it.`
-                        : VERDICT[verdictOf(pickTarget)].title
-                    }
+                    title={VERDICT[verdictOf(pickTarget)].title}
                     className={cn(
                       'flex-shrink-0 rounded-full px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider ring-1',
                       verdictOf(pickTarget) === 'unreviewed'
                         ? 'bg-surface-200/40 text-text-muted ring-border'
-                        : pickTarget.actor_review_unresolved
-                          ? 'bg-amber-400/10 text-amber-400/90 ring-amber-400/25'
-                          : 'bg-primary/15 text-primary-light ring-primary/30',
+                        : 'bg-primary/15 text-primary-light ring-primary/30',
                     )}
                   >
                     {VERDICT[verdictOf(pickTarget)].glyph} {VERDICT[verdictOf(pickTarget)].label}
-                    {pickTarget.actor_review_unresolved ? ' · re-pick' : ''}
                   </span>
-                  {boxCheck && (
+                  {targetBoxes && needsBoxCheck(targetBoxes) && (
                     <span
-                      title={`${BOX_CHECK_HINT[boxCheck.status]} Near f${boxCheck.frame}: amber = the stored label box, cyan = 2XLarge boxes (dashed below ${BOX_CHECK_LABEL_SCORE}) — click the right cyan box.`}
+                      title={`${BOX_CHECK_HINT[targetBoxes.status!]} Amber = the label box, cyan = 2XLarge boxes (dashed below ${DENSE_LABEL_SCORE}) — click the right cyan box.`}
                       className="flex-shrink-0 rounded-full bg-cyan-300/10 px-2 py-0.5 font-mono text-[10px] text-cyan-300 ring-1 ring-cyan-300/30"
                     >
-                      2XL: {boxCheck.status.replaceAll('_', ' ')}
+                      2XL: {targetBoxes.status!.replaceAll('_', ' ')}
                     </span>
                   )}
                   <span className="ml-auto flex items-center gap-3">
-                    {detectionFallback && nearEvent && (
-                      <label className="flex items-center gap-1.5 text-[11px] text-text-secondary" title="Hide detections below this score — drag left to reveal weaker boxes (extraction keeps everything ≥ 0.1)">
-                        <span className="whitespace-nowrap">
-                          score ≥ <span className="font-mono tabular-nums">{minDetScore.toFixed(2)}</span>
-                        </span>
-                        <input
-                          type="range"
-                          min={0.1}
-                          max={1}
-                          step={0.05}
-                          value={minDetScore}
-                          onChange={(e) => setMinDetScore(Number(e.target.value))}
-                          onPointerUp={(e) => e.currentTarget.blur()}
-                          className="h-1 w-24 cursor-pointer accent-primary"
-                        />
-                        <span className="font-mono text-[10px] tabular-nums text-text-muted">
-                          {(pickTarget.detections ?? []).filter((d) => d.score >= minDetScore).length}/{(pickTarget.detections ?? []).length}
-                        </span>
-                      </label>
-                    )}
                     {/* Stays put once confirmed, disabled with the reason —
                         a button that vanishes leaves you wondering whether
                         the action exists at all. */}
@@ -950,8 +777,7 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
           fps={fps}
           matches={matches}
           verdicts={verdicts}
-          unresolvedIds={unresolvedIds}
-          boxChecks={boxChecks}
+          boxChecks={boxCheckQueue}
           onStepBoxCheck={stepBoxCheck}
           activeRallyId={currentRallyId}
           activeActionIds={activeActionIds}

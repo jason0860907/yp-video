@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { API, ApiError, apiFetch } from '@/lib/api';
-import type { Rally, SidebarAction, TrackData } from '@/components/labeling/shared';
+import type { Rally, SidebarAction, TrackData, TrackLinks } from '@/components/labeling/shared';
 import type { ReidRecord } from '@/types/api';
 
 interface VideoMeta {
@@ -13,9 +13,14 @@ interface VideoMeta {
   action_events?: Array<Record<string, unknown>>;
 }
 
+// Stable identity while the links load, so memos keyed on them hold.
+const EMPTY_LINKS: TrackLinks = {};
+
 /** The per-video data layer both labeling pages (ReID, Association) share:
  *  extraction records, tracklets (null until tracked — the 404 is an answer,
- *  not an error) and the full action annotation flattened for the sidebar.
+ *  not an error), the event→tracklet links (their own query: an actor fix
+ *  moves them, never the tracklets) and the full action annotation flattened
+ *  for the sidebar.
  *  The query keys are shared across the pages too, so switching between them
  *  re-downloads nothing. */
 export function useVideoLabelingData(picked: string) {
@@ -41,6 +46,12 @@ export function useVideoLabelingData(picked: string) {
     enabled: Boolean(picked),
     staleTime: 60_000,
   });
+  const linksQuery = useQuery({
+    queryKey: ['tracklet-links', picked],
+    queryFn: () => apiFetch<TrackLinks>(API.tracklets.links(picked)),
+    enabled: Boolean(picked),
+  });
+  const trackLinks = linksQuery.data ?? EMPTY_LINKS;
 
   // The full action event list rides on the extraction records response
   // (meta.action_events) — same active annotation file the join uses, so
@@ -64,5 +75,5 @@ export function useVideoLabelingData(picked: string) {
     [meta.action_events],
   );
 
-  return { resultsQuery, records, meta, tracksQuery, actionEvents };
+  return { resultsQuery, records, meta, tracksQuery, trackLinks, actionEvents };
 }
