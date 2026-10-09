@@ -19,6 +19,9 @@ Dashboard 的完整 **Inference** 使用含 `rally`、`action`、`person`、`act
 checkpoint（單一檔案）：一次解碼產生回合、事件與人物框，再以 ByteTrack 串成回合內的
 tracklet，最後由同一個 checkpoint 的 actor head 從每個事件附近的
 tracklet 選 actor——和 App 進階分析同一條呼叫（`actor/person_action.build_policy`）。
+這個 checkpoint 由 Fusion Train 的 Action + Rally + Winner + Person + Actor recipe
+一次訓練：actor head 吃 Association 標註（`actor/training_labels.py` 寫成每事件一列），
+和其他 task 用同一份 train/val 影片切分。
 App 標準分析則直接用 SPOT pass 在偵測事件時順便挑的人（`tracks/<stem>_actor_picks.json`，
 見 `core/actor_picks.py`），不再重跑骨幹。人物框保留在
 `tracks/<stem>_persons.npz`，tracking 與事件候選都讀同一份框，不會另跑

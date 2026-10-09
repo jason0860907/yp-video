@@ -11,7 +11,8 @@
         "rally",
         "rally_winner",
         "action",
-        "action_rally_winner"
+        "action_rally_winner",
+        "action_rally_winner_actor"
       ],
       "title": "Recipe",
       "type": "string"
@@ -308,6 +309,21 @@
       "description": "Optional Action foreground sampling threshold for mixed training. At 0.5, half of Action clips are anchored on an annotated event.",
       "title": "Action Fg Upsample"
     },
+    "action_block_upsample": {
+      "anyOf": [
+        {
+          "exclusiveMaximum": 1,
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Mixed recipes: share of Action training clips anchored on a block event, the rarest touch. Empty samples blocks at their natural rate.",
+      "title": "Action Block Upsample"
+    },
     "action_dilate_len": {
       "default": 0,
       "description": "Action recipes: mark the N sampled frames on either side of each annotated touch as positive too. 0 = only the annotated frame.",
@@ -315,6 +331,14 @@
       "minimum": 0,
       "title": "Action Dilate Len",
       "type": "integer"
+    },
+    "person_giou_weight": {
+      "default": 0.0,
+      "description": "Mixed recipes: GIoU weight on the person head's decoded boxes, on top of its heatmap and size losses. 0 = no GIoU term.",
+      "maximum": 10,
+      "minimum": 0,
+      "title": "Person Giou Weight",
+      "type": "number"
     },
     "num_workers": {
       "default": 8,

@@ -47,6 +47,7 @@ RecipeId = Literal[
     "rally_winner",
     "action",
     "action_rally_winner",
+    "action_rally_winner_actor",
 ]
 
 #: One of the two label families a recipe draws from; which request fields
@@ -210,6 +211,15 @@ class FusionTrainRequest(StrictModel):
             "At 0.5, half of Action clips are anchored on an annotated event."
         ),
     )
+    action_block_upsample: float | None = Field(
+        default=None,
+        gt=0,
+        lt=1,
+        description=(
+            "Mixed recipes: share of Action training clips anchored on a block "
+            "event, the rarest touch. Empty samples blocks at their natural rate."
+        ),
+    )
     action_dilate_len: int = Field(
         default=0,
         ge=0,
@@ -217,6 +227,15 @@ class FusionTrainRequest(StrictModel):
         description=(
             "Action recipes: mark the N sampled frames on either side of each "
             "annotated touch as positive too. 0 = only the annotated frame."
+        ),
+    )
+    person_giou_weight: float = Field(
+        default=0.0,
+        ge=0,
+        le=10,
+        description=(
+            "Mixed recipes: GIoU weight on the person head's decoded boxes, on "
+            "top of its heatmap and size losses. 0 = no GIoU term."
         ),
     )
     num_workers: int = Field(

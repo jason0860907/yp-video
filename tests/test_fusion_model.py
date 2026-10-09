@@ -141,12 +141,53 @@ class BuildCommandTests(unittest.TestCase):
         self.assertNotIn("--sample_fps ", joined)
         self.assertIn("--audio_backend logmel", joined)
 
+    def test_actor_recipe_command_carries_its_sidecar_and_fine_tune_knobs(self) -> None:
+        recipe = RECIPES["action_rally_winner_actor"]
+        req = FusionTrainRequest(
+            recipe=recipe.id, validation="ratio",
+            **{k: v for k, v in recipe.defaults.items() if k != "feature_arch"},
+        )
+        prepared = PreparedLabels(
+            label_dirs={"action": Path("/run/labels/action-annotations"),
+                        "rally": Path("/run/labels/rally-annotations")},
+            label_subdirs=("action-annotations", "rally-annotations", "person-boxes", "actor-events"),
+            frame_dir=Path("/frames"),
+            dataset="yp_action_rally",
+            extra_args=["--actor_dir", "/run/labels/actor-events",
+                        "--person_dir", "/run/labels/person-boxes"],
+        )
+        cmd = spot_training.build_command(
+            req, recipe, prepared, save_dir=Path("/run"), init_checkpoint=None, audio_dir=None,
+        )
+        joined = " ".join(cmd)
+        self.assertIn("--tasks action,location,rally,winner,person,actor", joined)
+        self.assertIn("--actor_dir /run/labels/actor-events", joined)
+        self.assertIn("--action_class_upsample block=0.1", joined)
+        self.assertIn("--person_giou_weight 1.0", joined)
+
+    def test_fine_tune_knobs_stay_off_by_default(self) -> None:
+        req = FusionTrainRequest(recipe="action_rally_winner", validation="ratio")
+        prepared = PreparedLabels(
+            label_dirs={"action": Path("/a"), "rally": Path("/r")},
+            label_subdirs=(), frame_dir=Path("/frames"), dataset="yp_action_rally",
+        )
+        joined = " ".join(spot_training.build_command(
+            req, RECIPES["action_rally_winner"], prepared,
+            save_dir=Path("/run"), init_checkpoint=None, audio_dir=None,
+        ))
+        self.assertNotIn("--action_class_upsample", joined)
+        self.assertNotIn("--person_giou_weight", joined)
+
     def test_run_name_token_per_recipe(self) -> None:
         self.assertEqual(spot_training.recipe_token(RECIPES["rally_winner"]), "ral_win")
         self.assertEqual(spot_training.recipe_token(RECIPES["action"]), "act")
         self.assertEqual(
             spot_training.recipe_token(RECIPES["action_rally_winner"]),
             "act_ral_win",
+        )
+        self.assertEqual(
+            spot_training.recipe_token(RECIPES["action_rally_winner_actor"]),
+            "act_ral_win_actor",
         )
 
     def test_bad_run_name_is_refused(self) -> None:
@@ -173,6 +214,16 @@ class SupervisionGateTests(unittest.TestCase):
         self.assertIn("winner", str(caught.exception))
         check_task_supervision(RECIPES["rally_winner"], self._prepared({"rallies_with_winner": 3}))
         check_task_supervision(RECIPES["rally"], self._prepared({"rallies_with_winner": 0}))
+
+    def test_actor_head_needs_actor_rows(self) -> None:
+        def summary(actor_events: int) -> dict:
+            return {"rallies_with_winner": 3, "rally": {"person": {"boxes": 9}},
+                    "action": {"actor": {"events": actor_events}}}
+        with self.assertRaises(RuntimeError) as caught:
+            check_task_supervision(RECIPES["action_rally_winner_actor"], self._prepared(summary(0)))
+        self.assertIn("actor", str(caught.exception))
+        check_task_supervision(RECIPES["action_rally_winner_actor"], self._prepared(summary(5)))
+        check_task_supervision(RECIPES["action_rally_winner"], self._prepared(summary(0)))
 
 class FusionLabelScopeTests(unittest.TestCase):
     def test_snapshot_carries_rally_spans_for_scoring(self) -> None:

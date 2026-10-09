@@ -78,7 +78,7 @@ def spot_info() -> dict:
     if not checkpoints:
         info["error"] = (
             f"No package under {SPOT_CHECKPOINTS_DIR} serves rally, action, person and "
-            "actor together; package a joint run with yp_spot.person_action.package first."
+            "actor together; train the Action + Rally + Winner + Person + Actor recipe in Fusion Train first."
         )
     return info
 

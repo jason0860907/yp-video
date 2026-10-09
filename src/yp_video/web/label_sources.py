@@ -2,9 +2,10 @@
 
 A SPOT stream reads one label directory plus optional task sidecars. Rally recipes draw from the
 rally annotations at a reduced extraction fps, plus the person-box sidecar
-(the tracker's boxes) when the person head is trained; action recipes from
-the action annotations at native fps. A mixed recipe carries both
-directories explicitly.
+(the 2XLarge dense boxes) when the person head is trained; action recipes
+from the action annotations at native fps, plus the actor-event sidecar (the
+association annotations) when the actor head is trained. A mixed recipe
+carries both directories explicitly.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from yp_video.action import rally as rally_spot
 from yp_video.action import training
 from yp_video.action.frames import ensure_action_frame_caches
 from yp_video.actor.person_labels import write_person_labels
+from yp_video.actor.training_labels import write_actor_labels
 from yp_video.action.training_labels import prepare_action_training_labels
 from yp_video.config import ACTION_FRAMES_DIR
 from yp_video.core.rallies import ANNOTATION_SUFFIX
@@ -45,7 +47,8 @@ class PreparedLabels:
     frame_dir: Path
     #: yp-spot's positional dataset name (class list / default paths).
     dataset: str
-    #: Extra ``yp_spot.train`` arguments the tasks need (``--person_dir``).
+    #: Extra ``yp_spot.train`` arguments the tasks need (``--person_dir``,
+    #: ``--actor_dir``).
     extra_args: list[str] = field(default_factory=list)
     summary: dict = field(default_factory=dict)
     #: Videos whose labels are SPOT predictions, not human work.
@@ -117,11 +120,18 @@ class ActionSource:
             save_dir=save_dir,
             camera_view=req.camera_view,
         )
+        label_dir = Path(summary["label_dir"])
+        extra_args: list[str] = []
+        if "actor" in recipe.tasks:
+            actor_dir = save_dir / "labels" / TASKS["actor"].label_subdir
+            summary["actor"] = write_actor_labels(label_dir, label_dir=actor_dir)
+            extra_args = ["--actor_dir", str(actor_dir)]
         return PreparedLabels(
-            label_dirs={"action": Path(summary["label_dir"])},
+            label_dirs={"action": label_dir},
             label_subdirs=label_subdirs(recipe.tasks),
             frame_dir=ACTION_FRAMES_DIR,
             dataset="yp_actions",
+            extra_args=extra_args,
             summary=summary,
             prediction_stems=training.prediction_label_stems(items),
             all_stems={label.stem.removesuffix("_actions") for label, _video in items},
@@ -178,13 +188,16 @@ def check_task_supervision(recipe: Recipe, prepared: PreparedLabels) -> None:
     """
     summary = prepared.summary
     rally_summary = summary.get("rally", summary)
+    action_summary = summary.get("action", summary)
     present = {
         "winner": bool(summary.get("rallies_with_winner")),
         "person": bool((rally_summary.get("person") or {}).get("boxes")),
+        "actor": bool((action_summary.get("actor") or {}).get("events")),
     }
     hints = {
         "winner": "annotate the winning side in the rally editor first",
         "person": "run Rally Tracking on the rally-annotated videos first",
+        "actor": "label actors in Association Label on videos with a dense person pass first",
     }
     for task in recipe.tasks:
         if task in present and not present[task]:

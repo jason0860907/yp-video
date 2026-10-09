@@ -92,7 +92,7 @@ def resolve_checkpoint(value: str) -> Path:
     if not ref:
         raise FileNotFoundError(
             "No SPOT package serves rally, action, person and actor together; "
-            "package a joint run with yp_spot.person_action.package first"
+            "train the Action + Rally + Winner + Person + Actor recipe in Fusion Train first"
         )
     checkpoint = prelabel.resolve_checkpoint(ref)
     tasks = package_tasks(checkpoint)

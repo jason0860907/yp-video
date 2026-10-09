@@ -34,7 +34,8 @@ type FusionForm = Required<FusionTrainRequest>;
 /** Mirrors spot_training.recipe_token — the run-name token per task set. */
 function recipeToken(tasks: string[]): string {
   if (tasks.includes('action') && tasks.includes('rally')) {
-    return tasks.includes('winner') ? 'act_ral_win' : 'act_ral';
+    const token = tasks.includes('winner') ? 'act_ral_win' : 'act_ral';
+    return tasks.includes('actor') ? `${token}_actor` : token;
   }
   if (tasks.includes('action')) return 'act';
   return tasks.includes('winner') ? 'ral_win' : 'ral';
@@ -278,8 +279,14 @@ export function FusionTrainPage() {
                     {visible.has('action_fg_upsample') && (
                       <SchemaNumberField name="action_fg_upsample" label="Action FG rate" step={0.05} />
                     )}
+                    {visible.has('action_block_upsample') && (
+                      <SchemaNumberField name="action_block_upsample" label="Block share" step={0.05} />
+                    )}
                     {visible.has('action_dilate_len') && (
                       <SchemaNumberField name="action_dilate_len" label="Action dilate" />
+                    )}
+                    {visible.has('person_giou_weight') && (
+                      <SchemaNumberField name="person_giou_weight" label="Person GIoU" step={0.5} />
                     )}
                     {visible.has('acc_grad_iter') && <SchemaNumberField name="acc_grad_iter" label="Grad accum" />}
                     <SchemaNumberField name="warm_up_epochs" label="Warmup" />

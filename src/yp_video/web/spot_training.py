@@ -1,7 +1,7 @@
 """The one SPOT training launcher behind Fusion Train.
 
-Every recipe — rally, rally + winner, action, action + rally + winner + person — is the
-same trainer with a different task list. This module owns the run naming,
+Every recipe — rally, rally + winner, action, action + rally + winner + person
+(+ actor) — is the same trainer with a different task list. This module owns the run naming,
 the command builder and ``start_training_job`` once; which labels a recipe
 draws from is ``label_sources``, and what the recipe trains is the contract
 registry (``RECIPES`` / ``TASKS``). The router stays HTTP-thin.
@@ -78,7 +78,8 @@ def recipe_token(recipe: Recipe) -> str:
     """Compact task token used in immutable run names."""
     tasks = recipe.tasks
     if "action" in tasks and "rally" in tasks:
-        return "act_ral_win" if "winner" in tasks else "act_ral"
+        token = "act_ral_win" if "winner" in tasks else "act_ral"
+        return f"{token}_actor" if "actor" in tasks else token
     if "action" in tasks:
         return "act"
     return "ral_win" if "winner" in tasks else "ral"
@@ -216,6 +217,10 @@ def build_command(
             )
         if "action" in recipe.tasks and req.action_dilate_len:
             cmd.extend(["--task_dilate_len", f"action={req.action_dilate_len}"])
+        if "action" in recipe.tasks and req.action_block_upsample is not None:
+            cmd.extend(["--action_class_upsample", f"block={req.action_block_upsample}"])
+        if "person" in recipe.tasks and req.person_giou_weight:
+            cmd.extend(["--person_giou_weight", str(req.person_giou_weight)])
     else:
         cmd.extend(["--sample_fps", str(req.sample_fps)])
         if "action" in recipe.tasks and req.action_dilate_len:

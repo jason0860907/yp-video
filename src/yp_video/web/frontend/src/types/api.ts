@@ -159,8 +159,9 @@ export type FusionRecipeId =
   | 'rally'
   | 'rally_winner'
   | 'action'
-  | 'action_rally_winner';
-export type SpotTask = 'rally' | 'winner' | 'action' | 'location' | 'person';
+  | 'action_rally_winner'
+  | 'action_rally_winner_actor';
+export type SpotTask = 'rally' | 'winner' | 'action' | 'location' | 'side' | 'jump' | 'person' | 'actor';
 
 /** One entry of the contract's task-set registry (yp_video.contracts.action.RECIPES). */
 export interface FusionRecipe {

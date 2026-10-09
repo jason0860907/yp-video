@@ -253,7 +253,9 @@ _MULTI_FPS_FIELDS = (
     "rally_stream_weight",
     "winner_stream_weight",
     "action_fg_upsample",
+    "action_block_upsample",
     "action_dilate_len",
+    "person_giou_weight",
     "acc_grad_iter",
 )
 _MULTI_FPS_DEFAULTS = {
@@ -272,7 +274,9 @@ _MULTI_FPS_DEFAULTS = {
     "rally_stream_weight": 1,
     "winner_stream_weight": 1,
     "action_fg_upsample": None,
+    "action_block_upsample": None,
     "action_dilate_len": 0,
+    "person_giou_weight": 0.0,
     "action_sample_fps": 30.0,
     "rally_sample_fps": 5.0,
     "winner_sample_fps": 5.0,
@@ -306,6 +310,19 @@ RECIPES: dict[str, Recipe] = {
             "boxes on the rally stream.",
             _MULTI_FPS_FIELDS,
             _MULTI_FPS_DEFAULTS,
+        ),
+        # The production fusion model. Its extra defaults are what the runs
+        # that shipped the actor head trained with: person GIoU weight 1, and
+        # a tenth of the Action clips anchored on the rare block.
+        Recipe(
+            "action_rally_winner_actor",
+            "Action + Rally + Winner + Person + Actor",
+            ("action", "location", "rally", "winner", "person", "actor"),
+            "One backbone for every SPOT pass stage: Action with its contact point, "
+            "Rally/Winner, Person on the rally stream, and Actor — who touched the "
+            "ball — trained per labelled event from the association annotations.",
+            _MULTI_FPS_FIELDS,
+            {**_MULTI_FPS_DEFAULTS, "action_block_upsample": 0.1, "person_giou_weight": 1.0},
         ),
     )
 }
