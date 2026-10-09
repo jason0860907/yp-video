@@ -21,7 +21,7 @@ export interface ClockSpan {
  *  slow poll behind it. seekFrame parks on a frame and holds it until play:
  *  the decoder may present a neighbour, but the frame asked for is the one
  *  labelled. With a `rally`, playback crossing its end from inside stops on
- *  its last frame, and play from there replays it.
+ *  its last frame, and play from there carries on past it.
  *
  *  Bind the <video> with `bindVideo` (it may mount after the hook); read it
  *  through `videoRef`. Any other seek (writing currentTime) releases the
@@ -117,13 +117,12 @@ export function useFrameClock({
       el.pause();
       return;
     }
-    // Parked at the rally's end the clock would stop again on the very next
-    // frame, so play there means "replay the rally".
-    const span = rallyFrames();
-    if (span && currentFrame() >= span[1]) seekFrame(span[0]);
+    // Parked on the rally's last frame, play carries on past it: the stop
+    // only trips when crossing the end from inside. Replaying is a click on
+    // the rally.
     locked.current = null;
     void el.play().catch((e) => toast.error(`Play failed: ${errMsg(e)}`));
-  }, [currentFrame, rallyFrames, seekFrame]);
+  }, []);
 
   useEffect(() => {
     if (!video) return;
