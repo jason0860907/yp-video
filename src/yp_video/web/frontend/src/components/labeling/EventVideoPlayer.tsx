@@ -543,7 +543,7 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
                       fontFamily="ui-monospace, SF Mono, Menlo"
                     >
                       {label}
-                      {r.resolution === 'manual' ? ' ✎' : ''} · f{r.frame}
+                      {r.resolution === 'manual' ? ' ✎' : ''}
                     </text>
                   </g>
                 );
@@ -595,7 +595,7 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
                 })}
               </svg>
               <div className="pointer-events-none absolute left-2 top-2 rounded-md bg-black/60 px-2 py-0.5 font-mono text-[10.5px] tabular-nums text-white">
-                f{frame} · {visible.length} box(es)
+                {visible.length} box(es)
                 {(() => {
                   // The action under the playhead (±½ s, same rule as the
                   // sidebar rows), named in its color.
@@ -705,7 +705,7 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
                 <>
                   <span className="h-2 w-2 flex-shrink-0 rounded-full animate-pulse-dot" style={{ background: actionColor(pickTarget.label) }} />
                   <span className="text-primary-light">
-                    Picking player for <strong>{pickTarget.label}</strong> f{pickTarget.frame}
+                    Picking player for <strong>{pickTarget.label}</strong>
                     {fixing
                       ? ' — applying…'
                       : !onEventFrame

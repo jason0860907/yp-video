@@ -72,7 +72,7 @@ interface ReidEventPanelProps {
 }
 
 /** Read-only twin of the Action Label event panel: action dot + label,
- *  matched player, frame and time — click a row to park the video there. */
+ *  matched player and time — click a row to park the video there. */
 function ReidEventPanel({ entries, empty, matches, verdicts, boxChecks, selectedEventId, fps, activeActionIds, onJump, onJumpToCrop }: ReidEventPanelProps) {
   if (!entries.length) return <div className="ml-6 rounded-xl border border-border bg-surface-100 px-3 py-2 text-xs text-text-muted">{empty}</div>;
   return (
@@ -88,7 +88,7 @@ function ReidEventPanel({ entries, empty, matches, verdicts, boxChecks, selected
             onClick={() => onJump(a)}
             title="Click to jump the video to this action"
             className={cn(
-              'grid cursor-pointer grid-cols-[1rem_minmax(4.5rem,1fr)_minmax(3rem,6.5rem)_3.6rem_2.6rem] items-center gap-1.5 rounded-lg border px-2 py-1.5 transition-colors',
+              'grid cursor-pointer grid-cols-[1rem_minmax(4.5rem,1fr)_minmax(3rem,6.5rem)_2.6rem] items-center gap-1.5 rounded-lg border px-2 py-1.5 transition-colors',
               a.id === selectedEventId ? 'border-primary/35 bg-primary/10' : 'border-border bg-surface-50 hover:bg-surface-200/40',
               active && 'ring-1 ring-accent/50',
             )}
@@ -134,7 +134,6 @@ function ReidEventPanel({ entries, empty, matches, verdicts, boxChecks, selected
             ) : (
               <VerdictPill verdict={verdicts.get(a.id)} />
             )}
-            <span className="text-center font-heading text-[11px] tabular-nums text-text-primary">f{a.frame}</span>
             <span className="text-center font-heading text-[10px] tabular-nums text-text-muted">{fmtTime(a.time != null ? a.time : a.frame / (fps || 30))}</span>
           </div>
         );
@@ -220,6 +219,20 @@ export const RallySidebar = memo(function RallySidebar({
       </span>
     );
   };
+  // Where the unlabelled events are, likewise visible while collapsed —
+  // events with no record (score, …) are not labelable and do not count.
+  const leftChip = (entries: SidebarAction[]) => {
+    const n = entries.reduce((sum, a) => sum + (verdicts.get(a.id) === 'unreviewed' ? 1 : 0), 0);
+    if (!n) return null;
+    return (
+      <span
+        title={`${n} action${n === 1 ? '' : 's'} here ${n === 1 ? 'has' : 'have'} no actor verdict yet`}
+        className="flex shrink-0 items-center whitespace-nowrap rounded-full bg-amber-400/10 px-2 py-0.5 text-[11px] font-medium text-amber-400 ring-1 ring-amber-400/30"
+      >
+        {n} left
+      </span>
+    );
+  };
   const stepButton = (dir: 1 | -1) => (
     <button
       type="button"
@@ -280,6 +293,7 @@ export const RallySidebar = memo(function RallySidebar({
                   onToggle={() => (isOpen ? onSetExpanded(null) : onJumpRally(rally))}
                 >
                   {confirmButton(entries)}
+                  {leftChip(entries)}
                   {boxCheckChip(entries)}
                 </RallyRow>
                 {isOpen && (
@@ -308,6 +322,7 @@ export const RallySidebar = memo(function RallySidebar({
                 onToggle={() => onSetExpanded(expanded === OUTSIDE ? null : OUTSIDE)}
               >
                 {confirmButton(outside)}
+                {leftChip(outside)}
                 {boxCheckChip(outside)}
               </OutsideRow>
               {expanded === OUTSIDE && (
