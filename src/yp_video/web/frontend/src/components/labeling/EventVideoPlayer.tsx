@@ -123,6 +123,9 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
     rally: selectedRally === 'all' ? null : rallies.find((r) => r.rally_id === selectedRally),
   });
   const [showTracks, setShowTracks] = useState(false);
+  // 2XLarge boxes below DENSE_LABEL_SCORE (dashed): often the occluded actor,
+  // often clutter — the labeler decides whether they are on screen.
+  const [showWeakBoxes, setShowWeakBoxes] = useState(true);
   // Expanded rally (or OUTSIDE) in the sidebar + last event jumped to — same
   // interaction as the Action Label rally list.
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -195,10 +198,12 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
   const targetBoxes = pickTarget ? eventBoxes.get(pickTarget.id) : undefined;
   const pickBoxes = useMemo(
     () =>
-      [...(targetBoxes?.boxes ?? [])].sort(
-        (a, b) => (b.box[2] - b.box[0]) * (b.box[3] - b.box[1]) - (a.box[2] - a.box[0]) * (a.box[3] - a.box[1]),
-      ),
-    [targetBoxes],
+      (targetBoxes?.boxes ?? [])
+        .filter((d) => showWeakBoxes || d.score >= DENSE_LABEL_SCORE)
+        .sort(
+          (a, b) => (b.box[2] - b.box[0]) * (b.box[3] - b.box[1]) - (a.box[2] - a.box[0]) * (a.box[3] - a.box[1]),
+        ),
+    [targetBoxes, showWeakBoxes],
   );
   // Parked, pick mode lands on the target's frame — entering it, or the
   // playhead crossing to the next action, seeks there.
@@ -663,6 +668,20 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
                   className="h-3.5 w-3.5 accent-primary"
                 />
                 Tracks
+              </label>
+            )}
+            {canFix && (
+              <label
+                className="inline-flex flex-shrink-0 cursor-pointer items-center gap-1.5 text-xs text-text-secondary"
+                title={`Also show 2XLarge boxes scoring below ${DENSE_LABEL_SCORE} (dashed cyan) — often an occluded player, often clutter`}
+              >
+                <input
+                  type="checkbox"
+                  checked={showWeakBoxes}
+                  onChange={(e) => setShowWeakBoxes(e.target.checked)}
+                  className="h-3.5 w-3.5 accent-primary"
+                />
+                Weak boxes
               </label>
             )}
             {canFix && (
