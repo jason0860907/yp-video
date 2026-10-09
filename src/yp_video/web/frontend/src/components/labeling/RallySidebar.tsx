@@ -22,7 +22,7 @@ import { actionColor } from '@/lib/actionColors';
 import { Card } from '@/components/ui/Card';
 import { OutsideRow, RallyRow } from '@/components/action/RallyRows';
 import { SectionLabel } from '@/components/ui/SectionLabel';
-import type { ReidPlayers } from '@/types/api';
+import type { BoxCheckEntry, ReidPlayers } from '@/types/api';
 import {
   fmtTime,
   VERDICT,
@@ -75,6 +75,8 @@ interface ReidEventPanelProps {
   verdicts: ReadonlyMap<string, ActorVerdict>;
   /** Events whose verdict resolves to no tracklet — flagged for re-picking. */
   unresolvedIds: ReadonlySet<string>;
+  /** Events in the 2XLarge box-check queue — marked next to their label. */
+  boxChecks: ReadonlyMap<string, BoxCheckEntry>;
   selectedEventId: string | null;
   fps: number;
   /** Actions within ±½ s of the playhead — those rows light up. */
@@ -85,7 +87,7 @@ interface ReidEventPanelProps {
 
 /** Read-only twin of the Action Label event panel: action dot + label,
  *  matched player, frame and time — click a row to park the video there. */
-function ReidEventPanel({ entries, empty, matches, verdicts, unresolvedIds, selectedEventId, fps, activeActionIds, onJump, onJumpToCrop }: ReidEventPanelProps) {
+function ReidEventPanel({ entries, empty, matches, verdicts, unresolvedIds, boxChecks, selectedEventId, fps, activeActionIds, onJump, onJumpToCrop }: ReidEventPanelProps) {
   if (!entries.length) return <div className="ml-6 rounded-xl border border-border bg-surface-100 px-3 py-2 text-xs text-text-muted">{empty}</div>;
   return (
     <div className="ml-6 space-y-1.5 rounded-xl border border-border bg-surface-100 p-2">
@@ -113,6 +115,14 @@ function ReidEventPanel({ entries, empty, matches, verdicts, unresolvedIds, sele
                 title={a.visible ? undefined : 'Non-visible action'}
               />
               <span className="truncate text-xs text-text-primary">{a.label ?? '—'}</span>
+              {boxChecks.has(a.id) && (
+                <span
+                  title={`2XL box check: ${boxChecks.get(a.id)!.status.replaceAll('_', ' ')}`}
+                  className="flex-shrink-0 rounded bg-cyan-300/10 px-1 font-mono text-[9px] text-cyan-300 ring-1 ring-cyan-300/30"
+                >
+                  2XL
+                </span>
+              )}
             </span>
             {m?.player ? (
               <button
@@ -157,6 +167,10 @@ export interface RallySidebarProps {
   verdicts: ReadonlyMap<string, ActorVerdict>;
   /** Events whose verdict resolves to no tracklet — flagged for re-picking. */
   unresolvedIds: ReadonlySet<string>;
+  /** The 2XLarge box-check queue, by event id (empty on read-only pages). */
+  boxChecks: ReadonlyMap<string, BoxCheckEntry>;
+  /** Park on the next (1) / previous (-1) box-check event from the playhead. */
+  onStepBoxCheck: (dir: 1 | -1) => void;
   /** The rally under the playhead — the list's only frame-derived scalar. */
   activeRallyId: number | null;
   /** Actions within ±½ s of the playhead; identity-stable between changes. */
@@ -186,7 +200,7 @@ function pendingIn(entries: SidebarAction[], confirmable?: ReadonlySet<string>) 
 
 export const RallySidebar = memo(function RallySidebar({
   rallies, byRally, outside, totalActions, fps, matches, verdicts,
-  unresolvedIds, activeRallyId, activeActionIds, expanded, selectedRally,
+  unresolvedIds, boxChecks, onStepBoxCheck, activeRallyId, activeActionIds, expanded, selectedRally,
   selectedEventId, listRef, onSelectAll, onJumpRally, onSetExpanded,
   onJumpEvent, onJumpToCrop, confirmableIds, onConfirmRally,
 }: RallySidebarProps) {
@@ -222,6 +236,31 @@ export const RallySidebar = memo(function RallySidebar({
       </span>
     );
   };
+  const boxCheckChip = (entries: SidebarAction[]) => {
+    const n = entries.reduce((sum, a) => sum + (boxChecks.has(a.id) ? 1 : 0), 0);
+    if (!n) return null;
+    return (
+      <span
+        title={`${n} actor box${n === 1 ? '' : 'es'} here match${n === 1 ? 'es' : ''} no 2XLarge box clearly — expand and pick the right one`}
+        className="flex shrink-0 items-center whitespace-nowrap rounded-full bg-cyan-300/10 px-2 py-0.5 text-[11px] font-medium text-cyan-300 ring-1 ring-cyan-300/30"
+      >
+        {n} 2XL
+      </span>
+    );
+  };
+  const stepButton = (dir: 1 | -1) => (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onStepBoxCheck(dir);
+      }}
+      title={dir > 0 ? 'Next 2XL box check after the playhead' : 'Previous 2XL box check before the playhead'}
+      className="px-1 text-cyan-300 transition-colors hover:text-cyan-100"
+    >
+      {dir > 0 ? '›' : '‹'}
+    </button>
+  );
   return (
     <div className="min-w-0 lg:w-[420px] lg:flex-shrink-0">
       <Card>
@@ -239,6 +278,15 @@ export const RallySidebar = memo(function RallySidebar({
             )}
           >
             <span className="text-xs font-medium text-text-primary">All rallies</span>
+            {boxChecks.size > 0 && (
+              <span className="ml-2 flex items-center rounded-full bg-cyan-300/10 text-[11px] font-medium text-cyan-300 ring-1 ring-cyan-300/30">
+                {stepButton(-1)}
+                <span title="Events whose actor box matches no 2XLarge box clearly — step through them with ‹ ›">
+                  {boxChecks.size} 2XL
+                </span>
+                {stepButton(1)}
+              </span>
+            )}
             <span className="ml-auto font-mono text-[10px] tabular-nums text-text-muted">{totalActions} action</span>
           </div>
           {rallies.map((rally, ri) => {
@@ -261,6 +309,7 @@ export const RallySidebar = memo(function RallySidebar({
                 >
                   {confirmButton(entries)}
                   {unresolvedChip(entries)}
+                  {boxCheckChip(entries)}
                 </RallyRow>
                 {isOpen && (
                   <ReidEventPanel
@@ -269,6 +318,7 @@ export const RallySidebar = memo(function RallySidebar({
                     matches={matches}
                     verdicts={verdicts}
                     unresolvedIds={unresolvedIds}
+                    boxChecks={boxChecks}
                     selectedEventId={selectedEventId}
                     fps={fps}
                     activeActionIds={activeActionIds}
@@ -289,6 +339,7 @@ export const RallySidebar = memo(function RallySidebar({
               >
                 {confirmButton(outside)}
                 {unresolvedChip(outside)}
+                {boxCheckChip(outside)}
               </OutsideRow>
               {expanded === OUTSIDE && (
                 <ReidEventPanel
@@ -297,6 +348,7 @@ export const RallySidebar = memo(function RallySidebar({
                   matches={matches}
                   verdicts={verdicts}
                   unresolvedIds={unresolvedIds}
+                  boxChecks={boxChecks}
                   selectedEventId={selectedEventId}
                   fps={fps}
                   activeActionIds={activeActionIds}

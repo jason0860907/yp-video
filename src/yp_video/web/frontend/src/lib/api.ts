@@ -266,5 +266,6 @@ export const API = {
     fix: (name: string) => `/actor-association/fix/${encodeURIComponent(name)}`,
     confirm: (name: string) => `/actor-association/confirm/${encodeURIComponent(name)}`,
     done: (name: string) => `/actor-association/done/${encodeURIComponent(name)}`,
+    boxCheck: (name: string) => `/actor-association/box-check/${encodeURIComponent(name)}`,
   },
 } as const;

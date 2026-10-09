@@ -23,7 +23,7 @@ import { RallyTimeline } from '@/components/editor/RallyTimeline';
 import type { EditorAnnotation } from '@/components/editor/AnnotationEditor';
 import { useVideoKeys } from './useVideoKeys';
 import { useFrameClock } from './useFrameClock';
-import type { ReidPlayers, ReidRecord } from '@/types/api';
+import type { BoxCheckEntry, ReidPlayers, ReidRecord } from '@/types/api';
 import { OUTSIDE, RallySidebar } from './RallySidebar';
 import { canConfirm, fmtTime, rallyOf, trackColor, trackKeyOf, verdictOf, VERDICT, type ActorFix, type ActorVerdict, type Rally, type SidebarAction, type TrackData, type TrackMasks } from './shared';
 import {
@@ -42,6 +42,11 @@ import {
 // Detections below this score never win automatic association — they exist
 // only as manual-picker choices (mirrors reid/detector.AUTO_PICK_MIN_SCORE).
 const AUTO_PICK_MIN_SCORE = 0.5;
+// 2XLarge box-check boxes: the person head's label cut (actor/person_labels
+// PERSON_LABEL_MIN_SCORE) — weaker boxes draw dashed.
+const BOX_CHECK_LABEL_SCORE = 0.4;
+const BOX_CHECK_COLOR = '#67e8f9';
+const LABEL_BOX_COLOR = '#fbbf24';
 
 /** One keycap. Action Label spells these inline; naming it here keeps the
  *  keys in this bar from drifting apart. */
@@ -52,6 +57,16 @@ function Key({ children }: { children: React.ReactNode }) {
     </kbd>
   );
 }
+
+const NO_BOX_CHECKS: ReadonlyMap<string, BoxCheckEntry> = new Map();
+/** Why an event is in the 2XLarge box-check queue (actor/box_style.py). */
+const BOX_CHECK_HINT: Record<BoxCheckEntry['status'], string> = {
+  snapped: 'The label box is a 2XLarge box.',
+  contested: "Another person's 2XLarge box overlaps the label box about as well as the best one.",
+  unmatched: 'No 2XLarge box overlaps the label box by IoU ≥ 0.5.',
+  not_covered: 'The dense 2XLarge pass did not cover this frame — nothing to pick; re-pick or mark occluded.',
+  cross_frame_unresolved: 'The label was drawn on another frame and could not be followed to the event frame.',
+};
 
 export interface PlayerHandle {
   /** Park the video on an event's frame, select + expand its rally, and pin
@@ -97,10 +112,13 @@ export interface EventVideoPlayerProps {
   onJumpToCrop?: (eventId: string) => void;
   /** Which tracklet each event's actor sits on (empty = no tracking run). */
   trackLinks: TrackData['links'];
+  /** Events whose label box the 2XLarge box check does not snap, by id —
+   *  pick mode draws their event frame's dense boxes to pick from. */
+  boxChecks?: ReadonlyMap<string, BoxCheckEntry>;
 }
 
 export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(function EventVideoPlayer(
-  { src, videoName, clock, tracklets, fps, frameSize, records, actionEvents, matches, rallies, selectedRally, onSelectRally, onFixActor, onConfirmActor, confirmableIds, onConfirmRally, fixing = false, onJumpToCrop, trackLinks },
+  { src, videoName, clock, tracklets, fps, frameSize, records, actionEvents, matches, rallies, selectedRally, onSelectRally, onFixActor, onConfirmActor, confirmableIds, onConfirmRally, fixing = false, onJumpToCrop, trackLinks, boxChecks = NO_BOX_CHECKS },
   ref,
 ) {
   const takeHandover = usePlayheadHandover(
@@ -186,6 +204,17 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
   // Near the action frame the record's stored detections are ALSO offered
   // (they cover people without a tracklet, down to the score slider).
   const nearEvent = pickTarget != null && Math.abs(pickTarget.frame - frame) <= 2;
+  // The target's box-check entry: its event frame's 2XLarge boxes are picked
+  // exactly as drawn (snap off, no tracklet), smallest on top so a player
+  // standing in front of another stays clickable.
+  const boxCheck = pickTarget ? boxChecks.get(pickTarget.id) : undefined;
+  const boxCheckBoxes = useMemo(
+    () =>
+      [...(boxCheck?.boxes ?? [])].sort(
+        (a, b) => (b.box[2] - b.box[0]) * (b.box[3] - b.box[1]) - (a.box[2] - a.box[0]) * (a.box[3] - a.box[1]),
+      ),
+    [boxCheck],
+  );
 
   // The rally under the playhead — masks are fetched per rally, whole
   // tracklets at once, so silhouettes render continuously like the boxes.
@@ -430,6 +459,27 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
     [rallies, fps, onSelectRally, videoRef],
   );
 
+  // Step through the 2XLarge box-check queue in frame order from the
+  // playhead (wrapping), straight into pick mode where its boxes draw. The
+  // playhead is read through a ref so the memoized sidebar keeps holding.
+  const frameRef = useRef(frame);
+  useEffect(() => {
+    frameRef.current = frame;
+  }, [frame]);
+  const stepBoxCheck = useCallback(
+    (dir: 1 | -1) => {
+      const queue = sidebarActions.filter((a) => boxChecks.has(a.id));
+      if (dir < 0) queue.reverse();
+      const at = frameRef.current;
+      const target = queue.find((a) => (dir > 0 ? a.frame > at : a.frame < at)) ?? queue[0];
+      if (!target) return;
+      const rally = seekEvent(target);
+      scrollRallyTop(listRef.current, rally ? rally.rally_id : OUTSIDE);
+      if (canFix) setPickMode(true);
+    },
+    [sidebarActions, boxChecks, seekEvent, canFix],
+  );
+
   const timelineAnnotations = useMemo<EditorAnnotation[]>(
     () => rallies.map((r) => ({ rally_id: r.rally_id, start: r.start, end: r.end, label: 'rally', winner: null })),
     [rallies],
@@ -627,6 +677,65 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
                     </rect>
                   );
                 })}
+              {/* 2XLarge box check: the label as stored (amber) next to the
+                  event frame's dense boxes (cyan) — clicking one stores that
+                  exact box, so the next snapshot snaps it. */}
+              {boxCheck && nearEvent && (
+                <g className="pointer-events-none">
+                  <rect
+                    x={boxCheck.label_box[0]}
+                    y={boxCheck.label_box[1]}
+                    width={boxCheck.label_box[2] - boxCheck.label_box[0]}
+                    height={boxCheck.label_box[3] - boxCheck.label_box[1]}
+                    fill="none"
+                    stroke={LABEL_BOX_COLOR}
+                    strokeWidth={2}
+                    strokeDasharray="8 4"
+                    vectorEffect="non-scaling-stroke"
+                  />
+                  <text
+                    x={boxCheck.label_box[0] + 3}
+                    y={boxCheck.label_box[3] + Math.round(h / 40)}
+                    fill={LABEL_BOX_COLOR}
+                    stroke="#000"
+                    strokeWidth={4}
+                    paintOrder="stroke"
+                    fontSize={Math.round(h / 52)}
+                    fontFamily="ui-monospace, SF Mono, Menlo"
+                  >
+                    label{boxCheck.label_frame != null && boxCheck.label_frame !== boxCheck.frame ? ` @f${boxCheck.label_frame}` : ''}
+                  </text>
+                </g>
+              )}
+              {boxCheck && nearEvent &&
+                boxCheckBoxes.map((d, i) => {
+                  const [x0, y0, x1, y1] = d.box;
+                  const strong = d.score >= BOX_CHECK_LABEL_SCORE;
+                  return (
+                    <rect
+                      key={`2xl-${i}`}
+                      x={x0}
+                      y={y0}
+                      width={x1 - x0}
+                      height={y1 - y0}
+                      fill="transparent"
+                      stroke={BOX_CHECK_COLOR}
+                      strokeOpacity={strong ? 0.95 : 0.6}
+                      strokeWidth={strong ? 2 : 1.5}
+                      strokeDasharray={strong ? undefined : '4 4'}
+                      vectorEffect="non-scaling-stroke"
+                      className={fixing ? 'pointer-events-none opacity-40' : 'pointer-events-auto cursor-pointer hover:fill-cyan-300/20'}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        // Exactly this box on the event frame: no tracklet,
+                        // no snap onto a stored Medium detection.
+                        onFixActor?.(boxCheck.id, { mode: 'pick', box: d.box, snap: false });
+                      }}
+                    >
+                      <title>{`2XLarge person · score ${d.score.toFixed(2)} — click to store this exact box as the actor`}</title>
+                    </rect>
+                  );
+                })}
               </svg>
               <div className="pointer-events-none absolute left-2 top-2 rounded-md bg-black/60 px-2 py-0.5 font-mono text-[10.5px] tabular-nums text-white">
                 f{frame} · {visible.length} box(es)
@@ -752,6 +861,14 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
                     {VERDICT[verdictOf(pickTarget)].glyph} {VERDICT[verdictOf(pickTarget)].label}
                     {pickTarget.actor_review_unresolved ? ' · re-pick' : ''}
                   </span>
+                  {boxCheck && (
+                    <span
+                      title={`${BOX_CHECK_HINT[boxCheck.status]} Near f${boxCheck.frame}: amber = the stored label box, cyan = 2XLarge boxes (dashed below ${BOX_CHECK_LABEL_SCORE}) — click the right cyan box.`}
+                      className="flex-shrink-0 rounded-full bg-cyan-300/10 px-2 py-0.5 font-mono text-[10px] text-cyan-300 ring-1 ring-cyan-300/30"
+                    >
+                      2XL: {boxCheck.status.replaceAll('_', ' ')}
+                    </span>
+                  )}
                   <span className="ml-auto flex items-center gap-3">
                     {detectionFallback && nearEvent && (
                       <label className="flex items-center gap-1.5 text-[11px] text-text-secondary" title="Hide detections below this score — drag left to reveal weaker boxes (extraction keeps everything ≥ 0.1)">
@@ -834,6 +951,8 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
           matches={matches}
           verdicts={verdicts}
           unresolvedIds={unresolvedIds}
+          boxChecks={boxChecks}
+          onStepBoxCheck={stepBoxCheck}
           activeRallyId={currentRallyId}
           activeActionIds={activeActionIds}
           expanded={expanded}

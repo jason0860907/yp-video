@@ -27,6 +27,7 @@ import { canConfirm, type ActorFix, type ActorVerdict, type TrackData } from '@/
 import { useVideoLabelingData } from '@/components/labeling/useVideoLabelingData';
 import type {
   AssociationVideo,
+  BoxCheckEntry,
   ReidActorFixResponse,
   ReidRecord,
 } from '@/types/api';
@@ -36,11 +37,16 @@ import { STATUS_OPTIONS, type ModeDescriptor, type PlaybackClock } from './mode'
 export const ASSOCIATION_MODE: ModeDescriptor = {
   key: 'association',
   label: 'Association',
-  statusOptions: [...STATUS_OPTIONS, { value: 'unresolved', label: 'Needs re-pick' }],
+  statusOptions: [
+    ...STATUS_OPTIONS,
+    { value: 'unresolved', label: 'Needs re-pick' },
+    { value: 'boxcheck', label: '2XL box check' },
+  ],
   status: assocStatus,
   matches: (row, status) => {
     if (status === 'all') return true;
     if (status === 'unresolved') return (row.assoc?.unresolved ?? 0) > 0;
+    if (status === 'boxcheck') return (row.assoc?.box_check ?? 0) > 0;
     return assocStatus(row) === status;
   },
   available: (row) => Boolean(row.assoc),
@@ -58,6 +64,11 @@ export const ASSOCIATION_MODE: ModeDescriptor = {
         {v.unresolved > 0 && (
           <span title="Verdicts resolving to no tracklet — re-pick these players so tracklet training can use them">
             <Badge tone="warning">{v.unresolved} re-pick</Badge>
+          </span>
+        )}
+        {v.box_check > 0 && (
+          <span title="Actor boxes that match no 2XLarge box clearly — pick the right one in pick mode">
+            <Badge tone="info">{v.box_check} 2XL</Badge>
           </span>
         )}
       </>
@@ -79,6 +90,17 @@ export function AssociationPanel({ video, clock }: { video: string; clock?: Play
   const videos = useMemo(() => videosQuery.data ?? [], [videosQuery.data]);
 
   const { records, meta, tracksQuery, actionEvents } = useVideoLabelingData(video);
+  // The 2XLarge box-check queue: events whose label box the person-head
+  // snapshot cannot match to a dense box. Snapped events need nothing.
+  const boxCheckQuery = useQuery({
+    queryKey: ['association-box-check', video],
+    queryFn: () => apiFetch<BoxCheckEntry[]>(API.association.boxCheck(video)),
+    enabled: Boolean(video),
+  });
+  const boxChecks = useMemo(
+    () => new Map((boxCheckQuery.data ?? []).filter((e) => e.status !== 'snapped').map((e) => [e.id, e])),
+    [boxCheckQuery.data],
+  );
   const rallies = useMemo(() => meta.rallies ?? [], [meta.rallies]);
 
   // A fix re-crops the event server-side (re-embedding follows in the
@@ -122,6 +144,7 @@ export function AssociationPanel({ video, clock }: { video: string; clock?: Play
       // The work list's counts moved, and the identities this event fed into
       // are stale — ReID Label refetches them when it next mounts.
       void qc.invalidateQueries({ queryKey: ['association-videos'] });
+      void qc.invalidateQueries({ queryKey: ['association-box-check', video] });
       void qc.invalidateQueries({ queryKey: ['label-stats'] });
       void qc.invalidateQueries({ queryKey: ['reid-clusters', video], refetchType: 'none' });
       void qc.invalidateQueries({ queryKey: ['reid-players', video], refetchType: 'none' });
@@ -219,6 +242,7 @@ export function AssociationPanel({ video, clock }: { video: string; clock?: Play
           onConfirmRally={(ids) => void confirmAuto(ids)}
           fixing={Boolean(fixingEvent)}
           trackLinks={tracksQuery.data?.links ?? {}}
+          boxChecks={boxChecks}
         />
       )}
 

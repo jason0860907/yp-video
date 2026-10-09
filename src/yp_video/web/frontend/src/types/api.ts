@@ -674,6 +674,9 @@ export interface AssociationVideo {
    *  a better tracking run) before tracklet training can use them. Zero when
    *  the video has no tracking run at all: that gap is the pipeline chip's. */
   unresolved: number;
+  /** Boxed actor labels the 2XLarge box check does not snap (any status but
+   *  `snapped`) — the queue behind the "2XL box check" filter. */
+  box_check: number;
   /** What the automatic policy produced, for context on the remainder. */
   auto_counts: { ok: number; multi: number; miss: number };
   /** The stored "actor review is finished" flag — a human verdict, no longer
@@ -681,6 +684,23 @@ export interface AssociationVideo {
   done: boolean;
   status: LabelStatus;
   pipeline: PipelineState;
+}
+
+/** Why a label box is (not) one of the 2XLarge dense boxes on its event
+ *  frame — the actor snapshot's rule (actor/box_style.py). */
+export type BoxCheckStatus = 'snapped' | 'contested' | 'unmatched' | 'not_covered' | 'cross_frame_unresolved';
+
+/** One boxed actor label checked against the dense pass (actor/box_check.py). */
+export interface BoxCheckEntry {
+  id: string;
+  frame: number;
+  label: string | null;
+  status: BoxCheckStatus;
+  /** The stored label box, pixels, drawn on ``label_frame`` (null = the event's). */
+  label_box: [number, number, number, number];
+  label_frame: number | null;
+  /** The event frame's 2XLarge boxes (score ≥ 0.1), pixels. */
+  boxes: { box: [number, number, number, number]; score: number }[];
 }
 
 export interface ReidDatasetInfo {
