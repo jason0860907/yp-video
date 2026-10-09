@@ -336,20 +336,25 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewB
   const selectedAnnotation =
     selectedKey == null ? undefined : annotations.find((a) => a.key === selectedKey);
 
+  // The time of the previous update, so the stop below trips only when
+  // playback crosses the selected rally's end — not when play starts there.
+  const lastTime = useRef(0);
   const onTimeUpdate = () => {
     const el = videoRef.current;
     if (!el) return;
+    const before = lastTime.current;
+    lastTime.current = el.currentTime;
     setCurrentTime(el.currentTime);
     // Not while the element is being reloaded: removeAttribute('src') + load()
     // reports 0, and writing that to the shared clock discards the position a
     // handover just brought in.
     if (hasRealTime(el)) onTimeChange?.(el.currentTime);
     const a = selectedAnnotation;
-    if (a && !el.paused && el.currentTime >= a.end) {
+    if (a && !el.paused && before < a.end && el.currentTime >= a.end) {
       // Stop the preview at the boundary and STAY on this rally: the reviewer
       // has just watched its end and the next thing they do is nudge it with
-      // a/s/d/f, which needs a selection. Idempotent — once paused, this
-      // branch cannot re-enter.
+      // a/s/d/f, which needs a selection. Play from the end carries on past
+      // it — it does not cross the boundary again.
       el.pause();
       el.currentTime = a.end;
     }
