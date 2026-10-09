@@ -53,7 +53,7 @@ def test_no_tracks_still_exports_human_frames_and_empty(labels):
     cache.mkdir(parents=True)
     for frame in range(3):
         (cache / f'{frame:06d}.jpg').write_bytes(b'frame')
-    with patch('yp_video.actor.person_labels.tracks_path', return_value=labels / 'missing.jsonl'):
+    with patch('yp_video.actor.person_labels.dense_path', return_value=labels / 'missing.npz'):
         result = write_person_labels([(labels / 'absent.jsonl', labels / 'game.mp4')], label_dir=labels / 'out', cache_root=cache.parent)
     assert result['reviewed_frames'] == 2
     with np.load(labels / 'out' / 'game_person.npz') as output:

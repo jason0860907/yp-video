@@ -1,43 +1,56 @@
-"""The person-box sidecar: every rally-span frame, the tracker's boxes on
-it normalized to the frame, and nothing outside the spans."""
+"""The person-box sidecar from the 2XLarge dense pass: every covered frame,
+its boxes above the label cut, and strode frames filled from their neighbour."""
 
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
-from types import SimpleNamespace
+from pathlib import Path
 
 import numpy as np
 
-from yp_video.actor.person_labels import _frame_boxes
+from yp_video.actor.person_labels import dense_frame_boxes
 
 
-class FrameBoxTests(unittest.TestCase):
-    def test_spans_pick_the_frames_and_boxes_normalize(self) -> None:
-        data = SimpleNamespace(
-            meta={"frame_size": [1000, 500]},
-            records=[
-                {"rally_id": 1, "track_id": 1, "frames": [10, 11, 12, 40], "boxes": [[100, 50, 200, 250]] * 4},
-                {"rally_id": 1, "track_id": 2, "frames": [11], "boxes": [[600, 0, 700, 100]]},
-            ],
-        )
-        # One rally 1.0–1.2 s at 10 fps → frames 10..12; frame 40 is outside.
-        frames, counts, boxes = _frame_boxes(
-            data, ann_path_rows=[{"start": 1.0, "end": 1.2}], fps=10.0, num_frames=100
-        )
-        self.assertEqual(frames.tolist(), [10, 11, 12])
-        self.assertEqual(counts.tolist(), [1, 2, 1])
-        self.assertEqual(boxes.shape, (4, 4))
-        np.testing.assert_allclose(boxes[0].astype(np.float32), [0.1, 0.1, 0.2, 0.5], atol=1e-3)
-        np.testing.assert_allclose(boxes[2].astype(np.float32), [0.6, 0.0, 0.7, 0.2], atol=1e-3)
+def write_dense(path: Path, *, frames, counts, boxes, scores, stride) -> None:
+    np.savez_compressed(
+        path,
+        frames=np.asarray(frames, np.int32),
+        counts=np.asarray(counts, np.int32),
+        boxes=np.asarray(boxes, np.float16).reshape(-1, 4),
+        scores=np.asarray(scores, np.float16),
+        meta=np.array(json.dumps({"fps": 60.0, "stride": stride})),
+    )
 
-    def test_empty_span_frames_are_kept_as_nobody(self) -> None:
-        data = SimpleNamespace(meta={"frame_size": [100, 100]}, records=[])
-        frames, counts, boxes = _frame_boxes(
-            data, ann_path_rows=[{"start": 0.0, "end": 0.2}], fps=10.0, num_frames=100
-        )
-        self.assertEqual(frames.tolist(), [0, 1, 2])
-        self.assertEqual(counts.tolist(), [0, 0, 0])
-        self.assertEqual(boxes.shape, (0, 4))
+
+class DenseFrameBoxTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.dir = tempfile.TemporaryDirectory()
+        self.path = Path(self.dir.name) / "game_dense.npz"
+
+    def tearDown(self) -> None:
+        self.dir.cleanup()
+
+    def test_the_cut_drops_low_scores_and_keeps_empty_frames(self) -> None:
+        write_dense(self.path, frames=[10, 11], counts=[2, 1],
+                    boxes=[[.1, .1, .2, .5], [.6, 0, .7, .2], [.3, .3, .4, .6]],
+                    scores=[.9, .2, .3], stride=1)
+        fps, labels = dense_frame_boxes(self.path, min_score=.4)
+        self.assertEqual(fps, 60.0)
+        self.assertEqual(sorted(labels), [10, 11])
+        np.testing.assert_allclose(labels[10], [[.1, .1, .2, .5]], atol=1e-3)
+        self.assertEqual(labels[11], [])
+
+    def test_a_strode_frame_takes_the_previous_boxes_only_inside_a_span(self) -> None:
+        # Span one: 10, 12, 14; span two starts at 40.
+        write_dense(self.path, frames=[10, 12, 14, 40], counts=[1, 0, 1, 1],
+                    boxes=[[.1, .1, .2, .2], [.3, .3, .4, .4], [.5, .5, .6, .6]],
+                    scores=[.9, .9, .9], stride=2)
+        _, labels = dense_frame_boxes(self.path, min_score=.4)
+        self.assertEqual(sorted(labels), [10, 11, 12, 13, 14, 40])
+        self.assertEqual(labels[11], labels[10])
+        self.assertEqual(labels[13], [])
 
 
 if __name__ == "__main__":

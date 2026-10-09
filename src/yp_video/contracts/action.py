@@ -142,9 +142,10 @@ TASKS: dict[str, TaskSpec] = {
             ("jump",), ("action",), "jump_balanced_accuracy", False,
         ),
         # Where the people are, per frame: the model's own boxes, distilled
-        # from the tracker (actor/person_labels.py writes the sidecar from
-        # tracks). Rides the rally stream — rally spans are where tracking
-        # ran — so every tracked video supervises it, action labels or not.
+        # from RF-DETR Seg 2XLarge (actor/person_labels.py writes the sidecar
+        # from the dense pass). Rides the rally stream — rally spans are where
+        # the pass ran — so every covered video supervises it, action labels
+        # or not.
         TaskSpec(
             "person", "Person", "aux", "person-boxes", "*_person.npz",
             (), ("rally",), "person_ap50", False,
