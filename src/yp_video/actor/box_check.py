@@ -9,7 +9,8 @@ page's box-check queue: a confirmed automatic box no dense box matches, or a
 label an action edit moved off its frame and the dense boxes lost on the way.
 
 Cached per video on the files it reads, so the work list counts it on every
-load without re-reading a dense pass that has not changed.
+load without re-reading a dense pass that has not changed; boxes reach
+pixels only for the one video a page asks for.
 """
 
 from __future__ import annotations
@@ -39,11 +40,39 @@ def box_check(stem: str) -> list[dict]:
     pixels (empty when the frame is not covered) — and, for an event whose
     actor label has a box, ``status`` (box_style's SNAPPED or why not) and
     ``label_box``, the label's box on the event frame (None when UNRESOLVED);
-    both None otherwise. Shared — read-only.
+    both None otherwise.
     """
+    checked = _checked(stem)
+    if checked is None:
+        return []
+    (width, height), entries = checked
+    return [
+        {
+            **{key: entry[key] for key in ("id", "frame", "label", "status", "label_box")},
+            "boxes": [
+                {"box": pixels(box, width, height), "score": round(score, 3)}
+                for box, score in zip(entry["boxes"], entry["scores"])
+            ],
+        }
+        for entry in entries
+    ]
+
+
+def pending_count(stem: str) -> int:
+    """Events whose label box needs a look (a status other than SNAPPED)."""
+    checked = _checked(stem)
+    if checked is None:
+        return 0
+    return sum(entry["status"] not in (None, SNAPPED) for entry in checked[1])
+
+
+def _checked(stem: str) -> tuple[tuple[int, int], list[dict]] | None:
+    """The cached check: frame size and entries whose dense boxes stay
+    normalized — the work list only counts statuses, and converting every
+    box of every video to pixels was most of what its first build cost."""
     sources = action_source_paths(stem)
     if not sources or not dense_path(stem).exists():
-        return []
+        return None
     sources.append(dense_path(stem))
     labels = actor_labels.actors_path(stem)
     if labels.exists():
@@ -51,18 +80,13 @@ def box_check(stem: str) -> list[dict]:
     try:
         return _cache.get(stem, sources, lambda: _check(stem))
     except FileNotFoundError:
-        return []  # deleted between exists() and stat
+        return None  # deleted between exists() and stat
 
 
-def pending_count(stem: str) -> int:
-    """Events whose label box needs a look (a status other than SNAPPED)."""
-    return sum(entry["status"] not in (None, SNAPPED) for entry in box_check(stem))
-
-
-def _check(stem: str) -> list[dict]:
+def _check(stem: str) -> tuple[tuple[int, int], list[dict]] | None:
     dense = dense_pass(stem)
     if dense is None:
-        return []
+        return None
     width, height = dense.meta["frame_size"]
     labels = actor_labels.load(stem)
     out = []
@@ -82,17 +106,8 @@ def _check(stem: str) -> list[dict]:
                 status = settle(target, None if hit is None else hit[0])[1]
                 label_box = pixels(target, width, height)
         boxes, scores = hit or ([], [])
-        out.append(
-            {
-                "id": str(event["id"]),
-                "frame": frame,
-                "label": event.get("label"),
-                "status": status,
-                "label_box": label_box,
-                "boxes": [
-                    {"box": pixels(box, width, height), "score": round(score, 3)}
-                    for box, score in zip(boxes, scores)
-                ],
-            }
-        )
-    return out
+        out.append({
+            "id": str(event["id"]), "frame": frame, "label": event.get("label"),
+            "status": status, "label_box": label_box, "boxes": boxes, "scores": scores,
+        })
+    return (width, height), out
