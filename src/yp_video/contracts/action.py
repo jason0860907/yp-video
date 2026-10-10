@@ -219,10 +219,11 @@ _RALLY_FIELDS = ("sample_fps", "acc_grad_iter", "video_limit")
 # Every recipe defaults to the same base learning rate (3e-5, matching the
 # yp-spot CLI default); per-task overrides start equal to it so the form
 # shows one number everywhere until the operator deliberately diverges.
-# Every recipe trains at an effective batch of 64 as 32 micro-batches of 2
-# clips: at the 224x398 model input (yp_spot DEFAULT_INPUT_SIZE) a 4-clip
-# step no longer fits the 24 GB card for either backbone, while 2 clips
-# leaves headroom for the five-head runs.
+# Every recipe trains at an effective batch of 64. Rally and Action recipes
+# take 32 micro-batches of 2 clips; the mixed recipes' ConvNeXt backbone on
+# the 448 letterbox canvas needs ~21 GB for one 64-frame clip with every
+# head, so they take 64 micro-batches of 1 (2 clips run out of memory on
+# the 24 GB card).
 _RALLY_DEFAULTS = {
     "batch_size": 64, "acc_grad_iter": 32, "num_epochs": 30,
     "warm_up_epochs": 2, "learning_rate": 3e-5, "audio_backend": "none",
@@ -262,7 +263,7 @@ _MULTI_FPS_DEFAULTS = {
     "batch_size": 64,
     "feature_arch": "convnextt_dv3_gsm",
     "num_workers": 4,
-    "acc_grad_iter": 32,
+    "acc_grad_iter": 64,
     "num_epochs": 50,
     "warm_up_epochs": 3,
     "learning_rate": 3e-5,
