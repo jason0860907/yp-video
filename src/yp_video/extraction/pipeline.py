@@ -64,6 +64,7 @@ from yp_video.extraction.store import (
     action_annotation_path,
     crop_dir,
     records_path,
+    with_current_actions,
 )
 from yp_video.person.detector import (
     DETECTOR_NAME,
@@ -525,7 +526,13 @@ def _apply_actor_fix(
     row = next((i for i, r in enumerate(records) if r["id"] == event_id), None)
     if row is None:
         raise KeyError(f"No extraction record for event {event_id}")
-    record = records[row]
+    # The label sits on the action's CURRENT frame (actor_fix._event_frame),
+    # and an action edit since extraction leaves this row's copy stale; a
+    # stale frame would send the picked box across frames to be followed.
+    current = with_current_actions([records[row]], stem)
+    if not current:
+        raise KeyError(f"No current action event {event_id}")
+    record = records[row] = current[0]
     record["actor_revision"] = int(record.get("actor_revision") or 0) + 1
 
     frame_w, frame_h = meta.get("frame_size") or [0, 0]

@@ -596,7 +596,12 @@ class ActorFixRevertTests(unittest.TestCase):
                     }
                 ],
             )
-            with patch.object(pipeline, "records_path", return_value=records):
+            actions = Path(raw_dir) / "match_actions.jsonl"
+            write_jsonl(actions, {}, [{"id": "e1", "frame": 10, "xy": [0.5, 0.5]}])
+            with (
+                patch.object(pipeline, "records_path", return_value=records),
+                patch.object(actor_fix.extraction_store, "action_annotation_path", return_value=actions),
+            ):
                 returned = pipeline._apply_actor_fix(
                     "match", "/nonexistent/match.mp4", "e1", None
                 )
