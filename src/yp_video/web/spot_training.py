@@ -208,6 +208,7 @@ def build_command(
             ("action", req.action_stream_weight),
             ("rally", req.rally_stream_weight),
             ("winner", req.winner_stream_weight),
+            ("actor", req.actor_stream_weight),
         ):
             if task in recipe.tasks and weight != 1:
                 cmd.extend(["--task_stream_weight", f"{task}={weight}"])

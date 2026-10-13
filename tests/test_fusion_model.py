@@ -164,6 +164,8 @@ class BuildCommandTests(unittest.TestCase):
         self.assertIn("--actor_dir /run/labels/actor-events", joined)
         self.assertIn("--action_class_upsample block=0.1", joined)
         self.assertIn("--person_giou_weight 1.0", joined)
+        # Two shares of each epoch go to the actor's event clips.
+        self.assertIn("--task_stream_weight actor=2", joined)
 
     def test_fine_tune_knobs_stay_off_by_default(self) -> None:
         req = FusionTrainRequest(recipe="action_rally_winner", validation="ratio")
@@ -177,6 +179,7 @@ class BuildCommandTests(unittest.TestCase):
         ))
         self.assertNotIn("--action_class_upsample", joined)
         self.assertNotIn("--person_giou_weight", joined)
+        self.assertNotIn("--task_stream_weight", joined)
 
     def test_run_name_token_per_recipe(self) -> None:
         self.assertEqual(spot_training.recipe_token(RECIPES["rally_winner"]), "ral_win")

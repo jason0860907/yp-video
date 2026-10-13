@@ -322,8 +322,11 @@ RECIPES: dict[str, Recipe] = {
             "One backbone for every SPOT pass stage: Action with its contact point, "
             "Rally/Winner, Person on the rally stream, and Actor — who touched the "
             "ball — trained per labelled event from the association annotations.",
-            _MULTI_FPS_FIELDS,
-            {**_MULTI_FPS_DEFAULTS, "action_block_upsample": 0.1, "person_giou_weight": 1.0},
+            (*_MULTI_FPS_FIELDS, "actor_stream_weight"),
+            # The actor stream gets two shares: Rally and Winner saturate
+            # within a few epochs, while picking the actor is the weakest stage.
+            {**_MULTI_FPS_DEFAULTS, "action_block_upsample": 0.1, "person_giou_weight": 1.0,
+             "actor_stream_weight": 2},
         ),
     )
 }

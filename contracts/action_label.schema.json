@@ -294,7 +294,8 @@
         "action_block_upsample",
         "action_dilate_len",
         "person_giou_weight",
-        "acc_grad_iter"
+        "acc_grad_iter",
+        "actor_stream_weight"
       ],
       "defaults": {
         "batch_size": 64,
@@ -318,7 +319,8 @@
         "action_sample_fps": 30.0,
         "rally_sample_fps": 5.0,
         "winner_sample_fps": 5.0,
-        "video_limit": 0
+        "video_limit": 0,
+        "actor_stream_weight": 2
       }
     }
   },

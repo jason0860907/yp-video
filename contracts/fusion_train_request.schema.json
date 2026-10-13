@@ -294,6 +294,13 @@
       "title": "Winner Stream Weight",
       "type": "integer"
     },
+    "actor_stream_weight": {
+      "default": 1,
+      "maximum": 9,
+      "minimum": 1,
+      "title": "Actor Stream Weight",
+      "type": "integer"
+    },
     "action_fg_upsample": {
       "anyOf": [
         {

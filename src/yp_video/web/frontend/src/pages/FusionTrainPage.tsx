@@ -269,6 +269,9 @@ export function FusionTrainPage() {
                       <SchemaNumberField name="action_stream_weight" label="Action" />
                       <SchemaNumberField name="rally_stream_weight" label="Rally" />
                       <SchemaNumberField name="winner_stream_weight" label="Winner" />
+                      {visible.has('actor_stream_weight') && (
+                        <SchemaNumberField name="actor_stream_weight" label="Actor" />
+                      )}
                     </div>
                   </div>
                 )}

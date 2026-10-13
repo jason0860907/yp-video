@@ -202,6 +202,7 @@ class FusionTrainRequest(StrictModel):
     action_stream_weight: int = Field(default=1, ge=1, le=9)
     rally_stream_weight: int = Field(default=1, ge=1, le=9)
     winner_stream_weight: int = Field(default=1, ge=1, le=9)
+    actor_stream_weight: int = Field(default=1, ge=1, le=9)
     action_fg_upsample: float | None = Field(
         default=None,
         gt=0,
