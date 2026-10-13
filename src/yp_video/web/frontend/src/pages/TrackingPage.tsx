@@ -14,6 +14,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { NumberInput } from '@/components/form/Field';
+import { FieldShell } from '@/components/form/FieldLabel';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { PipelineChips, Prereqs, STAGE_HINT } from '@/components/video/PipelineChips';
 import { SectionLabel } from '@/components/ui/SectionLabel';
@@ -80,18 +81,15 @@ export function TrackingPage() {
             <Button size="sm" onClick={() => navigate('/inference')}>
               Open Inference
             </Button>
-            <Button intent="primary" onClick={run} disabled={Boolean(blocked)}>
-              Run Rally Tracking
-            </Button>
           </>
         }
       />
 
       <div className="grid grid-cols-2 gap-3.5 lg:grid-cols-4">
-        <StatTile label="Videos" value={videos.length} tintClass="text-primary-light" />
+        <StatTile label="Videos" value={videos.length} tintClass="text-primary-light" loading={!videosQuery.data} />
         <StatTile label="Selected" value={selected.size} tintClass="text-primary-light" />
-        <StatTile label="Tracked" value={tracked.length} tintClass="text-primary-light" />
-        <StatTile label="Untracked in selection" value={missing} tintClass="text-text-muted" />
+        <StatTile label="Tracked" value={tracked.length} tintClass="text-primary-light" loading={!videosQuery.data} />
+        <StatTile label="Untracked in selection" value={missing} tintClass="text-text-muted" loading={!videosQuery.data} />
       </div>
 
       <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)]">
@@ -103,18 +101,9 @@ export function TrackingPage() {
             while actions are still being labeled.
           </p>
           <div className="space-y-2">
-            <label className="block text-xs text-text-secondary">
-              <span className="mb-1 block">
-                Stride <span className="text-text-muted">— detect every Nth rally frame</span>
-              </span>
-              <NumberInput
-                min={1}
-                max={10}
-                value={stride}
-                onChange={setStride}
-                className="py-1.5 text-xs"
-              />
-            </label>
+            <FieldShell label="Stride" description="Detect every Nth rally frame.">
+              <NumberInput min={1} max={10} value={stride} onChange={setStride} />
+            </FieldShell>
             <label className="flex cursor-pointer items-center gap-2 text-xs text-text-secondary">
               <input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} className="h-3.5 w-3.5 accent-primary" />
               Overwrite existing tracklets

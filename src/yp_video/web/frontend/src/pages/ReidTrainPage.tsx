@@ -20,7 +20,6 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { StatTile } from '@/components/ui/StatTile';
 import { fieldCls } from '@/components/form/Field';
@@ -118,13 +117,17 @@ export function ReidTrainPage() {
 
   return (
     <div className="mx-auto max-w-screen-2xl">
-      <PageHeader
-        subtitle={
-          status
-            ? `${status.totals.assigned_events} events across ${status.totals.ready_videos} finished video(s)`
-            : undefined
-        }
-      />
+      <div className="mb-5 grid grid-cols-2 gap-3.5 lg:grid-cols-4">
+        <StatTile label="Labeled events" value={status?.totals.assigned_events} loading={!status} tintClass="text-primary-light" />
+        <StatTile label="Finished videos" value={status?.totals.ready_videos} loading={!status} tintClass="text-primary-light" />
+        <StatTile label="Identities" value={status?.totals.identities} loading={!status} tintClass="text-primary-light" />
+        <StatTile
+          label="Not marked done"
+          value={status?.totals.pending_videos}
+          loading={!status}
+          tintClass={status?.totals.pending_videos ? 'text-amber-400' : 'text-text-muted'}
+        />
+      </div>
 
       <div className="mb-5 space-y-3">
         {status?.totals.pending_videos ? (

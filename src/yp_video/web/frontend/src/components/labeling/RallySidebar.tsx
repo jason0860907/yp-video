@@ -247,7 +247,7 @@ export const RallySidebar = memo(function RallySidebar({
     </button>
   );
   return (
-    <div className="min-w-0 lg:w-[420px] lg:flex-shrink-0">
+    <div className="min-w-0 xl:w-[420px] xl:flex-shrink-0">
       <Card>
         <SectionLabel>
           Rallies ({rallies.length} rally · {totalActions} action)

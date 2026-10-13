@@ -2,8 +2,8 @@
  *
  *  Perception, not judgement. RF-DETR Seg on every annotated
  *  action frame, keeping ALL the boxes — which of those people acted is
- *  Association Predict, and it re-decides among these boxes without ever
- *  opening the video again.
+ *  Inference's association stage, and it re-decides among these boxes
+ *  without ever opening the video again.
  *
  *  The sparse sibling of Rally Tracking: that one detects every frame of
  *  every rally, this one the ~300 frames an action happened on. Two
@@ -82,18 +82,15 @@ export function PlayerDetectionPage() {
             <Button size="sm" onClick={() => navigate('/inference')}>
               Open Inference
             </Button>
-            <Button intent="primary" onClick={run} disabled={Boolean(blocked)}>
-              Run Player Detection
-            </Button>
           </>
         }
       />
 
       <div className="grid grid-cols-2 gap-3.5 lg:grid-cols-4">
-        <StatTile label="Videos" value={videos.length} tintClass="text-primary-light" />
+        <StatTile label="Videos" value={videos.length} tintClass="text-primary-light" loading={!videosQuery.data} />
         <StatTile label="Selected" value={selected.size} tintClass="text-primary-light" />
-        <StatTile label="Detected" value={detected.length} tintClass="text-primary-light" />
-        <StatTile label="Events" value={videos.reduce((s, v) => s + v.event_count, 0)} tintClass="text-text-muted" />
+        <StatTile label="Detected" value={detected.length} tintClass="text-primary-light" loading={!videosQuery.data} />
+        <StatTile label="Events" value={videos.reduce((s, v) => s + v.event_count, 0)} tintClass="text-text-muted" loading={!videosQuery.data} />
       </div>
 
       <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)]">
@@ -101,8 +98,8 @@ export function PlayerDetectionPage() {
           <SectionLabel>Config</SectionLabel>
           <p className="mb-3 text-xs leading-relaxed text-text-muted">
             For every annotated action event: detect every person on that frame with RF-DETR Seg
-            and keep every box. Decides nothing — Association Predict picks who acted
-            from this list, and never needs the video again.
+            and keep every box. Decides nothing — Inference's association stage picks
+            who acted from this list, and never needs the video again.
           </p>
           <div className="space-y-2">
             <div className="flex items-center justify-between text-xs">

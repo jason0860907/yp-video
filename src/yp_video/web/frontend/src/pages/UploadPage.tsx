@@ -5,6 +5,7 @@ import { cn } from '@/lib/cn';
 import { formatBytes } from '@/lib/format';
 import { useSingleJob } from '@/lib/useSingleJob';
 import { Button } from '@/components/ui/Button';
+import { Segmented } from '@/components/ui/Segmented';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -216,18 +217,14 @@ export function UploadPage() {
             </button>
           ))}
         </div>
-        <div className="inline-flex rounded-lg border border-border bg-surface-50 p-0.5">
-          {(['upload', 'download'] as Mode[]).map((m) => (
-            <button
-              key={m}
-              type="button"
-              onClick={() => setMode(m)}
-              className={cn('rounded-md px-3.5 py-1.5 text-xs font-medium transition-colors', mode === m ? 'bg-primary text-on-primary' : 'text-text-secondary hover:bg-ink/[0.04]')}
-            >
-              {m === 'upload' ? 'Upload' : 'Download from R2'}
-            </button>
-          ))}
-        </div>
+        <Segmented<Mode>
+          options={[
+            { key: 'upload', label: 'Upload' },
+            { key: 'download', label: 'Download from R2' },
+          ]}
+          value={mode}
+          onChange={setMode}
+        />
       </Card>
 
       {/* File browser */}
@@ -245,7 +242,7 @@ export function UploadPage() {
                 Uploaded
               </Button>
             )}
-            <Button size="sm" intent="primary" onClick={() => setSelection((f) => (isUpload ? !f.uploaded : !f.local))}>
+            <Button size="sm" onClick={() => setSelection((f) => (isUpload ? !f.uploaded : !f.local))}>
               Un-synced
             </Button>
           </div>

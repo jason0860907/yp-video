@@ -7,12 +7,10 @@ import { toast } from '@/components/feedback/toast';
 export function CopyFilenameButton({ name }: { name: string }) {
   return (
     <Button
+      size="sm"
       className="h-9 py-0"
+      disabled={!name}
       onClick={() => {
-        if (!name) {
-          toast.warning('No video selected');
-          return;
-        }
         copyText(name).then(
           () => toast.success(`Copied ${name}`),
           () => toast.error('Copy failed'),

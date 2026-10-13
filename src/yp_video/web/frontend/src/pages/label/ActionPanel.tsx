@@ -12,7 +12,7 @@ import { useQuery } from '@tanstack/react-query';
 import { API, apiFetch, apiUrl, errMsg } from '@/lib/api';
 import { fieldCls } from '@/components/form/Field';
 import { cn } from '@/lib/cn';
-import { hasRealTime, usePlayheadHandover } from '@/lib/playheadHandover';
+import { firstRallyStart, hasRealTime, usePlayheadHandover } from '@/lib/playheadHandover';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -121,8 +121,8 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, registerGu
   // (which fetches a fresh URL) and seek back to where the user was.
   useVideoRecovery(videoRef, {
     src: () => (edRef.current.video ? apiUrl(API.actionAnnotate.video(edRef.current.video)) : ''),
-    onRecover: () => toast.info('影片串流中斷，已自動重新載入'),
-    onGiveUp: () => toast.error('影片重載後仍卡在同一處，已停止自動重試 — 請把 DevTools Console 的 [video-recovery] 記錄回報'),
+    onRecover: () => toast.info('Video stream dropped — reloaded automatically'),
+    onGiveUp: () => toast.error('Video still stuck after reloading; auto-retry stopped — please report the [video-recovery] lines from the DevTools console'),
   });
 
   // ── On-video overlay ──
@@ -144,7 +144,7 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, registerGu
     // without error. seekFrame would still have locked the frame counter, so
     // the failure used to show up as a correct-looking readout over a video
     // sitting at 0.
-    const t = takeHandover();
+    const t = takeHandover(firstRallyStart(edRef.current.rallies));
     if (t == null) return;
     const arriveAt = () => {
       const f = Math.floor(t * (edRef.current.fps || 30));
@@ -461,7 +461,7 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, registerGu
   // clock (see onVideoMetadata).
   const nudgeEvent = (d: number) => {
     if (!selectedId) {
-      toast.warning('先選一個動作');
+      toast.warning('Pick an action first');
       return;
     }
     const before = edRef.current.events.find((e) => e.id === selectedId);
@@ -548,13 +548,13 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, registerGu
   const outside = ed.events.filter((e) => !e.rally_id);
 
   return (
-    <div className="flex flex-col gap-5 lg:flex-row">
+    <div className="flex flex-col gap-5 xl:flex-row">
       {/* Player */}
       <div className="min-w-0 flex-1 space-y-4">
         <Card>
-          <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <h3 className="font-heading text-sm font-semibold text-text-primary">Action Labels</h3>
-            <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h3 className="whitespace-nowrap font-heading text-sm font-semibold text-text-primary">Action Labels</h3>
+            <div className="flex flex-wrap gap-2">
               {labels.map((l, i) => {
                 const active = l === selectedLabel;
                 const color = actionColor(l);
@@ -563,7 +563,7 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, registerGu
                     key={l}
                     type="button"
                     onClick={() => setSelectedLabel(l)}
-                    className={cn('rounded-lg border px-3 py-2 font-heading text-xs font-semibold capitalize transition-colors', active ? 'text-white' : 'text-text-secondary hover:text-text-primary')}
+                    className={cn('whitespace-nowrap rounded-lg border px-3 py-2 font-heading text-xs font-semibold capitalize transition-colors', active ? 'text-white' : 'text-text-secondary hover:text-text-primary')}
                     style={{ borderColor: active ? color : 'var(--line)', background: active ? `${color}33` : 'transparent' }}
                   >
                     <span className="opacity-60">{i + 1}</span> {l}
@@ -665,7 +665,7 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, registerGu
       </div>
 
       {/* Rallies + events */}
-      <div className="min-w-0 lg:w-[420px] lg:flex-shrink-0">
+      <div className="min-w-0 xl:w-[460px] xl:flex-shrink-0">
         <Card>
           <div className="mb-3 flex items-center justify-between gap-2">
             <SectionLabel className="mb-0">
@@ -695,7 +695,7 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, registerGu
           </div>
           <div className="h-px bg-border" />
 
-          <div ref={listRef} className="mt-2 max-h-[calc(100vh-18rem)] space-y-1.5 overflow-y-auto pr-1">
+          <div ref={listRef} className="vq-list mt-2 max-h-[calc(100vh-23rem)] space-y-1.5 overflow-y-auto pr-1">
             {!ed.video ? (
               <EmptyState icon={<DotIcon />} title="No video loaded" />
             ) : ed.rallies.length === 0 && outside.length === 0 ? (

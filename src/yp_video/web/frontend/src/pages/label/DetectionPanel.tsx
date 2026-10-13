@@ -24,7 +24,7 @@ export const DETECTION_MODE: ModeDescriptor = {
   status: (row) => row.detection?.status ?? 'unlabeled',
   matches: (row, status) => status === 'all' || (row.detection?.status ?? 'unlabeled') === status,
   available: (row) => Boolean(row.action),
-  hint: () => '需要一支 cut 影片',
+  hint: () => 'Needs a cut video',
 };
 type Annotation = { revision: number; state: 'draft' | 'reviewed'; boxes: Box[] };
 type PredictionSource = {
@@ -86,10 +86,10 @@ export function DetectionPanel({
         <p role="alert" className="text-red-400">
           {errMsg(info.error)}
         </p>
-        <Button onClick={() => void info.refetch()}>重新載入</Button>
+        <Button onClick={() => void info.refetch()}>Reload</Button>
       </Card>
     );
-  if (!info.data || frame === null) return <Card>讀取影片…</Card>;
+  if (!info.data || frame === null) return <Card>Loading video…</Card>;
   return (
     <DetectionFrame
       key={`${video}:${frame}:${source}`}
@@ -178,10 +178,10 @@ function DetectionFrame({
     return (
       !dirty ||
       (await confirm({
-        title: '尚有未儲存的人物框',
-        body: '離開會捨棄這次修改。',
-        confirmText: '捨棄修改',
-        cancelText: '繼續編輯',
+        title: 'Unsaved person boxes',
+        body: 'Leaving discards these edits.',
+        confirmText: 'Discard edits',
+        cancelText: 'Keep editing',
         variant: 'warning',
       }))
     );
@@ -215,10 +215,10 @@ function DetectionFrame({
       state === 'reviewed' &&
       !boxes.length &&
       !(await confirm({
-        title: '確認這個影格完全沒有人？',
-        body: '只有確實沒有任何可辨識人物才標為無人；尚未畫框請儲存草稿。',
-        confirmText: '確認無人',
-        cancelText: '繼續標註',
+        title: 'Confirm this frame has no people?',
+        body: 'Mark empty only when no recognisable person is in frame. If you have not drawn boxes yet, save a draft instead.',
+        confirmText: 'Confirm empty',
+        cancelText: 'Keep labeling',
       }))
     )
       return;
@@ -266,7 +266,7 @@ function DetectionFrame({
       (saved || dirty) &&
       !(await confirm({
         title: 'Replace current boxes?',
-        body: '目前的框將由所選來源的預測取代，需重新確認。',
+        body: 'The current boxes are replaced by the selected source\'s predictions and need confirming again.',
         confirmText: 'Replace',
       }))
     )
@@ -286,7 +286,7 @@ function DetectionFrame({
   };
   const sourceLabel = info.prediction_sources.find((s) => s.id === source)?.label ?? 'Predictions';
   return (
-    <div className="flex flex-col gap-5 lg:flex-row">
+    <div className="flex flex-col gap-5 xl:flex-row">
       <div className="min-w-0 flex-1 space-y-3">
         <Card>
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -423,7 +423,7 @@ function DetectionFrame({
               <label htmlFor="detection-frame">Frame</label>
               <input
                 id="detection-frame"
-                aria-label="影格編號"
+                aria-label="Frame number"
                 className={cn(fieldCls, '!w-20 py-1 text-xs')}
                 type="number"
                 min={0}
@@ -438,7 +438,7 @@ function DetectionFrame({
           </div>
         </Card>
         <p className="px-1 text-[11px] text-text-muted">
-          Draw to add · Drag to move · Drag corners to resize · 所有可辨識人物，僅框可見部分。
+          Draw to add · Drag to move · Drag corners to resize · Every recognisable person, visible part only.
         </p>
         {error && (
           <Card>
@@ -456,7 +456,7 @@ function DetectionFrame({
           </Card>
         )}
       </div>
-      <div className="min-w-0 lg:w-[360px] lg:flex-shrink-0">
+      <div className="min-w-0 xl:w-[360px] xl:flex-shrink-0">
         <Card>
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <SectionLabel className="mb-0">
@@ -521,7 +521,7 @@ function DetectionFrame({
               <label htmlFor="prediction-score">Min score</label>
               <input
                 id="prediction-score"
-                aria-label="預測最低分數"
+                aria-label="Minimum prediction score"
                 type="number"
                 min={0}
                 max={1}
@@ -612,7 +612,7 @@ function DetectionFrame({
               </Button>
             </div>
             <select
-              aria-label="跳到動作影格"
+              aria-label="Jump to action frame"
               value=""
               disabled={busy}
               className={cn(fieldCls, 'text-xs')}
@@ -626,7 +626,7 @@ function DetectionFrame({
               ))}
             </select>
             <select
-              aria-label="已標註影格"
+              aria-label="Labeled frames"
               value=""
               disabled={busy}
               className={cn(fieldCls, 'text-xs')}
@@ -645,7 +645,7 @@ function DetectionFrame({
           <details className="mt-3 border-t border-border pt-3 text-[11px] text-text-muted">
             <summary className="cursor-pointer">Labeling guide</summary>
             <p className="mt-2 leading-relaxed">
-              包含場邊人員，只框可見部分。既有框自動顯示為預標註，修改後先存草稿或確認全部人物；只有已確認影格才是人工真值。空白影格不等於已確認無人。
+              Include people off court; box only the visible part. Existing boxes show as pre-annotations — after editing, save a draft or confirm every person. Only confirmed frames count as ground truth, and a blank frame is not a confirmed empty one.
             </p>
           </details>
         </Card>

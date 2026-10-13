@@ -5,6 +5,31 @@
 
 import type { CourtState } from './geometry';
 
+/** Text in court metres. A sub-unit font size lays glyphs out at a fraction
+ *  of a pixel and Chrome rounds each advance, so the letters pile up ("lefend").
+ *  Laying the text out TEXT_SCALE times larger and scaling the whole group back
+ *  down keeps the advances exact. */
+const TEXT_SCALE = 20;
+function GuideText({
+  at: [x, y],
+  anchor,
+  rotate = 0,
+  children,
+}: {
+  at: [number, number];
+  anchor?: 'middle';
+  rotate?: number;
+  children: string;
+}) {
+  return (
+    <g transform={`translate(${x} ${y}) rotate(${rotate}) scale(${1 / TEXT_SCALE})`}>
+      <text textAnchor={anchor} fontSize={0.75 * TEXT_SCALE} fill="currentColor">
+        {children}
+      </text>
+    </g>
+  );
+}
+
 export function LandmarkGuide({
   state,
   armed,
@@ -17,11 +42,10 @@ export function LandmarkGuide({
   const { length, width } = state.court;
   // Court (x along, y across) → sketch: across runs left→right, along runs down.
   const at = (x: number, y: number) => ({ cx: y, cy: x });
-  const label = { fontSize: 0.75, fill: 'currentColor' };
   const right = width + 0.6;
   return (
     <svg
-      viewBox={`-2 -1.8 ${width + 8} ${length + 3.6}`}
+      viewBox={`-2.8 -1.8 ${width + 8.8} ${length + 3.6}`}
       className="mx-auto mb-3 w-3/4 text-text-muted"
     >
       <rect x={0} y={0} width={width} height={length} className="fill-sky-900/40" />
@@ -46,24 +70,18 @@ export function LandmarkGuide({
         strokeWidth={0.2}
         strokeDasharray="0.3 0.2"
       />
-      <text x={width / 2} y={-0.6} textAnchor="middle" {...label}>
+      <GuideText at={[width / 2, -0.6]} anchor="middle">
         left end
-      </text>
-      <text x={width / 2} y={length + 1.2} textAnchor="middle" {...label}>
+      </GuideText>
+      <GuideText at={[width / 2, length + 1.2]} anchor="middle">
         right end
-      </text>
-      <text x={right + 0.5} y={length / 2 + 0.25} {...label}>
-        net
-      </text>
-      <text x={right} y={length / 2 - 3 + 0.25} {...label}>
-        attack
-      </text>
-      <text x={right} y={length / 2 + 3 + 0.25} {...label}>
-        attack
-      </text>
-      <text transform={`translate(-1.2 ${length / 2}) rotate(-90)`} textAnchor="middle" {...label}>
+      </GuideText>
+      <GuideText at={[right + 1, length / 2 + 0.25]}>net</GuideText>
+      <GuideText at={[right, length / 2 - 3 + 0.25]}>attack</GuideText>
+      <GuideText at={[right, length / 2 + 3 + 0.25]}>attack</GuideText>
+      <GuideText at={[-1.6, length / 2]} anchor="middle" rotate={-90}>
         near · camera
-      </text>
+      </GuideText>
       {/* Net tops sit on the posts' line, just outside each sideline. */}
       {Object.entries(state.net_landmarks).map(([name, [lx, ly]]) => {
         const isArmed = name === armed;

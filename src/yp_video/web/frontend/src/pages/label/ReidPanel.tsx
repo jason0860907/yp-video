@@ -18,8 +18,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { API, ApiError, apiFetch, apiUrl, errMsg } from '@/lib/api';
-import { cn } from '@/lib/cn';
 import { Badge } from '@/components/ui/Badge';
+import { Segmented } from '@/components/ui/Segmented';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -318,21 +318,14 @@ export function ReidPanel({ video, registerGuard, clock }: { video: string; regi
               <svg className="h-3.5 w-3.5 text-text-muted" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
               </svg>
-              <div className="inline-flex rounded-lg border border-border bg-surface-50 p-0.5">
-                {(['top', 'right'] as const).map((pos) => (
-                  <button
-                    key={pos}
-                    type="button"
-                    onClick={() => setLockedDock(pos)}
-                    className={cn(
-                      'rounded-md px-3 py-1 text-xs font-medium capitalize transition-colors',
-                      lockedDock === pos ? 'bg-primary text-on-primary' : 'text-text-secondary hover:bg-ink/[0.04]',
-                    )}
-                  >
-                    {pos}
-                  </button>
-                ))}
-              </div>
+              <Segmented
+                options={[
+                  { key: 'top', label: 'Top' },
+                  { key: 'right', label: 'Right' },
+                ]}
+                value={lockedDock}
+                onChange={setLockedDock}
+              />
             </div>
           </div>
           <div className="flex items-center gap-2">

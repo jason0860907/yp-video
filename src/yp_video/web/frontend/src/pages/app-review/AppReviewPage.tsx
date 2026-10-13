@@ -94,7 +94,14 @@ export function AppReviewPage() {
   };
 
   return (
-    <div className="mx-auto grid max-w-[1800px] gap-4 xl:grid-cols-[260px_minmax(0,1fr)_400px]">
+    // The side panel's column exists only while there is a panel to fill it;
+    // reserving it empty leaves the prompt card squeezed into the middle.
+    <div
+      className={cn(
+        'mx-auto grid max-w-[1800px] gap-4',
+        detail.data && preview ? 'xl:grid-cols-[260px_minmax(0,1fr)_400px]' : 'xl:grid-cols-[260px_minmax(0,1fr)]',
+      )}
+    >
       <Card className="xl:max-h-[calc(100vh-120px)] xl:overflow-auto">
         <LibraryBrowser
           user={user}

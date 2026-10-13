@@ -66,7 +66,7 @@ function TimeField({ seconds, onCommit }: { seconds: number; onCommit: (value: n
  *  picking it once up top keeps each row to two buttons instead of four. */
 type SideAxis = 'lr' | 'nf';
 const AXIS_SIDES: Record<SideAxis, CourtSide[]> = { lr: ['left', 'right'], nf: ['near', 'far'] };
-const AXIS_DISPLAY: Record<SideAxis, string> = { lr: '左/右', nf: '遠/近' };
+const AXIS_DISPLAY: Record<SideAxis, string> = { lr: 'L/R', nf: 'N/F' };
 
 export interface EditorAnnotation {
   rally_id: number | null;
@@ -171,8 +171,8 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewB
   // (which fetches a fresh URL) and seek back to where the user was.
   useVideoRecovery(videoRef, {
     src: () => (videoName ? videoStreamPath(videoName) : ''),
-    onRecover: () => toast.info('影片串流中斷，已自動重新載入'),
-    onGiveUp: () => toast.error('影片重載後仍卡在同一處，已停止自動重試 — 請把 DevTools Console 的 [video-recovery] 記錄回報'),
+    onRecover: () => toast.info('Video stream dropped — reloaded automatically'),
+    onGiveUp: () => toast.error('Video still stuck after reloading; auto-retry stopped — please report the [video-recovery] lines from the DevTools console'),
   });
 
   // ── Load a file ──
@@ -518,7 +518,7 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewB
 
 
   return (
-    <div className="flex flex-col gap-5 lg:flex-row lg:items-start">
+    <div className="flex flex-col gap-5 xl:flex-row xl:items-start">
       {/* Player + timeline */}
       <div className="min-w-0 flex-1 space-y-4">
         <Card>
@@ -648,14 +648,14 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewB
       </div>
 
       {/* Annotation list */}
-      <div className="lg:w-[460px] lg:flex-shrink-0">
+      <div className="min-w-0 xl:w-[460px] xl:flex-shrink-0">
         <Card>
           <div className="mb-3 flex items-center justify-between gap-2">
             <SectionLabel className="mb-0">
               Annotations ({annotations.length} rally){totalDuration > 0 ? ` · ${formatTime(totalDuration)} played` : ''}
             </SectionLabel>
             <div className="flex items-center gap-2">
-              <div className="flex overflow-hidden rounded-lg border border-border" title="得分側方向（畫面視角）">
+              <div className="flex overflow-hidden rounded-lg border border-border" title="Winner side axis (camera view): left/right or near/far">
                 {(['lr', 'nf'] as const).map((axis) => (
                   <button
                     key={axis}
@@ -737,7 +737,7 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewB
                     <div
                       className="flex w-11 shrink-0 items-center justify-center gap-0.5"
                       onClick={(e) => e.stopPropagation()}
-                      title="得分側（畫面視角）— 再點一次取消"
+                      title="Winner side (camera view) — click again to clear"
                     >
                       {a.winner && !AXIS_SIDES[sideAxis].includes(a.winner) ? (
                         // A stored winner from the other axis: show it alone so the
@@ -746,7 +746,7 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewB
                         <button
                           type="button"
                           onClick={() => updateWinner(i, a.winner!)}
-                          title="與目前方向不同的舊標記 — 點一下清除"
+                          title="Stored on the other axis — click to clear"
                           className="w-5 rounded py-0.5 text-center text-[10px] leading-none bg-accent/30 text-text-primary ring-1 ring-accent/60"
                         >
                           {SIDE_DISPLAY[a.winner]}
@@ -757,6 +757,7 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewB
                             key={side}
                             type="button"
                             onClick={() => updateWinner(i, side)}
+                            title={side}
                             className={cn(
                               'w-5 rounded py-0.5 text-center text-[10px] leading-none transition-colors',
                               a.winner === side

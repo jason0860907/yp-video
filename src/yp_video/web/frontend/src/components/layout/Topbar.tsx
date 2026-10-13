@@ -91,8 +91,10 @@ export function Topbar({ onToggleSidebar }: TopbarProps) {
         )}
       </button>
 
-      {/* palette chips */}
-      <div className="flex items-center gap-1.5 px-0.5">
+      {/* palette chips — labelled, so three bare dots don't read as status
+          lights. */}
+      <div className="flex h-[30px] items-center gap-1.5 rounded-lg border border-border bg-surface-50 px-2">
+        <span className="text-[10px] uppercase tracking-widest text-text-muted">Accent</span>
         {PALETTES.map((p) => (
           <button
             key={p.key}
@@ -103,7 +105,7 @@ export function Topbar({ onToggleSidebar }: TopbarProps) {
             aria-pressed={palette === p.key}
             className={cn(
               'h-[15px] w-[15px] rounded-full transition-transform hover:scale-110',
-              palette === p.key ? 'ring-2 ring-text-primary ring-offset-2 ring-offset-surface-100' : 'ring-1 ring-border',
+              palette === p.key ? 'ring-2 ring-text-primary ring-offset-2 ring-offset-surface-50' : 'ring-1 ring-border',
             )}
             style={{ background: p.swatch }}
           />

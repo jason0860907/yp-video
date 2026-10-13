@@ -31,7 +31,7 @@ interface PredictConfigCardProps<S extends BaseSettings> {
   overwriteLabel: string;
   runDisabled: boolean;
   onRun: () => void;
-  runLabel?: string;
+  runLabel: string;
 }
 
 /** The config card both SPOT predict pages share: checkpoint select, a grid
@@ -47,7 +47,7 @@ export function PredictConfigCard<S extends BaseSettings>({
   overwriteLabel,
   runDisabled,
   onRun,
-  runLabel = 'Run SPOT',
+  runLabel,
 }: PredictConfigCardProps<S>) {
   // Seed checkpoint from the server default once available.
   useEffect(() => {

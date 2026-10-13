@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { API, apiFetch, apiUrl, errMsg } from '@/lib/api';
-import { cn } from '@/lib/cn';
 import { formatTimePrecise } from '@/lib/format';
 import { Button } from '@/components/ui/Button';
+import { Segmented } from '@/components/ui/Segmented';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -167,18 +167,14 @@ export function CutPage() {
       <PageHeader
         actions={
           <>
-            <div className="inline-flex rounded-lg border border-border bg-surface-50 p-0.5">
-              {(['broadcast', 'sideline'] as CutKind[]).map((k) => (
-                <button
-                  key={k}
-                  type="button"
-                  onClick={() => setKind(k)}
-                  className={cn('rounded-md px-2.5 py-1 font-heading text-xs capitalize transition-colors', kind === k ? 'bg-primary text-on-primary' : 'text-text-secondary hover:bg-ink/[0.04]')}
-                >
-                  {k}
-                </button>
-              ))}
-            </div>
+            <Segmented<CutKind>
+              options={[
+                { key: 'broadcast', label: 'Broadcast' },
+                { key: 'sideline', label: 'Sideline' },
+              ]}
+              value={kind}
+              onChange={setKind}
+            />
             <Button intent="primary" onClick={exportAll} disabled={exporting}>
               {exporting ? 'Exporting…' : 'Export All'}
             </Button>
@@ -247,10 +243,10 @@ export function CutPage() {
               </span>
             </div>
             <div className="flex items-center gap-2">
-              <Button size="sm" intent="primary" onClick={doMarkStart}>
+              <Button size="sm" onClick={doMarkStart}>
                 Mark Start [
               </Button>
-              <Button size="sm" intent="primary" onClick={doMarkEnd}>
+              <Button size="sm" onClick={doMarkEnd}>
                 Mark End ]
               </Button>
             </div>

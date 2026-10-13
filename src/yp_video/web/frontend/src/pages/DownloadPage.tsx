@@ -183,7 +183,7 @@ export function DownloadPage() {
             <SectionLabel className="mb-0">{hasPlaylist ? title || 'Download queue' : 'Download queue'}</SectionLabel>
             {hasPlaylist && (
               <div className="flex items-center gap-2">
-                <Button size="sm" intent="primary" onClick={() => toggleAll(true)}>
+                <Button size="sm" onClick={() => toggleAll(true)}>
                   Select All
                 </Button>
                 <Button size="sm" onClick={() => toggleAll(false)}>

@@ -1,37 +1,19 @@
 import { useCallback, useEffect, useState } from 'react';
 
-const STORAGE_KEY = 'sidebarOpenSections';
-
-function read(): string[] {
-  try {
-    const stored: unknown = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]');
-    return Array.isArray(stored) ? stored.filter((v): v is string => typeof v === 'string') : [];
-  } catch {
-    return [];
-  }
-}
-
 /**
- * Which collapsible sidebar sections are expanded, remembered across reloads.
+ * Which collapsible sidebar sections are expanded — an accordion keyed to the
+ * route.
  *
- * Landing on a route inside a folded section unfolds it — a fold must never
- * hide the page you are looking at. It is an unfold, not a pin: the user can
- * close it again while still on that page.
+ * Landing on a route unfolds its section and folds every other one, so the
+ * list never grows past the window and pushes System under the footer. The
+ * user can still open or close any section by hand until the next navigation.
  */
 export function useNavSections(activeSection: string | undefined) {
-  const [open, setOpen] = useState<Set<string>>(() => new Set(read()));
+  const [open, setOpen] = useState<Set<string>>(() => new Set(activeSection ? [activeSection] : []));
 
   useEffect(() => {
-    if (!activeSection) return;
-    setOpen((previous) => {
-      if (previous.has(activeSection)) return previous;
-      return new Set(previous).add(activeSection);
-    });
+    setOpen(new Set(activeSection ? [activeSection] : []));
   }, [activeSection]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify([...open]));
-  }, [open]);
 
   const toggle = useCallback((title: string) => {
     setOpen((previous) => {

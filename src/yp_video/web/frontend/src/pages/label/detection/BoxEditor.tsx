@@ -99,7 +99,7 @@ export function BoxEditor({
     <div className="relative select-none overflow-hidden rounded-lg bg-black">
       <img
         src={src}
-        alt="待標註人物的影格"
+        alt="Frame to label people on"
         draggable={false}
         className="block w-full"
         onLoad={() => {
@@ -113,14 +113,14 @@ export function BoxEditor({
       />
       {error ? (
         <p role="alert" className="p-6 text-red-400">
-          影格載入失敗，請重新載入。
+          Frame failed to load — reload to retry.
         </p>
       ) : (
         <svg
           ref={svg}
           viewBox="0 0 1000 1000"
           preserveAspectRatio="none"
-          aria-label="人物框編輯區"
+          aria-label="Person box editor"
           className={`absolute inset-0 h-full w-full touch-none ${draw ? 'cursor-crosshair' : 'cursor-default'}`}
           onPointerDown={(e) => begin(e, null)}
           onPointerMove={move}

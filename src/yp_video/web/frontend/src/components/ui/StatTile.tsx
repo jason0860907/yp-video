@@ -7,14 +7,17 @@ interface StatTileProps {
   sub?: ReactNode;
   /** Tailwind text-color class for the number (e.g. `text-primary-light`). */
   tintClass?: string;
+  /** The data behind the number has not arrived yet: show a dash, not a 0
+   *  that reads as "nothing here". */
+  loading?: boolean;
 }
 
 /** KPI tile: small label, big mono number, optional sub. Numbers are mono. */
-export function StatTile({ label, value, sub, tintClass = 'text-text-primary' }: StatTileProps) {
+export function StatTile({ label, value, sub, tintClass = 'text-text-primary', loading = false }: StatTileProps) {
   return (
     <div className="card px-[17px] py-[15px]">
       <div className="font-body text-[11px] text-text-muted">{label}</div>
-      <div className={cn('mt-1 font-mono text-[26px] font-bold tabular-nums', tintClass)}>{value}</div>
+      <div className={cn('mt-1 font-mono text-[26px] font-bold tabular-nums', loading ? 'text-text-muted' : tintClass)}>{loading ? '–' : value}</div>
       {sub && <div className="mt-0.5 truncate text-[10.5px] text-text-muted">{sub}</div>}
     </div>
   );

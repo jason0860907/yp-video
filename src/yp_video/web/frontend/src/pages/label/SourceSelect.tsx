@@ -14,6 +14,8 @@ interface SourceSelectProps {
   /** What the last load resolved to; rendered right beside the select so
    *  the request and the answer read as one phrase. Null hides the badge. */
   loaded?: LoadedSource | null;
+  /** The mode keeps a single store: the select shows it, locked. */
+  disabled?: boolean;
 }
 
 const LOADED: Record<LoadedSource, { label: string; tone: BadgeTone }> = {
@@ -22,12 +24,18 @@ const LOADED: Record<LoadedSource, { label: string; tone: BadgeTone }> = {
   none: { label: 'empty', tone: 'neutral' },
 };
 
-export function SourceSelect({ source, onSource, loaded }: SourceSelectProps) {
+export function SourceSelect({ source, onSource, loaded, disabled = false }: SourceSelectProps) {
   return (
     <div className="inline-flex items-center gap-2 text-xs text-text-muted">
       <label className="inline-flex items-center gap-2">
         Source
-        <select value={source} onChange={(e) => onSource(e.target.value as LabelSource)} className={cn(fieldCls, 'h-9 py-0')}>
+        <select
+          value={source}
+          onChange={(e) => onSource(e.target.value as LabelSource)}
+          disabled={disabled}
+          title={disabled ? 'This mode keeps a single store' : undefined}
+          className={cn(fieldCls, 'h-9 py-0 text-xs disabled:cursor-not-allowed disabled:opacity-50')}
+        >
           <option value="annotation">Annotation</option>
           <option value="pre-annotation">Pre-Annotation</option>
         </select>

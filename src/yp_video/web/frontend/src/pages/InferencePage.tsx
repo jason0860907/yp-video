@@ -136,17 +136,14 @@ export function InferencePage() {
             <Button size="sm" onClick={() => navigate('/label?mode=rally')}>
               Open Label
             </Button>
-            <Button intent="primary" onClick={run} disabled={!ready}>
-              Run Inference
-            </Button>
           </>
         }
       />
 
       <div className="grid grid-cols-2 gap-3.5 lg:grid-cols-4">
-        <StatTile label="Videos" value={videos.length} tintClass="text-primary-light" />
+        <StatTile label="Videos" value={videos.length} tintClass="text-primary-light" loading={!videosQuery.data} />
         <StatTile label="Selected" value={selected.size} tintClass="text-primary-light" />
-        <StatTile label="Complete" value={completeCount} tintClass="text-primary-light" />
+        <StatTile label="Complete" value={completeCount} tintClass="text-primary-light" loading={!videosQuery.data} />
         <StatTile label="Running" value={runningCount} tintClass={runningCount ? 'text-primary-light' : 'text-text-muted'} />
       </div>
 

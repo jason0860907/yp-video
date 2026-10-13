@@ -102,7 +102,7 @@ export function ActionPredictPage() {
       upsertJob(job);
       toast.success(`Started Action Predict for ${names.length} video(s)`);
     } catch (e) {
-      toast.error(`SPOT start failed: ${errMsg(e)}`);
+      toast.error(`Action Predict failed to start: ${errMsg(e)}`);
     }
   };
 
@@ -118,19 +118,16 @@ export function ActionPredictPage() {
         actions={
           <>
             <Button size="sm" onClick={() => navigate('/label?mode=action')}>
-              Open Label
-            </Button>
-            <Button intent="primary" onClick={run} disabled={!spotReady}>
-              Run SPOT
+              Open Action Label
             </Button>
           </>
         }
       />
 
       <div className="grid grid-cols-2 gap-3.5 lg:grid-cols-4">
-        <StatTile label="Videos" value={videos.length} tintClass="text-primary-light" />
+        <StatTile label="Videos" value={videos.length} tintClass="text-primary-light" loading={!videosQuery.data} />
         <StatTile label="Selected" value={selected.size} tintClass="text-primary-light" />
-        <StatTile label="Labeled" value={labeledCount} tintClass="text-primary-light" />
+        <StatTile label="Labeled" value={labeledCount} tintClass="text-primary-light" loading={!videosQuery.data} />
         <StatTile label="Running" value={runningCount} tintClass={runningCount ? 'text-primary-light' : 'text-text-muted'} />
       </div>
 
@@ -146,6 +143,7 @@ export function ActionPredictPage() {
           overwriteLabel="Overwrite existing action pre-annotations"
           runDisabled={!spotReady}
           onRun={run}
+          runLabel="Run Action Predict"
         />
 
         <Card>

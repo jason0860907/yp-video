@@ -36,7 +36,7 @@ function weekStart(weeksAgo: number): Date {
 const formatHours = (seconds: number): string => {
   const h = Math.floor(seconds / 3600);
   const m = Math.round((seconds % 3600) / 60);
-  return h ? `${h} 小時 ${String(m).padStart(2, '0')} 分` : `${m} 分`;
+  return h ? `${h}h ${String(m).padStart(2, '0')}m` : `${m}m`;
 };
 
 const formatDay = (d: Date): string =>
@@ -59,10 +59,10 @@ function formatValue(field: string, v: unknown): string {
 }
 
 const OP_LABEL: Record<AuditChange['op'], string> = {
-  added: '新增',
-  removed: '刪除',
-  edited: '修改',
-  truncated: '其餘',
+  added: 'Added',
+  removed: 'Removed',
+  edited: 'Edited',
+  truncated: 'More',
 };
 
 const OP_TONE: Record<AuditChange['op'], 'success' | 'danger' | 'info' | 'neutral'> = {
@@ -72,12 +72,12 @@ const OP_TONE: Record<AuditChange['op'], 'success' | 'danger' | 'info' | 'neutra
   truncated: 'neutral',
 };
 
-/** One changed item, e.g. 「修改 #3  結束 0:45.2 → 0:47.8」. */
+/** One changed item, e.g. 「Edited #3  end 0:45.2 → 0:47.8」. */
 function ChangeLine({ change }: { change: AuditChange }) {
   if (change.op === 'truncated') {
     return (
       <span className="text-[11px] text-text-muted">
-        還有 {change.count} 項變更未列出
+        {change.count} more change(s) not listed
       </span>
     );
   }
@@ -119,12 +119,12 @@ function SavesDetail({ event }: { event: AuditEvent }) {
     return <span className="text-[11px] text-red-400">{errMsg(saves.error)}</span>;
   }
   if (!saves.data) {
-    return <span className="text-[11px] text-text-muted">載入中…</span>;
+    return <span className="text-[11px] text-text-muted">Loading…</span>;
   }
   if (!saves.data.saves.length) {
     return (
       <span className="text-[11px] text-text-muted">
-        這筆紀錄早於變更明細功能，只有時間與統計。
+        This record predates change details — only times and counts were kept.
       </span>
     );
   }
@@ -147,7 +147,7 @@ function SavesDetail({ event }: { event: AuditEvent }) {
             {save.changes.length ? (
               save.changes.map((c, ci) => <ChangeLine key={ci} change={c} />)
             ) : (
-              <span className="text-[11px] text-text-muted/60">（無變更明細）</span>
+              <span className="text-[11px] text-text-muted/60">(no change details)</span>
             )}
           </div>
         );
@@ -227,7 +227,7 @@ function WorklogCard() {
 
   return (
     <Card
-      label={`工時 · ${formatDay(since)}–${formatDay(new Date(until.getTime() - 1))}`}
+      label={`Labeling time · ${formatDay(since)}–${formatDay(new Date(until.getTime() - 1))}`}
       className="mb-4"
       right={
         <div className="flex items-center gap-1.5">
@@ -238,7 +238,7 @@ function WorklogCard() {
               intent={weeksAgo === n ? 'primary' : 'ghost'}
               onClick={() => setWeeksAgo(n)}
             >
-              {n === 0 ? '本週' : '上週'}
+              {n === 0 ? 'This week' : 'Last week'}
             </Button>
           ))}
         </div>
@@ -248,16 +248,16 @@ function WorklogCard() {
         <ErrorState message={errMsg(log.error)} onRetry={() => void log.refetch()} />
       ) : !log.data?.people.length ? (
         <p className="py-4 text-center text-xs text-text-muted">
-          {log.isLoading ? '載入中…' : '這週還沒有標註紀錄'}
+          {log.isLoading ? 'Loading…' : 'No labeling recorded this week'}
         </p>
       ) : (
         <table className="w-full text-left text-[12.5px]">
           <thead>
             <tr className="border-b border-border text-[11px] uppercase tracking-[0.06em] text-text-muted">
-              <th className="pb-2 pr-3 font-normal">執行者</th>
-              <th className="pb-2 pr-3 text-right font-normal">工時</th>
-              <th className="pb-2 pr-3 text-right font-normal">段數</th>
-              <th className="pb-2 text-right font-normal">存檔次數</th>
+              <th className="pb-2 pr-3 font-normal">Actor</th>
+              <th className="pb-2 pr-3 text-right font-normal">Time</th>
+              <th className="pb-2 pr-3 text-right font-normal">Sessions</th>
+              <th className="pb-2 text-right font-normal">Saves</th>
             </tr>
           </thead>
           <tbody>
@@ -408,16 +408,16 @@ export function AuditPage() {
 
   return (
     <>
-      <PageHeader subtitle="每個會改變狀態的操作與背景工作，記錄執行者、對象與結果。編輯器的自動存檔會摺疊成一列，次數顯示為 ×N。" />
+      <PageHeader subtitle="Every state-changing action and background job, with who did it, on what, and the result. An editor's autosaves fold into one row, counted as ×N." />
 
       <WorklogCard />
 
       <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatTile label="事件" value={stats.loaded} tintClass="text-primary-light" />
-        <StatTile label="操作次數" value={stats.saves} tintClass="text-primary-light" />
-        <StatTile label="執行者" value={stats.actors} tintClass="text-primary-light" />
+        <StatTile label="Events" value={stats.loaded} tintClass="text-primary-light" />
+        <StatTile label="Operations" value={stats.saves} tintClass="text-primary-light" />
+        <StatTile label="Actors" value={stats.actors} tintClass="text-primary-light" />
         <StatTile
-          label="失敗"
+          label="Failed"
           value={stats.failures}
           tintClass={stats.failures ? 'text-red-400' : 'text-primary-light'}
         />
@@ -426,13 +426,13 @@ export function AuditPage() {
       <Card label="Filters" className="mb-4">
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
           <label className="flex flex-col gap-1.5">
-            <span className="text-[11px] text-text-muted">執行者</span>
+            <span className="text-[11px] text-text-muted">Actor</span>
             <select
               className={cn(fieldCls, 'cursor-pointer appearance-none')}
               value={draft.actor}
               onChange={(e) => set({ actor: e.target.value })}
             >
-              <option value="">全部</option>
+              <option value="">All</option>
               {filters.data?.actors.map((a) => (
                 <option key={a} value={a}>
                   {a}
@@ -441,13 +441,13 @@ export function AuditPage() {
             </select>
           </label>
           <label className="flex flex-col gap-1.5">
-            <span className="text-[11px] text-text-muted">動作</span>
+            <span className="text-[11px] text-text-muted">Action</span>
             <select
               className={cn(fieldCls, 'cursor-pointer appearance-none')}
               value={draft.action}
               onChange={(e) => set({ action: e.target.value })}
             >
-              <option value="">全部</option>
+              <option value="">All</option>
               {filters.data?.actions.map((a) => (
                 <option key={a} value={a}>
                   {actionLabel(a)}
@@ -456,14 +456,14 @@ export function AuditPage() {
             </select>
           </label>
           <label className="flex flex-col gap-1.5">
-            <span className="text-[11px] text-text-muted">對象（影片／類別）</span>
+            <span className="text-[11px] text-text-muted">Target (video / kind)</span>
             {/* A datalist, not a select: the list is every video the trail has
                 seen, and partial text still matches server-side (ILIKE). */}
             <input
               className={fieldCls}
               list="audit-targets"
               value={draft.target}
-              placeholder={filters.data?.targets[0] ?? '影片名稱，可只打一段'}
+              placeholder="Part of a video name"
               onChange={(e) => set({ target: e.target.value })}
             />
             <datalist id="audit-targets">
@@ -473,7 +473,7 @@ export function AuditPage() {
             </datalist>
           </label>
           <label className="flex flex-col gap-1.5">
-            <span className="text-[11px] text-text-muted">起</span>
+            <span className="text-[11px] text-text-muted">From</span>
             <input
               type="datetime-local"
               className={fieldCls}
@@ -482,7 +482,7 @@ export function AuditPage() {
             />
           </label>
           <label className="flex flex-col gap-1.5">
-            <span className="text-[11px] text-text-muted">迄</span>
+            <span className="text-[11px] text-text-muted">To</span>
             <input
               type="datetime-local"
               className={fieldCls}
@@ -493,7 +493,7 @@ export function AuditPage() {
         </div>
         <div className="mt-3 flex items-center gap-2.5">
           <Button size="sm" intent="primary" disabled={!dirty} onClick={() => setApplied(draft)}>
-            套用
+            Apply
           </Button>
           <Button
             size="sm"
@@ -503,7 +503,7 @@ export function AuditPage() {
               setApplied(EMPTY);
             }}
           >
-            清除
+            Clear
           </Button>
         </div>
       </Card>
@@ -518,22 +518,22 @@ export function AuditPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
             }
-            title="沒有符合條件的事件"
-            subtitle="調整上方篩選條件，或先在其他頁面做一次操作。"
+            title="No matching events"
+            subtitle="Loosen the filters above, or do something on another page first."
           />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[1040px] text-left text-[12.5px]">
               <thead>
                 <tr className="border-b border-border text-[11px] uppercase tracking-[0.06em] text-text-muted">
-                  <th className="pb-2 pr-3 font-normal">開始</th>
-                  <th className="pb-2 pr-3 font-normal">結束</th>
-                  <th className="pb-2 pr-3 font-normal">時長</th>
-                  <th className="pb-2 pr-3 font-normal">執行者</th>
-                  <th className="pb-2 pr-3 font-normal">動作</th>
-                  <th className="pb-2 pr-3 font-normal">對象</th>
-                  <th className="pb-2 pr-3 font-normal">摘要</th>
-                  <th className="pb-2 font-normal">結果</th>
+                  <th className="pb-2 pr-3 font-normal">Start</th>
+                  <th className="pb-2 pr-3 font-normal">End</th>
+                  <th className="pb-2 pr-3 font-normal">Duration</th>
+                  <th className="pb-2 pr-3 font-normal">Actor</th>
+                  <th className="pb-2 pr-3 font-normal">Action</th>
+                  <th className="pb-2 pr-3 font-normal">Target</th>
+                  <th className="pb-2 pr-3 font-normal">Summary</th>
+                  <th className="pb-2 font-normal">Result</th>
                 </tr>
               </thead>
               <tbody>
@@ -560,7 +560,7 @@ export function AuditPage() {
                       {row.repeats > 1 && (
                         <button
                           type="button"
-                          title="展開每一次存檔的時間"
+                          title="Show every save"
                           aria-expanded={expanded === row.id}
                           onClick={() => setExpanded(expanded === row.id ? null : row.id)}
                           className="ml-2 align-middle"
@@ -581,7 +581,7 @@ export function AuditPage() {
                       {summaryText(row.summary)}
                     </td>
                     {/* Outcome only. The request latency lives in the row
-                        (duration_ms) but showing it beside 時長 invited reading
+                        (duration_ms) but showing it beside Duration invited reading
                         one as the other — they measure different things. */}
                     <td className="whitespace-nowrap py-2">
                       {row.outcome === 'error' ? (
@@ -609,7 +609,7 @@ export function AuditPage() {
                   disabled={events.isFetchingNextPage}
                   onClick={() => void events.fetchNextPage()}
                 >
-                  {events.isFetchingNextPage ? '載入中…' : '載入更多'}
+                  {events.isFetchingNextPage ? 'Loading…' : 'Load more'}
                 </Button>
               </div>
             )}

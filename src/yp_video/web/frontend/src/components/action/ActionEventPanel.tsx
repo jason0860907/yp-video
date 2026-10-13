@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { formatActionTime } from '@/lib/actionEditorModel';
 import { cn } from '@/lib/cn';
-import { COURT_SIDES, SIDE_DISPLAY } from '@/lib/courtSide';
+import { COURT_SIDES } from '@/lib/courtSide';
 import type { ActionAttributeDefaults, ActionEvent, CourtSide } from '@/types/api';
 import { ActionDot, EventRows } from './RallyRows';
 
@@ -35,13 +35,13 @@ function FrameCell({ frame, onCommit }: { frame: number; onCommit: (frame: numbe
         if (event.key === 'Enter') event.currentTarget.blur();
         else if (event.key === 'Escape') setDraft(null);
       }}
-      title="frame 號碼 — Enter 或離開欄位才套用，Esc 還原"
+      title="Frame number — Enter or leaving the cell applies, Esc reverts"
       className="w-full border-0 border-b border-white/10 bg-transparent text-center font-heading text-[11px] tabular-nums text-text-primary focus:border-primary-light focus:outline-none"
     />
   );
 }
 
-const JUMP_DISPLAY = { true: '跳', false: '站' } as const;
+const JUMP_DISPLAY = { true: 'jump', false: 'stand' } as const;
 /** Hand-set jump cycles unset (the default applies) → jumped → grounded. */
 const nextJump = (jump: boolean | undefined) => (jump === undefined ? true : jump ? false : undefined);
 
@@ -63,25 +63,25 @@ function AttributeCell({
       <select
         value={event.side ?? ''}
         onChange={(e) => onEdit({ side: (e.target.value || undefined) as CourtSide | undefined })}
-        title="Actor 在哪一側 — 「自」= 交給規則推導"
+        title="Actor's court side — auto = derived by the rules"
         className={cn(
           'w-full min-w-0 rounded-lg border border-border bg-surface-100 px-0.5 py-1 text-xs',
           event.side ? 'text-text-primary' : 'text-text-muted',
         )}
       >
-        <option value="">{derivedSide ? `自${SIDE_DISPLAY[derivedSide]}` : '自'}</option>
+        <option value="">{derivedSide ? `auto: ${derivedSide}` : 'auto'}</option>
         {COURT_SIDES.map((side) => (
           <option key={side} value={side}>
-            {SIDE_DISPLAY[side]}
+            {side}
           </option>
         ))}
       </select>
       <button
         type="button"
         onClick={() => onEdit({ jump: nextJump(event.jump) })}
-        title="有沒有跳 — 點擊切換：預設 → 跳 → 站"
+        title="Did the actor jump — click cycles default → jump → stand"
         className={cn(
-          'w-5 shrink-0 text-xs',
+          'w-9 shrink-0 text-[11px]',
           event.jump === undefined ? 'text-text-muted' : 'font-bold text-primary-light',
         )}
       >
@@ -123,7 +123,7 @@ export function ActionEventPanel({
     <EventRows
       entries={entries}
       empty={empty}
-      columns="minmax(5rem,1fr) 3.6rem 3.6rem 2.6rem 2.4rem"
+      columns="minmax(4.75rem,1fr) 6.5rem 2.75rem 2.4rem 2.2rem"
       selectedId={selectedId}
       isActive={(e) => Math.abs(e.frame - frame) <= windowFrames}
       onJump={(e) => onJump(e.id)}

@@ -51,7 +51,7 @@ interface VideoMultiSelectListProps<T extends VideoListItem> {
 type KindFilter = 'all' | CutKind;
 
 const selectCls =
-  'w-auto cursor-pointer appearance-none rounded-lg border border-border-light bg-surface-50 px-3 py-1 text-xs text-text-primary focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary/15';
+  'h-8 w-auto cursor-pointer appearance-none rounded-lg border border-border-light bg-surface-50 px-3 py-0 text-xs text-text-primary focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary/15';
 
 /** Filterable, multi-select video list: kind + status filters, select-visible,
  *  quick-select presets. Domain-specific status logic and row badges come in
@@ -110,9 +110,9 @@ export function VideoMultiSelectList<T extends VideoListItem>({
     <>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <SectionLabel className="mb-0">{title}</SectionLabel>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {quickSelects?.map((qs) => (
-            <Button key={qs.label} size="sm" onClick={() => setVisibleSelection(qs.predicate)}>
+            <Button key={qs.label} size="sm" className="h-8 py-0" onClick={() => setVisibleSelection(qs.predicate)}>
               {qs.label}
             </Button>
           ))}
@@ -148,7 +148,7 @@ export function VideoMultiSelectList<T extends VideoListItem>({
         </span>
       </div>
 
-      <div className={cn('space-y-1 overflow-auto pr-1', maxHeightClass)}>
+      <div className={cn('space-y-1 overflow-y-auto pr-1', maxHeightClass)}>
         {query?.isError ? (
           <ErrorState
             title="Failed to load videos"
@@ -175,7 +175,7 @@ export function VideoMultiSelectList<T extends VideoListItem>({
           visible.map((v) => (
             <label
               key={v.name}
-              className="flex w-max min-w-full cursor-pointer items-center gap-3 rounded-lg border border-border bg-surface-50 px-3 py-2 transition-colors hover:border-border-light"
+              className="flex w-full cursor-pointer flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-border bg-surface-50 px-3 py-2 transition-colors hover:border-border-light"
             >
               <input
                 type="checkbox"
@@ -184,8 +184,12 @@ export function VideoMultiSelectList<T extends VideoListItem>({
                 className="h-3.5 w-3.5 flex-shrink-0 accent-primary"
               />
               <KindBadge kind={v.kind} />
-              <span className="flex-1 whitespace-nowrap text-sm text-text-primary">{v.name}</span>
-              {renderMeta?.(v)}
+              <span className="min-w-[10rem] flex-1 truncate text-sm text-text-primary" title={v.name}>
+                {v.name}
+              </span>
+              {/* Status chips drop to their own line rather than pushing the
+                  row wider than the card. */}
+              <span className="ml-auto flex flex-wrap items-center justify-end gap-1">{renderMeta?.(v)}</span>
             </label>
           ))
         )}

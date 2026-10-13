@@ -184,7 +184,7 @@ export function LabelPage() {
             <select
               value={kindFilter}
               onChange={(e) => setKindFilter(e.target.value as KindFilter)}
-              className={cn(fieldCls, 'h-9 py-0')}
+              className={cn(fieldCls, 'h-9 py-0 text-xs')}
             >
               <option value="all">All kinds</option>
               <option value="broadcast">Broadcast</option>
@@ -196,7 +196,7 @@ export function LabelPage() {
             <select
               value={status}
               onChange={(e) => setStatusFilter(e.target.value)}
-              className={cn(fieldCls, 'h-9 py-0')}
+              className={cn(fieldCls, 'h-9 py-0 text-xs')}
             >
               {active.statusOptions.map((o) => (
                 <option key={o.value} value={o.value}>
@@ -205,13 +205,14 @@ export function LabelPage() {
               ))}
             </select>
           </label>
-          {active.hasSources && (
-            <SourceSelect
-              source={source}
-              onSource={setSource}
-              loaded={loadedSource}
-            />
-          )}
+          {/* Always rendered so the row keeps its shape across tabs; single-store
+              modes show it locked to Annotation. */}
+          <SourceSelect
+            source={active.hasSources ? source : 'annotation'}
+            onSource={setSource}
+            loaded={active.hasSources ? loadedSource : null}
+            disabled={!active.hasSources}
+          />
           {/* The picker takes whatever width is left; on narrow screens the
               whole group (search + copy + done) wraps to its own line. */}
           <div className="flex min-w-[20rem] flex-1 items-center gap-2">
@@ -256,19 +257,19 @@ export function LabelPage() {
               }}
             />
             <CopyFilenameButton name={video} />
-            {active.key === 'rally' && (
-              <Button
-                size="sm"
-                onClick={() => setClipsOpen(true)}
-                disabled={!video || Boolean(unavailable)}
-                title="Download rally clips"
-              >
-                Clips
-              </Button>
-            )}
+            <Button
+              size="sm"
+              className="h-9 py-0"
+              onClick={() => setClipsOpen(true)}
+              disabled={active.key !== 'rally' || !video || Boolean(unavailable)}
+              title={active.key === 'rally' ? 'Download rally clips' : 'Rally clips — on the Rally tab'}
+            >
+              Clips
+            </Button>
             {active.doneApi && (
               <Button
                 size="sm"
+                className="h-9 py-0"
                 intent={isDone ? 'default' : 'primary'}
                 onClick={() => void toggleDone()}
                 disabled={!video || doneBusy || Boolean(unavailable)}

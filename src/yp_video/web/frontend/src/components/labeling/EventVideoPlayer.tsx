@@ -24,6 +24,7 @@ import { RallyTimeline } from '@/components/editor/RallyTimeline';
 import type { EditorAnnotation } from '@/components/editor/AnnotationEditor';
 import { useVideoKeys } from './useVideoKeys';
 import { useFrameClock } from './useFrameClock';
+import { KeyHints } from './PlayerTransport';
 import type { BoxCheckEntry, ReidPlayers, ReidRecord } from '@/types/api';
 import { OUTSIDE, RallySidebar } from './RallySidebar';
 import { canConfirm, fmtTime, rallyOf, trackColor, trackKeyOf, verdictOf, VERDICT, type ActorFix, type ActorVerdict, type Rally, type SidebarAction, type TrackData, type TrackLinks, type TrackMasks } from './shared';
@@ -34,16 +35,6 @@ import { buildFrameRows, buildFrameSilhouettes, buildTrackBoxes, nearestFrame, S
 const DENSE_LABEL_SCORE = 0.4;
 const DENSE_BOX_COLOR = '#67e8f9';
 const LABEL_BOX_COLOR = '#fbbf24';
-
-/** One keycap. Action Label spells these inline; naming it here keeps the
- *  keys in this bar from drifting apart. */
-function Key({ children }: { children: React.ReactNode }) {
-  return (
-    <kbd className="rounded bg-surface-200 px-1.5 py-0.5 font-mono text-[10px] text-text-secondary">
-      {children}
-    </kbd>
-  );
-}
 
 const NO_EVENT_BOXES: ReadonlyMap<string, BoxCheckEntry> = new Map();
 /** Why an event is in the 2XLarge box-check queue (actor/box_style.py). */
@@ -429,9 +420,9 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
 
   const aspect = w / h;
   return (
-    <div className="flex flex-col gap-5 lg:flex-row lg:items-start">
+    <div className="flex flex-col gap-5 xl:flex-row xl:items-start">
       {/* Player — same console styling as the Rally Label / Action Label editors */}
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 flex-1 space-y-4">
         <Card>
           <div className="overflow-hidden rounded-2xl bg-black shadow-lg shadow-black/40 ring-1 ring-white/[0.06]">
             <div className="relative mx-auto" style={{ aspectRatio: `${aspect}`, maxWidth: `calc(var(--video-max-h, 45vh) * ${aspect})` }}>
@@ -772,14 +763,14 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
         </Card>
         {/* Same place, same vocabulary as Action Label: a reviewer moving
             between the two pages should not have to relearn the keys. */}
-        <p className="px-1 text-[11px] text-text-muted">
-          <Key>Space</Key> play · <Key>← →</Key> frame · <Key>Shift ← →</Key> 10 frames
-          {canFix && (
-            <>
-              {' '}· <Key>P</Key> pick mode
-            </>
-          )}
-        </p>
+        <KeyHints
+          keys={[
+            ['Space', 'play'],
+            ['← →', 'frame'],
+            ['Shift ← →', '10 frames'],
+            ...(canFix ? ([['P', 'pick mode']] as [string, string][]) : []),
+          ]}
+        />
       </div>
 
       {/* Rally list — same sidebar as the Rally Label / Action Label editors.

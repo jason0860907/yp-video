@@ -14,11 +14,12 @@ import { useMemo, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { API, apiFetch, apiUrl, errMsg } from '@/lib/api';
-import { hasRealTime, seekWhenSeekable, usePlayheadHandover } from '@/lib/playheadHandover';
+import { firstRallyStart, hasRealTime, seekWhenSeekable, usePlayheadHandover } from '@/lib/playheadHandover';
 import { ActionTimeline, type TimelineEvent } from '@/components/editor/ActionTimeline';
 import { ACTION_COLORS } from '@/lib/actionColors';
 import { useActionWaveform } from '@/lib/useActionWaveform';
 import { Button } from '@/components/ui/Button';
+import { Segmented } from '@/components/ui/Segmented';
 import { Card } from '@/components/ui/Card';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { Tabs } from '@/components/ui/Tabs';
@@ -63,7 +64,7 @@ export const COURT_MODE: ModeDescriptor = {
   status: (row) => row.court?.status ?? 'unlabeled',
   matches: (row, status) => status === 'all' || (row.court?.status ?? 'unlabeled') === status,
   available: (row) => Boolean(row.action),
-  hint: () => '需要一支 cut 影片',
+  hint: () => 'Needs a cut video',
   doneApi: (video) => API.court.done(video),
 };
 
@@ -298,7 +299,7 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
     );
 
   return (
-    <div className="flex flex-col gap-5 lg:flex-row">
+    <div className="flex flex-col gap-5 xl:flex-row">
       {/* Player */}
       <div className="min-w-0 flex-1 space-y-4">
         <Card>
@@ -307,20 +308,14 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
               Court Calibration
             </h3>
             <div className="flex flex-wrap items-center gap-2">
-              <Button
-                size="sm"
-                intent={tool === 'mark' ? 'primary' : 'default'}
-                onClick={() => setTool('mark')}
-              >
-                Mark points
-              </Button>
-              <Button
-                size="sm"
-                intent={tool === 'line' ? 'primary' : 'default'}
-                onClick={() => setTool('line')}
-              >
-                Draw lines
-              </Button>
+              <Segmented
+                options={[
+                  { key: 'mark', label: 'Mark points' },
+                  { key: 'line', label: 'Draw lines' },
+                ]}
+                value={tool}
+                onChange={setTool}
+              />
               <Button size="sm" onClick={guides.undo} disabled={!guides.guides.length}>
                 Undo line
               </Button>
@@ -329,7 +324,8 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
               </Button>
               <Button
                 size="sm"
-                intent={margin ? 'primary' : 'default'}
+                aria-pressed={margin > 0}
+                className={cn(margin > 0 && 'border-primary/50 text-primary-light')}
                 onClick={() => setOutside(!margin)}
                 title={
                   hasOutsideMark
@@ -391,7 +387,7 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
                       }
                       setDuration(el.duration);
                       loadWaveform(video, el.duration);
-                      const at = takeHandover();
+                      const at = takeHandover(firstRallyStart(meta.rallies ?? []));
                       if (at != null) seekWhenSeekable(el, at);
                     }}
                     onTimeUpdate={(e) => {
@@ -515,7 +511,7 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
       </div>
 
       {/* Landmarks · Court · Rally */}
-      <div className="min-w-0 lg:w-[420px] lg:flex-shrink-0">
+      <div className="min-w-0 xl:w-[420px] xl:flex-shrink-0">
         <Card className="space-y-4">
           <Tabs
             tabs={[

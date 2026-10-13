@@ -16,6 +16,9 @@ import { API, apiFetch, errMsg } from '@/lib/api';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { fieldCls } from '@/components/form/Field';
+import { FieldShell } from '@/components/form/FieldLabel';
+import { cn } from '@/lib/cn';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { PipelineChips, Prereqs, STAGE_HINT } from '@/components/video/PipelineChips';
 import { SectionLabel } from '@/components/ui/SectionLabel';
@@ -87,18 +90,15 @@ export function ReidPredictPage() {
             <Button size="sm" onClick={() => navigate('/label?mode=reid')}>
               Open ReID Label
             </Button>
-            <Button intent="primary" onClick={run} disabled={Boolean(blocked)}>
-              Run Embedding
-            </Button>
           </>
         }
       />
 
       <div className="grid grid-cols-2 gap-3.5 lg:grid-cols-4">
-        <StatTile label="Videos" value={videos.length} tintClass="text-primary-light" />
+        <StatTile label="Videos" value={videos.length} tintClass="text-primary-light" loading={!videosQuery.data} />
         <StatTile label="Selected" value={selected.size} tintClass="text-primary-light" />
-        <StatTile label="Embedded" value={embedded.length} tintClass="text-primary-light" />
-        <StatTile label="Not embedded in selection" value={notEmbedded} tintClass="text-text-muted" />
+        <StatTile label="Embedded" value={embedded.length} tintClass="text-primary-light" loading={!videosQuery.data} />
+        <StatTile label="Not embedded in selection" value={notEmbedded} tintClass="text-text-muted" loading={!videosQuery.data} />
       </div>
 
       <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)]">
@@ -115,15 +115,8 @@ export function ReidPredictPage() {
           </p>
           <div className="space-y-2">
             {checkpoints.length > 0 && (
-              <label className="block text-xs text-text-secondary">
-                <span className="mb-1 block">
-                  Checkpoint <span className="text-text-muted">— clip-reident weights to embed with</span>
-                </span>
-                <select
-                  value={checkpoint}
-                  onChange={(e) => setCheckpoint(e.target.value)}
-                  className="w-full cursor-pointer appearance-none rounded-lg border border-border-light bg-surface-50 px-3 py-1.5 text-xs text-text-primary focus:border-primary/50 focus:outline-none"
-                >
+              <FieldShell label="Checkpoint" description="clip-reident weights to embed with.">
+                <select value={checkpoint} onChange={(e) => setCheckpoint(e.target.value)} className={cn(fieldCls, 'cursor-pointer')}>
                   <option value="">Default (official) — {checkpoints.find((c) => c.active)?.run_name ?? 'none'}</option>
                   {checkpoints.map((c) => (
                     <option key={c.ref} value={c.ref}>
@@ -132,7 +125,7 @@ export function ReidPredictPage() {
                     </option>
                   ))}
                 </select>
-              </label>
+              </FieldShell>
             )}
             <label className="flex cursor-pointer items-center gap-2 text-xs text-text-secondary">
               <input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} className="h-3.5 w-3.5 accent-primary" />
