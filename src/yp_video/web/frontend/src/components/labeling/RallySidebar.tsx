@@ -16,7 +16,7 @@
  *  across frames where the membership doesn't move.
  */
 
-import { memo, type RefObject } from 'react';
+import { memo, type ReactNode, type RefObject } from 'react';
 import { cn } from '@/lib/cn';
 import { actionColor } from '@/lib/actionColors';
 import { Card } from '@/components/ui/Card';
@@ -73,11 +73,13 @@ interface ReidEventPanelProps {
   activeActionIds: Set<string>;
   onJump: (a: SidebarAction) => void;
   onJumpToCrop?: (eventId: string) => void;
+  /** The group's confirm bar, under its last action. */
+  footer?: ReactNode;
 }
 
 /** Read-only twin of the Action Label event panel: action dot + label,
  *  matched player and time — click a row to park the video there. */
-function ReidEventPanel({ entries, empty, matches, verdicts, boxChecks, selectedEventId, fps, activeActionIds, onJump, onJumpToCrop }: ReidEventPanelProps) {
+function ReidEventPanel({ entries, empty, matches, verdicts, boxChecks, selectedEventId, fps, activeActionIds, onJump, onJumpToCrop, footer }: ReidEventPanelProps) {
   if (!entries.length) return <div className="ml-6 rounded-xl border border-border bg-surface-100 px-3 py-2 text-xs text-text-muted">{empty}</div>;
   return (
     <div className="ml-6 space-y-1.5 rounded-xl border border-border bg-surface-100 p-2">
@@ -142,6 +144,7 @@ function ReidEventPanel({ entries, empty, matches, verdicts, boxChecks, selected
           </div>
         );
       })}
+      {footer}
     </div>
   );
 }
@@ -191,21 +194,18 @@ export const RallySidebar = memo(function RallySidebar({
   selectedEventId, listRef, onSelectAll, onJumpRally, onSetExpanded,
   onJumpEvent, onJumpToCrop, confirmableIds, onConfirmRally,
 }: RallySidebarProps) {
-  /** Sits inside a clickable row, so it must not also seek the video. */
-  const confirmButton = (entries: SidebarAction[]) => {
+  /** Closes the expanded group: confirm every proposal in it at once. */
+  const confirmBar = (entries: SidebarAction[]) => {
     const pending = pendingIn(entries, confirmableIds);
     if (!onConfirmRally || !pending.length) return null;
     return (
       <button
         type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          onConfirmRally(pending);
-        }}
-        title={`Confirm this rally's ${pending.length} model answers — picks stay confirmed and "Model: occluded?" becomes Occluded`}
-        className="flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full bg-primary/15 px-2 py-0.5 text-[11px] font-medium text-primary-light ring-1 ring-primary/30 transition-colors hover:bg-primary/30"
+        onClick={() => onConfirmRally(pending)}
+        title="Confirm every proposal here — agent picks and automatic picks become Confirmed, an agent's occluded becomes Occluded"
+        className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-primary/15 px-2 py-1.5 text-xs font-medium text-primary-light ring-1 ring-primary/30 transition-colors hover:bg-primary/25"
       >
-        ✓ <span className="opacity-80">{pending.length}</span>
+        ✓ Confirm {pending.length} proposal{pending.length === 1 ? '' : 's'}
       </button>
     );
   };
@@ -298,7 +298,6 @@ export const RallySidebar = memo(function RallySidebar({
                   // Collapse if open; otherwise select + expand + seek to the rally start.
                   onToggle={() => (isOpen ? onSetExpanded(null) : onJumpRally(rally))}
                 >
-                  {confirmButton(entries)}
                   {leftChip(entries)}
                   {boxCheckChip(entries)}
                 </RallyRow>
@@ -314,6 +313,7 @@ export const RallySidebar = memo(function RallySidebar({
                     activeActionIds={activeActionIds}
                     onJump={onJumpEvent}
                     onJumpToCrop={onJumpToCrop}
+                    footer={confirmBar(entries)}
                   />
                 )}
               </div>
@@ -327,7 +327,6 @@ export const RallySidebar = memo(function RallySidebar({
                 open={expanded === OUTSIDE}
                 onToggle={() => onSetExpanded(expanded === OUTSIDE ? null : OUTSIDE)}
               >
-                {confirmButton(outside)}
                 {leftChip(outside)}
                 {boxCheckChip(outside)}
               </OutsideRow>
@@ -343,6 +342,7 @@ export const RallySidebar = memo(function RallySidebar({
                   activeActionIds={activeActionIds}
                   onJump={onJumpEvent}
                   onJumpToCrop={onJumpToCrop}
+                  footer={confirmBar(outside)}
                 />
               )}
             </div>
