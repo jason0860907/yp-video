@@ -170,7 +170,7 @@ class AssociationProgressTests(unittest.TestCase):
                 actor_labels.save(
                     "match",
                     "reviewed",
-                    ActorLabel(ActorVerdict.CONFIRMED_AUTO, 30, (1, 2, 3, 4)),
+                    ActorLabel(ActorVerdict.CONFIRMED, 30, (1, 2, 3, 4)),
                 )
                 # Old verdicts are durable, but do not count toward current
                 # progress or its verdict breakdown.
@@ -184,7 +184,7 @@ class AssociationProgressTests(unittest.TestCase):
         self.assertEqual(result["event_count"], 2)
         self.assertEqual(result["reviewed"], 1)
         self.assertEqual(result["unreviewed"], 1)
-        self.assertEqual(result["verdicts"], {"confirmed_auto": 1})
+        self.assertEqual(result["verdicts"], {"confirmed": 1})
         self.assertEqual(
             result["auto_counts"], {"ok": 3, "multi": 0, "miss": 1}
         )

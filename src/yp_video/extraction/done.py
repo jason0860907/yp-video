@@ -4,7 +4,7 @@
 settled. But a user who named every crop has also, implicitly, agreed with
 every automatic actor pick behind those crops — they looked at the person and
 called them by name. Turning that implication into an explicit
-``confirmed_auto`` label is what gives the association model positive
+``confirmed`` label is what gives the association model positive
 training truth without ever inventing it (see actor/labels.py).
 
 Implicit, so it stays opt-in: ``confirm_auto`` is a parameter, and only
@@ -27,7 +27,7 @@ from yp_video.reid import identity
 
 
 def confirmations_for(stem: str, records: Sequence[dict]) -> dict[str, ActorLabel]:
-    """Every automatic pick a human could endorse, as the ``confirmed_auto``
+    """Every automatic pick a human could endorse, as the ``confirmed``
     label it would be.
 
     The label snapshots the pick's box on the event frame, in the 2XLarge
@@ -51,14 +51,14 @@ def confirmations_for(stem: str, records: Sequence[dict]) -> dict[str, ActorLabe
             continue
         frame = int(record["frame"])
         picked = ActorLabel(
-            ActorVerdict.CONFIRMED_AUTO,
+            ActorVerdict.CONFIRMED,
             frame=int(record.get("crop_frame") or frame),
             box=tuple(float(v) for v in record["actor_box"]),
         )
         box = event_box(stem, picked, frame)
         if box is not None:
             out[str(record["id"])] = ActorLabel(
-                ActorVerdict.CONFIRMED_AUTO, frame=frame, box=settle_box(stem, box, frame)
+                ActorVerdict.CONFIRMED, frame=frame, box=settle_box(stem, box, frame)
             )
     return out
 
@@ -90,7 +90,7 @@ def mark_done(stem: str, done: bool, *, confirm_auto: bool) -> int:
         meta, records = read_jsonl_cached(records_path(stem))
         records = labelable(records, stem, float(meta.get("fps") or 0))
         confirmed = len(
-            actor_labels.confirm_auto(stem, confirmable_actors(stem, records))
+            actor_labels.confirm(stem, confirmable_actors(stem, records))
         )
     label_done.set_done(stem, "reid", done)
     return confirmed
@@ -103,10 +103,11 @@ def confirm_reviewed(stem: str) -> int:
     A predict re-run then invents answers for events that had none — and
     those would arrive unendorsed, un-reviewing a video its reviewer already
     declared finished. So a Done video keeps its endorsement: every current
-    automatic answer gets the same ``confirmed_auto``/``occluded`` label the
-    per-rally sweep writes, video-wide. Existing verdicts always win
-    (actor/labels.confirm_auto). Not-Done videos are left alone — new
-    machine output nobody vouched for stays visibly unreviewed.
+    automatic answer gets the same ``confirmed`` label the per-rally sweep
+    writes, video-wide. Human verdicts always win (actor/labels.confirm), and
+    an agent proposal is never an automatic answer, so it waits for its own
+    Confirm. Not-Done videos are left alone — new machine output nobody
+    vouched for stays visibly unreviewed.
     """
     if not label_done.is_done(stem, "association"):
         return 0
@@ -116,7 +117,7 @@ def confirm_reviewed(stem: str) -> int:
     meta, records = read_jsonl_cached(path)
     records = labelable(records, stem, float(meta.get("fps") or 0))
     return len(
-        actor_labels.confirm_auto(stem, confirmations_for(stem, records))
+        actor_labels.confirm(stem, confirmations_for(stem, records))
     )
 
 

@@ -19,7 +19,8 @@ pick) is followed there through the dense boxes; ``box_source`` says which
 (event_frame | followed).
 
 Events left out are counted, not written: occluded or unresolved actors,
-events without a human actor, two touches on one frame (one clip, two
+events without a human actor (no label, or an agent proposal nobody has
+confirmed — actor/labels.py), two touches on one frame (one clip, two
 answers), and videos without actor labels or a dense pass. Which rows train
 and which validate is the trainer's call: it splits them by the action
 stream's videos, so the actor head validates on the run's held-out videos.
@@ -95,6 +96,9 @@ def _video_rows(stem: str, events: list[dict], actors: dict, dense: DensePass, c
         label = actors.get(event["id"])
         if label is None:
             counts["no_human_actor"] += 1
+            continue
+        if not label.human:
+            counts["agent_proposals"] += 1
             continue
         lo, hi = sorted((frame, frame if label.frame is None else label.frame))
         people = dense.people(range(lo, hi + 1))

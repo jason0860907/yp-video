@@ -53,7 +53,7 @@ class ActorLabelStoreTests(unittest.TestCase):
             self.assertEqual(
                 labels["occluded-event"].verdict, ActorVerdict.OCCLUDED
             )
-            self.assertTrue(labels["manual-event"].overrides_auto)
+            self.assertTrue(labels["manual-event"].human)
 
             stored = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(stored["version"], actor_labels.SCHEMA_VERSION)
@@ -92,14 +92,14 @@ class ActorLabelStoreTests(unittest.TestCase):
                 "match", "fixed", ActorLabel(ActorVerdict.OCCLUDED)
             )
 
-            added = actor_labels.confirm_auto(
+            added = actor_labels.confirm(
                 "match",
                 {
                     "fixed": ActorLabel(
-                        ActorVerdict.CONFIRMED_AUTO, 1, (1, 2, 3, 4)
+                        ActorVerdict.CONFIRMED, 1, (1, 2, 3, 4)
                     ),
                     "untouched": ActorLabel(
-                        ActorVerdict.CONFIRMED_AUTO, 2, (5, 6, 7, 8)
+                        ActorVerdict.CONFIRMED, 2, (5, 6, 7, 8)
                     ),
                 },
             )
@@ -108,9 +108,25 @@ class ActorLabelStoreTests(unittest.TestCase):
             self.assertEqual(added, ['untouched'])
             self.assertEqual(labels["fixed"].verdict, ActorVerdict.OCCLUDED)
             self.assertEqual(
-                labels["untouched"].verdict, ActorVerdict.CONFIRMED_AUTO
+                labels["untouched"].verdict, ActorVerdict.CONFIRMED
             )
-            self.assertFalse(labels["untouched"].overrides_auto)
+
+    def test_confirmation_replaces_an_agent_proposal(self) -> None:
+        with self._store():
+            actor_labels.save("match", "picked", ActorLabel(ActorVerdict.AGENT, 1, (1, 2, 3, 4)))
+            actor_labels.save("match", "hidden", ActorLabel(ActorVerdict.AGENT_OCCLUDED))
+            labels = actor_labels.load("match")
+            self.assertFalse(labels["picked"].human)
+
+            added = actor_labels.confirm(
+                "match", {k: labels[k].confirmed() for k in ("picked", "hidden")}
+            )
+
+            labels = actor_labels.load("match")
+            self.assertEqual(added, ["hidden", "picked"])
+            self.assertEqual(labels["picked"], ActorLabel(ActorVerdict.CONFIRMED, 1, (1, 2, 3, 4)))
+            self.assertEqual(labels["hidden"], ActorLabel(ActorVerdict.OCCLUDED))
+            self.assertTrue(labels["hidden"].human)
 
 
 class DoneConfirmationTests(unittest.TestCase):
@@ -145,7 +161,7 @@ class DoneConfirmationTests(unittest.TestCase):
         self.assertEqual(list(confirmable), ["auto-assigned"])
         self.assertEqual(
             confirmable["auto-assigned"],
-            ActorLabel(ActorVerdict.CONFIRMED_AUTO, 10, (1.0, 2.0, 3.0, 4.0)),
+            ActorLabel(ActorVerdict.CONFIRMED, 10, (1.0, 2.0, 3.0, 4.0)),
         )
 
 
@@ -291,6 +307,7 @@ class ConfirmEndpointTests(unittest.TestCase):
                 ),
                 patch.object(actor_labels._store, "_cache", StatCache()),
                 patch("yp_video.actor.box_style.dense_pass", return_value=None),
+                patch.object(router, "sync_to_r2"),
             ):
                 yield
 
@@ -300,11 +317,11 @@ class ConfirmEndpointTests(unittest.TestCase):
             # quietly overwrite it with "the machine was right".
             actor_labels.save("match", "auto-b", ActorLabel(ActorVerdict.OCCLUDED))
 
-            response = router.confirm("match.mp4", router.ConfirmRequest())
+            response = router.confirm("match.mp4", router.ConfirmRequest(event_ids=["auto-a", "auto-b"]))
             labels = actor_labels.load("match")
 
-        self.assertEqual(response["confirmed"], {"auto-a": "confirmed_auto"})
-        self.assertEqual(labels["auto-a"].verdict, ActorVerdict.CONFIRMED_AUTO)
+        self.assertEqual(response["confirmed"], {"auto-a": "confirmed"})
+        self.assertEqual(labels["auto-a"].verdict, ActorVerdict.CONFIRMED)
         self.assertEqual(labels["auto-a"].box, (1.0, 2.0, 3.0, 4.0))
         self.assertEqual(labels["auto-b"].verdict, ActorVerdict.OCCLUDED)
         # A manual fix already had a label; an unresolved event has no box to
@@ -314,12 +331,13 @@ class ConfirmEndpointTests(unittest.TestCase):
 
     def test_confirming_twice_is_a_no_op(self) -> None:
         with self._video():
-            first = router.confirm("match.mp4", router.ConfirmRequest())
-            second = router.confirm("match.mp4", router.ConfirmRequest())
+            request = router.ConfirmRequest(event_ids=["auto-a", "auto-b"])
+            first = router.confirm("match.mp4", request)
+            second = router.confirm("match.mp4", request)
 
         self.assertEqual(
             first["confirmed"],
-            {"auto-a": "confirmed_auto", "auto-b": "confirmed_auto"},
+            {"auto-a": "confirmed", "auto-b": "confirmed"},
         )
         self.assertEqual(second["confirmed"], {})
 
@@ -335,6 +353,20 @@ class ConfirmEndpointTests(unittest.TestCase):
 
         self.assertEqual(caught.exception.status_code, 400)
         self.assertIn("model-occluded", str(caught.exception.detail))
+
+    def test_confirms_an_agent_proposal_as_its_human_twin(self) -> None:
+        with self._video():
+            # The agent picked for the manual-resolution event, and called
+            # the miss occluded.
+            actor_labels.save("match", "fixed", ActorLabel(ActorVerdict.AGENT, 3, (9, 10, 11, 12)))
+            actor_labels.save("match", "miss", ActorLabel(ActorVerdict.AGENT_OCCLUDED))
+
+            response = router.confirm("match.mp4", router.ConfirmRequest(event_ids=["fixed", "miss"]))
+            labels = actor_labels.load("match")
+
+        self.assertEqual(response["confirmed"], {"fixed": "confirmed", "miss": "occluded"})
+        self.assertEqual(labels["fixed"], ActorLabel(ActorVerdict.CONFIRMED, 3, (9.0, 10.0, 11.0, 12.0)))
+        self.assertEqual(labels["miss"].verdict, ActorVerdict.OCCLUDED)
 
     def test_a_miss_cannot_be_confirmed(self) -> None:
         """It needs a real verdict; reporting success would be a lie."""

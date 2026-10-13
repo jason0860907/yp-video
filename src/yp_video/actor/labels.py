@@ -2,11 +2,13 @@
 
 One event, one label — ``videos/association/annotations/<stem>_actors.json``:
 
-    {"version": 3,
+    {"version": 4,
      "actors": {
        "<e>": {"verdict": "manual", "frame": 812, "box": [x0, y0, x1, y1]},
-       "<e>": {"verdict": "confirmed_auto", "frame": 40, "box": [...]},
-       "<e>": {"verdict": "occluded"}
+       "<e>": {"verdict": "confirmed", "frame": 40, "box": [...]},
+       "<e>": {"verdict": "occluded"},
+       "<e>": {"verdict": "agent", "frame": 77, "box": [...]},
+       "<e>": {"verdict": "agent_occluded"}
      }}
 
 A label answers one question: which person on screen performed this event.
@@ -24,15 +26,22 @@ never guessed when the walk loses the person.
 The verdict IS the state, and says who chose the box:
 
 - ``manual``          the user picked this person.
-- ``occluded``        nobody in frame is the actor. No box exists to record.
-- ``confirmed_auto``  the user endorsed the automatic pick (by naming the
-                      crop, or reviewing the video). The box snapshots what
-                      they endorsed, so later re-extraction cannot silently
-                      reinterpret the endorsement.
+- ``confirmed``       the user endorsed a proposed box — the automatic pick
+                      or an agent's. The box snapshots what they endorsed, so
+                      later re-extraction cannot silently reinterpret it.
+- ``occluded``        the user says nobody in frame is the actor (directly,
+                      or by endorsing an agent's ``agent_occluded``).
+- ``agent``           an annotation agent picked this person; nobody has
+                      checked it yet.
+- ``agent_occluded``  an annotation agent says nobody in frame is the actor;
+                      nobody has checked it yet.
 
-Only the first two override the automatic pick (``ActorLabel.overrides_auto``)
-— a confirmation agrees with it by definition. All three are training truth
-for the person/action head (actor/training_labels.py, through Fusion Train).
+The first three are human verdicts (``ActorLabel.human``) and the only
+training truth for the person/action head (actor/training_labels.py,
+through Fusion Train). The agent's two are proposals: the Association Label
+page shows them like a decision and asks for a Confirm, and confirming one
+(``confirm``) turns it into ``confirmed`` / ``occluded``. Every label, a
+proposal included, decides what extraction crops for its event.
 
 Player identity is a different label with a different lifetime, and a
 different directory: ``videos/reid/annotations/<stem>_players.json`` (see
@@ -50,7 +59,7 @@ from pathlib import Path
 from yp_video.config import ASSOCIATION_ANNOTATIONS_DIR
 from yp_video.core.sidecar import JsonSidecar
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 #: The name this package owns inside the shared annotations directory.
 #: Public so a caller can count or list actor-labelled videos without
 #: re-spelling the suffix and drifting from it.
@@ -61,16 +70,27 @@ Box = tuple[float, float, float, float]
 
 class ActorVerdict(str, Enum):
     MANUAL = "manual"
+    CONFIRMED = "confirmed"
     OCCLUDED = "occluded"
-    CONFIRMED_AUTO = "confirmed_auto"
+    AGENT = "agent"
+    AGENT_OCCLUDED = "agent_occluded"
+
+
+#: The verdicts a human gave — training truth; the rest are agent proposals.
+HUMAN_VERDICTS = frozenset({ActorVerdict.MANUAL, ActorVerdict.CONFIRMED, ActorVerdict.OCCLUDED})
+#: What confirming each agent proposal turns it into.
+_CONFIRMED_AS = {
+    ActorVerdict.AGENT: ActorVerdict.CONFIRMED,
+    ActorVerdict.AGENT_OCCLUDED: ActorVerdict.OCCLUDED,
+}
 
 
 @dataclass(frozen=True)
 class ActorLabel:
-    """One event's human actor verdict, and the box behind it.
+    """One event's actor verdict, and the box behind it.
 
-    Occluded carries neither ``frame`` nor ``box``; the other verdicts carry
-    both. Constructing anything else raises, so no reader has to ask.
+    The two occluded verdicts carry neither ``frame`` nor ``box``; the others
+    carry both. Constructing anything else raises, so no reader has to ask.
     """
 
     verdict: ActorVerdict
@@ -80,7 +100,7 @@ class ActorLabel:
     box: Box | None = None
 
     def __post_init__(self) -> None:
-        occluded = self.verdict is ActorVerdict.OCCLUDED
+        occluded = self.occluded
         if occluded != (self.box is None) or occluded != (self.frame is None):
             raise ValueError(
                 f"A {self.verdict.value} label must carry "
@@ -88,9 +108,18 @@ class ActorLabel:
             )
 
     @property
-    def overrides_auto(self) -> bool:
-        """Whether extraction must replace the automatic pick with this."""
-        return self.verdict is not ActorVerdict.CONFIRMED_AUTO
+    def occluded(self) -> bool:
+        """Whether this says nobody in frame is the actor."""
+        return self.verdict in (ActorVerdict.OCCLUDED, ActorVerdict.AGENT_OCCLUDED)
+
+    @property
+    def human(self) -> bool:
+        """Whether a human gave this verdict (training truth), not an agent."""
+        return self.verdict in HUMAN_VERDICTS
+
+    def confirmed(self) -> "ActorLabel":
+        """The human verdict endorsing this agent proposal."""
+        return ActorLabel(_CONFIRMED_AS[self.verdict], frame=self.frame, box=self.box)
 
     def payload(self) -> dict:
         out: dict = {"verdict": self.verdict.value}
@@ -194,12 +223,12 @@ def save(stem: str, event_id: str, label: ActorLabel | None) -> None:
         _write(stem, labels)
 
 
-def confirm_auto(stem: str, confirmations: dict[str, ActorLabel]) -> list[str]:
-    """Record endorsements of the automatic pick, never overwriting a fix.
+def confirm(stem: str, confirmations: dict[str, ActorLabel]) -> list[str]:
+    """Record endorsements, never overwriting a human verdict.
 
-    A manual or occluded verdict is the stronger statement: the user looked
-    at that event and disagreed with the machine. Bulk confirmation must not
-    undo it, so existing labels win.
+    Each confirmation lands on an event with no label or with an agent
+    proposal: a manual, confirmed or occluded verdict is a human's own
+    statement about that event, and a bulk confirmation must not undo it.
 
     Returns the events actually confirmed, decided under the same lock as the
     write — a caller comparing before and after could not report that
@@ -207,7 +236,10 @@ def confirm_auto(stem: str, confirmations: dict[str, ActorLabel]) -> list[str]:
     """
     with _store.transaction():
         labels = _read(stem)
-        added = sorted(set(confirmations) - set(labels))
+        added = sorted(
+            event_id for event_id in confirmations
+            if event_id not in labels or not labels[event_id].human
+        )
         if added:
             labels.update({event_id: confirmations[event_id] for event_id in added})
             _write(stem, labels)

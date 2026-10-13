@@ -208,7 +208,7 @@ class ReassociationTests(unittest.TestCase):
         that decides nothing must not touch the file — otherwise re-running on
         a finished video orders a full re-embed to produce identical vectors."""
         actor_labels.save(
-            "match", "auto", ActorLabel(ActorVerdict.CONFIRMED_AUTO, 200, (1, 2, 3, 4))
+            "match", "auto", ActorLabel(ActorVerdict.CONFIRMED, 200, (1, 2, 3, 4))
         )
         before = self.records.stat().st_mtime_ns
 
@@ -224,7 +224,7 @@ class ReassociationTests(unittest.TestCase):
     def test_a_done_video_keeps_its_endorsement_after_a_re_run(self) -> None:
         """The per-rally sweep says "reviewed"; a predict re-run must not
         un-review a video its reviewer declared finished. Answers the run
-        produces land as confirmed_auto instead of unreviewed."""
+        produces land as confirmed instead of unreviewed."""
         label_done.set_done("match", "association", True)
 
         counts = self._run(
@@ -235,7 +235,7 @@ class ReassociationTests(unittest.TestCase):
 
         self.assertEqual(counts["confirmed"], 1)
         self.assertIs(
-            actor_labels.load("match")["auto"].verdict, ActorVerdict.CONFIRMED_AUTO
+            actor_labels.load("match")["auto"].verdict, ActorVerdict.CONFIRMED
         )
 
     def test_an_undone_video_gains_no_endorsement(self) -> None:

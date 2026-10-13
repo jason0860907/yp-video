@@ -625,11 +625,11 @@ class ConfirmableAnswerTests(unittest.TestCase):
         dense.start()
         self.addCleanup(dense.stop)
 
-    def test_a_pick_becomes_confirmed_auto(self) -> None:
+    def test_a_pick_becomes_confirmed(self) -> None:
         out = done.confirmations_for("match", [
             {"id": "e1", "frame": 10, "resolution": "auto", "actor_box": [1, 2, 3, 4]},
         ])
-        self.assertEqual(out["e1"].verdict, ActorVerdict.CONFIRMED_AUTO)
+        self.assertEqual(out["e1"].verdict, ActorVerdict.CONFIRMED)
         self.assertEqual(out["e1"].box, (1.0, 2.0, 3.0, 4.0))
 
     def test_an_abstention_diagnostic_is_not_endorsable(self) -> None:

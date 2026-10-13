@@ -510,8 +510,9 @@ export interface ReidRecord {
   /** How the actor was resolved. Always explicit — never infer it from crop
    *  presence, the server never does either. */
   resolution: 'unresolved' | 'auto' | 'manual' | 'occluded';
-  /** The human verdict on this event's actor; drives association training. */
-  actor_review?: 'unreviewed' | 'confirmed_auto' | 'manual' | 'occluded';
+  /** The verdict on this event's actor (actor/labels.py): a human's —
+   *  association training truth — or an agent's proposal awaiting Confirm. */
+  actor_review?: 'unreviewed' | 'manual' | 'confirmed' | 'occluded' | 'agent' | 'agent_occluded';
   /** What decided this actor: the policy (`source`) and whether it found a
    *  candidate (`status`). */
   association?: {
@@ -673,10 +674,14 @@ export interface AssociationVideo {
    *  somebody to identify (a `score` names nobody). Action annotations own
    *  this, not extraction — see extraction/store.labelable_actions. */
   event_count: number;
+  /** Events with a human verdict. */
   reviewed: number;
+  /** Events without one — agent proposals included. */
   unreviewed: number;
+  /** Agent proposals awaiting a Confirm (part of `unreviewed`). */
+  proposed: number;
   /** verdict -> count; keys are absent when the count is zero. */
-  verdicts: Partial<Record<'manual' | 'occluded' | 'confirmed_auto', number>>;
+  verdicts: Partial<Record<'manual' | 'confirmed' | 'occluded' | 'agent' | 'agent_occluded', number>>;
   /** Actor label boxes that are not a 2XLarge box on their event frame (a
    *  status other than `snapped`) — the queue behind the "2XL box check"
    *  filter. */

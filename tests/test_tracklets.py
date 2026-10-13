@@ -294,7 +294,7 @@ class EventTrackPrecedenceTests(unittest.TestCase):
     def test_a_label_box_overrules_the_policys_tracklet(self) -> None:
         """The policy named the actor; the person picked the bystander's box
         — manual or endorsed, the label's box decides."""
-        for verdict in (ActorVerdict.MANUAL, ActorVerdict.CONFIRMED_AUTO):
+        for verdict in (ActorVerdict.MANUAL, ActorVerdict.CONFIRMED):
             with self.subTest(verdict=verdict), self._video(
                 {"e1": self._pick(verdict)}, record={**self.RECORD, "track": "1:1"}
             ):

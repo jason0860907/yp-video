@@ -4,8 +4,9 @@
 import { rallyAt } from '@/lib/actionEditorModel';
 import type { ReidRecord } from '@/types/api';
 
-/** The human verdict on one event's actor. "unreviewed" is the absence of
- *  one — never inferred from the record's shape (see actor/labels.py). */
+/** The verdict on one event's actor (actor/labels.py). "unreviewed" is the
+ *  absence of one — never inferred from the record's shape. `agent` and
+ *  `agent_occluded` are an annotation agent's proposals, not a human's. */
 export type ActorVerdict = NonNullable<ReidRecord['actor_review']>;
 
 export const verdictOf = (r: Pick<ReidRecord, 'actor_review'>): ActorVerdict =>
@@ -16,10 +17,16 @@ export const verdictOf = (r: Pick<ReidRecord, 'actor_review'>): ActorVerdict =>
  *  wording is how "confirmed" ends up meaning two different things. */
 export const VERDICT: Record<ActorVerdict, { label: string; glyph: string; title: string }> = {
   unreviewed: { label: 'Unreviewed', glyph: '·', title: 'Nobody has ruled on this actor yet' },
-  confirmed_auto: { label: 'Confirmed', glyph: '✓', title: 'Automatic pick, confirmed by a human' },
+  confirmed: { label: 'Confirmed', glyph: '✓', title: 'A proposed pick (automatic or agent), confirmed by a human' },
   manual: { label: 'Manual', glyph: '✎', title: 'Actor picked by hand' },
-  occluded: { label: 'Occluded', glyph: '⊘', title: 'Nobody in frame is the actor' },
+  occluded: { label: 'Occluded', glyph: '⊘', title: 'A human says nobody in frame is the actor' },
+  agent: { label: 'Agent', glyph: '✦', title: "An annotation agent's pick — Confirm it, or pick the right person" },
+  agent_occluded: { label: 'Agent: occluded', glyph: '✦', title: 'An annotation agent says nobody in frame is the actor — Confirm it, or pick the right person' },
 };
+
+/** Whether an event still needs a human: nobody ruled on it, or only an
+ *  agent did. */
+export const needsReview = (v: ActorVerdict) => v === 'unreviewed' || v === 'agent' || v === 'agent_occluded';
 
 export interface Rally {
   rally_id: number;
@@ -60,10 +67,13 @@ export interface TrackMasks {
   tracks: Record<string, string>;
 }
 
-/** Whether a human could endorse the policy's answer here: an automatic pick
- *  nobody has ruled on, which lands as `confirmed_auto`. */
-export const canConfirm = (r: Pick<ReidRecord, 'resolution' | 'actor_review'>) =>
-  verdictOf(r) === 'unreviewed' && r.resolution === 'auto';
+/** Whether a human could endorse what was proposed here: an agent's
+ *  proposal (lands as `confirmed` / `occluded`), or an automatic pick nobody
+ *  has ruled on (lands as `confirmed`). */
+export const canConfirm = (r: Pick<ReidRecord, 'resolution' | 'actor_review'>) => {
+  const v = verdictOf(r);
+  return v === 'agent' || v === 'agent_occluded' || (v === 'unreviewed' && r.resolution === 'auto');
+};
 
 /** The rally an event falls in, or null when it sits between rallies.
  *

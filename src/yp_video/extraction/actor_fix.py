@@ -51,18 +51,22 @@ class PickActor:
     event_id: str
     #: Pixels on the event's own frame — ``apply`` stamps the label with it.
     box: tuple[float, float, float, float]
+    #: An annotation agent's pick is a proposal awaiting a human Confirm.
+    by_agent: bool = False
 
     def label_on(self, frame: int) -> ActorLabel:
-        return ActorLabel(ActorVerdict.MANUAL, frame=frame, box=self.box)
+        verdict = ActorVerdict.AGENT if self.by_agent else ActorVerdict.MANUAL
+        return ActorLabel(verdict, frame=frame, box=self.box)
 
 
 @dataclass(frozen=True)
 class MarkOccluded:
     mode: Literal["occluded"]
     event_id: str
+    by_agent: bool = False
 
     def label_on(self, frame: int) -> ActorLabel:
-        return ActorLabel(ActorVerdict.OCCLUDED)
+        return ActorLabel(ActorVerdict.AGENT_OCCLUDED if self.by_agent else ActorVerdict.OCCLUDED)
 
 
 @dataclass(frozen=True)

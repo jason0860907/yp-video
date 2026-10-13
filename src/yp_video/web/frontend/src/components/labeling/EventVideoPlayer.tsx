@@ -27,7 +27,7 @@ import { useFrameClock } from './useFrameClock';
 import { KeyHints } from './PlayerTransport';
 import type { BoxCheckEntry, ReidPlayers, ReidRecord } from '@/types/api';
 import { OUTSIDE, RallySidebar } from './RallySidebar';
-import { canConfirm, fmtTime, rallyOf, trackColor, trackKeyOf, verdictOf, VERDICT, type ActorFix, type ActorVerdict, type Rally, type SidebarAction, type TrackData, type TrackLinks, type TrackMasks } from './shared';
+import { canConfirm, fmtTime, needsReview, rallyOf, trackColor, trackKeyOf, verdictOf, VERDICT, type ActorFix, type ActorVerdict, type Rally, type SidebarAction, type TrackData, type TrackLinks, type TrackMasks } from './shared';
 import { buildFrameRows, buildFrameSilhouettes, buildTrackBoxes, nearestFrame, SilhouetteRenderer, decodeMaskData } from './masks';
 
 // The pickable 2XLarge boxes: the person head's label cut (actor/person_labels
@@ -413,6 +413,35 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
     [sidebarActions, boxCheckQueue, seekEvent, canFix],
   );
 
+  // C = confirm the pick target's proposal, then park on the next event that
+  // still needs a human — confirming agent proposals is mostly this, event
+  // after event.
+  const confirmAndNext = useCallback(() => {
+    if (!pickTarget || !onConfirmActor || fixing || !canConfirm(pickTarget)) return;
+    onConfirmActor(pickTarget.id);
+    const next = records
+      .filter((r) => r.id !== pickTarget.id && r.frame > pickTarget.frame && needsReview(verdictOf(r)))
+      .reduce<ReidRecord | null>((a, b) => (a == null || b.frame < a.frame ? b : a), null);
+    if (!next) return;
+    const rally = seekEvent({ id: next.id, frame: next.frame, time: null });
+    scrollRallyTop(listRef.current, rally ? rally.rally_id : OUTSIDE);
+  }, [pickTarget, onConfirmActor, fixing, records, seekEvent]);
+  const confirmAndNextRef = useRef(confirmAndNext);
+  useEffect(() => {
+    confirmAndNextRef.current = confirmAndNext;
+  });
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'c' && e.key !== 'C') return;
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'SELECT' || e.metaKey || e.ctrlKey) return;
+      e.preventDefault();
+      confirmAndNextRef.current();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
+
   const timelineAnnotations = useMemo<EditorAnnotation[]>(
     () => rallies.map((r) => ({ rally_id: r.rally_id, start: r.start, end: r.end, label: 'rally', winner: null })),
     [rallies],
@@ -735,11 +764,15 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
                         disabled={fixing || !canConfirm(pickTarget)}
                         onClick={() => onConfirmActor(pickTarget.id)}
                         title={
-                          verdictOf(pickTarget) === 'confirmed_auto'
-                            ? 'Already confirmed'
-                            : pickTarget.resolution !== 'auto'
-                              ? 'No automatic pick to confirm — this event already has a human verdict'
-                              : 'The automatic pick is the right person — record that verdict and move on'
+                          verdictOf(pickTarget) === 'agent'
+                            ? "The agent's pick is the right person — confirm it (C: confirm and go to the next)"
+                            : verdictOf(pickTarget) === 'agent_occluded'
+                              ? 'The agent is right that nobody in frame is the actor — confirm it (C: confirm and go to the next)'
+                              : canConfirm(pickTarget)
+                                ? 'The automatic pick is the right person — confirm it (C: confirm and go to the next)'
+                                : verdictOf(pickTarget) === 'unreviewed'
+                                  ? 'Nobody was picked here — pick the right person or mark occluded'
+                                  : 'Already a human verdict'
                         }
                       >
                         Confirm
@@ -768,7 +801,7 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
             ['Space', 'play'],
             ['← →', 'frame'],
             ['Shift ← →', '10 frames'],
-            ...(canFix ? ([['P', 'pick mode']] as [string, string][]) : []),
+            ...(canFix ? ([['P', 'pick mode'], ['C', 'confirm & next']] as [string, string][]) : []),
           ]}
         />
       </div>

@@ -45,7 +45,7 @@ import time
 from collections.abc import Sequence
 from pathlib import Path
 
-from yp_video.actor.labels import ActorLabel, ActorVerdict
+from yp_video.actor.labels import ActorLabel
 from yp_video.actor.resolution import ActorResolution, actor_resolution
 from yp_video.contracts.action import event_id as action_event_id
 from yp_video.core.jsonl import read_jsonl, read_jsonl_cached, read_jsonl_header, write_jsonl
@@ -556,7 +556,7 @@ def _apply_actor_fix(
             record["auto_box"] = record.get("box")
         record["resolution"] = (
             ActorResolution.OCCLUDED.value
-            if label.verdict is ActorVerdict.OCCLUDED
+            if label.occluded
             else ActorResolution.MANUAL.value
         )
 

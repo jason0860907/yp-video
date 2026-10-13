@@ -70,22 +70,24 @@ def set_done(name: str, req: DoneRequest) -> dict:
 class ConfirmRequest(StrictModel):
     model_config = ConfigDict(extra="forbid")
 
-    #: None = every automatic pick in the video that has no verdict yet.
-    event_ids: list[str] | None = None
+    event_ids: list[str] = Field(min_length=1)
 
 
 @router.post("/confirm/{name}")
 def confirm(name: str, req: ConfirmRequest) -> dict:
-    """Endorse the policy's picks: "it already got these right" — each lands
-    as ``confirmed_auto`` (see extraction/done.confirmations_for).
+    """Endorse what was proposed for these events: "it already got these
+    right". An agent proposal lands as its human twin (``agent`` →
+    ``confirmed``, ``agent_occluded`` → ``occluded``); an automatic pick
+    nobody labelled lands as ``confirmed`` (extraction/done.confirmations_for).
 
     Purely an annotation write — the record, the crop and every embedding
     stay exactly as they are, because agreeing with a pick changes nothing
     about it. That is what separates this from a fix, and why it needs none
     of the fix's transaction machinery.
 
-    Events already carrying a verdict are left alone (a human correction
-    outranks a bulk confirmation), so the count reports what actually landed.
+    Events already carrying a human verdict are left alone (a human
+    correction outranks a bulk confirmation), so the count reports what
+    actually landed.
     """
     stem = Path(unquote(name)).stem
     path = extraction_store.records_path(stem)
@@ -96,23 +98,30 @@ def confirm(name: str, req: ConfirmRequest) -> dict:
     records = extraction_store.labelable(
         records, stem, float(meta.get("fps") or 0)
     )
-    confirmable = extraction_done.confirmations_for(stem, records)
-    if req.event_ids is not None:
-        wanted = set(req.event_ids)
-        unknown = sorted(wanted - set(confirmable))
-        if unknown:
-            # Silently dropping these would report a success that did not
-            # happen; a miss needs a real verdict, not a confirmation.
-            raise HTTPException(
-                400,
-                "Nothing to endorse — the policy picked nobody on the event frame for: "
-                f"{', '.join(unknown[:5])}"
-                + (f" (+{len(unknown) - 5} more)" if len(unknown) > 5 else ""),
-            )
-        confirmable = {k: v for k, v in confirmable.items() if k in wanted}
+    labels = actor_labels.load(stem)
+    confirmable = {
+        **extraction_done.confirmations_for(stem, records),
+        **{
+            event_id: label.confirmed()
+            for event_id, label in labels.items()
+            if not label.human
+        },
+    }
+    wanted = set(req.event_ids)
+    unknown = sorted(wanted - set(confirmable))
+    if unknown:
+        # Silently dropping these would report a success that did not
+        # happen; a miss needs a real verdict, not a confirmation.
+        raise HTTPException(
+            400,
+            "Nothing to endorse — neither the policy nor an agent picked anyone for: "
+            f"{', '.join(unknown[:5])}"
+            + (f" (+{len(unknown) - 5} more)" if len(unknown) > 5 else ""),
+        )
+    confirmable = {k: v for k, v in confirmable.items() if k in wanted}
 
-    before = _actor_rows(actor_labels.load(stem))
-    landed = actor_labels.confirm_auto(stem, confirmable)
+    before = _actor_rows(labels)
+    landed = actor_labels.confirm(stem, confirmable)
     # A bulk endorsement writes many durable verdicts at once. Not folded into
     # a session: it is one click, not a stretch of work.
     audit.record_diff(
@@ -122,6 +131,8 @@ def confirm(name: str, req: ConfirmRequest) -> dict:
         key=lambda r: r["id"],
         confirmed=len(landed),
     )
+    if landed:
+        sync_to_r2(actor_labels.actors_path(stem), "association/annotations")
     return {"confirmed": {event_id: confirmable[event_id].verdict.value for event_id in landed}}
 
 

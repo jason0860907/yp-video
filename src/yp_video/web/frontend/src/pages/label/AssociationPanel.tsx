@@ -40,11 +40,13 @@ export const ASSOCIATION_MODE: ModeDescriptor = {
   statusOptions: [
     ...STATUS_OPTIONS,
     { value: 'boxcheck', label: '2XL box check' },
+    { value: 'agent', label: 'Agent to confirm' },
   ],
   status: assocStatus,
   matches: (row, status) => {
     if (status === 'all') return true;
     if (status === 'boxcheck') return (row.assoc?.box_check ?? 0) > 0;
+    if (status === 'agent') return (row.assoc?.proposed ?? 0) > 0;
     return assocStatus(row) === status;
   },
   available: (row) => Boolean(row.assoc),
@@ -59,6 +61,11 @@ export const ASSOCIATION_MODE: ModeDescriptor = {
       <>
         <span className="shrink-0 font-mono text-[10px] tabular-nums text-text-muted">{v.event_count}ev</span>
         {v.reviewed > 0 && v.unreviewed > 0 && <Badge tone="warning">{v.unreviewed} left</Badge>}
+        {v.proposed > 0 && (
+          <span title="Actors an annotation agent proposed — each needs a Confirm before it trains anything">
+            <Badge tone="warning">{v.proposed} agent</Badge>
+          </span>
+        )}
         {v.box_check > 0 && (
           <span title="Actor boxes that are not a 2XLarge box on their event frame — pick the right one in pick mode">
             <Badge tone="info">{v.box_check} 2XL</Badge>
@@ -142,10 +149,10 @@ export function AssociationPanel({ video, clock }: { video: string; clock?: Play
     }
   };
 
-  // Confirming says "the policy already got this right" — so it only applies
-  // where the policy actually picked somebody. A miss has nobody to agree
-  // with and needs a real verdict, which is why it is excluded here rather
-  // than silently skipped server-side.
+  // Confirming says "what was proposed is right" — an agent's proposal, or
+  // the policy's pick where it actually picked somebody. A miss has nobody
+  // to agree with and needs a real verdict, which is why it is excluded here
+  // rather than silently skipped server-side.
   const confirmable = useMemo(() => records.filter(canConfirm), [records]);
 
   // Identity-stable so the memoized rally sidebar keeps holding. This is the
@@ -159,12 +166,12 @@ export function AssociationPanel({ video, clock }: { video: string; clock?: Play
   // whole-video sweep: an action outside every rally is usually a warm-up hit
   // or a mis-timed annotation, and sweeping those into training truth is
   // exactly the kind of thing nobody notices until the model has learned it.
-  const confirmAuto = async (ids: string[]) => {
+  const confirmProposals = async (ids: string[]) => {
     if (!ids.length) return;
     try {
       // The response says which VERDICT each event got — endorsing a pick
-      // lands as `confirmed_auto`, endorsing "nobody is visible" lands as
-      // `occluded`. Assuming the first showed the wrong badge for the second.
+      // lands as `confirmed`, endorsing an agent's "nobody is visible" lands
+      // as `occluded`. Assuming the first showed the wrong badge for the second.
       const { confirmed } = await apiFetch<{ confirmed: Record<string, ActorVerdict> }>(
         API.association.confirm(video),
         { method: 'POST', body: { event_ids: ids } },
@@ -192,7 +199,7 @@ export function AssociationPanel({ video, clock }: { video: string; clock?: Play
       toast.success(
         occluded
           ? `Confirmed ${n} — ${n - occluded} pick(s), ${occluded} occluded`
-          : `Confirmed ${n} automatic ${n === 1 ? 'pick' : 'picks'}`,
+          : `Confirmed ${n} ${n === 1 ? 'pick' : 'picks'}`,
       );
     } catch (e) {
       toast.error(`Confirm failed: ${errMsg(e)}`);
@@ -228,9 +235,9 @@ export function AssociationPanel({ video, clock }: { video: string; clock?: Play
           videoName={video}
           tracklets={tracksQuery.data?.tracklets ?? []}
           onFixActor={fixActor}
-          onConfirmActor={(id) => void confirmAuto([id])}
+          onConfirmActor={(id) => void confirmProposals([id])}
           confirmableIds={confirmableIds}
-          onConfirmRally={(ids) => void confirmAuto(ids)}
+          onConfirmRally={(ids) => void confirmProposals(ids)}
           fixing={Boolean(fixingEvent)}
           trackLinks={trackLinks}
           eventBoxes={eventBoxes}

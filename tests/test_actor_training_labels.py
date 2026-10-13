@@ -41,7 +41,7 @@ class ActorTrainingLabelTests(unittest.TestCase):
             write_jsonl(action_dir / "game_actions.jsonl", {"video": "game", "fps": 30.0}, events)
             actors_file, dense = root / "game_actors.json", root / "game_dense.npz"
             if actors is not None:
-                actors_file.write_text(json.dumps({"version": 3, "actors": actors}))
+                actors_file.write_text(json.dumps({"version": 4, "actors": actors}))
             _write_dense(dense)
             (out_dir).mkdir()
             (out_dir / "stale_actor_events.jsonl").write_text("{}\n")
@@ -62,7 +62,7 @@ class ActorTrainingLabelTests(unittest.TestCase):
              {"id": "s", "frame": 12, "label": "score"},
              {"id": "b", "frame": 30, "label": "set"}],
             {"a": {"verdict": "manual", "frame": 10, "box": [10, 10, 20, 50]},
-             "b": {"verdict": "confirmed_auto", "frame": 30, "box": [80, 10, 90, 50]}},
+             "b": {"verdict": "confirmed", "frame": 30, "box": [80, 10, 90, 50]}},
         )
         first, second = rows
         self.assertEqual(first["id"], "a")
@@ -100,6 +100,18 @@ class ActorTrainingLabelTests(unittest.TestCase):
         np.testing.assert_allclose(row["boxes"][0], [.12, .10, .22, .50], atol=1e-3)
         self.assertEqual((summary["occluded"], summary["no_human_actor"], summary["shared_frame"],
                           summary["orphan_actor_labels"]), (1, 1, 2, 1))
+
+    def test_an_agent_proposal_is_not_training_truth(self) -> None:
+        summary, rows = self._write(
+            [{"id": "agent", "frame": 10, "label": "spike"},
+             {"id": "agent-hidden", "frame": 30, "label": "set"},
+             {"id": "human", "frame": 11, "label": "receive"}],
+            {"agent": {"verdict": "agent", "frame": 10, "box": [10, 10, 20, 50]},
+             "agent-hidden": {"verdict": "agent_occluded"},
+             "human": {"verdict": "confirmed", "frame": 11, "box": [11, 10, 21, 50]}},
+        )
+        self.assertEqual([row["id"] for row in rows], ["human"])
+        self.assertEqual(summary["agent_proposals"], 2)
 
     def test_a_video_without_actor_labels_writes_nothing(self) -> None:
         summary, rows = self._write([{"id": "a", "frame": 10, "label": "spike"}], None)

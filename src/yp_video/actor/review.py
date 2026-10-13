@@ -13,8 +13,12 @@ class ReviewProgress:
     """One video's current Association review progress."""
 
     event_count: int
+    #: Events with a human verdict.
     reviewed: int
+    #: Events without one — agent proposals included.
     unreviewed: int
+    #: Agent proposals awaiting a Confirm (part of ``unreviewed``).
+    proposed: int
     verdicts: dict[str, int]
 
     @property
@@ -27,7 +31,8 @@ class ReviewProgress:
 
 
 def review_progress(stem: str, fps: float = 0) -> ReviewProgress:
-    """Compare durable labels with the video's current labelable events."""
+    """Compare durable labels with the video's current labelable events.
+    Only a human verdict counts as reviewed (actor/labels.py)."""
     current_ids = {
         str(record["id"])
         for record in labelable_actions(stem, fps)
@@ -38,10 +43,12 @@ def review_progress(stem: str, fps: float = 0) -> ReviewProgress:
         if event_id not in current_ids:
             continue
         verdicts[label.verdict.value] = verdicts.get(label.verdict.value, 0) + 1
-    reviewed_ids = current_ids & set(labels)
+    reviewed_ids = {event_id for event_id in current_ids & set(labels) if labels[event_id].human}
+    proposed = sum(1 for event_id in current_ids & set(labels) if not labels[event_id].human)
     return ReviewProgress(
         event_count=len(current_ids),
         reviewed=len(reviewed_ids),
         unreviewed=len(current_ids - reviewed_ids),
+        proposed=proposed,
         verdicts=verdicts,
     )

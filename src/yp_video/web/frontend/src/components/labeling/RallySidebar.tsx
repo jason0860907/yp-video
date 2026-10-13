@@ -25,6 +25,7 @@ import { SectionLabel } from '@/components/ui/SectionLabel';
 import type { BoxCheckEntry, ReidPlayers } from '@/types/api';
 import {
   fmtTime,
+  needsReview,
   VERDICT,
   type ActorVerdict,
   type Rally,
@@ -44,9 +45,12 @@ function VerdictPill({ verdict }: { verdict?: ActorVerdict }) {
       title={title}
       className={cn(
         'max-w-full justify-self-end truncate rounded-full px-2 py-0.5 text-[11px] ring-1',
-        verdict === 'confirmed_auto' && 'bg-primary/10 text-primary-light ring-primary/25',
+        verdict === 'confirmed' && 'bg-primary/10 text-primary-light ring-primary/25',
         verdict === 'manual' && 'bg-accent/15 text-accent ring-accent/25',
         verdict === 'occluded' && 'bg-surface-200/40 italic text-text-muted ring-border',
+        // A proposal reads as unfinished work: dashed, in the "left" amber.
+        (verdict === 'agent' || verdict === 'agent_occluded') &&
+          'border border-dashed border-amber-400/50 bg-amber-400/5 text-amber-300 ring-0',
       )}
     >
       {label}
@@ -222,11 +226,13 @@ export const RallySidebar = memo(function RallySidebar({
   // Where the unlabelled events are, likewise visible while collapsed —
   // events with no record (score, …) are not labelable and do not count.
   const leftChip = (entries: SidebarAction[]) => {
-    const n = entries.reduce((sum, a) => sum + (verdicts.get(a.id) === 'unreviewed' ? 1 : 0), 0);
+    const pending = entries.map((a) => verdicts.get(a.id)).filter((v): v is ActorVerdict => v != null && needsReview(v));
+    const n = pending.length;
     if (!n) return null;
+    const agent = pending.filter((v) => v !== 'unreviewed').length;
     return (
       <span
-        title={`${n} action${n === 1 ? '' : 's'} here ${n === 1 ? 'has' : 'have'} no actor verdict yet`}
+        title={`${n} action${n === 1 ? '' : 's'} here still need${n === 1 ? 's' : ''} a human verdict${agent ? ` — ${agent} of them an agent's proposal to confirm` : ''}`}
         className="flex shrink-0 items-center whitespace-nowrap rounded-full bg-amber-400/10 px-2 py-0.5 text-[11px] font-medium text-amber-400 ring-1 ring-amber-400/30"
       >
         {n} left

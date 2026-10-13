@@ -33,7 +33,6 @@ from typing import Sequence
 
 from yp_video.actor import labels as actor_labels
 from yp_video.actor.box_style import DUPLICATE_IOU, dense_pass, event_box, pixels
-from yp_video.actor.labels import ActorVerdict
 from yp_video.actor.person_labels import PERSON_LABEL_MIN_SCORE
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import read_jsonl_cached
@@ -102,7 +101,7 @@ def _event_tracks(stem: str) -> dict[str, TrackRef]:
         event_id = record["id"]
         label = verdicts.get(str(event_id))
         if label is not None:
-            if label.verdict is ActorVerdict.OCCLUDED:
+            if label.occluded:
                 continue
             # The human box is tight and is its own gate: no display box
             # stands between it and the tracklet it sits on.

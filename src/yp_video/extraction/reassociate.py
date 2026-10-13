@@ -22,7 +22,6 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from yp_video.actor import labels as actor_labels
-from yp_video.actor.labels import ActorVerdict
 from yp_video.actor.policy import ActorPick, ActorPolicy
 from yp_video.actor.resolution import ActorResolution
 from yp_video.core.jsonl import read_jsonl, write_jsonl
@@ -198,16 +197,18 @@ def reassociate_video(
                 # re-decided — that is the whole point of having ruled on it.
                 counts.labeled += 1
                 continue
-            if label is not None and label.verdict is ActorVerdict.OCCLUDED:
+            if label is not None and label.occluded:
                 counts.labeled += 1
                 dirty |= _update(
                     record, resolution=ActorResolution.OCCLUDED.value
                 )
                 continue
-            if label is not None and label.overrides_auto:
-                # A manual pick with nothing cut for it yet: detection stores
+            if label is not None:
+                # A labelled box with nothing cut for it yet: detection stores
                 # no crop, so a freshly detected video arrives here with the
-                # verdict on file and no pixels behind it.
+                # verdict on file and no pixels behind it. A confirmed pick is
+                # cut from its own snapshot too — an agent's confirmed box
+                # need not be what the policy would pick.
                 target = label_target(stem, record, label)
                 if target is not None:
                     pending.append(
@@ -221,11 +222,7 @@ def reassociate_video(
                 counts.unresolvable += 1
                 dirty |= _clear(record)
                 continue
-            # Everything else runs the policy — INCLUDING a confirmed_auto
-            # event with no crop. That verdict says "the automatic answer was
-            # right", so computing it is what honouring the label means;
-            # skipping it would leave the video's endorsed picks blank.
-
+            # Everything else — an event nobody labelled — runs the policy.
             pick = policy.decide(str(record.get("id")))
             dirty |= _update(
                 record,
@@ -348,7 +345,7 @@ def _is_materialized(record: dict, label) -> bool:
     Occlusion asks for none — "nobody is the actor" is complete the moment
     the resolution says so.
     """
-    if label.verdict is ActorVerdict.OCCLUDED:
+    if label.occluded:
         return record.get("resolution") == ActorResolution.OCCLUDED.value
     return (
         record.get("crop") is not None

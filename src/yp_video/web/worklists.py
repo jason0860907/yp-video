@@ -166,6 +166,8 @@ def association_videos() -> list[dict]:
                 "event_count": progress.event_count,
                 "reviewed": progress.reviewed,
                 "unreviewed": progress.unreviewed,
+                # Agent proposals awaiting a Confirm (part of unreviewed).
+                "proposed": progress.proposed,
                 "verdicts": progress.verdicts,
                 # The 2XLarge box-check queue (actor/box_check.py): label
                 # boxes that are not a dense box on their event frame.

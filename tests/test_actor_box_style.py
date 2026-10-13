@@ -27,7 +27,7 @@ from yp_video.web.routers import actor_association as router
 
 class BoxStyleRuleTests(unittest.TestCase):
     def test_a_label_on_its_event_frame_is_taken_as_is(self) -> None:
-        label = ActorLabel(ActorVerdict.CONFIRMED_AUTO, 10, (10., 20., 40., 80.))
+        label = ActorLabel(ActorVerdict.CONFIRMED, 10, (10., 20., 40., 80.))
         self.assertEqual(box_style.resolve_target(label, 10, {}, 100, 100),
                          ([.1, .2, .4, .8], box_style.EVENT_FRAME))
 
@@ -102,7 +102,7 @@ def scratch_video(actors: dict | None = None):
             {"id": f"e{frame}", "frame": frame, "label": "attack"} for frame in (10, 20, 30, 40)
         ] + [{"id": "s", "frame": 50, "label": "score"}])
         if actors is not None:
-            actors_file.write_text(json.dumps({"version": 3, "actors": actors}))
+            actors_file.write_text(json.dumps({"version": 4, "actors": actors}))
         write_dense(dense, frames=[10, 20, 30], counts=[2, 2, 1],
                     boxes=[[.10, .10, .20, .50], [.60, .10, .70, .50],
                            [.10, .10, .20, .40], [.10, .20, .20, .50],
@@ -176,8 +176,8 @@ class ConfirmationTests(unittest.TestCase):
         with scratch_video():
             labels = done.confirmations_for("game", records)
         self.assertEqual(labels, {
-            "clear": ActorLabel(ActorVerdict.CONFIRMED_AUTO, 10, (10., 10., 20., 50.)),
-            "contested": ActorLabel(ActorVerdict.CONFIRMED_AUTO, 20, (10., 10., 20., 50.)),
+            "clear": ActorLabel(ActorVerdict.CONFIRMED, 10, (10., 10., 20., 50.)),
+            "contested": ActorLabel(ActorVerdict.CONFIRMED, 20, (10., 10., 20., 50.)),
         })
 
 
@@ -186,7 +186,7 @@ class BoxCheckTests(unittest.TestCase):
         box = [10, 10, 20, 50]
         with scratch_video({
             "e10": {"verdict": "manual", "frame": 10, "box": box},
-            "e20": {"verdict": "confirmed_auto", "frame": 20, "box": box},
+            "e20": {"verdict": "confirmed", "frame": 20, "box": box},
             "e30": {"verdict": "manual", "frame": 30, "box": box},
             "e40": {"verdict": "manual", "frame": 40, "box": box},
         }):
@@ -230,7 +230,7 @@ class BoxCheckTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 actor_labels.load("game")
             actor_labels.actors_path("game").write_text(json.dumps(
-                {"version": 3, "actors": {"e10": {"verdict": "manual", "track": "1:2", "frame": 1, "box": [1, 2, 3, 4]}}}
+                {"version": 4, "actors": {"e10": {"verdict": "manual", "track": "1:2", "frame": 1, "box": [1, 2, 3, 4]}}}
             ))
             with self.assertRaises(ValueError):
                 actor_labels.load("game")
