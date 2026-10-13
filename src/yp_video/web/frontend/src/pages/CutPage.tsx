@@ -243,10 +243,10 @@ export function CutPage() {
               </span>
             </div>
             <div className="flex items-center gap-2">
-              <Button size="sm" onClick={doMarkStart}>
+              <Button size="sm" intent="primary" onClick={doMarkStart}>
                 Mark Start [
               </Button>
-              <Button size="sm" onClick={doMarkEnd}>
+              <Button size="sm" intent="primary" onClick={doMarkEnd}>
                 Mark End ]
               </Button>
             </div>

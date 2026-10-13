@@ -21,7 +21,7 @@ export const VERDICT: Record<ActorVerdict, { label: string; glyph: string; title
   manual: { label: 'Manual', glyph: '✎', title: 'Actor picked by hand' },
   occluded: { label: 'Occluded', glyph: '⊘', title: 'A human says nobody in frame is the actor' },
   agent: { label: 'Agent', glyph: '✦', title: "An annotation agent's pick — Confirm it, or pick the right person" },
-  agent_occluded: { label: 'Agent: occluded', glyph: '✦', title: 'An annotation agent says nobody in frame is the actor — Confirm it, or pick the right person' },
+  agent_occluded: { label: 'Agent ⊘', glyph: '✦', title: 'An annotation agent says nobody in frame is the actor — Confirm it, or pick the right person' },
 };
 
 /** Whether an event still needs a human: nobody ruled on it, or only an

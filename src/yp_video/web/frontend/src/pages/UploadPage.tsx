@@ -242,7 +242,7 @@ export function UploadPage() {
                 Uploaded
               </Button>
             )}
-            <Button size="sm" onClick={() => setSelection((f) => (isUpload ? !f.uploaded : !f.local))}>
+            <Button size="sm" intent="primary" onClick={() => setSelection((f) => (isUpload ? !f.uploaded : !f.local))}>
               Un-synced
             </Button>
           </div>

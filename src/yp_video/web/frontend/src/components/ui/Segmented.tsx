@@ -1,6 +1,5 @@
-/** A pick-one switch (mode, kind, tool). The chosen option reads raised, not
- *  brand-green: green is reserved for the page's one call to action, and a
- *  switch beside it must not compete for that. */
+/** A pick-one switch (mode, kind, tool). The chosen option is brand-green,
+ *  like every other selected toggle in the app (timeline zoom, pick mode). */
 
 import { cn } from '@/lib/cn';
 
@@ -23,9 +22,7 @@ export function Segmented<K extends string>({
           onClick={() => onChange(o.key)}
           className={cn(
             'rounded-md px-3 py-1 text-xs font-medium transition-colors',
-            o.key === value
-              ? 'bg-surface-300 text-text-primary shadow-sm ring-1 ring-border-light'
-              : 'text-text-muted hover:text-text-secondary',
+            o.key === value ? 'bg-primary text-on-primary' : 'text-text-secondary hover:bg-ink/[0.04]',
           )}
         >
           {o.label}

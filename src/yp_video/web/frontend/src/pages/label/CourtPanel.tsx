@@ -324,8 +324,7 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
               </Button>
               <Button
                 size="sm"
-                aria-pressed={margin > 0}
-                className={cn(margin > 0 && 'border-primary/50 text-primary-light')}
+                intent={margin ? 'primary' : 'default'}
                 onClick={() => setOutside(!margin)}
                 title={
                   hasOutsideMark

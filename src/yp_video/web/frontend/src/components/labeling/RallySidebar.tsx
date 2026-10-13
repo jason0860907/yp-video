@@ -48,9 +48,9 @@ function VerdictPill({ verdict }: { verdict?: ActorVerdict }) {
         verdict === 'confirmed' && 'bg-primary/10 text-primary-light ring-primary/25',
         verdict === 'manual' && 'bg-accent/15 text-accent ring-accent/25',
         verdict === 'occluded' && 'bg-surface-200/40 italic text-text-muted ring-border',
-        // A proposal reads as unfinished work: dashed, in the "left" amber.
-        (verdict === 'agent' || verdict === 'agent_occluded') &&
-          'border border-dashed border-amber-400/50 bg-amber-400/5 text-amber-300 ring-0',
+        // A proposal reads as unfinished work, in the "left" amber.
+        (verdict === 'agent' || verdict === 'agent_occluded') && 'bg-amber-400/10 text-amber-400 ring-amber-400/30',
+        verdict === 'agent_occluded' && 'italic',
       )}
     >
       {label}
