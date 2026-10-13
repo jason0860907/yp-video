@@ -12,7 +12,8 @@ from yp_video.action import training_labels
 from yp_video.contracts.action import RECIPES
 from yp_video.core.jsonl import write_jsonl
 from yp_video.web import spot_training
-from yp_video.web.label_sources import PreparedLabels, check_task_supervision
+from yp_video.config import CUT_KINDS
+from yp_video.web.label_sources import PreparedLabels, check_task_supervision, in_view
 from yp_video.web.routers import fusion_model
 from yp_video.web.train_requests import FusionTrainRequest
 
@@ -180,6 +181,13 @@ class BuildCommandTests(unittest.TestCase):
         self.assertNotIn("--action_class_upsample", joined)
         self.assertNotIn("--person_giou_weight", joined)
         self.assertNotIn("--task_stream_weight", joined)
+
+    def test_a_view_keeps_only_its_own_cuts_before_any_cache_is_built(self) -> None:
+        side = (Path("a.jsonl"), CUT_KINDS["sideline"].local_dir / "a.mp4")
+        broadcast = (Path("b.jsonl"), CUT_KINDS["broadcast"].local_dir / "b.mp4")
+        self.assertEqual(in_view([side, broadcast], "sideline"), [side])
+        self.assertEqual(in_view([side, broadcast], "broadcast"), [broadcast])
+        self.assertEqual(in_view([side, broadcast], "all"), [side, broadcast])
 
     def test_run_name_token_per_recipe(self) -> None:
         self.assertEqual(spot_training.recipe_token(RECIPES["rally_winner"]), "ral_win")

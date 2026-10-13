@@ -21,7 +21,7 @@ from yp_video.action.frames import ensure_action_frame_caches
 from yp_video.actor.person_labels import write_person_labels
 from yp_video.actor.training_labels import write_actor_labels
 from yp_video.action.training_labels import prepare_action_training_labels
-from yp_video.config import ACTION_FRAMES_DIR
+from yp_video.config import ACTION_FRAMES_DIR, cut_kind_of
 from yp_video.core.rallies import ANNOTATION_SUFFIX
 from yp_video.contracts.action import (
     LABEL_FILE_SUFFIX,
@@ -64,6 +64,15 @@ class LabelSource(Protocol):
     ) -> PreparedLabels: ...
 
 
+def in_view(items: list[tuple[Path, Path]], camera_view: str) -> list[tuple[Path, Path]]:
+    """The ``(label, video)`` pairs whose cut is of ``camera_view`` ("all"
+    keeps every one) — decided before any frame cache is built, so a
+    sideline run never extracts, or needs the source of, a broadcast cut."""
+    if camera_view == "all":
+        return items
+    return [(label, video) for label, video in items if cut_kind_of(video) == camera_view]
+
+
 class RallySource:
     """Rally spans (and their winners) in the shared native frame cache."""
 
@@ -71,6 +80,7 @@ class RallySource:
         self, req: FusionTrainRequest, recipe: Recipe, *, save_dir: Path, progress: Progress
     ) -> PreparedLabels:
         items, missing = rally_spot.select_training_items(resolve_cut, req.video_limit)
+        items = in_view(items, req.camera_view)
         if not items:
             raise RuntimeError("No rally annotations with a cut video (local or R2)")
         ensure_action_frame_caches(
@@ -102,7 +112,10 @@ class ActionSource:
     def prepare(
         self, req: FusionTrainRequest, recipe: Recipe, *, save_dir: Path, progress: Progress
     ) -> PreparedLabels:
-        items = training.label_items(resolve_cut, include_predictions=req.include_predictions)
+        items = in_view(
+            training.label_items(resolve_cut, include_predictions=req.include_predictions),
+            req.camera_view,
+        )
         if not items:
             raise RuntimeError("No action labels selected for training")
 
