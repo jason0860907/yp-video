@@ -14,6 +14,13 @@ A box becomes a tracklet by geometry (tracklets/geometry.link_boxes). A label
 carries no tracklet on purpose: ``track_id`` restarts per rally, so every
 re-track renumbers, while a box on a frame means the same person forever.
 
+Geometry alone cannot tell a player standing behind a teammate from that
+teammate: when the tracker lost the one behind, the occluder's tracklet
+overlaps the label box well enough to win. A label's link therefore also
+asks the event frame's 2XLarge boxes — the boxes labels are clicked from —
+and stands down when another person's box is the better fit for the
+tracklet (``_claimed_by_other``).
+
 Nothing is stored. The answer is recomputed from the label file, the records
 and the tracklets, so re-running tracking can never leave a stale pointer
 behind.
@@ -25,8 +32,9 @@ from dataclasses import dataclass
 from typing import Sequence
 
 from yp_video.actor import labels as actor_labels
-from yp_video.actor.box_style import event_box
+from yp_video.actor.box_style import DUPLICATE_IOU, dense_pass, event_box, pixels
 from yp_video.actor.labels import ActorVerdict
+from yp_video.actor.person_labels import PERSON_LABEL_MIN_SCORE
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import read_jsonl_cached
 from yp_video.extraction.store import (
@@ -40,6 +48,7 @@ from yp_video.tracklets.geometry import (
     BOX_MATCH_IOU,
     EVENT_TRACK_MAX_DELTA,
     BoxQuery,
+    TrackletIndex,
     TrackRef,
     box_near,
     link_boxes,
@@ -88,6 +97,7 @@ def _event_tracks(stem: str) -> dict[str, TrackRef]:
 
     out: dict[str, TrackRef] = {}
     queries: list[BoxQuery] = []
+    labelled: list[BoxQuery] = []
     for record in records:
         event_id = record["id"]
         label = verdicts.get(str(event_id))
@@ -98,7 +108,7 @@ def _event_tracks(stem: str) -> dict[str, TrackRef]:
             # stands between it and the tracklet it sits on.
             box = event_box(stem, label, record["frame"])
             if box is not None:
-                queries.append(BoxQuery(event_id, record["frame"], list(box), list(box)))
+                labelled.append(BoxQuery(event_id, record["frame"], list(box), list(box)))
             continue
         if not record.get("box"):
             continue
@@ -116,8 +126,47 @@ def _event_tracks(stem: str) -> dict[str, TrackRef]:
                 record["box"],
             )
         )
-    out.update(link_boxes(index, queries, stride=int(tmeta.get("stride") or 1)))
+    stride = int(tmeta.get("stride") or 1)
+    out.update(link_boxes(index, queries, stride=stride))
+    out.update(_label_links(stem, index, labelled, stride))
     return out
+
+
+def _label_links(stem: str, index: TrackletIndex, queries: list[BoxQuery], stride: int) -> dict[str, TrackRef]:
+    """``link_boxes`` for human label boxes, minus links whose tracklet is
+    somebody else's on the event frame (see the module docstring)."""
+    linked = link_boxes(index, queries, stride=stride)
+    dense = dense_pass(stem)
+    if dense is None:
+        return linked
+    width, height = dense.meta["frame_size"]
+    by_key = {q.key: q for q in queries}
+    out: dict[str, TrackRef] = {}
+    for key, ref in linked.items():
+        query = by_key[key]
+        track_box = next(b for r, b in index.nearest(query.frame, window=stride) if r == ref)
+        on_frame = dense.at(query.frame, PERSON_LABEL_MIN_SCORE)
+        people = [pixels(b, width, height) for b in on_frame[0]] if on_frame else []
+        if not _claimed_by_other(track_box, query.anchor, people):
+            out[key] = ref
+    return out
+
+
+def _claimed_by_other(
+    track_box: Sequence[float],
+    label_box: Sequence[float],
+    people: Sequence[Sequence[float]],
+) -> bool:
+    """Whether another person's box fits ``track_box`` better than the label.
+
+    A box that re-detects the labelled person (IoU ≥ DUPLICATE_IOU with the
+    label) is not another person, so it never takes the tracklet away.
+    """
+    own = iou(track_box, label_box)
+    return any(
+        iou(person, label_box) < DUPLICATE_IOU and iou(track_box, person) > own
+        for person in people
+    )
 
 
 def track_keys(stem: str) -> dict[str, str]:
