@@ -30,7 +30,7 @@ from pydantic import Field
 from yp_video.actor import labels as actor_labels
 from yp_video.config import cut_kind_of
 from yp_video.core.cache import StatCache
-from yp_video.core.jsonl import read_jsonl, read_jsonl_cached
+from yp_video.core.jsonl import read_jsonl, read_jsonl_cached, read_jsonl_header
 from yp_video.core.rallies import load_rallies
 from yp_video.extraction import pipeline
 from yp_video.extraction import store as extraction_store
@@ -62,7 +62,9 @@ def list_videos() -> list[dict]:
         if not events:
             continue
         path = extraction_store.records_path(f.stem)
-        header = read_jsonl_cached(path)[0] if path.exists() else None
+        # Header only: a records file runs to megabytes, and parsing every
+        # one of them to reach line 1 made this list take ~8 s.
+        header = read_jsonl_header(path) if path.exists() else None
         current = pipeline.detections_current(f.stem)
         results.append({
             "name": f.name,

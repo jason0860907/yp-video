@@ -48,7 +48,7 @@ from pathlib import Path
 from yp_video.actor.labels import ActorLabel, ActorVerdict
 from yp_video.actor.resolution import ActorResolution, actor_resolution
 from yp_video.contracts.action import event_id as action_event_id
-from yp_video.core.jsonl import read_jsonl, read_jsonl_cached, write_jsonl
+from yp_video.core.jsonl import read_jsonl, read_jsonl_cached, read_jsonl_header, write_jsonl
 from yp_video.core.person_boxes import DETECTOR_NAME as FUSION_DETECTOR_NAME
 from yp_video.core.person_boxes import PersonBoxes, person_boxes_path
 from yp_video.core.progress import ProgressFn
@@ -124,7 +124,7 @@ def detections_current(stem: str, *, detector: str = DETECTOR_NAME) -> bool:
     path = records_path(stem)
     if not path.exists():
         return False
-    header, _ = read_jsonl_cached(path)
+    header = read_jsonl_header(path)
     source = header.get("source") or {}
     if source.get("detector") != detector:
         return False
