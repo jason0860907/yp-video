@@ -36,11 +36,15 @@ export function seekWhenSeekable(el: HTMLVideoElement, t: number): void {
  * Take the incoming playhead for *videoKey* before this panel's own player can
  * touch the clock. Returns a getter that yields the value once and then null,
  * so a later reload does not yank the user back to where they arrived.
+ *
+ * With nothing handed over, the first take yields *firstRally* (the first
+ * rally's start, in seconds) instead: a match opens on play, not on the
+ * minutes of warm-up before it.
  */
 export function usePlayheadHandover(
   read: (() => number | null) | undefined,
   videoKey: string,
-): () => number | null {
+): (firstRally?: number | null) => number | null {
   // Sampled during render, which is early enough to beat the element's first
   // write — an effect would already be too late. useMemo, not a ref, because
   // reading a ref during render is exactly the hazard the lint rule guards.
@@ -52,14 +56,21 @@ export function usePlayheadHandover(
   const handoff = useMemo(() => read?.() ?? null, [videoKey]);
   const consumedFor = useRef<string | null>(null);
 
-  return useCallback(() => {
-    // Once only: a later reload of the same video must not yank the user back
-    // to where they arrived.
-    if (consumedFor.current === videoKey) return null;
-    consumedFor.current = videoKey;
-    return handoff;
-  }, [handoff, videoKey]);
+  return useCallback(
+    (firstRally?: number | null) => {
+      // Once only: a later reload of the same video must not yank the user
+      // back to where they arrived.
+      if (consumedFor.current === videoKey) return null;
+      consumedFor.current = videoKey;
+      return handoff ?? firstRally ?? null;
+    },
+    [handoff, videoKey],
+  );
 }
+
+/** Where a video opens when no playhead was handed over. */
+export const firstRallyStart = (rallies: readonly { start: number }[]): number | null =>
+  rallies.length ? Math.min(...rallies.map((r) => r.start)) : null;
 
 /** True when the element is loaded enough that its time means something.
  *  Guards the clock against the 0 that a src reset reports. */

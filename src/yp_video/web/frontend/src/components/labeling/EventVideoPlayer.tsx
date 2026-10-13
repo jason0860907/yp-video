@@ -15,7 +15,7 @@ import { useQuery } from '@tanstack/react-query';
 import { API, apiFetch } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { actionColor } from '@/lib/actionColors';
-import { hasRealTime, seekWhenSeekable, usePlayheadHandover } from '@/lib/playheadHandover';
+import { firstRallyStart, hasRealTime, seekWhenSeekable, usePlayheadHandover } from '@/lib/playheadHandover';
 import { scrollActionIntoView, scrollRallyTop } from '@/lib/sidebarScroll';
 import type { PlaybackClock } from '@/pages/label/mode';
 import { Button } from '@/components/ui/Button';
@@ -117,7 +117,7 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
   const [duration, setDuration] = useState(0);
   // The Action Label frame clock: with a rally selected, playback stops at
   // its end, and play from there replays it.
-  const { videoRef, bindVideo, frame, playing, step, togglePlay } = useFrameClock({
+  const { videoRef, bindVideo, frame, playing, seekFrame, step, togglePlay } = useFrameClock({
     fps,
     numFrames: Math.round(duration * fps),
     rally: selectedRally === 'all' ? null : rallies.find((r) => r.rally_id === selectedRally),
@@ -209,11 +209,13 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
   // playhead crossing to the next action, seeks there.
   const pickTargetId = pickTarget?.id;
   const pickTargetFrame = pickTarget?.frame;
+  // Every seek here goes through seekFrame: writing currentTime directly
+  // leaves the frame clock reading in-flight presentations, and the
+  // frame-exact overlays flicker until the decoder settles.
   useEffect(() => {
-    const el = videoRef.current;
-    if (pickTargetFrame == null || playing || !el) return;
-    el.currentTime = (pickTargetFrame + 0.5) / fps;
-  }, [pickTargetId, pickTargetFrame, playing, fps, videoRef]);
+    if (pickTargetFrame == null || playing) return;
+    seekFrame(pickTargetFrame);
+  }, [pickTargetId, pickTargetFrame, playing, seekFrame]);
   // The box-check queue: events whose label box is not a 2XLarge box.
   const boxCheckQueue = useMemo(
     () => new Map([...eventBoxes].filter(([, e]) => needsBoxCheck(e))),
@@ -376,10 +378,9 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
     (rally: Rally) => {
       onSelectRally(rally.rally_id);
       setExpanded(String(rally.rally_id));
-      const el = videoRef.current;
-      if (el) el.currentTime = rally.start + 0.5 / fps;
+      seekFrame(Math.round(rally.start * fps));
     },
-    [onSelectRally, fps, videoRef],
+    [onSelectRally, fps, seekFrame],
   );
   const selectAllRallies = useCallback(() => onSelectRally('all'), [onSelectRally]);
 
@@ -393,14 +394,11 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
       const rally = rallies.find((x) => t >= x.start && t <= x.end);
       onSelectRally(rally ? rally.rally_id : 'all');
       setExpanded(rally ? String(rally.rally_id) : OUTSIDE);
-      const el = videoRef.current;
-      if (el) {
-        el.pause();
-        el.currentTime = (a.frame + 0.5) / fps;
-      }
+      videoRef.current?.pause();
+      seekFrame(a.frame);
       return rally;
     },
-    [rallies, fps, onSelectRally, videoRef],
+    [rallies, fps, onSelectRally, videoRef, seekFrame],
   );
 
   // Step through the 2XLarge box-check queue in frame order from the
@@ -450,7 +448,7 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
                 onLoadedMetadata={(e) => {
                   const el = e.currentTarget;
                   setDuration(el.duration);
-                  const t = takeHandover();
+                  const t = takeHandover(firstRallyStart(rallies));
                   if (t != null) seekWhenSeekable(el, t);
                 }}
                 className="block h-full w-full cursor-pointer bg-black object-contain"

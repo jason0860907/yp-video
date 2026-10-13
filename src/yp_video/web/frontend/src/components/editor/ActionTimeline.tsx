@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { cn } from '@/lib/cn';
 import type { ActionEvent, ActionRally, WaveformData } from '@/types/api';
+import { DEFAULT_SPV, ZOOMS } from './timelineZoom';
 
 /** What the timeline draws of an action — any page's events that carry
  *  these can sit on it. */
@@ -16,15 +17,6 @@ const fmt = (s: number) => {
   return `${m}:${sec.toString().padStart(2, '0')}`;
 };
 
-// Window length shown across the timeline. spv = 0 means "All" (whole video).
-const ZOOMS: Array<{ label: string; spv: number }> = [
-  { label: 'All', spv: 0 },
-  { label: '10m', spv: 600 },
-  { label: '5m', spv: 300 },
-  { label: '3m', spv: 180 },
-  { label: '30s', spv: 30 },
-  { label: '10s', spv: 10 },
-];
 
 // Waveform amplitude shaping (ported from the legacy editor).
 const WAVE_SCALE_PERCENTILE = 0.98;
@@ -81,7 +73,7 @@ export function ActionTimeline({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [viewW, setViewW] = useState(0);
   // Default to a tight 30s window — action labels are frame-precise work.
-  const [spv, setSpv] = useState(30);
+  const [spv, setSpv] = useState(DEFAULT_SPV);
 
   const ready = duration > 0 && numFrames > 0;
   const time = fps ? frame / fps : 0;

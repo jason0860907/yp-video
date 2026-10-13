@@ -8,7 +8,7 @@ import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { toast } from '@/components/feedback/toast';
-import { hasRealTime, seekWhenSeekable, usePlayheadHandover } from '@/lib/playheadHandover';
+import { firstRallyStart, hasRealTime, seekWhenSeekable, usePlayheadHandover } from '@/lib/playheadHandover';
 import { useVideoRecovery } from '@/lib/useVideoRecovery';
 import { COURT_SIDES, SIDE_DISPLAY } from '@/lib/courtSide';
 import type { CourtSide } from '@/types/api';
@@ -532,7 +532,7 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewB
               onLoadedMetadata={(e) => {
                 const el = e.currentTarget;
                 setDuration(el.duration);
-                const t = takeHandover();
+                const t = takeHandover(firstRallyStart(annotations));
                 // seekable can still be empty here (the src is a 302 to a
                 // presigned URL), and a seek then silently does nothing.
                 if (t != null) seekWhenSeekable(el, t);

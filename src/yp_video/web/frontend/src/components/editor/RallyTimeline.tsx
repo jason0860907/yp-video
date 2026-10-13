@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { cn } from '@/lib/cn';
 import { useTheme } from '@/lib/theme';
 import type { EditorAnnotation } from './AnnotationEditor';
+import { DEFAULT_SPV, ZOOMS } from './timelineZoom';
 
 // "45 95 63" → "45,95,63" for rgba(); falls back to court green.
 const rgbList = (v: string, fallback: string) => (v.trim() ? v.trim().split(/\s+/).join(',') : fallback);
@@ -14,14 +15,6 @@ interface RallyTimelineProps {
   onSeek: (t: number) => void;
 }
 
-// Window length shown across the timeline. secondsPerView = 0 means "All"
-// (the whole video). Terse range-selector tokens, consistent style.
-const ZOOMS: Array<{ label: string; spv: number }> = [
-  { label: 'All', spv: 0 },
-  { label: '10m', spv: 600 },
-  { label: '5m', spv: 300 },
-  { label: '3m', spv: 180 },
-];
 
 /** Zoomable, horizontally-scrollable rally timeline. Segments are labelled
  *  R1, R2 …; the windowed zoom levels scroll to follow the playhead so a long
@@ -30,13 +23,13 @@ export function RallyTimeline({ videoRef, annotations, duration, markStart, onSe
   const scrollRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [viewW, setViewW] = useState(0);
-  // Default to a 3-minute window once the video is longer than that.
+  // Open at the default window once the video is longer than that.
   const [spv, setSpv] = useState(0);
-  const userScrolledRef = useRef(false);
+  const lastTimeRef = useRef<number | null>(null);
 
   useEffect(() => {
     // Pick a sensible default zoom the first time we learn the duration.
-    if (duration > 0) setSpv((cur) => (cur === 0 && duration > 200 ? 180 : cur));
+    if (duration > 0) setSpv((cur) => (cur === 0 && duration > DEFAULT_SPV ? DEFAULT_SPV : cur));
   }, [duration]);
 
   // Track the scroll-container width.
@@ -87,6 +80,11 @@ export function RallyTimeline({ videoRef, annotations, duration, markStart, onSe
       const pps = ppsRef.current;
       if (!canvas || !scroll || !pps) return;
       const dpr = window.devicePixelRatio || 1;
+      // The canvas covers only the visible window and draws the timeline
+      // shifted by the scroll offset: a canvas as wide as the whole timeline
+      // (20k px for a 15-minute match at 30 s) exceeds the GPU texture limit
+      // and renders blank.
+      const off = scroll.scrollLeft;
       const cssW = canvas.clientWidth;
       const cssH = canvas.clientHeight;
       if (canvas.width !== cssW * dpr || canvas.height !== cssH * dpr) {
@@ -106,8 +104,9 @@ export function RallyTimeline({ videoRef, annotations, duration, markStart, onSe
       ctx.textBaseline = 'middle';
       ctx.font = `${11 * dpr}px 'IBM Plex Mono', ui-monospace, monospace`;
       annRef.current.forEach((a, i) => {
-        const x1 = a.start * pps * dpr;
-        const x2 = a.end * pps * dpr;
+        const x1 = (a.start * pps - off) * dpr;
+        const x2 = (a.end * pps - off) * dpr;
+        if (x2 < 0 || x1 > w) return;
         const grad = ctx.createLinearGradient(x1, 0, x1, h);
         grad.addColorStop(0, `rgba(${brand.primary},0.6)`);
         grad.addColorStop(1, `rgba(${brand.primary},0.3)`);
@@ -122,15 +121,20 @@ export function RallyTimeline({ videoRef, annotations, duration, markStart, onSe
       });
 
       if (el && !isNaN(el.currentTime)) {
-        const px = el.currentTime * pps * dpr;
+        const px = (el.currentTime * pps - off) * dpr;
         ctx.fillStyle = brand.fg;
         ctx.shadowColor = brand.fg;
         ctx.shadowBlur = 6 * dpr;
         ctx.fillRect(px - dpr, 0, 2 * dpr, h);
         ctx.shadowBlur = 0;
 
-        // Follow the playhead: when windowed, keep it on screen.
-        if (spvRef.current !== 0 && !el.paused) {
+        // Follow the playhead: when windowed, keep it on screen — during
+        // playback and after a seek (opening a video lands on its first rally,
+        // clicking a row jumps). A playhead that has not moved leaves a manual
+        // scroll alone.
+        const moved = el.currentTime !== lastTimeRef.current;
+        lastTimeRef.current = el.currentTime;
+        if (spvRef.current !== 0 && moved) {
           const pxCss = el.currentTime * pps;
           const left = scroll.scrollLeft;
           const vw = scroll.clientWidth;
@@ -141,7 +145,7 @@ export function RallyTimeline({ videoRef, annotations, duration, markStart, onSe
       }
 
       if (markRef.current != null) {
-        const mx = markRef.current * pps * dpr;
+        const mx = (markRef.current * pps - off) * dpr;
         ctx.fillStyle = `rgb(${brand.accent})`;
         ctx.shadowColor = `rgba(${brand.accent},0.6)`;
         ctx.shadowBlur = 6 * dpr;
@@ -161,7 +165,8 @@ export function RallyTimeline({ videoRef, annotations, duration, markStart, onSe
             key={z.label}
             type="button"
             onClick={() => {
-              userScrolledRef.current = false;
+              // A new scale moves the playhead's pixel: re-centre on it.
+              lastTimeRef.current = null;
               setSpv(z.spv);
             }}
             className={cn(
@@ -177,18 +182,23 @@ export function RallyTimeline({ videoRef, annotations, duration, markStart, onSe
         ref={scrollRef}
         className="overflow-x-auto overflow-y-hidden rounded-2xl ring-1 ring-white/[0.06]"
         style={{ background: 'linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01))' }}
-        onScroll={() => (userScrolledRef.current = true)}
       >
-        <canvas
-          ref={canvasRef}
-          className="block h-12 cursor-pointer"
-          style={{ width: cssWidth }}
-          title="Click to seek"
-          onClick={(e) => {
-            const rect = e.currentTarget.getBoundingClientRect();
-            if (duration && rect.width) onSeek(((e.clientX - rect.left) / rect.width) * duration);
-          }}
-        />
+        {/* The spacer gives the scroll its full width; the canvas stays
+            pinned over the visible window. */}
+        <div style={{ width: cssWidth }}>
+          <canvas
+            ref={canvasRef}
+            className="sticky left-0 block h-12 cursor-pointer"
+            style={{ width: viewW }}
+            title="Click to seek"
+            onClick={(e) => {
+              const scroll = scrollRef.current;
+              if (!duration || !pxPerSec || !scroll) return;
+              const x = e.clientX - e.currentTarget.getBoundingClientRect().left + scroll.scrollLeft;
+              onSeek(Math.min(duration, x / pxPerSec));
+            }}
+          />
+        </div>
       </div>
     </div>
   );
