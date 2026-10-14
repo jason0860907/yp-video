@@ -1,19 +1,24 @@
-/** The App's three feeds — Rally, Action, Score — with its filters: player,
- *  touch kind, rally and favorites. */
+/** The App's three feeds — Rally, Action, Score — with its filters (player,
+ *  touch kind, favorite), listed the Label way: rally rows that expand.
+ *
+ *  Rally: each row is a clip; it opens into its touches, and a touch seeks.
+ *  Action / Score: rows group the clips by rally, one group open at a time;
+ *  clips outside any rally sit in the closed outside group, which is the
+ *  App's default "in rally" membership. */
 
 import { useCallback, useMemo, useState } from 'react';
 import { cn } from '@/lib/cn';
 import { fieldCls } from '@/components/form/Field';
 import { Badge } from '@/components/ui/Badge';
-import { formatTimePrecise } from '@/lib/format';
-import type { Clip, Preview, Scope, Tag } from './types';
-import { KIND_LABEL, SIDE_LABEL, lossReasonLabel, playerLabel } from './types';
+import { Segmented } from '@/components/ui/Segmented';
+import { ActionDot, EventRows, OutsideRow, RallyRow } from '@/components/action/RallyRows';
+import { formatActionTime } from '@/lib/actionEditorModel';
+import type { Clip, Preview, Scope, Tag, Touch } from './types';
+import { lossReasonLabel, playerLabel, sideLabel } from './types';
 
-const SCOPES: [Scope, string][] = [
-  ['rallies', 'Rally'],
-  ['actions', 'Action'],
-  ['scores', 'Score'],
-];
+const OUTSIDE = '__outside__';
+const KINDS = ['serve', 'receive', 'set', 'spike', 'block'];
+const SCOPE_LABEL: Record<Scope, string> = { rallies: 'Rally', actions: 'Action', scores: 'Score' };
 
 export function ClipList({
   preview,
@@ -23,25 +28,26 @@ export function ClipList({
   selected,
   onScope,
   onSelect,
+  onSeek,
 }: {
   preview: Preview;
   tags: Tag[];
   /** Rally UUID (lowercase) → its favorite tag ids. */
   rallyTags: Map<string, string[]>;
   scope: Scope;
-  selected: string;
+  selected: Clip | null;
   onScope: (scope: Scope) => void;
-  onSelect: (clip: Clip, visible: Clip[]) => void;
+  /** A clip picked; `queue` is what auto-next walks after it. */
+  onSelect: (clip: Clip, queue: Clip[]) => void;
+  onSeek: (time: number) => void;
 }) {
   const [kind, setKind] = useState('');
   const [player, setPlayer] = useState('');
-  const [rally, setRally] = useState('');
   const [tag, setTag] = useState('');
-  const [inRally, setInRally] = useState(true);
+  const [expanded, setExpanded] = useState<string | null>(null);
   const tagName = useMemo(() => new Map(tags.map((t) => [t.id.toLowerCase(), t.name])), [tags]);
   const tagsOf = useCallback(
-    (c: Clip) =>
-      (c.id ? rallyTags.get(c.id.toLowerCase()) : c.tag_ids)?.map((t) => t.toLowerCase()) ?? [],
+    (c: Clip) => (c.id ? rallyTags.get(c.id.toLowerCase()) : c.tag_ids)?.map((t) => t.toLowerCase()) ?? [],
     [rallyTags],
   );
 
@@ -50,83 +56,129 @@ export function ClipList({
       preview[scope].filter((c) => {
         const byPlayer = (n: number | undefined) => !player || String(n) === player;
         if (tag && !tagsOf(c).includes(tag)) return false;
-        if (rally && String(c.rally_index) !== rally) return false;
         if (scope === 'rallies')
-          return (
-            (!kind && !player) ||
-            c.touches.some((t) => (!kind || t.kind === kind) && byPlayer(t.player?.number))
-          );
-        if (inRally && c.rally_index == null) return false;
+          return (!kind && !player) || c.touches.some((t) => (!kind || t.kind === kind) && byPlayer(t.player?.number));
         if (!byPlayer(c.player?.number)) return false;
         if (scope === 'scores') return !kind || c.touches.some((t) => t.kind === kind);
         return !kind || c.kind === kind;
       }),
-    [preview, scope, player, kind, rally, tag, inRally, tagsOf],
+    [preview, scope, player, kind, tag, tagsOf],
   );
+
+  const groupOf = (c: Clip) => (c.rally_index == null ? OUTSIDE : String(c.rally_index));
+  // The selection's group opens with it — also when auto-next walks on.
+  const selectedGroup = selected ? groupOf(selected) : null;
+  const [openedFor, setOpenedFor] = useState<string | null>(null);
+  if (selectedGroup !== openedFor) {
+    setOpenedFor(selectedGroup);
+    if (selectedGroup) setExpanded(selectedGroup);
+  }
+
+  // Auto-next stays on the side of the outside line it started on, so the
+  // closed outside group is not played into unasked.
+  const select = (c: Clip) =>
+    onSelect(c, clips.filter((x) => (x.rally_index == null) === (c.rally_index == null)));
+  const rallyClip = useMemo(() => new Map(preview.rallies.map((r) => [String(r.rally_index), r])), [preview.rallies]);
+  const rallyBounds = (r: Clip) => ({ rally_id: r.rally_index ?? 0, start: r.start, end: r.end });
+
+  /** The rally's outcome and favorites, on whichever row stands for it. */
+  const chips = (r: Clip | undefined) =>
+    r && (
+      <>
+        {r.winner && <Badge tone="success">Winner {sideLabel(r.winner)}</Badge>}
+        {r.loss_reason && (
+          <Badge tone={r.loss_reason_inferred ? 'neutral' : 'warning'}>
+            {lossReasonLabel(r.loss_reason)}
+            {r.loss_reason_inferred && ' (inferred)'}
+          </Badge>
+        )}
+        {tagsOf(r).map((t) => (
+          <Badge key={t} tone="accent">
+            {tagName.get(t) ?? 'Favorite'}
+          </Badge>
+        ))}
+      </>
+    );
+
+  const touchRows = (r: Clip) => (
+    <EventRows<Touch & { id: string }>
+      entries={r.touches.map((t) => ({ ...t, id: t.event_id }))}
+      empty="No touches in this rally"
+      columns="auto 4.5rem minmax(0,1fr) auto"
+      selectedId={null}
+      isActive={() => false}
+      onJump={(t) => onSeek(t.time)}
+    >
+      {(t) => (
+        <>
+          <ActionDot label={t.kind} visible />
+          <span className="text-xs capitalize text-text-primary">{t.kind}</span>
+          <span className="truncate text-xs text-text-secondary">{t.player && playerLabel(t.player)}</span>
+          <span className="font-mono text-[11px] tabular-nums text-text-muted">{formatActionTime(t.time)}</span>
+        </>
+      )}
+    </EventRows>
+  );
+
+  const clipRows = (entries: Clip[]) => (
+    <EventRows<Clip & { id: string }>
+      entries={entries.map((c) => ({ ...c, id: c.key }))}
+      empty="No clips"
+      columns="auto minmax(0,1fr) auto"
+      selectedId={selected?.key ?? null}
+      isActive={() => false}
+      onJump={select}
+    >
+      {(c) => (
+        <>
+          <ActionDot label={c.kind} visible />
+          <span className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs">
+            <span className="capitalize text-text-primary">
+              {c.kind} #{c.index}
+            </span>
+            {c.player && <span className="truncate text-text-secondary">{playerLabel(c.player)}</span>}
+            {scope === 'scores' && chips(c)}
+          </span>
+          <span className="font-mono text-[11px] tabular-nums text-text-muted">
+            {formatActionTime(c.start)} → {formatActionTime(c.end)}
+          </span>
+        </>
+      )}
+    </EventRows>
+  );
+
+  const toggle = (key: string) => setExpanded(expanded === key ? null : key);
+  const outside = clips.filter((c) => c.rally_index == null);
 
   return (
     <div className="flex min-h-0 flex-col gap-3">
-      <div className="flex gap-1 rounded-lg bg-surface-200 p-1">
-        {SCOPES.map(([key, label]) => (
-          <button
-            key={key}
-            onClick={() => onScope(key)}
-            className={cn(
-              'flex-1 rounded-md py-1.5 text-xs font-semibold',
-              key === scope ? 'bg-surface-50 text-text-primary shadow-sm' : 'text-text-muted',
-            )}
-          >
-            {label} <span className="font-normal text-text-muted">{preview[key].length}</span>
-          </button>
-        ))}
-      </div>
-      <div className="grid grid-cols-2 gap-2">
-        <select
-          aria-label="球員"
-          className={fieldCls}
-          value={player}
-          onChange={(e) => setPlayer(e.target.value)}
-        >
-          <option value="">全部球員</option>
+      <Segmented
+        options={(Object.keys(SCOPE_LABEL) as Scope[]).map((key) => ({
+          key,
+          label: `${SCOPE_LABEL[key]} ${preview[key].length}`,
+        }))}
+        value={scope}
+        onChange={onScope}
+      />
+      <div className="grid grid-cols-3 gap-2">
+        <select aria-label="Player" className={cn(fieldCls, 'text-xs')} value={player} onChange={(e) => setPlayer(e.target.value)}>
+          <option value="">All players</option>
           {preview.roster.map((p) => (
             <option key={p.number} value={p.number}>
               {playerLabel(p)}
             </option>
           ))}
         </select>
-        <select
-          aria-label="動作"
-          className={fieldCls}
-          value={kind}
-          onChange={(e) => setKind(e.target.value)}
-        >
-          <option value="">全部動作</option>
-          {['serve', 'receive', 'set', 'spike', 'block'].map((k) => (
+        <select aria-label="Kind" className={cn(fieldCls, 'text-xs capitalize')} value={kind} onChange={(e) => setKind(e.target.value)}>
+          <option value="">All kinds</option>
+          {KINDS.map((k) => (
             <option key={k} value={k}>
-              {KIND_LABEL[k]}
+              {k}
             </option>
           ))}
         </select>
-        <select
-          aria-label="回合"
-          className={fieldCls}
-          value={rally}
-          onChange={(e) => setRally(e.target.value)}
-        >
-          <option value="">全部回合</option>
-          {preview.rallies.map((r) => (
-            <option key={r.key} value={String(r.rally_index)}>
-              Rally {r.rally_index}
-            </option>
-          ))}
-        </select>
-        <select
-          aria-label="收藏"
-          className={fieldCls}
-          value={tag}
-          onChange={(e) => setTag(e.target.value)}
-        >
-          <option value="">全部收藏</option>
+        <select aria-label="Favorite" className={cn(fieldCls, 'text-xs')} value={tag} onChange={(e) => setTag(e.target.value)}>
+          <option value="">All favorites</option>
           {tags
             .filter((t) => t.deleted_at === null)
             .map((t) => (
@@ -136,54 +188,63 @@ export function ClipList({
             ))}
         </select>
       </div>
-      {scope !== 'rallies' && (
-        <label className="flex items-center gap-2 text-xs text-text-secondary">
-          <input type="checkbox" checked={inRally} onChange={(e) => setInRally(e.target.checked)} />
-          只看回合內
-        </label>
-      )}
-      <p className="text-xs text-text-muted">{clips.length} 個片段</p>
-      <div className="min-h-0 flex-1 space-y-1 overflow-auto pr-1">
-        {clips.map((c) => (
-          <button
-            key={c.key}
-            onClick={() => onSelect(c, clips)}
-            className={cn(
-              'w-full rounded-lg border px-3 py-2 text-left text-sm',
-              c.key === selected
-                ? 'border-primary/60 bg-primary/10'
-                : 'border-border-light hover:border-border-bright',
-            )}
-          >
-            <span className="flex items-baseline gap-2">
-              <span className="font-semibold">
-                {scope === 'rallies'
-                  ? `Rally ${c.rally_index}`
-                  : `${KIND_LABEL[c.kind] ?? c.kind} #${c.index}`}
-              </span>
-              <span className="font-mono text-xs text-text-muted">
-                {formatTimePrecise(c.start, 1)}–{formatTimePrecise(c.end, 1)}
-              </span>
-            </span>
-            <span className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-text-secondary">
-              {scope !== 'rallies' && c.rally_index != null && <span>Rally {c.rally_index}</span>}
-              {c.player && <span>{playerLabel(c.player)}</span>}
-              {c.winner && <Badge tone="success">{SIDE_LABEL[c.winner] ?? c.winner}得分</Badge>}
-              {c.loss_reason && (
-                <Badge tone={c.loss_reason_inferred ? 'neutral' : 'warning'}>
-                  {lossReasonLabel(c.loss_reason)}
-                  {c.loss_reason_inferred && '（推測）'}
-                </Badge>
-              )}
-              {tagsOf(c).map((t) => (
-                <Badge key={t} tone="accent">
-                  {tagName.get(t) ?? '收藏'}
-                </Badge>
-              ))}
-            </span>
-          </button>
-        ))}
+      <div className="h-px bg-border" />
+      <div className="vq-list max-h-[calc(100vh-24rem)] min-h-0 space-y-1.5 overflow-y-auto pr-1">
+        {clips.length === 0 && <p className="py-6 text-center text-xs text-text-muted">No clips match the filters.</p>}
+        {scope === 'rallies'
+          ? clips.map((r, i) => {
+              const key = groupOf(r);
+              const open = expanded === key;
+              return (
+                <div key={r.key} className="space-y-1.5">
+                  <RallyRow
+                    index={i}
+                    rally={rallyBounds(r)}
+                    count={r.touches.length}
+                    open={open}
+                    selected={r.key === selected?.key}
+                    live={false}
+                    onSelect={() => select(r)}
+                    onToggle={() => (open ? setExpanded(null) : select(r))}
+                  >
+                    {chips(r)}
+                  </RallyRow>
+                  {open && touchRows(r)}
+                </div>
+              );
+            })
+          : preview.rallies.map((r, i) => {
+              const key = groupOf(r);
+              const entries = clips.filter((c) => groupOf(c) === key);
+              if (!entries.length) return null;
+              return (
+                <div key={r.key} className="space-y-1.5">
+                  <RallyRow
+                    index={i}
+                    rally={rallyBounds(r)}
+                    count={entries.length}
+                    open={expanded === key}
+                    selected={selectedGroup === key}
+                    live={false}
+                    onSelect={() => toggle(key)}
+                    onToggle={() => toggle(key)}
+                  >
+                    {scope === 'actions' && chips(rallyClip.get(key))}
+                  </RallyRow>
+                  {expanded === key && clipRows(entries)}
+                </div>
+              );
+            })}
+        {scope !== 'rallies' && outside.length > 0 && (
+          <div className="space-y-1.5">
+            <OutsideRow rowKey={OUTSIDE} count={outside.length} open={expanded === OUTSIDE} onToggle={() => toggle(OUTSIDE)} />
+            {expanded === OUTSIDE && clipRows(outside)}
+          </div>
+        )}
       </div>
+      <p className="text-[11px] text-text-muted">
+        {clips.length} of {preview[scope].length} clips
+      </p>
     </div>
   );
 }

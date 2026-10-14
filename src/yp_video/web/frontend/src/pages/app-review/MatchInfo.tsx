@@ -2,18 +2,19 @@
  *  loss reasons — and what this view cannot show. */
 
 import { SectionLabel } from '@/components/ui/SectionLabel';
+import { formatDateTime } from '@/lib/format';
 import type { LibraryMatch, Preview } from './types';
-import { SIDE_LABEL, fmtDate, lossReasonLabel, playerLabel } from './types';
+import { lossReasonLabel, playerLabel, sideLabel } from './types';
 
 export function MatchInfo({ match, preview }: { match: LibraryMatch; preview: Preview }) {
   return (
     <div className="space-y-5 text-sm">
       <div>
-        <SectionLabel>比賽</SectionLabel>
+        <SectionLabel>Match</SectionLabel>
         <p className="font-medium">{match.title}</p>
         <p className="text-xs text-text-muted">
-          {match.angle} · {fmtDate(match.recorded_at ?? match.updated_at)} · 分析{' '}
-          {match.analysis?.status ?? '無'}
+          {match.angle} · {formatDateTime(match.recorded_at ?? match.updated_at)} · analysis{' '}
+          {match.analysis?.status ?? 'none'}
         </p>
       </div>
       {preview.warnings.length > 0 && (
@@ -26,23 +27,23 @@ export function MatchInfo({ match, preview }: { match: LibraryMatch; preview: Pr
         </div>
       )}
       <div>
-        <SectionLabel>場邊比分（依得分方）</SectionLabel>
-        {preview.court_totals.length === 0 && <p className="text-text-muted">沒有回合。</p>}
+        <SectionLabel>Court-side score (by winner side)</SectionLabel>
+        {preview.court_totals.length === 0 && <p className="text-text-muted">No rallies.</p>}
         {preview.court_totals.map((t) => (
           <p key={t.set}>
-            第 {t.set} 局：
+            Set {t.set}:{' '}
             {Object.entries(t.points)
-              .map(([side, n]) => `${SIDE_LABEL[side] ?? side} ${n}`)
+              .map(([side, n]) => `${sideLabel(side)} ${n}`)
               .join(' : ')}
-            {t.unknown > 0 && <span className="text-text-muted">（未知 {t.unknown}）</span>}
+            {t.unknown > 0 && <span className="text-text-muted"> ({t.unknown} unknown)</span>}
           </p>
         ))}
-        <p className="mt-1 text-xs text-text-muted">場邊累計不代表換場後的球隊比分。</p>
+        <p className="mt-1 text-xs text-text-muted">Court-side totals are not team scores once sides switch.</p>
       </div>
       <div>
-        <SectionLabel>失分原因</SectionLabel>
+        <SectionLabel>Loss reasons</SectionLabel>
         {Object.keys(preview.loss_reasons).length === 0 ? (
-          <p className="text-text-muted">尚未標記。</p>
+          <p className="text-text-muted">None marked.</p>
         ) : (
           Object.entries(preview.loss_reasons).map(([code, n]) => (
             <p key={code}>
@@ -52,15 +53,16 @@ export function MatchInfo({ match, preview }: { match: LibraryMatch; preview: Pr
         )}
       </div>
       <div>
-        <SectionLabel>名單</SectionLabel>
+        <SectionLabel>Roster</SectionLabel>
         {preview.roster.length === 0 ? (
-          <p className="text-text-muted">沒有名單。</p>
+          <p className="text-text-muted">No roster.</p>
         ) : (
-          <p>{preview.roster.map(playerLabel).join('、')}</p>
+          <p>{preview.roster.map(playerLabel).join(', ')}</p>
         )}
       </div>
       <p className="text-xs text-text-muted">
-        只存在使用者裝置上的狀態看不到：看過標記、收藏內的手動排序、各比賽的取景偏好。
+        State kept only on the user's device is not visible here: watched marks, manual order inside favorites,
+        per-match framing preferences.
       </p>
     </div>
   );

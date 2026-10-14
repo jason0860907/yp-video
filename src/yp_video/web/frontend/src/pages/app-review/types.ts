@@ -1,5 +1,9 @@
+import { SIDE_DISPLAY } from '@/lib/courtSide';
+import type { CourtSide } from '@/types/api';
+
 export type WindowMode = 'full_play' | 'to_next' | 'whole_rally';
 export type Scope = 'rallies' | 'actions' | 'scores';
+export type Tab = 'clips' | 'match' | 'review';
 
 export interface AppUser {
   id: string;
@@ -117,6 +121,12 @@ export interface MatchDetail {
   review_id: string | null;
   reviews: ReviewSummary[];
 }
+/** GET …/video/meta — the source's probe; the frame clock needs its rate. */
+export interface VideoMeta {
+  fps: number;
+  num_frames: number;
+  duration: number;
+}
 export interface Review {
   id: string;
   created_at: string;
@@ -125,33 +135,15 @@ export interface Review {
   application: unknown | null;
 }
 
-export const KIND_LABEL: Record<string, string> = {
-  rally: '回合',
-  serve: '發球',
-  receive: '接球',
-  set: '舉球',
-  spike: '扣球',
-  block: '攔網',
-  score: '得分',
-  other: '其他',
-};
-
-export const SIDE_LABEL: Record<string, string> = {
-  left: '左側',
-  right: '右側',
-  near: '近側',
-  far: '遠側',
-};
-
 const LOSS_REASON: Record<string, string> = {
-  spike_error: '扣球失誤',
-  blocked: '被攔網',
-  set_error: '舉球失誤',
-  receive_error: '接發失誤',
-  chance_ball_error: '嗆司接噴',
-  defense_error: '防守失誤',
-  serve_error: '發球失誤',
-  other: '其他',
+  spike_error: 'Spike error',
+  blocked: 'Blocked',
+  set_error: 'Set error',
+  receive_error: 'Receive error',
+  chance_ball_error: 'Free-ball error',
+  defense_error: 'Defense error',
+  serve_error: 'Serve error',
+  other: 'Other',
 };
 
 /** The App's LossReason.displayName: built-ins by code, custom ones carry
@@ -160,14 +152,14 @@ export const lossReasonLabel = (code: string) =>
   LOSS_REASON[code] ?? (code.startsWith('custom:') ? code.slice(7) : code);
 
 export const DECISION_LABEL: Record<string, string> = {
-  accepted_feedback: '已審核保留',
-  rejected: '不採用',
-  remove_event: '已移除人工標註事件',
-  remove_rally: '已移除人工標註回合',
-  update_rally: '已更新回合界線',
+  accepted_feedback: 'Kept as feedback',
+  rejected: 'Rejected',
+  remove_event: 'Label event removed',
+  remove_rally: 'Label rally removed',
+  update_rally: 'Rally bounds updated',
 };
 
 export const playerLabel = (p: Player) => `#${p.number} ${p.name}`;
 
-export const fmtDate = (epoch: number) =>
-  new Date(epoch * 1000).toLocaleString('zh-TW', { dateStyle: 'short', timeStyle: 'short' });
+/** A court side as Label shows it (遠/近/左/右); anything else verbatim. */
+export const sideLabel = (side: string) => SIDE_DISPLAY[side as CourtSide] ?? side;

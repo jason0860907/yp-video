@@ -122,6 +122,8 @@ export const API = {
       `/app-review/users/${encodeURIComponent(user)}/matches/${encodeURIComponent(match)}${q({ mode, corrected })}`,
     video: (user: string, match: string) =>
       `/app-review/users/${encodeURIComponent(user)}/matches/${encodeURIComponent(match)}/video`,
+    videoMeta: (user: string, match: string) =>
+      `/app-review/users/${encodeURIComponent(user)}/matches/${encodeURIComponent(match)}/video/meta`,
     startReview: (user: string, match: string) =>
       `/app-review/users/${encodeURIComponent(user)}/matches/${encodeURIComponent(match)}/review`,
     review: (id: string) => `/app-review/reviews/${id}`,

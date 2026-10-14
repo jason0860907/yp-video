@@ -9,43 +9,51 @@ import { API, apiFetch, errMsg } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { fieldCls } from '@/components/form/Field';
 import { Badge } from '@/components/ui/Badge';
-import { formatTimePrecise } from '@/lib/format';
 import { Button } from '@/components/ui/Button';
 import { Collapsible } from '@/components/ui/Collapsible';
+import { ErrorState } from '@/components/ui/ErrorState';
+import { toast } from '@/components/feedback/toast';
+import { EventRows } from '@/components/action/RallyRows';
+import { VideoCombobox } from '@/components/video/VideoCombobox';
+import { formatActionTime } from '@/lib/actionEditorModel';
+import { formatDateTime } from '@/lib/format';
 import type { Candidate, LibraryMatch, MatchDetail, Review } from './types';
-import { DECISION_LABEL, SIDE_LABEL, fmtDate, lossReasonLabel } from './types';
+import { DECISION_LABEL, lossReasonLabel, sideLabel } from './types';
 
 type Value = Record<string, unknown>;
+
+const LABEL_MODES = [
+  ['rally', 'Rally'],
+  ['action', 'Action'],
+  ['association', 'Association'],
+  ['reid', 'ReID'],
+] as const;
 
 function title(c: Candidate): string {
   const v = c.value as Value;
   const [scope, rest] = [c.scope, c.id.slice(c.id.indexOf(':') + 1)];
+  const span = (a: [number, number]) => `${formatActionTime(a[0])}–${formatActionTime(a[1])}`;
   if (scope === 'actions' || scope === 'scores') {
     const parts = [
-      v.removed && '刪除',
-      v.trim_start != null &&
-        `裁切 ${formatTimePrecise(v.trim_start as number, 1)}–${formatTimePrecise(v.trim_end as number, 1)}`,
-      v.loss_reason && `失分：${lossReasonLabel(v.loss_reason as string)}`,
-      (v.tag_ids as string[]).length > 0 && '收藏',
+      v.removed && 'removed',
+      v.trim_start != null && `trimmed ${span([v.trim_start as number, v.trim_end as number])}`,
+      v.loss_reason && `loss: ${lossReasonLabel(v.loss_reason as string)}`,
+      (v.tag_ids as string[]).length > 0 && 'favorited',
     ].filter(Boolean);
     const where =
-      rest.startsWith('rally-') || rest.startsWith('unmapped-')
-        ? '回合結尾'
-        : formatTimePrecise(Number(rest), 1);
-    return `${scope === 'actions' ? 'Action' : 'Score'} ${where}：${parts.join('、') || '無變更'}`;
+      rest.startsWith('rally-') || rest.startsWith('unmapped-') ? 'rally end' : formatActionTime(Number(rest));
+    return `${scope === 'actions' ? 'Action' : 'Score'} ${where}: ${parts.join(', ') || 'no change'}`;
   }
-  if (scope === 'rally') return `刪除 Rally ${rest}`;
-  if (scope === 'rally_bounds') {
-    const [b, a] = [v.before as [number, number], v.after as [number, number]];
-    return `Rally ${rest} 界線 ${formatTimePrecise(b[0], 1)}–${formatTimePrecise(b[1], 1)} → ${formatTimePrecise(a[0], 1)}–${formatTimePrecise(a[1], 1)}`;
-  }
+  if (scope === 'rally') return `Rally ${rest} deleted`;
+  if (scope === 'rally_bounds')
+    return `Rally ${rest} bounds ${span(v.before as [number, number])} → ${span(v.after as [number, number])}`;
   if (scope === 'winner') {
-    const side = (s: unknown) => (s ? (SIDE_LABEL[s as string] ?? String(s)) : '未知');
-    return `Rally ${rest} 得分方 ${side(v.before)} → ${side(v.after)}`;
+    const side = (s: unknown) => (s ? sideLabel(String(s)) : 'unknown');
+    return `Rally ${rest} winner ${side(v.before)} → ${side(v.after)}`;
   }
-  if (scope === 'player') return `觸球 ${v.event_id as string} 指派 #${v.number as number}`;
-  if (scope === 'identification') return '人物分組與門檻';
-  if (scope === 'roster') return '球員名單';
+  if (scope === 'player') return `Touch ${v.event_id as string} assigned #${v.number as number}`;
+  if (scope === 'identification') return 'Person grouping and thresholds';
+  if (scope === 'roster') return 'Roster';
   return c.id;
 }
 
@@ -71,7 +79,6 @@ export function FeedbackPanel({
   const [video, setVideo] = useState(() => sourceCut(detail.match));
   const [sameSource, setSameSource] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
 
   const review = useQuery({
     queryKey: ['app-review', 'review', reviewId],
@@ -107,9 +114,8 @@ export function FeedbackPanel({
     review.data.application != null ||
     ['remove_event', 'remove_rally', 'update_rally'].includes(previous?.decision ?? '');
 
-  const run = async (fn: () => Promise<Review>) => {
+  const run = async (fn: () => Promise<Review>, done: string) => {
     setBusy(true);
-    setError('');
     try {
       const next = await fn();
       queryClient.setQueryData(['app-review', 'review', next.id], next);
@@ -118,66 +124,70 @@ export function FeedbackPanel({
       void target.refetch();
       setNote('');
       setSameSource(false);
+      toast.success(done);
     } catch (e) {
-      setError(errMsg(e));
+      toast.error(errMsg(e));
     } finally {
       setBusy(false);
     }
   };
   const decide = (decision: string) =>
-    run(() =>
-      apiFetch<Review>(API.appReview.decisions(reviewId!), {
-        method: 'POST',
-        body: {
-          candidate_id: candidate!.id,
-          decision,
-          note,
-          video,
-          revision: target.data?.[decision] || '',
-          same_source: sameSource,
-        },
-      }),
+    run(
+      () =>
+        apiFetch<Review>(API.appReview.decisions(reviewId!), {
+          method: 'POST',
+          body: {
+            candidate_id: candidate!.id,
+            decision,
+            note,
+            video,
+            revision: target.data?.[decision] || '',
+            same_source: sameSource,
+          },
+        }),
+      DECISION_LABEL[decision] ?? decision,
     );
 
   if (candidates.length === 0)
-    return <p className="text-sm text-text-muted">此比賽沒有使用者修正。</p>;
+    return <p className="py-6 text-center text-xs text-text-muted">This match has no user corrections.</p>;
+  if (review.error) return <ErrorState message={errMsg(review.error)} onRetry={() => void review.refetch()} />;
 
   return (
     <div className="flex min-h-0 flex-col gap-3 text-sm">
       {!reviewId ? (
-        <div className="space-y-2 rounded-lg border border-border-light p-3">
-          <p className="text-text-secondary">
-            {candidates.length} 項修正尚未審核。開始審核會固定目前這份 App
-            快照，之後使用者再改也不影響。
+        <div className="space-y-2 rounded-xl border border-border bg-surface-100 p-3">
+          <p className="text-xs text-text-secondary">
+            {candidates.length} corrections not reviewed. Starting a review pins this App snapshot — later
+            edits by the user do not change it.
           </p>
           <Button
+            size="sm"
             intent="primary"
             disabled={busy}
             onClick={() =>
-              void run(() =>
-                apiFetch<Review>(API.appReview.startReview(user, detail.match.id), {
-                  method: 'POST',
-                }),
+              void run(
+                () => apiFetch<Review>(API.appReview.startReview(user, detail.match.id), { method: 'POST' }),
+                'Review started',
               )
             }
           >
-            開始審核
+            Start review
           </Button>
         </div>
       ) : (
         <div className="flex flex-wrap items-center gap-2 text-xs text-text-muted">
-          已審核 {Object.keys(decisions).length}/{candidates.length}
+          Reviewed {Object.keys(decisions).length}/{candidates.length}
           {detail.reviews.length > 1 && (
             <select
-              aria-label="審核快照"
+              aria-label="Review snapshot"
               className={cn(fieldCls, 'h-8 w-auto py-0 text-xs')}
               value={reviewId}
               onChange={(e) => setReviewId(e.target.value)}
             >
               {detail.reviews.map((r) => (
                 <option key={r.id} value={r.id}>
-                  {r.id === detail.review_id ? '目前快照' : '舊快照'} ·{' '}
-                  {fmtDate(Date.parse(r.created_at) / 1000)} · {r.reviewed}/{r.total}
+                  {r.id === detail.review_id ? 'Current snapshot' : 'Older snapshot'} ·{' '}
+                  {formatDateTime(Date.parse(r.created_at) / 1000)} · {r.reviewed}/{r.total}
                 </option>
               ))}
             </select>
@@ -186,102 +196,92 @@ export function FeedbackPanel({
       )}
       {review.data?.application != null && (
         <Button
+          size="sm"
           disabled={busy}
           onClick={() =>
-            void run(() => apiFetch<Review>(API.appReview.recover(reviewId!), { method: 'POST' }))
+            void run(
+              () => apiFetch<Review>(API.appReview.recover(reviewId!), { method: 'POST' }),
+              'Interrupted label import recovered',
+            )
           }
         >
-          恢復中斷的標註匯入
+          Recover the interrupted label import
         </Button>
       )}
 
-      <div className="max-h-72 space-y-1 overflow-auto pr-1">
-        {candidates.map((c) => {
-          const d = decisions[c.id];
-          return (
-            <button
-              key={c.id}
-              onClick={() => {
-                setSelected(c.id);
-                setNote('');
-                setSameSource(false);
-                setError('');
-                if (c.clip) onSeek(c.clip);
-              }}
-              className={cn(
-                'w-full rounded-lg border px-3 py-2 text-left',
-                c.id === selected
-                  ? 'border-primary/60 bg-primary/10'
-                  : 'border-border-light hover:border-border-bright',
-              )}
-            >
-              <span className="block">{title(c)}</span>
-              <span className="mt-1 block">
+      <div className="vq-list max-h-72 overflow-y-auto pr-1 [&>div]:ml-0">
+        <EventRows
+          entries={candidates}
+          empty="No corrections"
+          columns="minmax(0,1fr) auto"
+          selectedId={selected || null}
+          isActive={() => false}
+          onJump={(c) => {
+            setSelected(c.id);
+            setNote('');
+            setSameSource(false);
+            if (c.clip) onSeek(c.clip);
+          }}
+        >
+          {(c) => {
+            const d = decisions[c.id];
+            return (
+              <>
+                <span className="text-xs text-text-primary">{title(c)}</span>
                 {d ? (
                   <Badge tone="success">{DECISION_LABEL[d.decision] ?? d.decision}</Badge>
                 ) : (
-                  <Badge>待審核</Badge>
+                  <Badge>To review</Badge>
                 )}
-              </span>
-            </button>
-          );
-        })}
+              </>
+            );
+          }}
+        </EventRows>
       </div>
 
       {candidate && (
-        <div className="space-y-3 border-t border-border-light pt-3">
+        <div className="space-y-3 border-t border-border pt-3">
           {candidate.reason && <p className="text-xs text-amber-400">{candidate.reason}</p>}
-          <Collapsible label="原始修正內容">
+          <Collapsible label="Raw correction">
             <pre className="max-h-48 overflow-auto rounded bg-surface-100 p-2 text-xs">
               {JSON.stringify(candidate.value, null, 2)}
             </pre>
           </Collapsible>
           {previous && (
             <p className="text-xs text-text-muted">
-              {DECISION_LABEL[previous.decision] ?? previous.decision} · {previous.actor} ·{' '}
-              {previous.at}
+              {DECISION_LABEL[previous.decision] ?? previous.decision} · {previous.actor} · {previous.at}
               {previous.note && <span className="block text-text-secondary">{previous.note}</span>}
             </p>
           )}
           <textarea
-            aria-label="審核依據"
+            aria-label="Review note"
             className={fieldCls}
-            placeholder="記錄影片中的觀察、誤判依據或不採用的原因"
+            placeholder="What the video shows, why it is a misdetection, or why the change is not adopted"
             value={note}
             onChange={(e) => setNote(e.target.value)}
           />
           <div className="flex flex-wrap gap-2">
             <Button size="sm" disabled={locked} onClick={() => void decide('accepted_feedback')}>
-              保留為已審核回饋
+              Keep as reviewed feedback
             </Button>
             <Button size="sm" disabled={locked} onClick={() => void decide('rejected')}>
-              不採用
+              Reject
             </Button>
           </div>
           {canApply && (
-            <div className="space-y-2 rounded-lg border border-border-light p-3">
-              <label className="block text-xs text-text-muted">
-                寫入的 pipeline 影片
-                <select
-                  className={fieldCls}
-                  value={video}
-                  onChange={(e) => setVideo(e.target.value)}
-                >
-                  <option value="">選擇影片</option>
-                  {videos.data?.map((v) => (
-                    <option key={v.name} value={v.name}>
-                      {v.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+            <div className="space-y-2 rounded-xl border border-border bg-surface-100 p-3">
+              <p className="text-xs text-text-muted">Pipeline video to write</p>
+              <VideoCombobox
+                items={videos.data ?? []}
+                value={video}
+                onChange={setVideo}
+                query={videos}
+                placeholder="Search pipeline videos…"
+              />
               <label className="flex gap-2 text-xs">
-                <input
-                  type="checkbox"
-                  checked={sameSource}
-                  onChange={(e) => setSameSource(e.target.checked)}
-                />
-                已對照兩份影片，確認是同一來源、同一時間軸，且此修改符合標註定義，而非使用者觀看偏好。
+                <input type="checkbox" checked={sameSource} onChange={(e) => setSameSource(e.target.checked)} />
+                I compared both videos: same source, same timeline, and the change fits the label definition
+                rather than a viewing preference.
               </label>
               <Button
                 size="sm"
@@ -290,30 +290,18 @@ export function FeedbackPanel({
                 onClick={() => void decide(operation)}
               >
                 {operation === 'update_rally'
-                  ? '確認完整回合界線並更新標註'
-                  : '確認誤判並移除該人工標註'}
+                  ? 'Confirm the full rally bounds and update the label'
+                  : 'Confirm the misdetection and remove the human label'}
               </Button>
               {video && target.data && !target.data[operation] && (
-                <p className="text-xs text-amber-400">
-                  尚無人工標註，請先到 Label 完整審核並儲存。
-                </p>
+                <p className="text-xs text-amber-400">No human label yet — fully review and save it in Label first.</p>
               )}
+              {target.error && <p className="text-xs text-red-400">{errMsg(target.error)}</p>}
               {video && (
                 <div className="flex flex-wrap gap-3 text-xs text-primary">
-                  {(
-                    [
-                      ['rally', 'Rally'],
-                      ['action', 'Action'],
-                      ['association', 'Association'],
-                      ['reid', 'ReID'],
-                    ] as const
-                  ).map(([mode, label]) => (
-                    <Link
-                      key={mode}
-                      target="_blank"
-                      to={`/label?video=${encodeURIComponent(video)}&mode=${mode}`}
-                    >
-                      開啟 {label} 標註
+                  {LABEL_MODES.map(([mode, label]) => (
+                    <Link key={mode} target="_blank" to={`/label?video=${encodeURIComponent(video)}&mode=${mode}`}>
+                      Open {label} label
                     </Link>
                   ))}
                 </div>
@@ -321,11 +309,6 @@ export function FeedbackPanel({
             </div>
           )}
         </div>
-      )}
-      {(error || review.error || target.error) && (
-        <p role="alert" className="text-xs text-red-400">
-          {error || errMsg(review.error ?? target.error)}
-        </p>
       )}
     </div>
   );
