@@ -134,7 +134,7 @@ def candidates(bundle: Bundle) -> list[dict]:
                     and clip is not None,
                     "reason": None
                     if clip
-                    else "找不到唯一片段：請確認分析版本及 Rally UUID 對照。",
+                    else "No unique clip found — check the analysis version and the Rally UUID mapping.",
                 }
             )
     library = bundle.library_rallies or []
@@ -150,7 +150,7 @@ def candidates(bundle: Bundle) -> list[dict]:
                 "value": {"deleted_rally_index": index},
                 "clip": {"start": rally.start, "end": rally.end} if rally else None,
                 "rally": rally.model_dump() if rally else None,
-                "reason": None if rally else "原始分析沒有此回合。",
+                "reason": None if rally else "The original analysis has no such rally.",
             }
         )
     for edited in library:
@@ -177,7 +177,7 @@ def candidates(bundle: Bundle) -> list[dict]:
                     "start": min(original.start, edited.start),
                     "end": max(original.end, edited.end),
                 },
-                "reason": "App 裁切是播放偏好；只有確認符合完整回合起訖，才能採用為標註。",
+                "reason": "An App trim is a playback preference; adopt it as a label only once it matches the full rally's start and end.",
             }
         )
     for index, side in sorted((c.rally_winner_overrides if c else {}).items()):
@@ -192,7 +192,7 @@ def candidates(bundle: Bundle) -> list[dict]:
                     "after": side,
                 },
                 "clip": {"start": rally.start, "end": rally.end} if rally else None,
-                "reason": "得分方修正先保存審核意見；要進訓練請到 Label 的 Rally 修改 winner。",
+                "reason": "Winner corrections are kept as review feedback; to train on one, change the winner in Label → Rally.",
             }
         )
     pi = c.player_identification if c else None
@@ -208,7 +208,7 @@ def candidates(bundle: Bundle) -> list[dict]:
                     "clip": {"start": max(0, event.time - 1), "end": event.time + 1}
                     if event
                     else None,
-                    "reason": "球員身分需在 Association／ReID 確認實際人物裁圖；此處只保存審核意見。",
+                    "reason": "Player identity must be confirmed on the actual person crops in Association / ReID; only the review feedback is kept here.",
                 }
             )
         # Preserve the run-scoped mapping, removed units and threshold even
@@ -219,7 +219,7 @@ def candidates(bundle: Bundle) -> list[dict]:
                 "scope": "identification",
                 "value": pi.model_dump(),
                 "clip": None,
-                "reason": "人物分組與門檻不直接轉成訓練標註。",
+                "reason": "Person grouping and thresholds never become training labels directly.",
             }
         )
     if c and bundle.roster:
@@ -229,7 +229,7 @@ def candidates(bundle: Bundle) -> list[dict]:
                 "scope": "roster",
                 "value": [r.model_dump() for r in bundle.roster],
                 "clip": None,
-                "reason": "名單與跨場身分保留於回饋，不以姓名猜測訓練身分。",
+                "reason": "Rosters and cross-match identities stay feedback; names are never used to guess training identities.",
             }
         )
     return rows
@@ -256,10 +256,10 @@ def prepare_patch(
     path = target_path(video, operation)
     if not path.exists():
         raise ValueError(
-            "請先在 Label 完整審核並儲存此影片；回饋不會把整份模型預測升格為人工標註。"
+            "Fully review and save this video in Label first — feedback never promotes a whole model prediction to a human label."
         )
     if fingerprint(path.read_bytes()) != revision:
-        raise ValueError("標註已變更，請重新載入目標後再審核。")
+        raise ValueError("The labels changed — reload the target before reviewing.")
     meta, rows = read_jsonl(path)
     if operation == "remove_event":
         if not candidate.get("can_remove_event"):

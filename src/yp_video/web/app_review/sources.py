@@ -100,8 +100,8 @@ def match_bundle(lib: dict, row: dict) -> tuple[Bundle, list[str]]:
     # own on the next edit), so the user sees this match uncorrected.
     if corrections and corrections.get("schema_version") != CORRECTIONS_VERSION:
         notes.append(
-            f"修正檔是 {corrections.get('schema_version')} 版，App 只讀 "
-            f"{CORRECTIONS_VERSION}：使用者目前看到的是未修正的結果。"
+            f"Corrections are schema {corrections.get('schema_version')}; the App reads only "
+            f"{CORRECTIONS_VERSION}, so the user currently sees the uncorrected result."
         )
         corrections = None
     folder = next((f for f in lib["folders"] if f["id"] == row["folder_id"]), None)

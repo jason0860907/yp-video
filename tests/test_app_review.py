@@ -374,12 +374,12 @@ def test_false_positive_import_preserves_others_clears_done(store):
 
 def test_missing_human_file_stale_source_and_wrong_duration(store):
     r = review()
-    with pytest.raises(ValueError, match="完整審核"):
+    with pytest.raises(ValueError, match="Fully review"):
         apply(r)
     path = action_file()
     with pytest.raises(ValueError, match="Confirm identical"):
         apply(r, same_source=False)
-    with pytest.raises(ValueError, match="已變更"):
+    with pytest.raises(ValueError, match="labels changed"):
         apply(r, revision="old")
     meta, rows = read_jsonl(path)
     write_jsonl(path, {**meta, "num_frames": 1000}, rows)
@@ -614,6 +614,14 @@ def test_http_match_review_apply_and_reload(store, monkeypatch):
         assert client.get("/api/app-review/users/user/matches/other").status_code == 404
         video = client.get(f"{base}/video", follow_redirects=False)
         assert video.headers["location"] == "https://v/src.mp4"
+        probed = []
+        monkeypatch.setattr(
+            app_review,
+            "probe_video_metadata",
+            lambda src: probed.append(src) or {"fps": 29.97, "num_frames": 900},
+        )
+        meta = client.get(f"{base}/video/meta").json()
+        assert meta["fps"] == 29.97 and probed == ["https://v/src.mp4"]
         created = client.post(f"{base}/review")
         assert created.status_code == 200
         data = created.json()

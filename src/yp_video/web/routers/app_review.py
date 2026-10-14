@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import RedirectResponse
 from pydantic import Field
 
+from yp_video.core.ffmpeg import FFmpegError, probe_video_metadata
 from yp_video.web.access import current_actor
 from yp_video.web.app_review import feedback, sources
 from yp_video.web.app_review.models import Bundle, Window
@@ -27,7 +28,7 @@ def checked(fn, *args, **kwargs):
         raise HTTPException(404, str(exc)) from exc
     except (BotoCoreError, ClientError) as exc:
         raise HTTPException(
-            502, "無法讀取雲端資料，請確認分析／辨識檔案存在及 R2 讀取權限。"
+            502, "Could not read cloud data — check that the analysis / identification files exist and R2 is readable."
         ) from exc
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
@@ -70,6 +71,17 @@ def match(user: str, match: str, mode: Window = "full_play", corrected: bool = T
 def match_video(user: str, match: str):
     _, row = checked(sources.library_match, user, match)
     return RedirectResponse(checked(sources.video_url, row))
+
+
+@router.get("/users/{user}/matches/{match}/video/meta")
+def match_video_meta(user: str, match: str):
+    """``{fps, duration, num_frames, start_time}`` of the source: the App's
+    result is in seconds, the player's frame clock needs the real rate."""
+    _, row = checked(sources.library_match, user, match)
+    try:
+        return probe_video_metadata(checked(sources.video_url, row))
+    except FFmpegError as exc:
+        raise HTTPException(502, str(exc)) from exc
 
 
 @router.post("/users/{user}/matches/{match}/review")

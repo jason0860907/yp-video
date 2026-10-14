@@ -359,7 +359,7 @@ def project(
     warnings = []
     if bundle.library_rallies is None:
         warnings.append(
-            "未提供 Library Rally：使用模型回合界線；App 裁切及無哨聲 Score 的修正無法還原。"
+            "No library rallies: using the model's rally bounds; App trims and whistle-less Score corrections cannot be restored."
         )
     if correction and correction.player_identification:
         pi = correction.player_identification
@@ -367,7 +367,7 @@ def project(
             not bundle.identification or pi.result_id != bundle.identification.job_id
         ):
             warnings.append(
-                "人物辨識結果未提供或 result_id 不符；只套用單次觸球指派，未套用整組人物配對。"
+                "Identification result missing or its result_id differs: only single-touch player assignments are applied, not the whole person grouping."
             )
     if correction:
         known = {c.key for _, c in action_contexts} | {c.key for c in score_contexts}
@@ -376,7 +376,7 @@ def project(
         ]
         if unresolved:
             warnings.append(
-                "無法對應的修正（需要相同分析版本／Rally UUID）："
+                "Corrections that could not be mapped (they need the same analysis version / Rally UUID): "
                 + ", ".join(unresolved)
             )
     return {
