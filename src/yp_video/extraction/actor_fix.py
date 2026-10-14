@@ -160,15 +160,22 @@ def apply(stem: str, frame_source: str, command: ActorFixCommand) -> ActorFixRes
         store.players_write_transaction(),
     ):
         refreshing_models = tuple(store.embedded_models(stem))
-        # No matrix is written here, so none is snapshotted; what keeps them
-        # honest until the background refresh is the sidecar, snapshotted
-        # with the files this transaction does write.
+        # A matrix is written here only to grow it by the row of a record
+        # this fix creates, so only then is it snapshotted; otherwise what
+        # keeps them honest until the background refresh is the sidecar,
+        # snapshotted with the files this transaction does write.
+        _meta, records = read_jsonl_cached(record_file)
+        creates_record = all(r["id"] != command.event_id for r in records)
         snapshots = _snapshot(
             [
                 record_file,
                 actor_labels.actors_path(stem),
                 store.players_path(stem),
                 store.embedding_refresh_path(stem),
+                *(
+                    store.embedding_path(stem, model)
+                    for model in (refreshing_models if creates_record else ())
+                ),
             ]
         )
         crop_dirs = (
@@ -210,7 +217,8 @@ def apply(stem: str, frame_source: str, command: ActorFixCommand) -> ActorFixRes
 def _event_frame(stem: str, event_id: str) -> int:
     """The event's current frame — the action annotation's, joined by id."""
     _meta, records = read_jsonl_cached(extraction_store.records_path(stem))
-    for record in extraction_store.with_current_actions(records, stem):
+    joined = [*records, *pipeline.unextracted_records(records, stem)]
+    for record in extraction_store.with_current_actions(joined, stem):
         if record["id"] == event_id:
             return int(record["frame"])
     raise KeyError(f"No current action event {event_id}")

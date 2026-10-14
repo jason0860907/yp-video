@@ -43,12 +43,18 @@ import queue
 import threading
 import time
 from collections.abc import Sequence
+from contextlib import ExitStack
 from pathlib import Path
 
 from yp_video.actor.labels import ActorLabel
 from yp_video.actor.resolution import ActorResolution, actor_resolution
 from yp_video.contracts.action import event_id as action_event_id
-from yp_video.core.jsonl import read_jsonl, read_jsonl_cached, read_jsonl_header, write_jsonl
+from yp_video.core.jsonl import (
+    read_jsonl,
+    read_jsonl_cached,
+    read_jsonl_header,
+    write_jsonl,
+)
 from yp_video.core.person_boxes import DETECTOR_NAME as FUSION_DETECTOR_NAME
 from yp_video.core.person_boxes import PersonBoxes, person_boxes_path
 from yp_video.core.progress import ProgressFn
@@ -117,6 +123,35 @@ def load_events(stem: str) -> list[dict]:
     ]
     events.sort(key=lambda e: e["frame"])
     return events
+
+
+def new_record(event: dict) -> dict:
+    """An event nobody has associated yet, which is what every event is
+    until the association stage runs."""
+    return {
+        "id": action_event_id(event),
+        "frame": event["frame"],
+        "xy": event.get("xy"),
+        "status": "miss",
+        "resolution": ActorResolution.UNRESOLVED.value,
+        "box": None,
+        "score": None,
+        "candidates": 0,
+        "crop": None,
+    }
+
+
+def unextracted_records(records: Sequence[dict], stem: str) -> list[dict]:
+    """A new record for every action event the extraction has no row for.
+
+    Those are events added to the action annotation after detection ran.
+    Their detector candidates are missing, but nothing a human verdict needs
+    is: a pick is a 2XLarge box on the event frame (actor/box_check.py), not
+    one of the detections. So they are listed — and fixed — like any other
+    unassociated event instead of hiding until a re-detect.
+    """
+    have = {str(record["id"]) for record in records}
+    return [new_record(event) for event in load_events(stem) if action_event_id(event) not in have]
 
 
 def detections_current(stem: str, *, detector: str = DETECTOR_NAME) -> bool:
@@ -271,19 +306,7 @@ def detect_video(
                             raise decode_error[0]
             xy = event.get("xy")
             event_id = action_event_id(event)
-            record = {
-                "id": event_id,
-                "frame": event["frame"],
-                "xy": xy,
-                # An event nobody has associated yet, which is what every
-                # event is until the association stage runs.
-                "status": "miss",
-                "resolution": ActorResolution.UNRESOLVED.value,
-                "box": None,
-                "score": None,
-                "candidates": 0,
-                "crop": None,
-            }
+            record = new_record(event)
             # A pick already made survives a re-detect. Dropping it would
             # discard a human verdict that this stage has no opinion about.
             record.update(
@@ -508,9 +531,14 @@ def apply_actor_fix(
 
     Returns the updated record without embeddings (the UI payload).
     """
-    with embedding_write_transaction(), _actor_fix_lock:
-        mark_actor_embedding_stale(stem, embedded_models(stem), event_id)
-        return _apply_actor_fix(stem, frame_source, event_id, label)
+    models = embedded_models(stem)
+    with embedding_write_transaction(), ExitStack() as matrix_locks:
+        # A record created here grows every matrix by a row (see below).
+        for model in models:
+            matrix_locks.enter_context(_embedding_lock(stem, model))
+        with _actor_fix_lock:
+            mark_actor_embedding_stale(stem, models, event_id)
+            return _apply_actor_fix(stem, frame_source, event_id, label, models)
 
 
 def _apply_actor_fix(
@@ -518,14 +546,27 @@ def _apply_actor_fix(
     frame_source: str,
     event_id: str,
     label: ActorLabel | None,
+    models: list[str],
 ) -> dict:
     import cv2
+    import numpy as np
 
     path = records_path(stem)
     meta, records = read_jsonl(path)
     row = next((i for i, r in enumerate(records) if r["id"] == event_id), None)
     if row is None:
-        raise KeyError(f"No extraction record for event {event_id}")
+        # An event added after detection: its record starts here, and every
+        # matrix gains its (empty) row so they stay aligned with the records.
+        new = next((r for r in unextracted_records(records, stem) if r["id"] == event_id), None)
+        if new is None:
+            raise KeyError(f"No extraction record for event {event_id}")
+        records.append(new)
+        row = len(records) - 1
+        for model in models:
+            matrix = load_embedding_matrix(stem, model)
+            save_embedding_matrix(
+                stem, model, np.vstack([matrix, np.full((1, matrix.shape[1]), np.nan)])
+            )
     # The label sits on the action's CURRENT frame (actor_fix._event_frame),
     # and an action edit since extraction leaves this row's copy stale; a
     # stale frame would send the picked box across frames to be followed.

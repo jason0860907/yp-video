@@ -151,7 +151,7 @@ class ActorFixTransactionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw_dir:
             root = Path(raw_dir)
             reid_file = root / "match_reid.jsonl"
-            reid_file.write_bytes(b"reid")
+            reid_file.write_text('{}\n{"id": "e1", "frame": 9}\n')
             model_files = {
                 model: root / f"match.{model}.npy" for model in models
             }
@@ -288,7 +288,7 @@ class ActorFixTransactionTests(unittest.TestCase):
             crop_dir = root / "crops"
             masked_dir = root / "masked"
             for path, content in (
-                (record_file, b"records-before"),
+                (record_file, b'{}\n{"id": "e1", "frame": 9}\n'),
                 (actors_file, b"actors-before"),
                 (players_file, b"players-before"),
                 (embedding_file, b"embedding-before"),
@@ -364,7 +364,7 @@ class ActorFixTransactionTests(unittest.TestCase):
                         ),
                     )
 
-            self.assertEqual(record_file.read_bytes(), b"records-before")
+            self.assertEqual(record_file.read_bytes(), b'{}\n{"id": "e1", "frame": 9}\n')
             self.assertEqual(actors_file.read_bytes(), b"actors-before")
             self.assertEqual(players_file.read_bytes(), b"players-before")
             self.assertEqual(embedding_file.read_bytes(), b"embedding-before")
@@ -518,7 +518,7 @@ class StagesStopWhereTheyShouldTests(unittest.TestCase):
         require the stage that depends on it."""
         with tempfile.TemporaryDirectory() as raw_dir:
             root = Path(raw_dir)
-            (root / "match_reid.jsonl").write_bytes(b"reid")
+            (root / "match_reid.jsonl").write_text('{}\n{"id": "e1", "frame": 9}\n')
 
             with (
                 patch.object(
@@ -603,7 +603,7 @@ class ActorFixRevertTests(unittest.TestCase):
                 patch.object(actor_fix.extraction_store, "action_annotation_path", return_value=actions),
             ):
                 returned = pipeline._apply_actor_fix(
-                    "match", "/nonexistent/match.mp4", "e1", None
+                    "match", "/nonexistent/match.mp4", "e1", None, []
                 )
             [record] = read_jsonl(records)[1]
 
@@ -848,7 +848,7 @@ class ActorEmbeddingRefreshTests(unittest.TestCase):
             reid_file = root / "match_reid.jsonl"
             matrix = root / "match.model.npy"
             refreshes = root / "match_embedding-refresh.json"
-            reid_file.write_bytes(b"reid")
+            reid_file.write_text('{}\n{"id": "e1", "frame": 9}\n')
             matrix.write_bytes(b"matrix")
             os.utime(reid_file, ns=(1, 1))
             os.utime(matrix, ns=(2, 2))

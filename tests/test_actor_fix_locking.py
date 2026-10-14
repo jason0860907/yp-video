@@ -137,7 +137,7 @@ class LockOrderTests(unittest.TestCase):
         models = ["clip-reident", "clip-reident-masked"]
         with tempfile.TemporaryDirectory() as raw_dir:
             root = Path(raw_dir)
-            (root / "match_reid.jsonl").write_bytes(b"reid")
+            (root / "match_reid.jsonl").write_text('{}\n{"id": "e1", "frame": 9}\n')
             for model in models:
                 (root / f"match.{model}.npy").write_bytes(b"embedding")
 
@@ -237,6 +237,20 @@ class LockOrderTests(unittest.TestCase):
             )
 
         self.assertEqual(updated, ["clip-reident"])
+        self.assertEqual(
+            seen, {"embedding-write", "model-matrix", "record-file"}
+        )
+
+    def test_applying_a_record_fix_respects_the_hierarchy(self) -> None:
+        """A fix may grow every matrix, so it holds the per-model locks
+        before the record file."""
+        with instrumented(
+            patch.object(pipeline, "embedded_models", return_value=["a", "b"]),
+            patch.object(pipeline, "mark_actor_embedding_stale"),
+            patch.object(pipeline, "_apply_actor_fix", return_value={"id": "e1"}),
+        ) as seen:
+            pipeline.apply_actor_fix("match", "match.mp4", "e1", None)
+
         self.assertEqual(
             seen, {"embedding-write", "model-matrix", "record-file"}
         )

@@ -200,13 +200,13 @@ def records(name: str) -> dict:
 
 def _slim_records(path: Path, stem: str) -> list[dict]:
     meta, records = read_jsonl_cached(path)
-    out = []
     # Only the events somebody can actually be identified in — a score has no
-    # player, and nobody is tracked between rallies (extraction/store.py).
-    for r in extraction_store.labelable(records, stem, float(meta.get("fps") or 0)):
-        r = dict(r)
-        out.append(r)
-    return out
+    # player, and nobody is tracked between rallies (extraction/store.py) —
+    # including events added since detection ran, which a fix records
+    # (pipeline.unextracted_records). Frame order, like a detection pass.
+    rows = [*records, *pipeline.unextracted_records(records, stem)]
+    labelable = extraction_store.labelable(rows, stem, float(meta.get("fps") or 0))
+    return sorted(labelable, key=lambda r: r["frame"])
 
 
 @router.get("/crop/{name}/{crop_file}")

@@ -26,7 +26,7 @@ class CurrentFrameTests(unittest.TestCase):
                 patch.object(store, "action_annotation_path", return_value=actions),
             ):
                 record = pipeline._apply_actor_fix(
-                    "v", "unused.mp4", "e1", ActorLabel(ActorVerdict.OCCLUDED)
+                    "v", "unused.mp4", "e1", ActorLabel(ActorVerdict.OCCLUDED), []
                 )
             self.assertEqual(record["frame"], 1901)
             self.assertEqual(read_jsonl(records)[1][0]["frame"], 1901)
