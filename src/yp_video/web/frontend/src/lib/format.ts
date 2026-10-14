@@ -50,6 +50,12 @@ export function formatClock(epochSeconds: number | null | undefined): string {
   return `${pad(d.getHours(), 2)}:${pad(d.getMinutes(), 2)}:${pad(d.getSeconds(), 2)}`;
 }
 
+/** Local short date and time from a unix-seconds timestamp. */
+export function formatDateTime(epochSeconds: number | null | undefined): string {
+  if (!epochSeconds) return '—';
+  return new Date(epochSeconds * 1000).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
+}
+
 export function formatDuration(seconds: number | null | undefined): string {
   if (!seconds) return '—';
   const h = Math.floor(seconds / 3600);

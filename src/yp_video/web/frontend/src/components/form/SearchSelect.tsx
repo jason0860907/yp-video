@@ -5,13 +5,15 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import type { KeyboardEvent } from 'react';
+import type { KeyboardEvent, ReactNode } from 'react';
 import { cn } from '@/lib/cn';
 import { fieldCls } from '@/components/form/Field';
 
 export interface SearchSelectOption {
   value: string;
   label: string;
+  /** A second line under the label in the list (counts, dates, badges). */
+  detail?: ReactNode;
 }
 
 export function SearchSelect({
@@ -130,6 +132,7 @@ export function SearchSelect({
                 )}
               >
                 <span className="block min-w-0 break-all">{option.label}</span>
+                {option.detail && <span className="mt-1 block text-[11px] text-text-muted">{option.detail}</span>}
               </button>
             ))
           )}

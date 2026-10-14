@@ -7,7 +7,7 @@ const POINTS_PER_SECOND = 120;
 const MIN_POINTS = 2400;
 const MAX_POINTS = 96000;
 
-const EMPTY_WAVEFORM: WaveformData = {
+export const EMPTY_WAVEFORM: WaveformData = {
   video: '',
   loading: false,
   error: '',
