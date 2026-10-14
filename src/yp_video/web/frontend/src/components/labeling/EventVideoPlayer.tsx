@@ -115,8 +115,8 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
   });
   const [showTracks, setShowTracks] = useState(false);
   // 2XLarge boxes below DENSE_LABEL_SCORE (dashed): often the occluded actor,
-  // often clutter — the labeler decides whether they are on screen.
-  const [showWeakBoxes, setShowWeakBoxes] = useState(true);
+  // often clutter — off by default, the labeler turns them on when needed.
+  const [showWeakBoxes, setShowWeakBoxes] = useState(false);
   // Expanded rally (or OUTSIDE) in the sidebar + last event jumped to — same
   // interaction as the Action Label rally list.
   const [expanded, setExpanded] = useState<string | null>(null);
