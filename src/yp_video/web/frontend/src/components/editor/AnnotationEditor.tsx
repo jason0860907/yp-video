@@ -66,7 +66,7 @@ function TimeField({ seconds, onCommit }: { seconds: number; onCommit: (value: n
  *  picking it once up top keeps each row to two buttons instead of four. */
 type SideAxis = 'lr' | 'nf';
 const AXIS_SIDES: Record<SideAxis, CourtSide[]> = { lr: ['left', 'right'], nf: ['near', 'far'] };
-const AXIS_DISPLAY: Record<SideAxis, string> = { lr: 'L/R', nf: 'N/F' };
+const AXIS_DISPLAY: Record<SideAxis, string> = { lr: '左/右', nf: '遠/近' };
 
 export interface EditorAnnotation {
   rally_id: number | null;
