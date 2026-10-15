@@ -27,7 +27,6 @@ Only manual annotations seed this; pre-annotations are model output.
 from __future__ import annotations
 
 import json
-import os
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -41,7 +40,7 @@ from yp_video.config import (
     BALL_PSEUDO_LABELS_DIR,
 )
 from yp_video.contracts.action import LABEL_FILE_SUFFIX
-from yp_video.core.jsonl import read_jsonl, write_jsonl
+from yp_video.core.jsonl import atomic_binary, read_jsonl, write_jsonl
 
 # A flight: consecutive visible contacts this far apart. Shorter is one touch
 # marked twice; longer spans a dead ball or a missed contact.
@@ -117,28 +116,27 @@ def detect_candidates(video_path: Path, *, should_pause: Callable[[], bool]) -> 
     found = detector.detect(video_path, spans(pairs), should_pause=should_pause)
     out = candidates_path(stem)
     out.parent.mkdir(parents=True, exist_ok=True)
-    part = out.with_name(out.name + ".part.npz")
-    np.savez_compressed(
-        part,
-        frames=np.asarray(found.frames, dtype=np.int32),
-        counts=np.asarray([len(b) for b in found.boxes], dtype=np.int32),
-        boxes=np.concatenate([b[:, :4] for b in found.boxes]) if found.boxes else np.zeros((0, 4), np.float32),
-        scores=np.concatenate([b[:, 4] for b in found.boxes]) if found.boxes else np.zeros((0,), np.float32),
-        meta=np.array(json.dumps({
-            "video": stem,
-            "model": detector.VARIANT,
-            "weights": str(detector.WEIGHTS),
-            "resolution": detector.RESOLUTION,
-            "class_id": detector.CLASS_ID,
-            "score_floor": detector.SCORE_FLOOR,
-            "fps": found.fps,
-            "stride": found.stride,
-            "frame_size": list(found.frame_size),
-            "annotation_events": meta.get("num_events"),
-            "created_at": time.time(),
-        })),
-    )
-    os.replace(part, out)
+    with atomic_binary(out) as f:
+        np.savez_compressed(
+            f,
+            frames=np.asarray(found.frames, dtype=np.int32),
+            counts=np.asarray([len(b) for b in found.boxes], dtype=np.int32),
+            boxes=np.concatenate([b[:, :4] for b in found.boxes]) if found.boxes else np.zeros((0, 4), np.float32),
+            scores=np.concatenate([b[:, 4] for b in found.boxes]) if found.boxes else np.zeros((0,), np.float32),
+            meta=np.array(json.dumps({
+                "video": stem,
+                "model": detector.VARIANT,
+                "weights": str(detector.WEIGHTS),
+                "resolution": detector.RESOLUTION,
+                "class_id": detector.CLASS_ID,
+                "score_floor": detector.SCORE_FLOOR,
+                "fps": found.fps,
+                "stride": found.stride,
+                "frame_size": list(found.frame_size),
+                "annotation_events": meta.get("num_events"),
+                "created_at": time.time(),
+            })),
+        )
     return {"frames": len(found.frames), "boxes": int(sum(len(b) for b in found.boxes))}
 
 

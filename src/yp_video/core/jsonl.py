@@ -19,7 +19,8 @@ def atomic_write(path: Path) -> Iterator[TextIO]:
     """Open a temp file for writing and rename it over ``path`` on success.
 
     A concurrent reader sees the old or the new file — never a half-written
-    one. On failure the temp file is removed and nothing changes.
+    one, and the bytes are on disk before the rename (human annotations go
+    through here). On failure the temp file is removed and nothing changes.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     with NamedTemporaryFile(
@@ -27,6 +28,8 @@ def atomic_write(path: Path) -> Iterator[TextIO]:
     ) as f:
         try:
             yield f
+            f.flush()
+            os.fsync(f.fileno())
         except BaseException:
             os.unlink(f.name)
             raise
@@ -42,6 +45,8 @@ def atomic_binary(path: Path) -> Iterator[BinaryIO]:
     ) as f:
         try:
             yield f
+            f.flush()
+            os.fsync(f.fileno())
         except BaseException:
             os.unlink(f.name)
             raise

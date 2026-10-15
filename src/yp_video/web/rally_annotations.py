@@ -7,13 +7,12 @@ boundary adjustment preserves existing ids and fields through core.jsonl.
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 from typing import Literal
 
 from pydantic import Field
 
-from yp_video.core.jsonl import read_jsonl, read_jsonl_header
+from yp_video.core.jsonl import read_jsonl, read_jsonl_header, write_jsonl
 from yp_video.web.annotation_lock import annotation_write_lock
 from yp_video.web.schemas import StrictModel
 
@@ -96,18 +95,9 @@ def write_annotations_atomic(
             if a.winner is not None:
                 row["winner"] = a.winner
             rows.append(row)
-        tmp_path = output_path.with_suffix(output_path.suffix + f".tmp.{os.getpid()}")
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            meta = {
-                "_meta": True,
-                "video": video,
-                "duration": duration,
-                "max_rally_id": high,
-            }
-            f.write(json.dumps(meta, ensure_ascii=False) + "\n")
-            for row in rows:
-                f.write(json.dumps(row, ensure_ascii=False) + "\n")
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_path, output_path)
+        write_jsonl(
+            output_path,
+            {"video": video, "duration": duration, "max_rally_id": high},
+            rows,
+        )
         return rows, before

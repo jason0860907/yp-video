@@ -28,16 +28,14 @@ from __future__ import annotations
 
 import logging
 import math
-import os
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from tempfile import NamedTemporaryFile
 from typing import Literal
 
 from yp_video.actor import labels as actor_labels
 from yp_video.actor.labels import ActorLabel, ActorVerdict
-from yp_video.core.jsonl import read_jsonl_cached
+from yp_video.core.jsonl import atomic_binary, read_jsonl_cached
 from yp_video.extraction import pipeline
 from yp_video.extraction import store as extraction_store
 from yp_video.reid import store
@@ -121,16 +119,8 @@ def _restore(snapshot: _FileSnapshot) -> None:
     if snapshot.data is None:
         path.unlink(missing_ok=True)
         return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with NamedTemporaryFile(dir=path.parent, prefix=f"{path.name}.", suffix=".rollback", delete=False) as f:
-        try:
-            f.write(snapshot.data)
-            f.flush()
-            os.fsync(f.fileno())
-        except BaseException:
-            os.unlink(f.name)
-            raise
-    os.replace(f.name, path)
+    with atomic_binary(path) as f:
+        f.write(snapshot.data)
 
 
 def _directory_files(path: Path) -> set[Path]:

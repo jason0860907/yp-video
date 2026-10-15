@@ -23,7 +23,6 @@ neighbour's boxes instead of paying for both.
 from __future__ import annotations
 
 import json
-import os
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -32,6 +31,7 @@ import numpy as np
 
 from yp_video.config import PERSON_DENSE_DIR
 from yp_video.core.frames import open_video
+from yp_video.core.jsonl import atomic_binary
 from yp_video.core.progress import ProgressFn
 from yp_video.core.rallies import load_rallies, rally_fingerprint
 from yp_video.person.seg_batch import BatchSegDetector, span_frames
@@ -135,15 +135,14 @@ def detect_dense(
     }
     out = dense_path(stem)
     out.parent.mkdir(parents=True, exist_ok=True)
-    part = out.with_name(out.name + ".part.npz")
-    np.savez_compressed(
-        part,
-        frames=np.asarray(frames, dtype=np.int32),
-        times=np.asarray(times, dtype=np.float64),
-        counts=np.asarray(counts, dtype=np.int32),
-        boxes=np.concatenate(boxes) if boxes else np.zeros((0, 4), np.float16),
-        scores=np.concatenate(scores) if scores else np.zeros((0,), np.float16),
-        meta=np.array(json.dumps(meta)),
-    )
-    os.replace(part, out)
+    with atomic_binary(out) as f:
+        np.savez_compressed(
+            f,
+            frames=np.asarray(frames, dtype=np.int32),
+            times=np.asarray(times, dtype=np.float64),
+            counts=np.asarray(counts, dtype=np.int32),
+            boxes=np.concatenate(boxes) if boxes else np.zeros((0, 4), np.float16),
+            scores=np.concatenate(scores) if scores else np.zeros((0,), np.float16),
+            meta=np.array(json.dumps(meta)),
+        )
     return {"frames": len(frames), "boxes": int(sum(counts)), "rallies": len(spans)}
