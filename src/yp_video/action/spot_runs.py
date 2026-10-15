@@ -18,6 +18,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 
+from yp_video.action.prelabel import package_manifest
 from yp_video.contracts.action import (
     ACTION_CONTRACT_VERSION,
     SPOT_PACKAGE_TYPE,
@@ -81,8 +82,8 @@ def checkpoint_package_options(
     superset is fine: unused heads are skipped on load). Auxiliary heads the
     package lacks start from random weights, which is how a new head joins a
     trained model — the label names them, so such an init never passes for a
-    plain fine-tune. A package with no readable manifest is excluded: what it
-    contains cannot be verified.
+    plain fine-tune. Only current-contract packages are offered
+    (``prelabel.package_manifest``).
     """
     options: list[dict] = []
     if checkpoints_dir.exists():
@@ -90,12 +91,10 @@ def checkpoint_package_options(
             ckpt = run_dir / "checkpoint_best.pt"
             if not run_dir.is_dir() or not ckpt.is_file():
                 continue
-            manifest = load_json_file(run_dir / "manifest.json")
-            if not isinstance(manifest, dict):
+            manifest = package_manifest(run_dir)
+            if manifest is None:
                 continue
-            if manifest.get("type") != SPOT_PACKAGE_TYPE:
-                continue
-            carried = set(manifest.get("tasks") or ())
+            carried = set(manifest["tasks"])
             if not set(spotting_tasks(tasks)) <= carried:
                 continue
             label = _package_label(run_dir, manifest)
@@ -227,9 +226,9 @@ def export_checkpoint_package(
     label_subdirs: Sequence[str],
     training: dict,
     cmd: list[str],
-    serveable_tasks: Sequence[str] = (),
-    tasks: Sequence[str] | None = None,
-    recipe: str | None = None,
+    serveable_tasks: Sequence[str],
+    tasks: Sequence[str],
+    recipe: str,
 ) -> dict:
     """Copy a finished run's durable artifacts into a checkpoint package.
 
@@ -239,8 +238,7 @@ def export_checkpoint_package(
     ``label_subdirs``, and a ``manifest.json`` describing how it was trained.
 
     ``tasks`` / ``recipe`` are what a SPOT package declares so predict
-    surfaces can ask "does it serve X"; the independent association trainer
-    passes neither. ``serveable_tasks`` names the tasks a predict surface can
+    surfaces can ask "does it serve X". ``serveable_tasks`` names the tasks a predict surface can
     load on their own. Every declared task's best epoch is recorded in the
     manifest, but only a serveable task earns its own weights file: a task
     that can only ever be loaded alongside another (location rides with
@@ -312,7 +310,8 @@ def export_checkpoint_package(
         "type": SPOT_PACKAGE_TYPE,
         "version": 1,
         "contract_version": ACTION_CONTRACT_VERSION,
-        **({"tasks": list(tasks), "recipe": recipe} if tasks is not None else {}),
+        "tasks": list(tasks),
+        "recipe": recipe,
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "run_name": package_dir.name,
         "source_run_dir": str(run_dir),

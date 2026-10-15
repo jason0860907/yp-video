@@ -14,7 +14,11 @@ from yp_video.config import (
     SPOT_PACKAGE_DIR,
     SPOT_PYTHON,
 )
-from yp_video.contracts.action import ACTION_LABELS, SPOT_PACKAGE_TYPE
+from yp_video.contracts.action import (
+    ACTION_CONTRACT_VERSION,
+    ACTION_LABELS,
+    SPOT_PACKAGE_TYPE,
+)
 from yp_video.core.checkpoints import checkpoint_ref, is_under, resolve_ref
 
 _BEST_CHECKPOINT = "checkpoint_best.pt"
@@ -43,10 +47,10 @@ def list_checkpoints(
     """
     checkpoints = []
     for run_dir in _iter_package_dirs(root):
-        manifest = _load_json(run_dir / "manifest.json")
-        if manifest.get("type") != SPOT_PACKAGE_TYPE:
+        manifest = package_manifest(run_dir)
+        if manifest is None:
             continue
-        tasks = list(manifest.get("tasks") or [])
+        tasks = list(manifest["tasks"])
         if task is not None and task not in tasks:
             continue
         pick = ((manifest.get("best_per_task") or {}).get(task) or {}) if task else {}
@@ -100,6 +104,19 @@ def resolve_checkpoint(
     if resolved.suffix != ".pt":
         raise ValueError("SPOT checkpoint must be a .pt file")
     return resolved
+
+
+def package_manifest(package_dir: Path) -> dict | None:
+    """The package's manifest.json when it is a SPOT package of the current
+    label contract, else None: a package of another contract was trained on
+    labels this code no longer writes and is not offered anywhere."""
+    manifest = _load_json(package_dir / "manifest.json")
+    if (
+        manifest.get("type") != SPOT_PACKAGE_TYPE
+        or manifest.get("contract_version") != ACTION_CONTRACT_VERSION
+    ):
+        return None
+    return manifest
 
 
 def _iter_package_dirs(root: Path) -> list[Path]:

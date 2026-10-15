@@ -19,7 +19,6 @@ the router mirrors it.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -68,11 +67,10 @@ StageProgress = Callable[[float, str], None]
 
 def package_tasks(checkpoint: Path) -> list[str]:
     """The heads a checkpoint package declares (manifest.json ``tasks``)."""
-    manifest = checkpoint.parent / "manifest.json"
-    try:
-        return list(json.loads(manifest.read_text(encoding="utf-8")).get("tasks") or [])
-    except (OSError, ValueError):
-        return []
+    manifest = prelabel.package_manifest(checkpoint.parent)
+    if manifest is None:
+        raise ValueError(f"{checkpoint.parent.name} is not a current-contract SPOT package")
+    return list(manifest["tasks"])
 
 
 def list_checkpoints(root: Path = SPOT_CHECKPOINTS_DIR) -> list[dict]:

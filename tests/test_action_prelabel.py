@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 from yp_video.action import prelabel
-from yp_video.contracts.action import SPOT_PACKAGE_TYPE
+from yp_video.contracts.action import ACTION_CONTRACT_VERSION, SPOT_PACKAGE_TYPE
 
 
 def _make_package(root: Path, name: str, manifest: dict | None, files=("checkpoint_best.pt",)) -> None:
@@ -24,6 +24,7 @@ class ListCheckpointsByTaskTest(unittest.TestCase):
                 root, "fusion",
                 {
                     "type": SPOT_PACKAGE_TYPE,
+                    "contract_version": ACTION_CONTRACT_VERSION,
                     "tasks": ["action", "location", "actor"],
                     "best": {"epoch": 5, "metric": "val_mAP", "value": 0.3},
                     "best_per_task": {
@@ -33,7 +34,10 @@ class ListCheckpointsByTaskTest(unittest.TestCase):
                 },
                 files=("checkpoint_best.pt", "checkpoint_best_actor.pt"),
             )
-            _make_package(root, "rally", {"type": SPOT_PACKAGE_TYPE, "tasks": ["rally", "winner"], "best": {"epoch": 1}})
+            _make_package(root, "rally", {"type": SPOT_PACKAGE_TYPE, "contract_version": ACTION_CONTRACT_VERSION,
+                                          "tasks": ["rally", "winner"], "best": {"epoch": 1}})
+            _make_package(root, "old_contract", {"type": SPOT_PACKAGE_TYPE, "contract_version": "2.0.0",
+                                                 "tasks": ["action", "rally"], "best": {"epoch": 1}})
             _make_package(root, "foreign", {"type": "some-other-package-type"})
             _make_package(root, "legacy", None)
 

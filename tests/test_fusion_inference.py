@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from yp_video.contracts.action import SPOT_PACKAGE_TYPE
+from yp_video.contracts.action import ACTION_CONTRACT_VERSION, SPOT_PACKAGE_TYPE
 from yp_video.tracklets import store as tracks_store
 from yp_video.web import fusion_inference as fi
 
@@ -19,7 +19,8 @@ def _make_package(root: Path, name: str, tasks: list[str]) -> Path:
     package.mkdir()
     (package / "checkpoint_best.pt").write_bytes(b"")
     (package / "manifest.json").write_text(
-        json.dumps({"type": SPOT_PACKAGE_TYPE, "tasks": tasks, "best": {"epoch": 1}}),
+        json.dumps({"type": SPOT_PACKAGE_TYPE, "contract_version": ACTION_CONTRACT_VERSION,
+                    "tasks": tasks, "best": {"epoch": 1}}),
         encoding="utf-8",
     )
     return package / "checkpoint_best.pt"
@@ -42,7 +43,8 @@ class CheckpointTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             checkpoint = _make_package(Path(tmp), "fusion", ["rally", "action", "actor"])
             self.assertEqual(fi.package_tasks(checkpoint), ["rally", "action", "actor"])
-            self.assertEqual(fi.package_tasks(Path(tmp) / "nowhere" / "x.pt"), [])
+            with self.assertRaises(ValueError):
+                fi.package_tasks(Path(tmp) / "nowhere" / "x.pt")
 
     def test_resolve_rejects_a_package_missing_a_head(self):
         with tempfile.TemporaryDirectory() as tmp:
