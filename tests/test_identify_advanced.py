@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from yp_video.action import spot_pass
 from yp_video.ball import track as ball_track
+from yp_video.core.frames import VideoGeometry
 from yp_video.extraction import identify, pipeline
 from yp_video.tracklets import fusion, tracking
 
@@ -65,13 +66,6 @@ class AdvancedIdentifyTests(unittest.TestCase):
         from yp_video.actor import candidates, person_action
         from yp_video.core import actor_picks
 
-        class _Capture:
-            def get(self, prop):
-                return 1920 if prop == 3 else 1080
-
-            def release(self):
-                pass
-
         with tempfile.TemporaryDirectory() as tmp:
             checkpoint = Path(tmp) / "checkpoint_best.pt"
             checkpoint.write_bytes(b"")
@@ -84,7 +78,7 @@ class AdvancedIdentifyTests(unittest.TestCase):
                 patch.object(spot_pass, "run_spot_pass"),
                 patch.object(pipeline, "detect_video"),
                 patch.object(candidates, "track_paths", return_value={"1:1": {120: [0, 0, 9, 9]}}),
-                patch("cv2.VideoCapture", return_value=_Capture()),
+                patch.object(identify, "video_geometry", return_value=VideoGeometry(30.0, 1920, 1080)),
                 patch.object(actor_picks, "load_actor_picks", return_value={"picks": 1}),
                 patch.object(person_action, "build_policy", side_effect=_StopAfterDetection) as build,
                 patch.object(person_action, "policy_from_spot_picks", side_effect=_StopAfterDetection) as spot,

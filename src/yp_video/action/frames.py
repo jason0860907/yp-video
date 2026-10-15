@@ -14,7 +14,12 @@ import threading
 from collections.abc import Callable
 from pathlib import Path
 
-from yp_video.config import ACTION_FRAMES_DIR, SPOT_DIR, SPOT_FRAME_CACHE_MODULE, SPOT_PYTHON
+from yp_video.config import (
+    ACTION_FRAMES_DIR,
+    SPOT_DIR,
+    SPOT_FRAME_CACHE_MODULE,
+    SPOT_PYTHON,
+)
 from yp_video.contracts.action import (
     FRAME_CACHE_FORMAT,
     FRAME_CACHE_METADATA,

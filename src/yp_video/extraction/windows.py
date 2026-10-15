@@ -27,6 +27,7 @@ from pathlib import Path
 
 import numpy as np
 
+from yp_video.core.frames import open_video
 from yp_video.core.jsonl import read_jsonl
 from yp_video.core.progress import ProgressFn
 from yp_video.extraction.cropping import (
@@ -106,11 +107,9 @@ def _cut_masked(video_path: Path, views: list[list[tuple[int, Box]]], out_dir: P
             need[frame].add(box)
     total = sum(len(b) for b in need.values())
     paths: dict[tuple[int, Box], Path] = {}
-    cap = cv2.VideoCapture(str(video_path))
-    if not cap.isOpened():
-        raise ValueError(f"Cannot open video: {video_path}")
+    cap, geometry = open_video(video_path)
     try:
-        w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        w, h = geometry.width, geometry.height
         pos = 0
         for frame in sorted(need):
             if frame < pos or frame - pos > _SEEK_GAP:

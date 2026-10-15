@@ -707,7 +707,7 @@ def export_dataset() -> Response:
             events = normalize_events(
                 stem,
                 data.get("events", []),
-                fps=float(data.get("fps") or 30.0),
+                fps=float(data["fps"]),
                 num_frames=int(data.get("num_frames") or 0),
                 rallies=rallies,
             )

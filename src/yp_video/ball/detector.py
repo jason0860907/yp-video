@@ -16,6 +16,7 @@ from pathlib import Path
 import numpy as np
 
 from yp_video.config import BALL_CHECKPOINTS_DIR
+from yp_video.core.frames import open_video, video_geometry
 from yp_video.core.progress import ProgressFn
 from yp_video.person.seg_batch import BatchSegDetector, span_frames
 
@@ -62,16 +63,7 @@ def release() -> None:
 
 def video_fps(video_path: Path) -> float:
     """cv2's frame rate — the one the frame indices here count in."""
-    import cv2
-
-    cap = cv2.VideoCapture(str(video_path))
-    try:
-        fps = cap.get(cv2.CAP_PROP_FPS)
-    finally:
-        cap.release()
-    if not fps > 0:
-        raise ValueError(f"Cannot read the frame rate of {video_path}")
-    return fps
+    return video_geometry(video_path).fps
 
 
 def detect(
@@ -83,17 +75,9 @@ def detect(
 ) -> Detections:
     """Every box above SCORE_FLOOR on the frames of ``spans`` (inclusive
     [first, last] frame pairs), sampled at about HZ."""
-    import cv2
 
-    cap = cv2.VideoCapture(str(video_path))
-    if not cap.isOpened():
-        raise ValueError(f"Cannot open video: {video_path}")
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    if not fps > 0 or width <= 0 or height <= 0:
-        cap.release()
-        raise ValueError(f"Invalid video geometry: {video_path}")
+    cap, geometry = open_video(video_path)
+    fps, width, height = geometry.fps, geometry.width, geometry.height
     stride = max(1, round(fps / HZ))
     total = sum((b - a) // stride + 1 for a, b in spans)
 

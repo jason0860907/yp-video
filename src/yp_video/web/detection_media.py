@@ -36,7 +36,9 @@ def metadata(video: Path) -> dict:
             raise HTTPException(409, "Native frame cache timestamps do not match images")
         # Native cache PTS use the stream time base.
         time_base = meta["time_base"][0] / meta["time_base"][1]
-        fps = (len(pts) - 1) / (float(pts[-1] - pts[0]) * time_base) if len(pts) > 1 else 30.0
+        if len(pts) < 2:
+            raise HTTPException(409, "Native frame cache has too few frames for a frame rate")
+        fps = (len(pts) - 1) / (float(pts[-1] - pts[0]) * time_base)
         return {"num_frames": len(pts), "fps": fps}
     return video_metadata(video)
 

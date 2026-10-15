@@ -31,6 +31,7 @@ from pathlib import Path
 import numpy as np
 
 from yp_video.config import PERSON_DENSE_DIR
+from yp_video.core.frames import open_video
 from yp_video.core.progress import ProgressFn
 from yp_video.core.rallies import load_rallies, rally_fingerprint
 from yp_video.person.seg_batch import BatchSegDetector, span_frames
@@ -72,21 +73,13 @@ def detect_dense(
     detector is released and DensePaused raised — nothing is written, so the
     video simply runs again later.
     """
-    import cv2
 
     stem = video_path.stem
     rallies = load_rallies(stem)
     if not rallies:
         raise ValueError(f"No rally spans for {stem}")
-    cap = cv2.VideoCapture(str(video_path))
-    if not cap.isOpened():
-        raise ValueError(f"Cannot open video: {video_path}")
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    if not fps > 0 or width <= 0 or height <= 0:
-        cap.release()
-        raise ValueError(f"Invalid video geometry: {video_path}")
+    cap, geometry = open_video(video_path)
+    fps, width, height = geometry.fps, geometry.width, geometry.height
     stride = max(1, round(fps / DENSE_MAX_FPS))
     spans = [(r["rally_id"], int(round(r["start"] * fps)), int(round(r["end"] * fps))) for r in rallies]
     total = sum((f1 - f0) // stride + 1 for _, f0, f1 in spans)

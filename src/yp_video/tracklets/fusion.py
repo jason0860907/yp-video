@@ -11,12 +11,18 @@ from pathlib import Path
 
 import numpy as np
 
+from yp_video.core.frames import video_geometry
 from yp_video.core.jsonl import read_jsonl_header, write_jsonl
 from yp_video.core.person_boxes import DETECTOR_NAME, PersonBoxes, person_boxes_path
 from yp_video.core.progress import ProgressFn
 from yp_video.core.rallies import load_rallies, rally_fingerprint
 from yp_video.tracklets import gta
-from yp_video.tracklets.store import tracks_current, tracks_masks_path, tracks_path, tracks_refined
+from yp_video.tracklets.store import (
+    tracks_current,
+    tracks_masks_path,
+    tracks_path,
+    tracks_refined,
+)
 from yp_video.tracklets.tracking import MIN_TRACK_FRAMES
 
 
@@ -50,7 +56,6 @@ def track_person_boxes(
     ``refine`` runs GTA over the ByteTrack tracklets: the Inference page wants
     App advanced's tracklets; standard identify wants its speed.
     """
-    import cv2
     import supervision as sv
 
     stem = video_path.stem
@@ -59,17 +64,8 @@ def track_person_boxes(
         raise ValueError(f"No rally spans for {stem}")
     path = person_boxes_path(stem)
     people = PersonBoxes.load(path)
-    cap = cv2.VideoCapture(str(video_path))
-    try:
-        if not cap.isOpened():
-            raise ValueError(f"Cannot open video: {video_path}")
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        fps = float(cap.get(cv2.CAP_PROP_FPS))
-    finally:
-        cap.release()
-    if width <= 0 or height <= 0 or fps <= 0:
-        raise ValueError(f"Invalid video geometry for {video_path}")
+    geometry = video_geometry(video_path)
+    width, height, fps = geometry.width, geometry.height, geometry.fps
 
     spans = [
         (r["rally_id"], np.searchsorted(people.frames, round(r["start"] * fps)),

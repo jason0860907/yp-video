@@ -69,7 +69,6 @@ def event_id(event: Mapping) -> str:
 # ── Label files ───────────────────────────────────────────────────
 # Per-video label files are JSONL with a ``_meta`` header line followed by one
 # record per video (see yp_video.core.jsonl).
-DEFAULT_FPS = 30.0
 
 
 # ── Tasks ─────────────────────────────────────────────────────────
@@ -463,7 +462,7 @@ class ActionLabelRecord(BaseModel):
 
     video: str = Field(description="Video stem; matches the frame-cache directory name")
     num_frames: int = Field(ge=0, description="Total frames in the cache for this video")
-    fps: float = Field(default=DEFAULT_FPS, gt=0)
+    fps: float = Field(gt=0)
     events: list[ActionEvent] = Field(default_factory=list)
 
 

@@ -94,7 +94,7 @@ def event_timeline(events: Sequence[dict], *, fps: float) -> list[dict]:
     it by event ``id``.
     """
     if fps <= 0:
-        fps = 30.0
+        raise ValueError(f"event_timeline needs a positive fps, got {fps}")
     out = []
     for event in events:
         item = _public({**event, "_t": _event_time(event, fps)})

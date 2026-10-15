@@ -25,7 +25,7 @@ from pathlib import Path
 
 from yp_video.action.rules import touch_sides
 from yp_video.config import ACTION_ANNOTATIONS_DIR
-from yp_video.contracts.action import DEFAULT_FPS, LABEL_FILE_GLOB, LABEL_FILE_SUFFIX
+from yp_video.contracts.action import LABEL_FILE_GLOB, LABEL_FILE_SUFFIX
 from yp_video.core.jsonl import read_jsonl
 from yp_video.core.rallies import load_rallies
 
@@ -126,7 +126,7 @@ def _report(directory: Path) -> None:
     for path in sorted(directory.glob(LABEL_FILE_GLOB)):
         meta, events = read_jsonl(path)
         stem = path.name.removesuffix(LABEL_FILE_SUFFIX)
-        labelled, report = with_attributes(stem, float(meta.get("fps") or DEFAULT_FPS), events)
+        labelled, report = with_attributes(stem, float(meta["fps"]), events)
         counts = {
             "events": len(labelled),
             "side": sum("side" in e for e in labelled),

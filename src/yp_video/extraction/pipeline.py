@@ -49,6 +49,7 @@ from pathlib import Path
 from yp_video.actor.labels import ActorLabel
 from yp_video.actor.resolution import ActorResolution, actor_resolution
 from yp_video.contracts.action import event_id as action_event_id
+from yp_video.core.frames import video_geometry
 from yp_video.core.jsonl import (
     read_jsonl,
     read_jsonl_cached,
@@ -222,11 +223,8 @@ def detect_video(
         previous_meta, existing = read_jsonl(path)
         previous = {str(r["id"]): r for r in existing}
 
-    cap = cv2.VideoCapture(str(video_path))
-    frame_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    frame_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    fps = float(cap.get(cv2.CAP_PROP_FPS)) or 30.0
-    cap.release()
+    geometry = video_geometry(video_path)
+    frame_w, frame_h, fps = geometry.width, geometry.height, geometry.fps
 
     # The dense tracking pass persists its raw detections for event frames
     # (same model, same resolution — see tracklets/tracking.py); every frame

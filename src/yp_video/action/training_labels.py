@@ -12,7 +12,7 @@ from yp_video.action.attributes import with_attributes
 from yp_video.action.frames import inspect_action_frame_cache
 from yp_video.action.training import rally_match_span
 from yp_video.config import ACTION_ANNOTATIONS_DIR, cut_kind_of
-from yp_video.contracts.action import DEFAULT_FPS, TASKS
+from yp_video.contracts.action import TASKS
 from yp_video.core.jsonl import read_jsonl, write_jsonl
 from yp_video.core.rallies import load_rallies
 
@@ -84,7 +84,7 @@ def prepare_action_training_labels(
         # our own additions) — never a stale copy of the rally spans.
         training_meta = {
             "video": stem,
-            "fps": meta.get("fps"),
+            "fps": meta["fps"],
             "source": meta.get("source"),
             "num_frames": cache_frames,
             "training_num_frames_source": "action_frame_cache",
@@ -98,7 +98,7 @@ def prepare_action_training_labels(
                 "training_num_frames": cache_frames,
             })
 
-        fps = float(meta.get("fps") or DEFAULT_FPS)
+        fps = float(meta["fps"])
         match_span = rally_match_span(stem, fps=fps, num_frames=cache_frames)
         if match_span is not None:
             training_meta["sample_spans"] = [list(match_span)]

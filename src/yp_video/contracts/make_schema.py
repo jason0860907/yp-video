@@ -19,8 +19,8 @@ from yp_video.config import PROJECT_ROOT
 
 from .action import (
     ACTION_CONTRACT_VERSION,
-    FRAME_GLOB,
     FRAME_CACHE_FORMAT,
+    FRAME_GLOB,
     FRAME_LONGEST_EDGE,
     FRAME_PY_PATTERN,
     LABEL_FILE_GLOB,

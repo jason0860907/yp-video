@@ -39,6 +39,7 @@ from pathlib import Path
 
 import numpy as np
 
+from yp_video.core.frames import open_video
 from yp_video.core.jsonl import write_jsonl
 from yp_video.core.progress import ProgressFn
 from yp_video.core.rallies import load_rallies, rally_fingerprint
@@ -109,7 +110,6 @@ def track_video(
     (extraction/pipeline.detect_video) reads them instead of re-decoding and
     re-detecting frames this dense pass already paid for.
     """
-    import cv2
     import supervision as sv
 
     stem = video_path.stem
@@ -120,15 +120,8 @@ def track_video(
             "tracking scans rallies only"
         )
 
-    cap = cv2.VideoCapture(str(video_path))
-    if not cap.isOpened():
-        raise ValueError(f"Cannot open video: {video_path}")
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    frame_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    frame_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    if not fps > 0 or frame_w <= 0 or frame_h <= 0:
-        cap.release()
-        raise ValueError(f"Invalid video geometry: {video_path}")
+    cap, geometry = open_video(video_path)
+    fps, frame_w, frame_h = geometry.fps, geometry.width, geometry.height
 
     spans = [
         (r["rally_id"], int(round(r["start"] * fps)), int(round(r["end"] * fps)))

@@ -73,7 +73,8 @@ def probe_video_metadata(path: Path | str) -> dict:
     back to ``round(duration * fps)`` when the container stores no frame count.
 
     Raises:
-        FFmpegError: ffprobe failed or returned invalid JSON.
+        FFmpegError: ffprobe failed, returned invalid JSON, or reported no
+            frame rate.
     """
     cmd = [
         "ffprobe", "-v", "error",
@@ -90,7 +91,9 @@ def probe_video_metadata(path: Path | str) -> dict:
     except json.JSONDecodeError as exc:
         raise FFmpegError("ffprobe returned invalid JSON") from exc
 
-    fps = parse_rate(stream.get("avg_frame_rate")) or parse_rate(stream.get("r_frame_rate")) or 30.0
+    fps = parse_rate(stream.get("avg_frame_rate")) or parse_rate(stream.get("r_frame_rate"))
+    if not fps:
+        raise FFmpegError(f"ffprobe reported no frame rate for {path}")
     duration = float(stream.get("duration") or 0)
     num_frames = int(stream.get("nb_frames") or round(duration * fps))
     return {

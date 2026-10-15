@@ -9,7 +9,11 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from yp_video.actor.person_labels import write_person_labels
-from yp_video.contracts.action import FRAME_CACHE_FORMAT, FRAME_CACHE_METADATA, FRAME_LONGEST_EDGE
+from yp_video.contracts.action import (
+    FRAME_CACHE_FORMAT,
+    FRAME_CACHE_METADATA,
+    FRAME_LONGEST_EDGE,
+)
 from yp_video.person import annotations as store
 from yp_video.web import detection_media, detection_predictions
 from yp_video.web.routers import detection_label as routes

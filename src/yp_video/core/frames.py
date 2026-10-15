@@ -13,6 +13,7 @@ from __future__ import annotations
 from collections import deque
 from collections.abc import Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
 
 #: A gap up to this many frames is grabbed through rather than sought across.
@@ -20,6 +21,41 @@ GRAB_GAP = 150
 #: Frames per run; each run opens its own capture and starts with one seek.
 RUN_LENGTH = 16
 WORKERS = 4
+
+
+@dataclass(frozen=True)
+class VideoGeometry:
+    """cv2's view of a video: the frame rate its frame indices count in."""
+
+    fps: float
+    width: int
+    height: int
+
+
+def open_video(video_path: Path):
+    """``(capture, geometry)`` for a readable video; the caller releases it.
+
+    Raises ValueError when the video will not open or reports no frame rate
+    or size — never a guessed default.
+    """
+    import cv2
+
+    cap = cv2.VideoCapture(str(video_path))
+    geometry = VideoGeometry(
+        fps=float(cap.get(cv2.CAP_PROP_FPS)),
+        width=int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+        height=int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+    )
+    if not cap.isOpened() or not geometry.fps > 0 or geometry.width <= 0 or geometry.height <= 0:
+        cap.release()
+        raise ValueError(f"Cannot read video geometry: {video_path}")
+    return cap, geometry
+
+
+def video_geometry(video_path: Path) -> VideoGeometry:
+    cap, geometry = open_video(video_path)
+    cap.release()
+    return geometry
 
 
 def read_frames(video_path: Path, frames: Iterable[int]) -> Iterator[tuple[int, object | None]]:

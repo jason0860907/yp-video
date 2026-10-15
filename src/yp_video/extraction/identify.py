@@ -29,6 +29,7 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
+from yp_video.core.frames import video_geometry
 from yp_video.core.progress import ProgressFn
 from yp_video.reid.embedder import threshold_calibration
 
@@ -140,7 +141,6 @@ def identify_players(
     """
     # Deferred imports: this module is also imported for its dataclasses by
     # code that must not pull the GPU stack in.
-    import cv2
 
     from yp_video.action.spot_pass import RallyOptions, SpotOptions, run_spot_pass
     from yp_video.actor.candidates import track_paths
@@ -203,14 +203,8 @@ def identify_players(
         )
         detect_video(video_path, person_boxes=person_boxes_path(stem),
                      on_progress=_banded(on_progress, "detecting"))
-    cap = cv2.VideoCapture(str(video_path))
-    try:
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    finally:
-        cap.release()
-    if width <= 0 or height <= 0:
-        raise ValueError(f"Invalid video geometry: {video_path}")
+    geometry = video_geometry(video_path)
+    width, height = geometry.width, geometry.height
     associate_cb = _banded(on_progress, "associating")
     if advanced:
         # The actor head picks among the GTA-refined tracklets themselves.
