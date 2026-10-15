@@ -36,7 +36,8 @@ from yp_video.reid.embedder import threshold_calibration
 #: the GPU bill (~14.5 ms/frame over every rally frame); everything after it
 #: is seconds to a few minutes.
 _BANDS = {
-    "tracking": (0, 62),
+    "tracking": (0, 58),
+    "ball": (58, 62),
     "detecting": (62, 68),
     "associating": (68, 76),
     "cropping": (76, 80),
@@ -95,6 +96,9 @@ class IdentifyResult:
     #: (extraction/feet.py) — what a court calibration later places on the
     #: floor, after this run's records are gone.
     feet: dict[str, list[float] | str]
+    #: The ball track over the flights between touches (ball/track.py) — what
+    #: the court fits 3D trajectories to. Advanced only; None in standard.
+    ball: dict | None
 
 
 def identify_players(
@@ -141,6 +145,7 @@ def identify_players(
     from yp_video.action.spot_pass import RallyOptions, SpotOptions, run_spot_pass
     from yp_video.actor.candidates import track_paths
     from yp_video.actor.person_action import build_policy, policy_from_spot_picks
+    from yp_video.ball.track import track_video as track_ball
     from yp_video.core.actor_picks import actor_picks_path, load_actor_picks
     from yp_video.core.person_boxes import person_boxes_path, save_person_boxes
     from yp_video.extraction import links
@@ -159,7 +164,9 @@ def identify_players(
     stem = video_path.stem
     events = load_events(stem)
     if not events:
-        return IdentifyResult(embedder=embedder, units=(), linkage=(), threshold=threshold_calibration(embedder), feet={})
+        return IdentifyResult(
+            embedder=embedder, units=(), linkage=(), threshold=threshold_calibration(embedder), feet={}, ball=None,
+        )
 
     if (person_boxes is None) != (actor_picks is None):
         raise ValueError("person_boxes and actor_picks come from one SPOT pass: pass both or neither")
@@ -171,8 +178,10 @@ def identify_players(
             video_path, stride=ADVANCED_STRIDE,
             event_frames={e["frame"] for e in events}, on_progress=tracking_cb,
         )
+        ball = track_ball(video_path, _touch_frames(stem), on_progress=_banded(on_progress, "ball"))
         detect_video(video_path, on_progress=_banded(on_progress, "detecting"))
     else:
+        ball = None
         if person_boxes is not None:
             save_person_boxes(person_boxes, person_boxes_path(stem), fusion_checkpoint)
             shutil.copyfile(actor_picks, actor_picks_path(stem))
@@ -249,7 +258,18 @@ def identify_players(
         else (),
         threshold={key: float(value) for key, value in calibration.items()},
         feet=feet,
+        ball=ball,
     )
+
+
+def _touch_frames(stem: str) -> list[int]:
+    """Every touch's frame, score included — unlike load_events, which drops
+    what names nobody: a score is where a flight came down."""
+    from yp_video.core.jsonl import read_jsonl_cached
+    from yp_video.extraction.store import action_annotation_path
+
+    _meta, rows = read_jsonl_cached(action_annotation_path(stem))
+    return [int(r["frame"]) for r in rows if r.get("frame") is not None]
 
 
 def _banded(on_progress: ProgressFn | None, phase: str) -> ProgressFn | None:
@@ -460,6 +480,7 @@ def _main() -> None:
             eid: foot if isinstance(foot, str) else [round(v, 4) for v in foot]
             for eid, foot in result.feet.items()
         },
+        "ball": result.ball,
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")

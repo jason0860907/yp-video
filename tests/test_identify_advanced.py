@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from yp_video.action import spot_pass
+from yp_video.ball import track as ball_track
 from yp_video.extraction import identify, pipeline
 from yp_video.tracklets import fusion, tracking
 
@@ -26,16 +27,18 @@ class AdvancedIdentifyTests(unittest.TestCase):
             with (
                 patch.object(pipeline, "load_events", return_value=events),
                 patch.object(tracking, "track_video", autospec=True) as track_video,
+                patch.object(identify, "_touch_frames", return_value=[120, 300, 330]),
+                patch.object(ball_track, "track_video", return_value={}) as track_ball,
                 patch.object(fusion, "track_person_boxes", autospec=True) as track_person_boxes,
                 patch.object(spot_pass, "run_spot_pass") as run_spot_pass,
                 patch.object(pipeline, "detect_video", side_effect=_StopAfterDetection) as detect_video,
                 self.assertRaises(_StopAfterDetection),
             ):
                 identify.identify_players(Path(tmp) / "match.mp4", fusion_checkpoint=checkpoint, **kwargs)
-            return track_video, track_person_boxes, run_spot_pass, detect_video
+            return track_video, track_ball, track_person_boxes, run_spot_pass, detect_video
 
     def test_advanced_tracks_with_gta_and_detects_from_its_sidecar(self):
-        track_video, track_person_boxes, run_spot_pass, detect_video = self._run(advanced=True)
+        track_video, track_ball, track_person_boxes, run_spot_pass, detect_video = self._run(advanced=True)
 
         track_video.assert_called_once()
         self.assertEqual(track_video.call_args.kwargs["stride"], identify.ADVANCED_STRIDE)
@@ -43,11 +46,14 @@ class AdvancedIdentifyTests(unittest.TestCase):
         self.assertIsNone(detect_video.call_args.kwargs.get("person_boxes"))
         track_person_boxes.assert_not_called()
         run_spot_pass.assert_not_called()
+        # The ball's flights end at every touch, the score at 330 included.
+        self.assertEqual(track_ball.call_args.args[1], [120, 300, 330])
 
     def test_standard_keeps_fusion_boxes_and_bytetrack(self):
-        track_video, track_person_boxes, run_spot_pass, detect_video = self._run(embedder="clip-reident")
+        track_video, track_ball, track_person_boxes, run_spot_pass, detect_video = self._run(embedder="clip-reident")
 
         track_video.assert_not_called()
+        track_ball.assert_not_called()
         run_spot_pass.assert_called_once()
         self.assertIsNotNone(run_spot_pass.call_args.kwargs["actor_output"])
         track_person_boxes.assert_called_once()
@@ -72,6 +78,8 @@ class AdvancedIdentifyTests(unittest.TestCase):
             with (
                 patch.object(pipeline, "load_events", return_value=[{"frame": 120}]),
                 patch.object(tracking, "track_video"),
+                patch.object(identify, "_touch_frames", return_value=[120]),
+                patch.object(ball_track, "track_video", return_value={}),
                 patch.object(fusion, "track_person_boxes"),
                 patch.object(spot_pass, "run_spot_pass"),
                 patch.object(pipeline, "detect_video"),
