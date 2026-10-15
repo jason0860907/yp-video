@@ -18,14 +18,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-KINDS = {
-    **dict.fromkeys(["發", "發球", "serve"], "serve"),
-    **dict.fromkeys(["接", "receive", "reception", "dig", "pass"], "receive"),
-    **dict.fromkeys(["舉", "set", "setting"], "set"),
-    **dict.fromkeys(["打", "扣", "扣球", "spike", "attack", "hit"], "spike"),
-    **dict.fromkeys(["攔", "攔網", "block"], "block"),
-    **dict.fromkeys(["分", "得分", "score", "point"], "score"),
-}
+from yp_video.contracts.action import ACTION_LABELS
+
 # Position in the 接→舉→打 build-up. A serve is the opponent's ball into play
 # and a block answers *their* attack, so neither is part of one.
 STAGE = {"receive": 0, "set": 1, "spike": 2}
@@ -41,7 +35,11 @@ TEAM_TOUCHES = 3
 
 
 def kind(event: Event) -> str:
-    return KINDS.get(str(event["label"]).lower(), "other")
+    """The event's contract label; anything else is a broken result."""
+    label = event["label"]
+    if label not in ACTION_LABELS:
+        raise ValueError(f"Not an action label: {label!r}")
+    return label
 
 
 def _build_up(events: Sequence[Event], before: Sequence[int], anchor: int) -> list[int]:

@@ -63,8 +63,8 @@ export function useVideoLabelingData(picked: string) {
         const frame = Math.max(0, Math.round(Number(x.frame) || 0));
         return [
           {
-            // Same id fallback as the extraction pipeline, so matches line up.
-            id: typeof x.id === 'string' && x.id ? x.id : `f${frame}`,
+            // contracts.action.event_id, stamped by the backend.
+            id: String(x.id),
             frame,
             time: typeof x.time === 'number' ? x.time : null,
             label: typeof x.label === 'string' ? x.label : undefined,

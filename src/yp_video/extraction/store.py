@@ -26,7 +26,7 @@ from yp_video.config import (
     ACTION_PRE_ANNOTATIONS_DIR,
     EXTRACTION_DIR,
 )
-from yp_video.contracts.action import LABEL_FILE_SUFFIX
+from yp_video.contracts.action import LABEL_FILE_SUFFIX, event_id
 from yp_video.core.jsonl import read_jsonl_cached
 from yp_video.core.rallies import (
     load_rallies,
@@ -105,7 +105,7 @@ def with_current_actions(records: Iterable[dict], stem: str) -> list[dict]:
         return []
     _meta, rows = read_jsonl_cached(source)
     events = {
-        str(event.get("id") or f"f{event['frame']}"): event
+        event_id(event): event
         for event in rows
         if event.get("frame") is not None
     }

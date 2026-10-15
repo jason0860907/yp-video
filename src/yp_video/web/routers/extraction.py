@@ -29,6 +29,7 @@ from pydantic import Field
 
 from yp_video.actor import labels as actor_labels
 from yp_video.config import cut_kind_of
+from yp_video.contracts.action import event_id
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import read_jsonl, read_jsonl_cached, read_jsonl_header
 from yp_video.core.rallies import load_rallies
@@ -170,7 +171,7 @@ def records(name: str) -> dict:
         fps = float(meta.get("fps") or 0)
         meta["action_events"] = [
             {
-                "id": event.get("id"),
+                "id": event_id(event),
                 "frame": event.get("frame"),
                 "time": (
                     float(event["frame"]) / fps
@@ -181,6 +182,7 @@ def records(name: str) -> dict:
                 "visible": event.get("visible", True),
             }
             for event in ann_events
+            if event.get("frame") is not None
         ]
     meta["rallies"] = load_rallies(stem)
     sources = [path, *extraction_store.action_source_paths(stem)]

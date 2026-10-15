@@ -14,7 +14,7 @@ mirrors ``Match+Actions.swift`` (``TouchIndex``, ``actionClips``,
 from collections import Counter
 from dataclasses import dataclass
 
-from yp_video.action.rules import KINDS
+from yp_video.action import rules
 
 from .models import Bundle, Event, Rally, Window
 
@@ -22,7 +22,7 @@ PAD = 1.0
 
 
 def kind(event: Event) -> str:
-    return KINDS.get(event.label.lower(), "other")
+    return rules.kind({"label": event.label})
 
 
 def clip_key(event: Event) -> str:

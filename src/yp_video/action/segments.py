@@ -20,6 +20,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from yp_video.contracts.action import event_id
+
 
 def _event_time(ev: dict, fps: float) -> float:
     """Event timestamp in seconds (prefer an explicit ``time`` field)."""
@@ -36,7 +38,7 @@ def _public(ev: dict | None) -> dict | None:
     if frame is None:
         raise ValueError("public action events require a source frame")
     out: dict = {
-        "id": str(ev.get("id") or f"f{int(frame)}"),
+        "id": event_id(ev),
         "label": ev.get("label"),
         "time": round(ev["_t"], 2),
         "frame": int(frame),
