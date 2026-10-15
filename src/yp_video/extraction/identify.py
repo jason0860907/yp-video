@@ -189,7 +189,7 @@ def identify_players(
             run_spot_pass(
                 video_path, checkpoint=fusion_checkpoint, tasks=("rally", "action"),
                 rally=RallyOptions(min_score=0.5, max_gap_s=2.0, min_duration_s=4.0),
-                spot=SpotOptions(batch_size=1, num_workers=0, clip_len=64), rally_pad_s=2.0,
+                spot=SpotOptions(batch_size=1, num_workers=0), rally_pad_s=2.0,
                 person_output=person_boxes_path(stem),
                 actor_output=actor_picks_path(stem),
                 on_progress=(lambda fraction: tracking_cb(int(fraction * 80), 100, "fusion person boxes"))

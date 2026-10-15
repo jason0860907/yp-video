@@ -90,7 +90,6 @@ def run_spot_inference(
     tasks: Sequence[str],
     batch_size: int = 8,
     num_workers: int = 0,
-    clip_len: int = 64,
     use_amp: bool = True,
     segments: Sequence[tuple[float, float]] | None = None,
     on_progress: Callable[[float], None] | None = None,
@@ -136,7 +135,6 @@ def run_spot_inference(
             save_dir=save_dir,
             batch_size=batch_size,
             num_workers=num_workers,
-            clip_len=clip_len,
             use_amp=use_amp,
             segments=segments,
         )

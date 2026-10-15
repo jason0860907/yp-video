@@ -42,7 +42,6 @@ class SpotOptions:
     batch_size: int
     #: ffmpeg decode threads; 0 lets ffmpeg pick.
     num_workers: int
-    clip_len: int
     use_amp: bool = True
 
 
@@ -158,7 +157,6 @@ def run_spot_pass(
         tasks=tasks,
         batch_size=spot.batch_size,
         num_workers=spot.num_workers,
-        clip_len=spot.clip_len,
         use_amp=spot.use_amp,
         segments=fixed_spans,
         on_progress=on_progress,

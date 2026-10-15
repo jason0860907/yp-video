@@ -25,21 +25,18 @@ import type { ActionVideo, Job } from '@/types/api';
 interface PredSettings {
   checkpoint: string;
   batch_size: number;
-  clip_len: number;
   prefetch_factor: number;
   overwrite: boolean;
 }
 const DEFAULTS: PredSettings = {
   checkpoint: '',
   batch_size: 1,
-  clip_len: 64,
   prefetch_factor: 1,
   overwrite: false,
 };
 
 const NUM_FIELDS: Array<NumField<PredSettings>> = [
   { key: 'batch_size', label: 'Batch', min: 1, max: 128, step: 1 },
-  { key: 'clip_len', label: 'Clip len', min: 8, max: 256, step: 8 },
   { key: 'prefetch_factor', label: 'Prefetch', min: 1, max: 8, step: 1 },
 ];
 
@@ -93,7 +90,6 @@ export function ActionPredictPage() {
           videos: names,
           checkpoint: settings.checkpoint,
           batch_size: settings.batch_size,
-          clip_len: settings.clip_len,
           prefetch_factor: settings.prefetch_factor,
           use_amp: true,
           overwrite: settings.overwrite,

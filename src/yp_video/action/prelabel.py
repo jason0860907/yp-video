@@ -149,7 +149,6 @@ def build_command(
     save_dir: Path | list[Path],
     batch_size: int,
     num_workers: int,
-    clip_len: int,
     prefetch_factor: int | None = None,
     use_amp: bool = True,
     segments: Sequence[tuple[float, float]] | None = None,
@@ -180,7 +179,6 @@ def build_command(
         "--save_dir", *(str(path) for path in save_dirs),
         "--batch_size", str(batch_size),
         "--num_workers", str(num_workers),
-        "--clip_len", str(clip_len),
     ]
     if prefetch_factor is not None:
         cmd.extend(["--prefetch_factor", str(prefetch_factor)])

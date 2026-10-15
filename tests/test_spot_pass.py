@@ -19,7 +19,7 @@ from yp_video.core.jsonl import read_jsonl
 FPS = 30.0
 META = {"fps": FPS, "num_frames": 3000, "duration": 100.0}
 RALLY = RallyOptions(min_score=0.5, max_gap_s=2.0, min_duration_s=4.0)
-SPOT = SpotOptions(batch_size=4, num_workers=0, clip_len=64)
+SPOT = SpotOptions(batch_size=4, num_workers=0)
 
 
 def _rally_events(start_s: float, end_s: float, step: int = 6) -> list[dict]:

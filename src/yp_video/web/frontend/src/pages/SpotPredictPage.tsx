@@ -28,7 +28,6 @@ interface PredSettings {
   max_gap_s: number;
   min_duration_s: number;
   batch_size: number;
-  clip_len: number;
   num_workers: number;
   overwrite: boolean;
 }
@@ -38,7 +37,6 @@ const DEFAULTS: PredSettings = {
   max_gap_s: 2.0,
   min_duration_s: 4,
   batch_size: 1,
-  clip_len: 64,
   num_workers: 1,
   overwrite: false,
 };
@@ -48,7 +46,6 @@ const NUM_FIELDS: Array<NumField<PredSettings>> = [
   { key: 'max_gap_s', label: 'Merge gap (s)', min: 0, max: 30, step: 0.5 },
   { key: 'min_duration_s', label: 'Min rally (s)', min: 0, max: 60, step: 0.5 },
   { key: 'batch_size', label: 'Batch', min: 1, max: 64, step: 1 },
-  { key: 'clip_len', label: 'Clip len', min: 8, max: 256, step: 8 },
   { key: 'num_workers', label: 'Workers', min: 1, max: 32, step: 1 },
 ];
 
@@ -100,7 +97,6 @@ export function SpotPredictPage() {
           max_gap_s: settings.max_gap_s,
           min_duration_s: settings.min_duration_s,
           batch_size: settings.batch_size,
-          clip_len: settings.clip_len,
           num_workers: settings.num_workers,
           overwrite: settings.overwrite,
         },

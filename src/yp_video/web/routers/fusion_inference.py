@@ -38,7 +38,6 @@ class InferenceRequest(StrictModel):
     max_gap_s: float = Field(default=2.0, ge=0.0, le=30.0)
     min_duration_s: float = Field(default=4.0, ge=0.0, le=60.0)
     batch_size: int = Field(default=1, ge=1, le=128)
-    clip_len: int = Field(default=64, ge=8, le=256)
     #: ffmpeg decode threads; 0 lets ffmpeg pick.
     num_workers: int = Field(default=0, ge=0, le=32)
     use_amp: bool = True
@@ -108,7 +107,6 @@ async def start(req: InferenceRequest) -> dict:
     spot = SpotOptions(
         batch_size=req.batch_size,
         num_workers=req.num_workers,
-        clip_len=req.clip_len,
         use_amp=req.use_amp,
     )
     job = job_manager.create_job(
