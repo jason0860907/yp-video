@@ -178,6 +178,9 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewB
   // ── Load a file ──
   useEffect(() => {
     if (!data) return;
+    // New data replaces the rows on screen: unsaved edits of the previous
+    // video (or store) are written first, not dropped.
+    flushUnsaved();
     const path = data.video || data.source_video || data.metadata?.video || '';
     setVideoName(path);
     const fromServer: EditorAnnotation[] = (data.results ?? [])
@@ -429,34 +432,38 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewB
   // beforeunload only warns (it fires before the leave dialog is answered);
   // pagehide fires once leaving is settled, and keepalive lets the flush
   // request outlive the tab. Same pattern as the Action panel.
-  const flushRef = useRef({ dirty, videoName, duration });
-  flushRef.current = { dirty, videoName, duration };
+  // The same flush runs when the editor unmounts (a tab switch) and before
+  // new data replaces the rows — leaving never waits out the autosave.
+  const flushRef = useRef({ dirty, videoName, duration, saveEndpoint });
+  flushRef.current = { dirty, videoName, duration, saveEndpoint };
+  function flushUnsaved() {
+    const cur = flushRef.current;
+    if (!cur.dirty || !cur.videoName) return;
+    flushRef.current = { ...cur, dirty: false };
+    void fetch(apiUrl(cur.saveEndpoint), {
+      method: 'POST',
+      keepalive: true,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        video: cur.videoName,
+        duration: cur.duration,
+        annotations: latestAnnotations.current.map(({ rally_id, start, end, label, winner }) => ({ rally_id, start, end, label, winner })),
+      }),
+    });
+  }
   useEffect(() => {
     const warn = (e: BeforeUnloadEvent) => {
       const cur = flushRef.current;
       if (cur.dirty && cur.videoName) e.preventDefault();
     };
-    const flush = () => {
-      const cur = flushRef.current;
-      if (!cur.dirty || !cur.videoName) return;
-      void fetch(apiUrl(saveEndpoint), {
-        method: 'POST',
-        keepalive: true,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          video: cur.videoName,
-          duration: cur.duration,
-          annotations: latestAnnotations.current.map(({ rally_id, start, end, label, winner }) => ({ rally_id, start, end, label, winner })),
-        }),
-      });
-    };
     window.addEventListener('beforeunload', warn);
-    window.addEventListener('pagehide', flush);
+    window.addEventListener('pagehide', flushUnsaved);
     return () => {
       window.removeEventListener('beforeunload', warn);
-      window.removeEventListener('pagehide', flush);
+      window.removeEventListener('pagehide', flushUnsaved);
+      flushUnsaved();
     };
-  }, [saveEndpoint]);
+  }, []);
 
   // ── Debounced autosave: push to the server AUTOSAVE_MS after editing stops ──
   const saveRef = useRef(save);

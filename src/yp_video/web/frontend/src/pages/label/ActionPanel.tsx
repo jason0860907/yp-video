@@ -95,6 +95,8 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, registerGu
   );
 
   const edRef = useRef(ed);
+  // Loaded from the pre-annotation store: nothing autosaves (see save).
+  const fromPreAnnotation = useRef(false);
   edRef.current = ed;
 
   const videosQuery = useQuery({ queryKey: ['action-videos'], queryFn: () => apiFetch<ActionVideo[]>(API.actionAnnotate.videos) });
@@ -249,6 +251,7 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, registerGu
         API.actionAnnotate.annotation(name, { source }),
       );
       onLoaded?.(data.loaded_source ?? 'none');
+      fromPreAnnotation.current = data.loaded_source === 'pre-annotation';
       const next = normalizeActionEditor(data, labels);
       // Never reuse a revision: a response from the previous video must not
       // be able to compare equal and mark this editor clean.
@@ -280,12 +283,13 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, registerGu
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [video, source]);
 
-  // Leaving with unsaved work: same confirm the old pick flow ran.
+  // Leaving with unsaved work saves it first; only work that cannot be
+  // saved (a failed request, or pre-annotation edits not adopted) asks.
   useEffect(() => {
     if (!registerGuard) return;
     registerGuard(async () => {
-      const cur = edRef.current;
-      if (!cur.dirty) return true;
+      if (!edRef.current.dirty) return true;
+      if (!fromPreAnnotation.current && (await saveRef.current(true)) && !edRef.current.dirty) return true;
       return confirm({ title: 'Discard unsaved changes?', body: 'The current action labels have not been saved.', confirmText: 'Discard', variant: 'danger' });
     });
     return () => registerGuard(null);
@@ -334,6 +338,19 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, registerGu
         if (!silent) toast.warning('No video loaded');
         return;
       }
+      // Pre-annotation edits are saved only on purpose: the save writes
+      // the annotation store, replacing whatever human labels it holds.
+      if (fromPreAnnotation.current) {
+        if (silent) return;
+        const adopt = await confirm({
+          title: 'Save pre-annotation as the annotation?',
+          body: 'This replaces any human action labels saved for this video.',
+          confirmText: 'Save',
+          variant: 'danger',
+        });
+        if (!adopt) return;
+        fromPreAnnotation.current = false;
+      }
       const video = snapshot.video;
       await apiFetch(API.actionAnnotate.annotations, {
         method: 'POST',
@@ -366,6 +383,11 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, registerGu
       toast.error(`Save failed: ${errMsg(e)}`);
     },
   });
+  // The leave guard is registered once; it saves through the latest closure.
+  const saveRef = useRef(save);
+  useEffect(() => {
+    saveRef.current = save;
+  });
 
   // ── Flush unsaved work when the page goes away ──
   // beforeunload only warns (it fires before the leave dialog is answered);
@@ -378,7 +400,7 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, registerGu
     };
     const flush = () => {
       const cur = edRef.current;
-      if (!cur.dirty || !cur.video) return;
+      if (!cur.dirty || !cur.video || fromPreAnnotation.current) return;
       void fetch(apiUrl(API.actionAnnotate.annotations), {
         method: 'POST',
         keepalive: true,
@@ -654,12 +676,15 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, registerGu
         </Card>
         <KeyHints
           keys={[
+            ['Space', 'play'],
             ['1-6', 'label'],
-            ['← →', 'frame'],
+            ['← →', 'frame (⇧ ×10)'],
             ['Enter', 'add'],
-            ['A S', 'nudge frame'],
+            ['Right-click', 'add off-screen'],
+            ['A S', 'nudge frame (⇧ ×10)'],
             ['P', 'point mode'],
             ['Del', 'remove'],
+            ['⌘S', 'save'],
           ]}
         />
       </div>

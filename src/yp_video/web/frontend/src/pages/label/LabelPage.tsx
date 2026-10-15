@@ -24,6 +24,7 @@ import { Button } from '@/components/ui/Button';
 import { Tabs } from '@/components/ui/Tabs';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { confirm } from '@/components/feedback/confirm';
 import { toast } from '@/components/feedback/toast';
 import { CopyFilenameButton } from '@/components/video/CopyFilenameButton';
 import { KindBadge } from '@/components/video/KindBadge';
@@ -132,6 +133,18 @@ export function LabelPage() {
   const isDone = pickedRow ? active.status(pickedRow) === 'done' : false;
   const toggleDone = async () => {
     if (!video || !active.doneApi) return;
+    // Association's Done confirms every auto pick of the video, rallies not
+    // yet looked at included — say so before it happens.
+    if (
+      active.key === 'association' &&
+      !isDone &&
+      !(await confirm({
+        title: 'Mark Association done?',
+        body: 'Every auto pick left in this video becomes confirmed, including rallies you have not reviewed.',
+        confirmText: 'Mark done',
+      }))
+    )
+      return;
     setDoneBusy(true);
     try {
       // Association's Done also sweep-confirms current auto picks; the
@@ -209,7 +222,7 @@ export function LabelPage() {
               modes show it locked to Annotation. */}
           <SourceSelect
             source={active.hasSources ? source : 'annotation'}
-            onSource={setSource}
+            onSource={(s) => void guarded(() => setSource(s))}
             loaded={active.hasSources ? loadedSource : null}
             disabled={!active.hasSources}
           />
