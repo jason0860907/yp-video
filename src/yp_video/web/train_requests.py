@@ -125,9 +125,9 @@ class FusionTrainRequest(StrictModel):
     )
     sample_fps: float = Field(
         default=30.0,
-        ge=0,
+        gt=0,
         le=120,
-        description="Per-video frame stride targeting this sampling rate. 0 = every frame.",
+        description="Per-video frame stride targeting this sampling rate.",
     )
     action_sample_fps: float = Field(
         default=30.0,
