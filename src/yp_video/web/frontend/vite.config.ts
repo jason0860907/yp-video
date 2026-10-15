@@ -35,7 +35,7 @@ export default defineConfig({
     },
   },
   build: {
-    // FastAPI serves this directory at the end of the migration.
+    // FastAPI serves this directory.
     outDir: 'dist',
     emptyOutDir: true,
   },

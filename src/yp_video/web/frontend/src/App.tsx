@@ -2,7 +2,7 @@ import type { ReactElement } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { DEFAULT_PATH, NAV_ITEMS } from '@/components/layout/nav';
-import { Placeholder } from '@/components/Placeholder';
+import { Card } from '@/components/ui/Card';
 import { JobsPage } from '@/pages/JobsPage';
 import { DownloadPage } from '@/pages/DownloadPage';
 import { ActionPredictPage } from '@/pages/ActionPredictPage';
@@ -19,7 +19,7 @@ import { ReidTrainPage } from '@/pages/ReidTrainPage';
 import { AppReviewPage } from '@/pages/app-review/AppReviewPage';
 import { AuditPage } from '@/pages/AuditPage';
 
-/** Migrated pages, by route. Paths absent here fall back to a Placeholder. */
+/** Every NAV route's page. */
 const PAGES: Record<string, ReactElement> = {
   '/download': <DownloadPage />,
   '/cut': <CutPage />,
@@ -38,20 +38,19 @@ const PAGES: Record<string, ReactElement> = {
   '/app-review': <AppReviewPage />,
 };
 
-/** Retired routes → where the work went. Bookmarks and muscle memory are
- *  cheap to honor; these are not NAV items, so nav.ts is unaffected. */
-const REDIRECTS: Record<string, string> = {
-  '/annotate': '/label?mode=rally',
-  '/action-annotate': '/label?mode=action',
-  '/association-label': '/label?mode=association',
-  '/reid-label': '/label?mode=reid',
-  '/spot-train': '/fusion-train',
-  '/action-train': '/fusion-train',
-};
+function NotFound() {
+  return (
+    <div className="mx-auto max-w-5xl">
+      <Card label="Not found">
+        <p className="text-sm text-text-secondary">No page lives at this address.</p>
+      </Card>
+    </div>
+  );
+}
 
 /**
  * Route table. Routes are driven from the same NAV config that builds the
- * sidebar, so the two never drift; each migrated page is registered in PAGES.
+ * sidebar, so the two never drift; each page is registered in PAGES.
  */
 export default function App() {
   return (
@@ -59,12 +58,9 @@ export default function App() {
       <Route element={<AppLayout />}>
         <Route index element={<Navigate to={DEFAULT_PATH} replace />} />
         {NAV_ITEMS.map((item) => (
-          <Route key={item.path} path={item.path} element={PAGES[item.path] ?? <Placeholder title={item.label} />} />
+          <Route key={item.path} path={item.path} element={PAGES[item.path]} />
         ))}
-        {Object.entries(REDIRECTS).map(([from, to]) => (
-          <Route key={from} path={from} element={<Navigate to={to} replace />} />
-        ))}
-        <Route path="*" element={<Placeholder title="Not found" />} />
+        <Route path="*" element={<NotFound />} />
       </Route>
     </Routes>
   );
