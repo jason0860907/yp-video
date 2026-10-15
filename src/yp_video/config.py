@@ -87,6 +87,16 @@ ACTION_ANNOTATIONS_DIR = VIDEOS_DIR / "action" / "annotations"
 ACTION_PRE_ANNOTATIONS_DIR = VIDEOS_DIR / "action" / "pre-annotations"
 PERSON_ANNOTATIONS_DIR = VIDEOS_DIR / "person" / "annotations"
 PERSON_DENSE_DIR = VIDEOS_DIR / "person" / "dense"
+# Ball: candidates/ caches the ball detector's boxes on the frames
+# between hand-marked contacts; pseudo-labels/ holds the boxes chosen from
+# them (ball/pseudo.py). Both derived from action annotations.
+BALL_CANDIDATES_DIR = VIDEOS_DIR / "ball" / "candidates"
+BALL_PSEUDO_LABELS_DIR = VIDEOS_DIR / "ball" / "pseudo-labels"
+# Detector training sets exported from the pseudo-labels (ball/dataset.py) and
+# the fine-tuned checkpoints — overridable apart from VIDEOS_DIR, like
+# REID_CHECKPOINTS_DIR, for the worker's staged identify layout.
+BALL_DATASETS_DIR = VIDEOS_DIR / "ball" / "datasets"
+BALL_CHECKPOINTS_DIR = _env_path("YP_BALL_CHECKPOINTS_DIR", VIDEOS_DIR / "ball" / "checkpoints")
 # Court calibration: the court landmarks a user marked on each video's frame.
 COURT_ANNOTATIONS_DIR = VIDEOS_DIR / "court" / "annotations"
 ACTION_FRAMES_DIR = VIDEOS_DIR / "action" / "frames"

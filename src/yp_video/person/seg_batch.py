@@ -31,12 +31,26 @@ class BatchSegDetector:
     pre-resized tensors.
     """
 
-    def __init__(self, variant: str, batch_size: int):
-        #: An ``rfdetr`` Seg class name, e.g. "RFDETRSegMedium".
+    def __init__(
+        self,
+        variant: str,
+        batch_size: int,
+        *,
+        resolution: int | None = None,
+        weights: str | None = None,
+        class_id: int = PERSON_CLASS_ID,
+    ):
+        #: An ``rfdetr`` class name, e.g. "RFDETRSegMedium" (detection-only
+        #: variants share the graph and post-processor; only boxes then).
         self.variant = variant
         self.batch_size = batch_size
+        #: Input size; None takes the variant's default.
+        self.resolution = resolution
+        #: A fine-tuned checkpoint; None takes the COCO weights.
+        self.weights = weights
+        #: The one class kept (a COCO id unless ``weights`` says otherwise).
+        self.class_id = class_id
         self._model = None
-        self.resolution: int | None = None
 
     def ensure(self) -> None:
         if self._model is not None:
@@ -44,7 +58,8 @@ class BatchSegDetector:
         import rfdetr
         import torch
 
-        model = getattr(rfdetr, self.variant)()
+        kwargs = {"resolution": self.resolution, "pretrain_weights": self.weights}
+        model = getattr(rfdetr, self.variant)(**{k: v for k, v in kwargs.items() if v is not None})
         self.resolution = model.model_config.resolution
         model.optimize_for_inference(dtype=torch.float16, batch_size=self.batch_size)
         self._model = model
@@ -64,7 +79,7 @@ class BatchSegDetector:
 
     def predict_boxes(self, tensors: list, threshold: float) -> list:
         """``predict_batch`` without the masks: ``(xyxy, scores)`` numpy pairs
-        per tensor, person class only, boxes in resolution-pixel space.
+        per tensor, ``class_id`` only, boxes in resolution-pixel space.
 
         rfdetr's ``predict`` always post-processes masks — every kept query
         upsampled to the input resolution and copied to the host — which at
@@ -85,18 +100,18 @@ class BatchSegDetector:
             results = model.model.postprocess({"pred_logits": raw[1], "pred_boxes": raw[0]}, target_sizes=sizes)
         out = []
         for result in results[:n]:
-            keep = (result["scores"] > threshold) & (result["labels"] == PERSON_CLASS_ID)
+            keep = (result["scores"] > threshold) & (result["labels"] == self.class_id)
             out.append((result["boxes"][keep].float().cpu().numpy(), result["scores"][keep].float().cpu().numpy()))
         return out
 
     def predict_batch(self, tensors: list, threshold: float) -> list:
         """≤batch_size preprocessed (C, res, res) tensors → sv.Detections each
-        (person class only, masks included), boxes in resolution-pixel space
+        (``class_id`` only, masks included), boxes in resolution-pixel space
         (callers scale back to frame pixels)."""
         n = len(tensors)
         padded = tensors + [tensors[-1]] * (self.batch_size - n)
         out = self._model.predict(padded, threshold=threshold, include_source_image=False)
-        return [det[det.class_id == PERSON_CLASS_ID] for det in out[:n]]
+        return [det[det.class_id == self.class_id] for det in out[:n]]
 
 
 

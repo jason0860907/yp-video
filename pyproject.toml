@@ -49,6 +49,11 @@ build-backend = "hatchling.build"
 packages = ["src/yp_video"]
 
 [dependency-groups]
+# Detector fine-tuning (ball/train.py): RF-DETR's Lightning stack. Kept out of
+# the runtime deps so the worker's release does not install it.
+train = [
+    "rfdetr[train]>=1.8.3",
+]
 dev = [
     "pyright>=1.1.408",
     "pytest>=8",
