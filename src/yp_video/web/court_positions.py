@@ -1,10 +1,12 @@
 """Court positions for the labeling page: gathers one local video's inputs —
-its calibration, actors' feet (extraction/feet.py) and action annotation —
-and places them with the one implementation, court/positions.py.
+its calibration, actors' feet (extraction/feet.py), action annotation and
+ball track (ball/track.py) — and places them with the one implementation,
+court/positions.py.
 """
 
 from __future__ import annotations
 
+from yp_video.ball import track as ball_track
 from yp_video.contracts.action import event_id
 from yp_video.core.jsonl import read_jsonl_cached
 from yp_video.core.rallies import load_rallies
@@ -50,4 +52,4 @@ def compute(stem: str) -> dict:
             "ball": (float(xy[0]), float(xy[1])) if xy and row.get("visible", True) else None,
             "rally_id": next((s["rally_id"] for s in spans if s["start"] <= time <= s["end"]), None),
         })
-    return {"video": stem, **positions.compute(calibration, events, feet)}
+    return {"video": stem, **positions.compute(calibration, events, feet, ball_track.load(stem))}

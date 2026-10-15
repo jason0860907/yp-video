@@ -97,6 +97,9 @@ BALL_PSEUDO_LABELS_DIR = VIDEOS_DIR / "ball" / "pseudo-labels"
 # REID_CHECKPOINTS_DIR, for the worker's staged identify layout.
 BALL_DATASETS_DIR = VIDEOS_DIR / "ball" / "datasets"
 BALL_CHECKPOINTS_DIR = _env_path("YP_BALL_CHECKPOINTS_DIR", VIDEOS_DIR / "ball" / "checkpoints")
+# The detector's ball boxes on the flights between one video's touches
+# (ball/track.py): what the court fits 3D trajectories to.
+BALL_TRACKS_DIR = VIDEOS_DIR / "ball" / "tracks"
 # Court calibration: the court landmarks a user marked on each video's frame.
 COURT_ANNOTATIONS_DIR = VIDEOS_DIR / "court" / "annotations"
 ACTION_FRAMES_DIR = VIDEOS_DIR / "action" / "frames"

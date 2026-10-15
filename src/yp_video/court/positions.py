@@ -1,5 +1,7 @@
 """Court positions of one video's play: the actor's feet at each contact, the
-ball's 3D point there, where it landed, and the arcs in between.
+ball's 3D point there, where it landed, and the arcs in between — fitted to
+the detected ball where it was seen (court/trajectory.py), else the
+ballistic path joining the two touches.
 
 The one implementation: the labeling web page and the production worker's
 court job both call `compute`, each gathering the inputs its own way (the web
@@ -17,7 +19,7 @@ from collections.abc import Mapping, Sequence
 
 import numpy as np
 
-from yp_video.court import camera, geometry
+from yp_video.court import camera, geometry, trajectory
 from yp_video.court.annotations import Calibration
 
 #: How far past the court lines a player can still stand (the free zone).
@@ -29,6 +31,9 @@ MAX_CONTACT_Z_M = 4.5
 MAX_FLIGHT_S = 2.0
 #: A score marks where the ball came down, not a touch anyone made.
 LANDING_LABEL = "score"
+
+#: Points sampled along each arc.
+ARC_SAMPLES = 16
 
 #: An event's feet: normalized image (x, y), or why there are none.
 Feet = Mapping[str, Sequence[float] | str]
@@ -49,21 +54,52 @@ def _lift(cam: camera.Camera | None, ball: Sequence[float] | None, court_xy: np.
     return point if point is not None and 0 <= point[2] <= MAX_CONTACT_Z_M else None
 
 
-def _flights(events: list[dict]) -> list[dict]:
-    """Ballistic arcs between consecutive placed touches of a rally.
+def _observations(track: Mapping, a: dict, b: dict) -> tuple[np.ndarray, np.ndarray]:
+    """The flight's ball sightings: every detected box between the two
+    touches, plus each touch's own ball point — (seconds from a, image xy)."""
+    fps = float(track["fps"])
+    t, xy = [], []
+    for e in (a, b):
+        if e.get("ball"):
+            t.append(e["time"] - a["time"])
+            xy.append(e["ball"])
+    for frame in range(a["frame"], b["frame"] + 1):
+        for x, y, _score in track["frames"].get(str(frame), ()):
+            t.append(frame / fps - a["time"])
+            xy.append((x, y))
+    return np.array(t, dtype=np.float64), np.array(xy, dtype=np.float64).reshape(-1, 2)
+
+
+def _flights(events: list[dict], cam: camera.Camera | None, aspect: float, track: Mapping | None) -> list[dict]:
+    """The ball's arc between each pair of consecutive touches of a rally.
 
     `events` (time order) holds every touch, placed or not, and only
     neighbours are joined — so an arc never jumps over an unplaced one, which
-    would draw a single flight where the ball was really played twice.
+    would draw a single flight where the ball was really played twice. An arc
+    is fitted to the detected ball (source "ball") where enough of the flight
+    was seen; otherwise, when both touches are placed in 3D, it is the
+    ballistic path joining them (source "touches").
     """
+    rng = np.random.default_rng(0)
     arcs = []
     for a, b in zip(events, events[1:]):
         if a["rally_id"] is None or a["rally_id"] != b["rally_id"]:
             continue
-        if a["ball_3d"] is None or b["ball_3d"] is None:
-            continue
         duration = b["time"] - a["time"]
         if not 0 < duration <= MAX_FLIGHT_S:
+            continue
+        fitted = None
+        if cam is not None and track is not None:
+            t, xy = _observations(track, a, b)
+            anchors = [(e["time"] - a["time"], e["ball_3d"]) for e in (a, b) if e["ball_3d"] is not None]
+            fitted = trajectory.fit(cam, aspect, t, xy, duration, rng, anchors)
+        if fitted is not None:
+            points = fitted.at(np.linspace(0.0, duration, ARC_SAMPLES))
+            evidence = {"source": "ball", "frames": fitted.frames, "rmse": round(fitted.rmse, 4)}
+        elif a["ball_3d"] is not None and b["ball_3d"] is not None:
+            points = camera.arc(a["ball_3d"], b["ball_3d"], duration, ARC_SAMPLES)
+            evidence = {"source": "touches"}
+        else:
             continue
         arcs.append({
             "rally_id": a["rally_id"],
@@ -73,7 +109,8 @@ def _flights(events: list[dict]) -> list[dict]:
             "to": b["id"],
             "start": round(a["time"], 3),
             "end": round(b["time"], 3),
-            "points": [[round(float(v), 2) for v in p] for p in camera.arc(a["ball_3d"], b["ball_3d"], duration)],
+            "points": [[round(float(v), 2) for v in p] for p in points],
+            **evidence,
         })
     return arcs
 
@@ -108,14 +145,15 @@ def calibration_summary(calibration: Calibration) -> dict:
     }
 
 
-def compute(calibration: Calibration, events: Sequence[Mapping], feet: Feet) -> dict:
+def compute(calibration: Calibration, events: Sequence[Mapping], feet: Feet, track: Mapping | None) -> dict:
     """Place every event on the court.
 
     `events`: `{id, frame, time, label, ball, rally_id}` — `ball` the visible
     ball's normalized image point or None, `rally_id` None outside every
     rally. `feet`: event id → the actor's feet in the image, or the reason
-    there are none (absent: no detection). Raises geometry.FitError when the
-    marks cannot fit the floor.
+    there are none (absent: no detection). `track`: the video's ball track
+    (ball/track.py), None when the ball was not detected. Raises
+    geometry.FitError when the marks cannot fit the floor.
     """
     to_court = np.array(geometry.fit(calibration.points).image_to_court)
     try:
@@ -172,5 +210,5 @@ def compute(calibration: Calibration, events: Sequence[Mapping], feet: Feet) -> 
         "units": "m",
         "court": {"length": length, "width": width},
         "events": [out(e) for e in placed],
-        "arcs": _flights(placed),
+        "arcs": _flights(placed, cam, calibration.frame_size[0] / calibration.frame_size[1], track),
     }

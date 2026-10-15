@@ -8,9 +8,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from yp_video.court import annotations as store
-from yp_video.court import camera, geometry
+from yp_video.court import camera, geometry, positions, trajectory
 from yp_video.court.annotations import Calibration
-from yp_video.court import positions
 from yp_video.extraction import feet as extraction_feet
 from yp_video.web.routers import court as routes
 
@@ -182,8 +181,9 @@ def test_flights_never_jump_over_an_unplaced_touch():
     # Frame 45 was touched too but could not be placed (no actor).
     unplaced = {**touch(45), "ball_3d": None}
     events = [touch(0), touch(30), unplaced, touch(60), touch(90, rally=2)]
-    flights = positions._flights(events)
+    flights = positions._flights(events, None, SIZE[0] / SIZE[1], None)
     assert [(f["from"], f["to"]) for f in flights] == [("e0", "e30")]
+    assert flights[0]["source"] == "touches"
 
 
 def test_compute_places_feet_lifts_contacts_and_keeps_reasons():
@@ -197,7 +197,7 @@ def test_compute_places_feet_lifts_contacts_and_keeps_reasons():
         {"id": "f90", "frame": 90, "time": 3.0, "label": "score", "ball": see((12.0, 5.0, 0.0)), "rally_id": 1},
     ]
     feet = {"f30": see((4.0, 2.0, 0.0)), "f60": see((4.0, 2.0, 0.0)), "f75": "occluded"}
-    result = positions.compute(calibration, events, feet)
+    result = positions.compute(calibration, events, feet, None)
     by_id = {e["id"]: e for e in result["events"]}
     assert by_id["f30"]["court_xy"] == pytest.approx([4.0, 2.0], abs=0.01)
     assert by_id["f60"]["ball_3d"][2] == pytest.approx(3.1, abs=0.01)
@@ -215,3 +215,59 @@ def test_calibration_summary_projects_the_lines_back_onto_the_marks():
     assert summary["lines"][0][1] == pytest.approx(see((18.0, 0.0, 0.0)), abs=1e-3)
     assert summary["net"][0] == pytest.approx(see((9.0, 0.0, 2.43)), abs=1e-3)
     assert summary["camera"]["center"] == pytest.approx([9.0, -12.0, 3.0], abs=0.01)
+
+
+def _flight(t):
+    """A set from (4, 2, 2.5) towards (12, 6, 1): p(t) = p0 + v0·t + ½gt²."""
+    p0, v0 = np.array([4.0, 2.0, 2.5]), np.array([8.0, 4.0, 3.4])
+    t = np.asarray(t, float)[:, None]
+    return p0 + v0 * t + 0.5 * np.array([0, 0, -9.81]) * t**2
+
+
+def test_trajectory_fit_recovers_the_flight_among_clutter():
+    see = _pinhole()
+    cam = camera.solve(_calibration(see))
+    rng = np.random.default_rng(1)
+    times = np.arange(0, 1.0, 1 / 15)
+    ball = [see(p) for p in _flight(times)]
+    # Every frame also boxes a head and a lamp, and two frames miss the ball.
+    t = np.concatenate([np.delete(times, [3, 8]), times, times])
+    xy = np.vstack([
+        np.delete(np.array(ball), [3, 8], axis=0),
+        rng.uniform(0.2, 0.8, (len(times), 2)),
+        np.tile([0.9, 0.1], (len(times), 1)),
+    ])
+    fit = trajectory.fit(cam, SIZE[0] / SIZE[1], t, xy, 1.0, rng)
+    assert fit is not None and fit.frames == len(times) - 2
+    assert fit.at(np.array([0.0, 0.5, 1.0])) == pytest.approx(_flight([0.0, 0.5, 1.0]), abs=0.01)
+
+
+def test_trajectory_fit_needs_frames_spread_over_the_flight():
+    see = _pinhole()
+    cam = camera.solve(_calibration(see))
+    rng = np.random.default_rng(1)
+    early = np.arange(0, 0.4, 1 / 15)  # seen only in the first 40%
+    xy = np.array([see(p) for p in _flight(early)])
+    assert trajectory.fit(cam, SIZE[0] / SIZE[1], early, xy, 1.0, rng) is None
+    few = early[:4]
+    assert trajectory.fit(cam, SIZE[0] / SIZE[1], few, xy[:4], 0.2, rng) is None
+
+
+def test_compute_fits_arcs_to_the_ball_track():
+    see = _pinhole()
+    calibration = _calibration(see)
+    # The set is touched at frame 30 (1.0 s), the next touch 1 s later, no
+    # feet for either: only the ball track can place this flight.
+    events = [
+        {"id": "f30", "frame": 30, "time": 1.0, "label": "set", "ball": None, "rally_id": 1},
+        {"id": "f60", "frame": 60, "time": 2.0, "label": "spike", "ball": None, "rally_id": 1},
+    ]
+    frames = range(30, 61, 2)
+    track = {"fps": 30.0, "frames": {
+        str(f): [[*see(p), 0.9]] for f, p in zip(frames, _flight([(f - 30) / 30 for f in frames]))
+    }}
+    result = positions.compute(calibration, events, {}, track)
+    (arc,) = result["arcs"]
+    assert arc["source"] == "ball" and arc["frames"] == len(frames)
+    assert arc["points"][0] == pytest.approx([4.0, 2.0, 2.5], abs=0.02)
+    assert positions.compute(calibration, events, {}, None)["arcs"] == []
