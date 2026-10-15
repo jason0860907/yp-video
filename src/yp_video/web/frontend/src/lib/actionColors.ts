@@ -10,3 +10,12 @@ export const ACTION_COLORS: Record<string, string> = {
 };
 
 export const actionColor = (label?: string | null) => ACTION_COLORS[label ?? ''] ?? '#8E8E93';
+
+// The court drawings' floor: neutral slate darker than every action hue — the
+// six span every hue, so a coloured floor would swallow one of them. The ball
+// is white for the same reason (yellow was the score's colour).
+export const COURT = {
+  surface: '#4A5361',
+  freeZone: '#2E343E',
+  ball: '#FFFFFF',
+};

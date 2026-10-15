@@ -10,7 +10,7 @@
  *  No dirty guard: every mark is saved the moment it lands.
  */
 
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { API, apiFetch, apiUrl, errMsg } from '@/lib/api';
@@ -134,6 +134,15 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
     numFrames,
   });
   useVideoKeys(togglePlay, step);
+  // Esc puts the armed landmark down, so a stray click marks nothing.
+  useEffect(() => {
+    if (!armed) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setArmed(null);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [armed]);
 
   const reach = state?.outside_frame ?? 0;
   const hasOutsideMark = Object.values(state?.points ?? {}).some(
@@ -502,14 +511,15 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
         <KeyHints
           keys={[
             ['Space', 'play'],
-            ['← →', 'frame'],
+            ['← →', 'frame (⇧ ×10)'],
+            ['Esc', 'stop marking'],
             ['Wheel', 'zoom'],
             ['Drag', 'pan (right-drag while marking)'],
           ]}
         />
       </div>
 
-      {/* Landmarks · Court · Rally */}
+      {/* Landmarks · Map · Positions */}
       <div className="min-w-0 xl:w-[420px] xl:flex-shrink-0">
         <Card className="space-y-4">
           <Tabs
@@ -517,7 +527,7 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
               { key: 'landmarks', label: 'Landmarks' },
               ...(['court', 'rally'] as const).map((key) => ({
                 key,
-                label: key === 'court' ? 'Court' : 'Rally',
+                label: key === 'court' ? 'Map' : 'Positions',
                 disabled: !fit,
                 title: fit ? undefined : 'Mark at least 4 floor points first',
               })),
@@ -545,14 +555,15 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
                 arcs={arcs}
                 ball={ball}
               />
-              {camera && arcs.length > 0 && (
+              {camera && (
                 <div>
-                  <SectionLabel>Side view · rally {arcs[0]!.rally_id}</SectionLabel>
+                  <SectionLabel>Side view{arcs.length > 0 ? ` · rally ${arcs[0]!.rally_id}` : ''}</SectionLabel>
                   <SideView
                     length={state.court.length}
                     netHeight={state.net_height_m}
                     arcs={arcs}
                     ball={ball}
+                    time={t}
                   />
                 </div>
               )}

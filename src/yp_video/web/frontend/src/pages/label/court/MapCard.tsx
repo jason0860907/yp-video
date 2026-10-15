@@ -45,7 +45,7 @@ export function MapCard({
   return (
     <>
       <div className="mb-2.5 flex items-center justify-between">
-        <SectionLabel className="mb-0">Court</SectionLabel>
+        <SectionLabel className="mb-0">Top-down</SectionLabel>
         <div className="inline-flex items-center gap-2 text-[11px]">
           {current && (
             <span style={{ color: actionColor(current.label) }}>

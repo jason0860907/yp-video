@@ -1,7 +1,7 @@
 /** Top-down court: metres on the floor, the near sideline at the bottom so it
  *  reads the way the camera sees it. */
 
-import { actionColor } from '@/lib/actionColors';
+import { actionColor, COURT } from '@/lib/actionColors';
 import type { Arc, CourtState, Point, Point3 } from './geometry';
 
 /** Free zone drawn around the court, metres. */
@@ -35,9 +35,10 @@ export function CourtMap({
   return (
     <svg
       viewBox={`${-MARGIN} ${-MARGIN} ${length + 2 * MARGIN} ${width + 2 * MARGIN}`}
-      className="w-full rounded-xl bg-emerald-950/60"
+      className="w-full rounded-xl"
+      style={{ background: COURT.freeZone }}
     >
-      <rect x={0} y={0} width={length} height={width} className="fill-sky-900/50" />
+      <rect x={0} y={0} width={length} height={width} fill={COURT.surface} />
       {state.lines.map(([x1, y1, x2, y2], i) => (
         <line
           key={i}
@@ -58,6 +59,7 @@ export function CourtMap({
           stroke={actionColor(a.label)}
           strokeWidth={0.07}
           strokeOpacity={0.7}
+          strokeDasharray={a.source === 'ball' ? undefined : '0.25 0.18'}
         />
       ))}
       {dots.map((d) =>
@@ -96,11 +98,11 @@ export function CourtMap({
             cx={ball[0]}
             cy={y(ball[1])}
             r={0.4}
-            fill="#facc15"
+            fill={COURT.ball}
             stroke="black"
             strokeWidth={0.08}
           />
-          <text x={ball[0] + 0.6} y={y(ball[1]) + 0.25} fontSize={0.7} fill="#facc15">
+          <text x={ball[0] + 0.6} y={y(ball[1]) + 0.25} fontSize={0.7} fill={COURT.ball}>
             {ball[2].toFixed(1)} m
           </text>
         </g>

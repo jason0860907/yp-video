@@ -111,6 +111,48 @@ export interface Arc {
   start: number;
   end: number;
   points: Point3[];
+  /** "ball": fitted to the detected ball; "touches": the gravity path
+   *  joining its two touches, nothing seen in between. */
+  source: 'ball' | 'touches';
+}
+
+const GRAVITY = 9.81;
+
+export interface FlightStats {
+  /** Launch speed, km/h. */
+  speed: number;
+  /** The ball's height at the touch that sent it, m. */
+  contact: number;
+  /** The highest point, m. */
+  peak: number;
+  /** Height over the net top where it crossed, m; null if it never did. */
+  clearance: number | null;
+}
+
+/** A flight's numbers off its gravity path: the points sample
+ *  p0 + v0·t + ½gt² evenly in time, so the two ends give v0. */
+export function flightStats(a: Arc, netX: number, netHeight: number): FlightStats | null {
+  const p = a.points[0];
+  const q = a.points[a.points.length - 1];
+  const d = a.end - a.start;
+  if (!p || !q || d <= 0) return null;
+  const v = [(q[0] - p[0]) / d, (q[1] - p[1]) / d, (q[2] - p[2]) / d + (GRAVITY * d) / 2];
+  let clearance: number | null = null;
+  if ((p[0] - netX) * (q[0] - netX) < 0) {
+    const t = (netX - p[0]) / v[0]!;
+    clearance = p[2] + v[2]! * t - (GRAVITY * t * t) / 2 - netHeight;
+  }
+  return {
+    speed: Math.hypot(v[0]!, v[1]!, v[2]!) * 3.6,
+    contact: p[2],
+    peak: Math.max(...a.points.map((x) => x[2])),
+    clearance,
+  };
+}
+
+/** The flight under way at t, else the last one flown. */
+export function shownFlight(arcs: Arc[], t: number): Arc | null {
+  return arcs.find((a) => a.start <= t && t <= a.end) ?? arcs.filter((a) => a.start <= t).at(-1) ?? null;
 }
 
 /** The arcs of the rally playing at time t (one flight's slack either side). */
