@@ -230,9 +230,9 @@ export const API = {
     videos: '/reid/videos',
     options: '/reid/options',
     embed: '/reid/embed',
-    clusters: (name: string, threshold: number, model = 'clip-reid') =>
+    clusters: (name: string, threshold: number, model: string) =>
       `/reid/clusters/${encodeURIComponent(name)}?threshold=${threshold}&model=${encodeURIComponent(model)}`,
-    players: (name: string, model = 'clip-reid') =>
+    players: (name: string, model: string) =>
       `/reid/players/${encodeURIComponent(name)}?model=${encodeURIComponent(model)}`,
     seedCluster: (name: string) => `/reid/seed-cluster/${encodeURIComponent(name)}`,
     done: (name: string) => `/reid/done/${encodeURIComponent(name)}`,

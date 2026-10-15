@@ -73,7 +73,7 @@ class EmbedTests(unittest.TestCase):
             patch.object(windows, "tracklet_index", return_value=TrackletIndex(tracks)),
             patch.object(windows, "track_keys", return_value={"a": "1:1"}),
             patch.object(windows, "_cut_masked", return_value=crops),
-            patch.object(windows, "build_embedders", return_value={windows.BASE_EMBEDDER: _Embedder()}),
+            patch.object(windows, "reident_engine", return_value=_Embedder()),
             patch.object(windows, "save_embedding_matrix", side_effect=lambda s, m, x: saved.update(m=x)),
             patch.object(windows, "clear_embedding_refreshes"),
         ):

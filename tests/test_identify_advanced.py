@@ -51,7 +51,7 @@ class AdvancedIdentifyTests(unittest.TestCase):
         self.assertEqual(track_ball.call_args.args[1], [120, 300, 330])
 
     def test_standard_keeps_fusion_boxes_and_bytetrack(self):
-        track_video, track_ball, track_person_boxes, run_spot_pass, detect_video = self._run(embedder="clip-reident")
+        track_video, track_ball, track_person_boxes, run_spot_pass, detect_video = self._run()
 
         track_video.assert_not_called()
         track_ball.assert_not_called()
@@ -94,21 +94,16 @@ class AdvancedIdentifyTests(unittest.TestCase):
         self.assertEqual(build.call_args.kwargs["tracks"], {"1:1": {120: [0, 0, 9, 9]}})
 
     def test_standard_reads_the_spot_pass_picks(self):
-        build, spot, _ = self._associate(embedder="clip-reident")
+        build, spot, _ = self._associate()
         build.assert_not_called()
         self.assertEqual(spot.call_args.args[1], {"picks": 1})
 
     def test_standard_takes_both_spot_outputs_or_neither(self):
         with patch.object(pipeline, "load_events", return_value=[{"frame": 1}]), self.assertRaises(ValueError):
             identify.identify_players(
-                Path("/tmp/m.mp4"), embedder="clip-reident", fusion_checkpoint=Path("/tmp/c.pt"),
+                Path("/tmp/m.mp4"), fusion_checkpoint=Path("/tmp/c.pt"),
                 person_boxes=Path("/tmp/persons.npz"),
             )
-
-    def test_mode_decides_the_embedder(self):
-        for kwargs in ({"advanced": True, "embedder": "clip-reident"}, {}):
-            with self.assertRaises(ValueError):
-                identify.identify_players(Path("/tmp/m.mp4"), fusion_checkpoint=Path("/tmp/c.pt"), **kwargs)
 
     def test_advanced_refuses_fusion_boxes(self):
         with tempfile.TemporaryDirectory() as tmp:

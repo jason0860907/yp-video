@@ -37,7 +37,7 @@ from yp_video.extraction.cropping import (
 )
 from yp_video.extraction.links import track_keys
 from yp_video.extraction.store import records_path
-from yp_video.reid.embedder import build_embedders
+from yp_video.reid.embedder import reident_engine
 from yp_video.reid.store import (
     clear_embedding_refreshes,
     embedding_write_transaction,
@@ -142,7 +142,7 @@ def embed_tracklet_windows(stem: str, video_path: Path, *, on_progress: Progress
     with the records. Returns ``{"models": [...], "crops": N}`` like embed_video."""
     _meta, records = read_jsonl(records_path(stem))
     views = window_boxes(records, track_keys(stem), tracklet_index(stem))
-    embedder = build_embedders()[BASE_EMBEDDER]
+    embedder = reident_engine()
     with tempfile.TemporaryDirectory(prefix="window-crops-") as tmp:
         crops = _cut_masked(video_path, views, Path(tmp), on_progress)
         order = list(crops)

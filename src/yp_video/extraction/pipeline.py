@@ -78,7 +78,7 @@ from yp_video.person.detector import (
     PersonBox,
     person_detector,
 )
-from yp_video.reid.embedder import base_embedder_name, build_embedders
+from yp_video.reid.embedder import build_embedders
 from yp_video.reid.store import (
     clear_embedding_refreshes,
     embedded_models,
@@ -747,39 +747,30 @@ def _patch_embedding_row(
                 if not masked_path.exists():
                     _masked_record_crop(stem, record, crop)
 
-    groups: dict[str, list[str]] = {}
-    for name in targets:
-        groups.setdefault(base_embedder_name(name), []).append(name)
-
     updated: list[str] = []
-    for base_name, variants in groups.items():
-        vectors: dict[str, np.ndarray] = {}
-        embedder = registry.get(base_name)
+    for name in targets:
+        vector = np.nan
+        embedder = registry.get(name)
         if crop is not None and embedder is not None:
-            paths: list[Path] = []
-            for name in variants:
-                path = masked_path if name.endswith("-masked") else normal_path
-                if path is None:
-                    raise ValueError(f"Missing actor crop for {base_name}")
-                paths.append(path)
-            batch = embedder.embed_paths(paths)
-            vectors = {name: batch[index] for index, name in enumerate(variants)}
+            path = masked_path if getattr(embedder, "masked_input", False) else normal_path
+            if path is None:
+                raise ValueError(f"Missing actor crop for {name}")
+            vector = embedder.embed_paths([path])[0]
 
-        for name in variants:
-            with (
-                embedding_write_transaction(),
-                _embedding_lock(stem, name),
-                _actor_fix_lock,
+        with (
+            embedding_write_transaction(),
+            _embedding_lock(stem, name),
+            _actor_fix_lock,
+        ):
+            if not _record_revision_is_current(
+                stem, str(record["id"]), expected_revision
             ):
-                if not _record_revision_is_current(
-                    stem, str(record["id"]), expected_revision
-                ):
-                    continue
-                matrix = load_embedding_matrix(stem, name)
-                matrix[row] = vectors.get(name, np.nan)
-                save_embedding_matrix(stem, name, matrix)
-                mark_actor_embedding_refreshed(
-                    stem, name, str(record["id"])
-                )
-                updated.append(name)
+                continue
+            matrix = load_embedding_matrix(stem, name)
+            matrix[row] = vector
+            save_embedding_matrix(stem, name, matrix)
+            mark_actor_embedding_refreshed(
+                stem, name, str(record["id"])
+            )
+            updated.append(name)
     return updated

@@ -5,7 +5,6 @@ description = "Volleyball video analysis pipeline: download, cut, detect, annota
 requires-python = ">=3.10"
 dependencies = [
     # Video decode / probing
-    "decord>=0.6.0",
     "opencv-python-headless>=4.8.0",
     "numpy>=1.24.0",
     "pydantic>=2.0",
@@ -20,13 +19,10 @@ dependencies = [
     # Web application
     "fastapi>=0.110.0",
     "uvicorn>=0.27.0",
-    "google-genai>=1.0.0",
     # Player ReID: person detection on action frames + embedding clustering.
-    # onnxruntime runs the CLIP-ReID embedder (ONNX export; CPU is fast enough
-    # for a few hundred crops per video).
     "rfdetr>=1.8.3",
     "scipy>=1.11",
-    "onnxruntime>=1.20",
+    # FastAPI's default response class (app.py ORJSONResponse).
     "orjson>=3.11.9",
     # Audit trail: Cloudflare Access identity + the Postgres it is written to.
     # PyJWT ships PyJWKClient, which fetches and caches the Access JWKS for us.

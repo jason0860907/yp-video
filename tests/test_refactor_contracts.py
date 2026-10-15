@@ -737,14 +737,16 @@ class MaskedCropReuseTests(unittest.TestCase):
 
 
 class ActorEmbeddingRefreshTests(unittest.TestCase):
-    def test_variants_with_shared_weights_use_one_batch(self) -> None:
+    def test_registered_embedder_refreshes_and_an_unregistered_matrix_blanks(self) -> None:
         class FakeEmbedder:
+            masked_input = True
+
             def __init__(self) -> None:
                 self.calls: list[list[Path]] = []
 
             def embed_paths(self, paths):
                 self.calls.append(list(paths))
-                return np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
+                return np.array([[1.0, 2.0]], dtype=np.float32)
 
         embedder = FakeEmbedder()
         saved: dict[str, np.ndarray] = {}
@@ -765,7 +767,7 @@ class ActorEmbeddingRefreshTests(unittest.TestCase):
                 patch.object(
                     pipeline,
                     "build_embedders",
-                    return_value={"clip-reident": embedder},
+                    return_value={"clip-reident-masked": embedder},
                 ),
                 patch.object(pipeline, "crop_dir", return_value=root / "crops"),
                 patch(
@@ -798,16 +800,13 @@ class ActorEmbeddingRefreshTests(unittest.TestCase):
                     expected_revision=1,
                 )
 
-        self.assertEqual(len(embedder.calls), 1)
-        self.assertEqual(len(embedder.calls[0]), 2)
+        self.assertEqual(embedder.calls, [[root / "masked" / "event-1.jpg"]])
         self.assertEqual(
             updated, ["clip-reident", "clip-reident-masked"]
         )
+        self.assertTrue(np.isnan(saved["clip-reident"][0]).all())
         np.testing.assert_array_equal(
-            saved["clip-reident"][0], np.array([1.0, 2.0])
-        )
-        np.testing.assert_array_equal(
-            saved["clip-reident-masked"][0], np.array([3.0, 4.0])
+            saved["clip-reident-masked"][0], np.array([1.0, 2.0])
         )
 
     def test_matrix_mtime_is_the_durable_stale_marker(self) -> None:

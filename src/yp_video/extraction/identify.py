@@ -31,7 +31,7 @@ from pathlib import Path
 
 from yp_video.core.frames import video_geometry
 from yp_video.core.progress import ProgressFn
-from yp_video.reid.embedder import threshold_calibration
+from yp_video.reid.embedder import DEFAULT_EMBEDDER, threshold_calibration
 
 #: Overall-percent band per phase, tuned to measured cost: dense tracking is
 #: the GPU bill (~14.5 ms/frame over every rally frame); everything after it
@@ -105,7 +105,6 @@ class IdentifyResult:
 def identify_players(
     video_path: Path,
     *,
-    embedder: str | None = None,
     fusion_checkpoint: Path,
     person_boxes: Path | None = None,
     actor_picks: Path | None = None,
@@ -133,8 +132,8 @@ def identify_players(
     labeled sideline videos) for a few extra GPU minutes per video. It reads no fusion boxes, so
     ``person_boxes`` and ``actor_picks`` must be None. Those tracklets also carry the identity
     vectors: advanced embeds with extraction/windows.py (masked crops averaged
-    over ±1 s of the actor's tracklet), so it takes no ``embedder`` — standard
-    identify requires one. And they are
+    over ±1 s of the actor's tracklet) instead of the registered
+    ``DEFAULT_EMBEDDER`` that standard identify uses. And they are
     the actor candidates: the person/action head picks among each event's
     tracklets within ±3 frames instead of its own proposals (actor hit
     77.6% → 82.6% on the model's 7-video validation split).
@@ -157,10 +156,7 @@ def identify_players(
     from yp_video.tracklets.fusion import track_person_boxes
     from yp_video.tracklets.tracking import track_video
 
-    if advanced == (embedder is not None):
-        raise ValueError("standard identify needs an embedder; advanced embeds its own windows")
-    if advanced:
-        embedder = WINDOWED_EMBEDDER
+    embedder = WINDOWED_EMBEDDER if advanced else DEFAULT_EMBEDDER
     stem = video_path.stem
     events = load_events(stem)
     if not events:
@@ -419,10 +415,9 @@ def _main() -> None:
     parser.add_argument("--fusion-checkpoint", type=Path, required=True)
     parser.add_argument("--person-boxes", type=Path, help="Reuse whole-video Fusion boxes from this analysis")
     parser.add_argument("--actor-picks", type=Path, help="Reuse the actor picks of that same SPOT pass")
-    mode = parser.add_mutually_exclusive_group(required=True)
-    mode.add_argument("--embedder", help="Standard identify: fusion boxes + ByteTrack, embedded with this model")
-    mode.add_argument("--advanced", action="store_true",
-                      help="RF-DETR Seg + ByteTrack + GTA tracking and tracklet-window embeddings")
+    parser.add_argument("--advanced", action="store_true",
+                        help="RF-DETR Seg + ByteTrack + GTA tracking and tracklet-window embeddings "
+                             "(default: fusion boxes + ByteTrack, masked single-crop embeddings)")
     parser.add_argument("--reps-per-unit", type=int, default=3)
     args = parser.parse_args()
 
@@ -431,7 +426,6 @@ def _main() -> None:
 
     result = identify_players(
         args.video,
-        embedder=args.embedder,
         fusion_checkpoint=args.fusion_checkpoint,
         person_boxes=args.person_boxes,
         actor_picks=args.actor_picks,

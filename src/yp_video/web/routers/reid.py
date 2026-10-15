@@ -54,7 +54,7 @@ def options() -> dict:
     registry = build_embedders()
     runs = checkpoints.list_checkpoints()
     return {
-        "default_embedder": DEFAULT_EMBEDDER if DEFAULT_EMBEDDER in registry else next(iter(registry)),
+        "default_embedder": DEFAULT_EMBEDDER,
         "embedders": [
             # masked → the crop viewer should show the crops-masked variant.
             {"name": n, "threshold": threshold_calibration(n), "masked": getattr(e, "masked_input", False)}
