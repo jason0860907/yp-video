@@ -305,8 +305,6 @@ def _with_images(
 
     Each photo is the complete source-video frame, downscaled proportionally,
     and carries the person's box normalized against that complete frame.
-    Frames are visited in order, since a decoder seeking backwards is the slow
-    case.
 
     Returns the exported units and matching `Unit` objects in the same order,
     so linkage leaf indices stay aligned with the shipped appearances.
@@ -376,22 +374,10 @@ def _image_dir(stem: str) -> Path:
 
 
 def _decode_frames(video_path: Path, wanted: set[int]) -> dict:
-    """The requested frames, read in ascending order."""
-    import cv2
+    """The requested frames that decode, by index."""
+    from yp_video.core.frames import read_frames
 
-    images: dict = {}
-    if not wanted:
-        return images
-    capture = cv2.VideoCapture(str(video_path))
-    try:
-        for index in sorted(wanted):
-            capture.set(cv2.CAP_PROP_POS_FRAMES, index)
-            ok, frame = capture.read()
-            if ok:
-                images[index] = frame
-    finally:
-        capture.release()
-    return images
+    return {index: image for index, image in read_frames(video_path, wanted) if image is not None}
 
 
 def _full_frame(frame, box):

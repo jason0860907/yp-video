@@ -18,12 +18,14 @@ Two rules make the job safe to run on a labeled video:
 from __future__ import annotations
 
 import logging
+from contextlib import closing
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from yp_video.actor import labels as actor_labels
 from yp_video.actor.policy import ActorPick, ActorPolicy
 from yp_video.actor.resolution import ActorResolution
+from yp_video.core.frames import read_frames
 from yp_video.core.jsonl import read_jsonl, write_jsonl
 from yp_video.core.progress import ProgressFn
 from yp_video.extraction import done
@@ -152,8 +154,6 @@ def reassociate_video(
     on_progress: ProgressFn | None = None,
 ) -> dict:
     """Re-run ``policy`` over one video's extracted records."""
-    import cv2
-
     stem = video_path.stem
     path = records_path(stem)
     if not path.exists():
@@ -280,17 +280,16 @@ def reassociate_video(
     if on_progress is not None:
         on_progress(0, len(pending), f"{len(pending)} picks moved; re-cropping...")
 
-    # Pass two: cut only what moved. Sorted by frame so the seeks run forward.
+    # Pass two: cut only what moved, each frame decoded once, in frame order.
     changed = 0
     if pending:
-        capture = cv2.VideoCapture(str(video_path))
-        try:
-            for index, item in enumerate(
-                sorted(pending, key=lambda p: p.target.frame)
-            ):
-                capture.set(cv2.CAP_PROP_POS_FRAMES, item.target.frame)
-                ok, frame_img = capture.read()
-                if not ok:
+        ordered = sorted(pending, key=lambda p: p.target.frame)
+        with closing(read_frames(video_path, [p.target.frame for p in ordered])) as decoded:
+            frame_no, frame_img = None, None
+            for index, item in enumerate(ordered):
+                while frame_no != item.target.frame:
+                    frame_no, frame_img = next(decoded)
+                if frame_img is None:
                     log.warning(
                         "Could not decode frame %s of %s; leaving the previous pick",
                         item.target.frame,
@@ -305,8 +304,6 @@ def reassociate_video(
                         len(pending),
                         f"re-cropping {index + 1}/{len(pending)}",
                     )
-        finally:
-            capture.release()
 
     if dirty or changed:
         # The outcome counts belong to whoever decided them. Detection writes
