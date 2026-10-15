@@ -271,3 +271,27 @@ def test_compute_fits_arcs_to_the_ball_track():
     assert arc["source"] == "ball" and arc["frames"] == len(frames)
     assert arc["points"][0] == pytest.approx([4.0, 2.0, 2.5], abs=0.02)
     assert positions.compute(calibration, events, {}, None)["arcs"] == []
+
+
+def test_chain_meets_at_every_touch_and_finds_its_time():
+    see = _pinhole()
+    cam = camera.solve(_calibration(see))
+    rng = np.random.default_rng(1)
+    # A set touched at (4, 2, 2.5) flies 0.7 s to a spike there, which drives
+    # the ball on for 0.4 s. The spike was spotted 2 frames late.
+    p1, v1 = _flight([0.7])[0], np.array([10.0, 2.0, -1.0])
+
+    def spike(t):
+        t = np.asarray(t, float)[:, None]
+        return p1 + v1 * t + 0.5 * np.array([0, 0, -9.81]) * t**2
+
+    late = 2 / 30
+    times = [np.arange(0, 0.7, 1 / 30), np.arange(0, 0.4, 1 / 30)]
+    flights = [
+        trajectory.Flight(times[0], np.array([see(p) for p in _flight(times[0])]), 0.7 + late),
+        trajectory.Flight(times[1] - late, np.array([see(p) for p in spike(times[1])]), 0.4 - late),
+    ]
+    chain = trajectory.fit_chain(cam, SIZE[0] / SIZE[1], flights, {}, rng)
+    assert chain.touches[1] == pytest.approx(p1, abs=0.05)
+    assert chain.shifts[1] == pytest.approx(-late, abs=0.01)
+    assert [n for n, _ in chain.seen] == [len(times[0]), len(times[1])]

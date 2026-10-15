@@ -70,48 +70,74 @@ def _observations(track: Mapping, a: dict, b: dict) -> tuple[np.ndarray, np.ndar
     return np.array(t, dtype=np.float64), np.array(xy, dtype=np.float64).reshape(-1, 2)
 
 
+def _runs(events: list[dict]) -> list[list[dict]]:
+    """Runs of consecutive touches of one rally, each no more than
+    MAX_FLIGHT_S after the one before: the chains the ball is fitted along."""
+    runs: list[list[dict]] = []
+    for a, b in zip(events, events[1:]):
+        if a["rally_id"] is None or a["rally_id"] != b["rally_id"] or not 0 < b["time"] - a["time"] <= MAX_FLIGHT_S:
+            continue
+        if runs and runs[-1][-1] is a:
+            runs[-1].append(b)
+        else:
+            runs.append([a, b])
+    return runs
+
+
 def _flights(events: list[dict], cam: camera.Camera | None, aspect: float, track: Mapping | None) -> list[dict]:
     """The ball's arc between each pair of consecutive touches of a rally.
 
     `events` (time order) holds every touch, placed or not, and only
     neighbours are joined — so an arc never jumps over an unplaced one, which
-    would draw a single flight where the ball was really played twice. An arc
-    is fitted to the detected ball (source "ball") where enough of the flight
-    was seen; otherwise, when both touches are placed in 3D, it is the
-    ballistic path joining them (source "touches").
+    would draw a single flight where the ball was really played twice.
+
+    Each run of touches is fitted as one chain (trajectory.fit_chain): the
+    detected ball over all its flights, with the touches already placed in
+    3D (from the actor's feet, or a landing on the floor) as anchors. The
+    fitted touch positions replace those events' ball_3d, so dots sit on the
+    arcs. An arc is "ball" when enough of its flight was seen on it, else
+    "touches" — the gravity path between its two placed touches.
     """
     rng = np.random.default_rng(0)
     arcs = []
-    for a, b in zip(events, events[1:]):
-        if a["rally_id"] is None or a["rally_id"] != b["rally_id"]:
-            continue
-        duration = b["time"] - a["time"]
-        if not 0 < duration <= MAX_FLIGHT_S:
-            continue
-        fitted = None
-        if cam is not None and track is not None:
-            t, xy = _observations(track, a, b)
-            anchors = [(e["time"] - a["time"], e["ball_3d"]) for e in (a, b) if e["ball_3d"] is not None]
-            fitted = trajectory.fit(cam, aspect, t, xy, duration, rng, anchors)
-        if fitted is not None:
-            points = fitted.at(np.linspace(0.0, duration, ARC_SAMPLES))
-            evidence = {"source": "ball", "frames": fitted.frames, "rmse": round(fitted.rmse, 4)}
-        elif a["ball_3d"] is not None and b["ball_3d"] is not None:
-            points = camera.arc(a["ball_3d"], b["ball_3d"], duration, ARC_SAMPLES)
-            evidence = {"source": "touches"}
-        else:
-            continue
-        arcs.append({
-            "rally_id": a["rally_id"],
-            # The touch that sent the ball — what the flight is coloured by.
-            "label": a["label"],
-            "from": a["id"],
-            "to": b["id"],
-            "start": round(a["time"], 3),
-            "end": round(b["time"], 3),
-            "points": [[round(float(v), 2) for v in p] for p in points],
-            **evidence,
-        })
+    for run in _runs(events):
+        anchors = {k: e["ball_3d"] for k, e in enumerate(run) if e["ball_3d"] is not None}
+        touches: list[np.ndarray | None] = [e["ball_3d"] for e in run]
+        shifts = [0.0] * len(run)
+        seen = [(0, float("nan"))] * (len(run) - 1)
+        if cam is not None:
+            empty = (np.zeros(0), np.zeros((0, 2)))
+            chain = trajectory.fit_chain(cam, aspect, [
+                trajectory.Flight(*(_observations(track, a, b) if track is not None else empty), b["time"] - a["time"])
+                for a, b in zip(run, run[1:])
+            ], anchors, rng)
+            touches, shifts, seen = chain.touches, chain.shifts, chain.seen
+            for e, point in zip(run, touches):
+                if point is not None and -trajectory.FLOOR_SLACK_M <= point[2] <= MAX_CONTACT_Z_M:
+                    e["ball_3d"] = point
+        for k, (a, b) in enumerate(zip(run, run[1:])):
+            start, end = a["time"] + shifts[k], b["time"] + shifts[k + 1]
+            pa, pb, duration = touches[k], touches[k + 1], end - start
+            if pa is None or pb is None or duration <= 0 or not trajectory.plausible(pa, pb, duration):
+                continue
+            frames, rmse = seen[k]
+            evidence = (
+                {"source": "ball", "frames": frames, "rmse": round(rmse, 4)}
+                if frames >= trajectory.MIN_FRAMES else {"source": "touches"}
+            )
+            arcs.append({
+                "rally_id": a["rally_id"],
+                # The touch that sent the ball — what the flight is coloured by.
+                "label": a["label"],
+                "from": a["id"],
+                "to": b["id"],
+                # When the ball was really touched: the spotted time, moved
+                # by the fit (at most trajectory.TOUCH_SLACK_S).
+                "start": round(start, 3),
+                "end": round(end, 3),
+                "points": [[round(float(v), 2) for v in p] for p in camera.arc(pa, pb, duration, ARC_SAMPLES)],
+                **evidence,
+            })
     return arcs
 
 
@@ -206,9 +232,11 @@ def compute(calibration: Calibration, events: Sequence[Mapping], feet: Feet, tra
             "reason": e["reason"],
         }
 
+    # First: fitting the arcs refines the touches' ball_3d.
+    arcs = _flights(placed, cam, calibration.frame_size[0] / calibration.frame_size[1], track)
     return {
         "units": "m",
         "court": {"length": length, "width": width},
         "events": [out(e) for e in placed],
-        "arcs": _flights(placed, cam, calibration.frame_size[0] / calibration.frame_size[1], track),
+        "arcs": arcs,
     }
