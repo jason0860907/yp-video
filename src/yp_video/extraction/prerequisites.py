@@ -65,16 +65,12 @@ def _tracks_stale(stem: str) -> bool:
 
     A track key is ``"{rally_id}:{track_id}"`` and rally_id is positional, so
     re-labeling rallies renumbers them and every stored key quietly points
-    somewhere else. Tracks written before the fingerprint existed report
-    False — unknown, not stale; claiming otherwise would flag every old video.
+    somewhere else.
     """
     path = tracks_path(stem)
     if not path.exists():
         return False
-    stored = (read_jsonl_header(path).get("rallies") or {}).get("fingerprint")
-    if not stored:
-        return False
-    return stored != rally_fingerprint(stem)
+    return read_jsonl_header(path)["rallies"]["fingerprint"] != rally_fingerprint(stem)
 
 
 def prerequisites(stem: str) -> Prerequisites:

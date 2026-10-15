@@ -41,8 +41,9 @@ CROPS_DIR = EXTRACTION_DIR / "crops"
 MASKED_CROPS_DIR = EXTRACTION_DIR / "crops-masked"
 
 # Action labels with nobody to re-identify: "score" marks where the ball
-# lands, not a person. Applied at extraction AND at read time, so old
-# extractions that predate the rule stay filtered too.
+# lands, not a person. Applied at extraction AND at read time: labels are
+# overlaid from the live action annotation (ACTION_FIELDS), so an event
+# re-labelled "score" after extraction must drop out too.
 SKIP_LABELS = frozenset({"score"})
 
 # These describe the ACTION, not the detector output.  Old extraction files

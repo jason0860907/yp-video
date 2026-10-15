@@ -43,10 +43,7 @@ def confirmations_for(stem: str, records: Sequence[dict]) -> dict[str, ActorLabe
     """
     out: dict[str, ActorLabel] = {}
     for record in records:
-        try:
-            resolution = actor_resolution(record)
-        except ValueError:
-            continue  # unmigrated record; never guess what it was
+        resolution = actor_resolution(record)
         if resolution is not ActorResolution.AUTO or record.get("actor_box") is None:
             continue
         frame = int(record["frame"])

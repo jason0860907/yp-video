@@ -164,14 +164,6 @@ class PrerequisiteTests(unittest.TestCase):
             ):
                 self.assertFalse(prereq._tracks_stale("match"))
 
-    def test_tracks_without_a_fingerprint_are_unknown_not_stale(self) -> None:
-        """Tracks predating the fingerprint must not all flag as stale."""
-        with tempfile.TemporaryDirectory() as raw_dir:
-            path = Path(raw_dir) / "match_tracks.jsonl"
-            write_jsonl(path, {"video": "match"}, [])
-            with patch.object(prereq, "tracks_path", return_value=path):
-                self.assertFalse(prereq._tracks_stale("match"))
-
     def test_moved_rallies_make_existing_tracks_stale(self) -> None:
         with tempfile.TemporaryDirectory() as raw_dir:
             path = Path(raw_dir) / "match_tracks.jsonl"
