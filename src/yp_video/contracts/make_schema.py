@@ -19,9 +19,9 @@ from yp_video.config import PROJECT_ROOT
 
 from .action import (
     ACTION_CONTRACT_VERSION,
-    FRAME_FFMPEG_PATTERN,
     FRAME_GLOB,
-    FRAME_HEIGHT,
+    FRAME_CACHE_FORMAT,
+    FRAME_LONGEST_EDGE,
     FRAME_PY_PATTERN,
     LABEL_FILE_GLOB,
     RECIPES,
@@ -94,8 +94,8 @@ def build_action_schema() -> dict:
             "constants in yp_spot/contract.py under the same version."
         ),
         "x-frame-layout": {
-            "height": FRAME_HEIGHT,
-            "ffmpeg_pattern": FRAME_FFMPEG_PATTERN,
+            "format": FRAME_CACHE_FORMAT,
+            "longest_edge": FRAME_LONGEST_EDGE,
             "py_pattern": FRAME_PY_PATTERN,
             "glob": FRAME_GLOB,
             "zero_based": True,

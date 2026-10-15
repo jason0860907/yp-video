@@ -40,6 +40,7 @@ SPOT_PACKAGE_DIR = SPOT_DIR / "yp_spot"
 SPOT_INFERENCE_MODULE = "yp_spot.inference"
 SPOT_TRAIN_MODULE = "yp_spot.train"
 SPOT_AUDIO_PRECOMPUTE_MODULE = "yp_spot.audio.precompute"
+SPOT_FRAME_CACHE_MODULE = "yp_spot.jpeg_frames"
 # yp-reid: same pattern as yp-spot — sibling repo + venv, subprocess boundary,
 # contract handshake (yp_video/contracts/reid.py ⇄ yp_reid/contract.py).
 REID_PKG_DIR = _env_path("YP_REID_DIR", PROJECT_ROOT.parent / "yp-reid")

@@ -1,4 +1,9 @@
-"""Frame cache helpers for SPOT action prediction and training."""
+"""Frame cache helpers for SPOT action prediction and training.
+
+yp-spot's ``yp_spot.jpeg_frames`` is the one producer of the cache; this
+module checks a cache against the contract and asks yp-spot to build it
+when one is missing or stale.
+"""
 
 from __future__ import annotations
 
@@ -6,20 +11,17 @@ import json
 import shutil
 import subprocess
 import threading
-import time
 from collections.abc import Callable
 from pathlib import Path
 
-from yp_video.config import ACTION_FRAMES_DIR
+from yp_video.config import ACTION_FRAMES_DIR, SPOT_DIR, SPOT_FRAME_CACHE_MODULE, SPOT_PYTHON
 from yp_video.contracts.action import (
-    FRAME_FFMPEG_PATTERN,
-    FRAME_HEIGHT,
+    FRAME_CACHE_FORMAT,
+    FRAME_CACHE_METADATA,
+    FRAME_LONGEST_EDGE,
     frame_filename,
 )
-from yp_video.core.cache import StatCache
 
-FRAME_PATTERN = FRAME_FFMPEG_PATTERN
-META_NAME = ".frame-cache.json"
 _EXTRACT_SEMAPHORE = threading.Semaphore(2)
 _CACHE_LOCKS: dict[str, threading.Lock] = {}
 _CACHE_LOCKS_GUARD = threading.Lock()
@@ -38,127 +40,57 @@ def ensure_action_frame_cache(
     *,
     cache_root: Path = ACTION_FRAMES_DIR,
     expected_frames: int | None = None,
-    height: int = FRAME_HEIGHT,
-    overwrite: bool = False,
 ) -> dict:
-    """Ensure a 0-based JPEG frame cache exists for ``video_path``.
+    """Ensure ``<cache_root>/<video_stem>/000000.jpg…`` exists and is current.
 
-    The output layout matches ``yp_spot.train``:
-    ``<cache_root>/<video_stem>/000000.jpg``. Every native frame is kept —
-    the one cache serves action and rally training alike, each striding it
-    to its own ``sample_fps``.
+    Every native frame is kept — the one cache serves action and rally
+    training alike, each striding it to its own ``sample_fps``.
     """
 
     video_path = Path(video_path)
     output_dir = action_frame_dir(video_path, cache_root=cache_root)
     with _cache_lock(output_dir):
-        return _ensure_action_frame_cache_locked(
-            video_path,
-            cache_root=cache_root,
-            output_dir=output_dir,
-            expected_frames=expected_frames,
-            height=height,
-            overwrite=overwrite,
-        )
-
-
-def _ensure_action_frame_cache_locked(
-    video_path: Path,
-    *,
-    cache_root: Path,
-    output_dir: Path,
-    expected_frames: int | None,
-    height: int,
-    overwrite: bool,
-) -> dict:
-    if not overwrite:
         cached = inspect_action_frame_cache(
-            video_path,
-            cache_root=cache_root,
-            expected_frames=expected_frames,
-            height=height,
+            video_path, cache_root=cache_root, expected_frames=expected_frames
         )
         if cached["ready"]:
             return {**cached, "created": False}
 
-    # Only a (re)build needs the source bytes — a ready cache serves videos
-    # whose cut now lives only in R2.
-    if not video_path.exists():
-        raise ActionFrameCacheError(
-            f"Frame cache for {video_path.stem} is missing or stale and the source "
-            f"video is not on local disk ({video_path}); download that cut to rebuild it"
+        # Only a (re)build needs the source bytes — a ready cache serves videos
+        # whose cut now lives only in R2.
+        if not video_path.exists():
+            raise ActionFrameCacheError(
+                f"Frame cache for {video_path.stem} is missing or stale and the source "
+                f"video is not on local disk ({video_path}); download that cut to rebuild it"
+            )
+        # Holding the lock, a leftover partial can only be a killed build.
+        for stale in (output_dir, cache_root / f".{video_path.stem}.partial"):
+            if stale.exists():
+                shutil.rmtree(stale)
+        cache_root.mkdir(parents=True, exist_ok=True)
+        cmd = [
+            str(SPOT_PYTHON), "-m", SPOT_FRAME_CACHE_MODULE,
+            "--video", video_path.stem,
+            "--source", str(video_path),
+            "--output", str(cache_root),
+            "--longest-edge", str(FRAME_LONGEST_EDGE),
+        ]
+        with _EXTRACT_SEMAPHORE:
+            result = subprocess.run(cmd, cwd=SPOT_DIR, capture_output=True, text=True, check=False)
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()[-500:]
+            raise ActionFrameCacheError(
+                f"Failed to extract action frames for {video_path.name}: {detail}"
+            )
+        built = inspect_action_frame_cache(
+            video_path, cache_root=cache_root, expected_frames=expected_frames
         )
-
-    cache_root.mkdir(parents=True, exist_ok=True)
-    tmp_dir = cache_root / f".{video_path.stem}.frames.tmp"
-    if tmp_dir.exists():
-        shutil.rmtree(tmp_dir)
-    tmp_dir.mkdir(parents=True)
-
-    vf = f"scale=-2:{height}"
-    cmd = [
-        "ffmpeg",
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-y",
-        "-i",
-        str(video_path),
-        "-map",
-        "0:v:0",
-        "-an",
-        "-sn",
-        "-vf",
-        vf,
-        "-q:v",
-        "3",
-        "-vsync",
-        "0",
-        "-start_number",
-        "0",
-        str(tmp_dir / FRAME_PATTERN),
-    ]
-
-    started = time.monotonic()
-    with _EXTRACT_SEMAPHORE:
-        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    if result.returncode != 0:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-        detail = (result.stderr or result.stdout or "").strip()[:500]
-        raise ActionFrameCacheError(
-            f"Failed to extract action frames for {video_path.name}: {detail}"
-        )
-
-    frame_count = _count_frames(tmp_dir)
-    if frame_count <= 0:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-        raise ActionFrameCacheError(f"No frames extracted from {video_path}")
-
-    metadata = {
-        "source": str(video_path),
-        # Size is the cut's identity across copies: the bytes live in R2 and
-        # are materialized per job, so an mtime would describe the download.
-        "source_size": video_path.stat().st_size,
-        "height": height,
-        "frame_count": frame_count,
-        "expected_frames": expected_frames,
-        "created_at": time.time(),
-        "extract_seconds": round(time.monotonic() - started, 3),
-    }
-    (tmp_dir / META_NAME).write_text(json.dumps(metadata, indent=2), encoding="utf-8")
-
-    if output_dir.exists():
-        shutil.rmtree(output_dir)
-    tmp_dir.replace(output_dir)
-
-    return {
-        "ready": True,
-        "created": True,
-        "path": str(output_dir),
-        "frame_count": frame_count,
-        "expected_frames": expected_frames,
-        "height": height,
-    }
+        if not built["ready"]:
+            raise ActionFrameCacheError(
+                f"Frame cache for {video_path.name} was built but does not match the "
+                f"contract ({built['frame_count']} frames, expected {expected_frames})"
+            )
+        return {**built, "created": True}
 
 
 def _cache_lock(output_dir: Path) -> threading.Lock:
@@ -176,30 +108,23 @@ def inspect_action_frame_cache(
     *,
     cache_root: Path = ACTION_FRAMES_DIR,
     expected_frames: int | None = None,
-    height: int = FRAME_HEIGHT,
 ) -> dict:
-    output_dir = action_frame_dir(Path(video_path), cache_root=cache_root)
+    video_path = Path(video_path)
+    output_dir = action_frame_dir(video_path, cache_root=cache_root)
     metadata = _read_metadata(output_dir)
-    frame_count = int(metadata.get("frame_count") or 0) if metadata else 0
-    if frame_count <= 0:
-        frame_count = _count_frames(output_dir)
-    first = output_dir / frame_filename(0)
-    last = output_dir / frame_filename(frame_count - 1) if frame_count else None
+    frame_count = int(metadata.get("frames") or 0) if metadata else 0
     ready = (
-        output_dir.is_dir()
-        and first.exists()
+        metadata is not None
+        and metadata.get("format") == FRAME_CACHE_FORMAT
+        and metadata.get("longest_edge") == FRAME_LONGEST_EDGE
         and frame_count > 0
-        and (last.exists() if last is not None else False)
+        and (output_dir / frame_filename(0)).exists()
+        and (output_dir / frame_filename(frame_count - 1)).exists()
     )
-
-    source_stat = Path(video_path).stat() if Path(video_path).exists() else None
-    if ready and metadata and source_stat:
-        ready = (
-            metadata.get("source_size") == source_stat.st_size
-            and metadata.get("height") == height
-            and metadata.get("frame_count") == frame_count
-        )
-
+    # Size is the cut's identity across copies: the bytes live in R2 and are
+    # materialized per job, so an mtime would describe the download.
+    if ready and video_path.exists():
+        ready = metadata.get("source_size") == video_path.stat().st_size
     if ready and expected_frames:
         # ffprobe metadata can be off by one for some cut files. Treat that as
         # usable, but rebuild larger mismatches.
@@ -210,7 +135,6 @@ def inspect_action_frame_cache(
         "path": str(output_dir),
         "frame_count": frame_count,
         "expected_frames": expected_frames,
-        "height": height,
     }
 
 
@@ -233,9 +157,9 @@ def ensure_action_frame_caches(
             cache_root=cache_root,
             expected_frames=expected_frames,
         )
-        created += int(bool(info.get("created")))
-        reused += int(not info.get("created"))
-        total_frames += int(info.get("frame_count") or 0)
+        created += int(info["created"])
+        reused += int(not info["created"])
+        total_frames += info["frame_count"]
 
     if progress:
         progress(total, total, f"Frame cache ready for {total} video(s)")
@@ -249,28 +173,9 @@ def ensure_action_frame_caches(
     }
 
 
-# Keyed on the directory's own stat: adding/removing entries bumps its mtime,
-# and caches land via an atomic tmp-dir replace, so the stat is stable once a
-# cache is in place. Saves a full glob per meta-less cache on every listing.
-_frame_count_cache = StatCache()
-
-
-def _count_frames(directory: Path) -> int:
-    if not directory.is_dir():
-        return 0
-    return _frame_count_cache.get(
-        str(directory),
-        [directory],
-        lambda: sum(1 for path in directory.glob("*.jpg") if path.name[:6].isdigit()),
-    )
-
-
 def _read_metadata(directory: Path) -> dict | None:
-    path = directory / META_NAME
-    if not path.exists():
+    path = directory / FRAME_CACHE_METADATA
+    if not path.is_file():
         return None
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
+    data = json.loads(path.read_text(encoding="utf-8"))
     return data if isinstance(data, dict) else None

@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from yp_video.actor.person_labels import write_person_labels
+from yp_video.contracts.action import FRAME_CACHE_FORMAT, FRAME_CACHE_METADATA, FRAME_LONGEST_EDGE
 from yp_video.person import annotations as store
 from yp_video.web import detection_media, detection_predictions
 from yp_video.web.routers import detection_label as routes
@@ -53,6 +54,8 @@ def test_no_tracks_still_exports_human_frames_and_empty(labels):
     cache.mkdir(parents=True)
     for frame in range(3):
         (cache / f'{frame:06d}.jpg').write_bytes(b'frame')
+    (cache / FRAME_CACHE_METADATA).write_text(json.dumps(
+        {'format': FRAME_CACHE_FORMAT, 'longest_edge': FRAME_LONGEST_EDGE, 'frames': 3}))
     with patch('yp_video.actor.person_labels.dense_path', return_value=labels / 'missing.npz'):
         result = write_person_labels([(labels / 'absent.jsonl', labels / 'game.mp4')], label_dir=labels / 'out', cache_root=cache.parent)
     assert result['reviewed_frames'] == 2

@@ -34,12 +34,14 @@ ACTION_CONTRACT_VERSION_ENV = "YP_ACTION_CONTRACT_VERSION"
 
 # ── Frame cache layout ────────────────────────────────────────────
 # Frames are extracted as 0-based, zero-padded JPEGs under
-# ``<cache_root>/<video_stem>/000000.jpg``, scaled to FRAME_HEIGHT (aspect
-# ratio preserved). Producer writes with ffmpeg (FRAME_FFMPEG_PATTERN);
-# consumer reads with str.format (FRAME_PY_PATTERN).
-FRAME_HEIGHT = 224
+# ``<cache_root>/<video_stem>/000000.jpg``, every native frame, longest edge
+# scaled to FRAME_LONGEST_EDGE (aspect ratio preserved). yp-spot's
+# ``yp_spot.jpeg_frames`` is the one producer; it stamps FRAME_CACHE_FORMAT
+# into FRAME_CACHE_METADATA. Consumers read with str.format (FRAME_PY_PATTERN).
+FRAME_LONGEST_EDGE = 448
+FRAME_CACHE_FORMAT = "spot-native-jpeg448-v1"
+FRAME_CACHE_METADATA = "metadata.json"
 FRAME_FILENAME_DIGITS = 6
-FRAME_FFMPEG_PATTERN = "%06d.jpg"
 FRAME_PY_PATTERN = "{:06d}.jpg"
 FRAME_GLOB = "*.jpg"
 
