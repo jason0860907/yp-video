@@ -20,7 +20,7 @@ import type { Arc, CameraView, CourtPositions } from '@/pages/label/court/geomet
 
 type Kind = 'serve' | 'receive' | 'set' | 'spike';
 /** A filter row — one value picked per row, rows combined. */
-type Group = 'zone' | 'pass' | 'result' | 'spot' | 'tempo' | 'direction' | 'style';
+type Group = 'zone' | 'pass' | 'passed' | 'result' | 'spot' | 'tempo' | 'direction' | 'style';
 type Picks = Partial<Record<Group, string>>;
 
 const KINDS: { key: Kind; label: string }[] = [
@@ -87,6 +87,7 @@ const PASSES: [string, string, string][] = [
   ['poor', 'Poor', SCALE.bad],
 ];
 const PASS_COLOR = Object.fromEntries(PASSES.map(([key, , color]) => [key, color]));
+const PASS_LABEL = Object.fromEntries(PASSES.map(([key, label]) => [key, label]));
 
 /** The teams named the way the rally model names sides: by which court
  *  end — `Half`, the court's own left or right end — is near the camera. */
@@ -165,6 +166,7 @@ function keysOf(f: TouchFlight): string[] {
   else if (f.route && !f.blocked) out.push('zone:out');
   if (f.pass) out.push(`pass:${f.pass}`);
   if (f.servedZone != null) out.push(`zone:${f.servedZone}`);
+  if (f.passed) out.push(`passed:${f.passed}`);
   // A set is filed under the attack it led to.
   const a = f.attack ?? f.setFor;
   if (a) {
@@ -187,6 +189,7 @@ function outcome(f: TouchFlight): string {
   if (f.setFor) {
     const a = f.setFor;
     return [
+      f.passed && `off a ${PASS_LABEL[f.passed]!.toLowerCase()} pass`,
       a.spot ? `to ${LABEL[`spot:${a.spot}`]}` : 'to ?',
       a.tempo && `${LABEL[`tempo:${a.tempo}`]} ${a.setTime!.toFixed(2)}s`,
       a.result && `attack: ${RESULT[a.result]!.label}`,
@@ -576,18 +579,30 @@ export function FlightsCard({
           )}
         </div>
       )}
-      {kind === 'set' &&
-        ATTACK_ROWS.filter((r) => r.group === 'tempo' || r.group === 'spot').map((r) =>
-          row(
-            r.group === 'spot' ? 'To' : r.title,
+      {kind === 'set' && (
+        <div className="space-y-2">
+          {row(
+            'Pass',
             <Choice
-              values={r.values}
-              picked={picks[r.group]}
-              count={count(r.group)}
-              onPick={toggle(r.group)}
+              values={PASSES.map(([key, label]) => [key, label])}
+              picked={picks.passed}
+              count={count('passed')}
+              onPick={toggle('passed')}
             />,
-          ),
-        )}
+          )}
+          {ATTACK_ROWS.filter((r) => r.group === 'tempo' || r.group === 'spot').map((r) =>
+            row(
+              r.group === 'spot' ? 'To' : r.title,
+              <Choice
+                values={r.values}
+                picked={picks[r.group]}
+                count={count(r.group)}
+                onPick={toggle(r.group)}
+              />,
+            ),
+          )}
+        </div>
+      )}
 
       {/* Each team's balls on their own court: the left-end team plays from
           the top half, so its balls land in the bottom one. */}

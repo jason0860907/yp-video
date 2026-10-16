@@ -85,6 +85,9 @@ export interface TouchFlight {
   /** For a set that was attacked, that attack — where it was hit from is
    *  where the set went. */
   setFor: Attack | null;
+  /** For a set, how well the ball was passed to the setter: the grade of
+   *  the receive or dig it came off. */
+  passed: PassGrade | null;
   /** The receiver's zone 1–9 where a serve or attack came down or was
    *  played; null when blocked, short or out. */
   landing: number | null;
@@ -159,13 +162,19 @@ export function touchFlights(positions: CourtPositions, netHeight: number): Touc
     if (crossed && stats.clearance != null && stats.clearance < 0) suspect.push('crossed under the net');
 
     return [
-      { event, arc, stats, half, from, to, crossed, blocked, pass, servedZone: null, setFor: null, landing, route, attack: null, suspect },
+      { event, arc, stats, half, from, to, crossed, blocked, pass, servedZone: null, setFor: null, passed: null, landing, route, attack: null, suspect },
     ];
   });
 
   const byEvent = new Map(flights.map((f) => [f.event.id, f]));
   const serveInto = new Map(flights.filter((f) => f.arc.label === 'serve').map((f) => [f.arc.to, f]));
   for (const f of flights) if (f.pass) f.servedZone = serveInto.get(f.event.id)?.landing ?? null;
+  // A set: how well the receive or dig it came off reached the setter.
+  for (const f of flights) {
+    if (f.arc.label !== 'receive' || events.get(f.arc.to)?.label !== 'set') continue;
+    const setter = byEvent.get(f.arc.to);
+    if (setter) setter.passed = f.pass ?? grade(f.to, f.crossed);
+  }
   const setInto = new Map(positions.arcs.filter((a) => a.label === 'set').map((a) => [a.to, a]));
   const rallies = new Map<number, Event[]>();
   for (const e of [...positions.events].sort((a, b) => a.time - b.time)) {
