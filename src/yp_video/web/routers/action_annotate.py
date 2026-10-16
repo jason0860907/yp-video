@@ -3,9 +3,6 @@
 import asyncio
 import json
 import logging
-import os
-import tempfile
-import traceback
 from pathlib import Path
 from typing import Literal
 from urllib.parse import unquote
@@ -14,20 +11,14 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import Field, field_validator
 
-from yp_video.action import prelabel
 from yp_video.action.attributes import attribute_defaults
-from yp_video.action.segments import pad_and_merge_spans
 from yp_video.config import (
     ACTION_ANNOTATIONS_DIR,
     CUT_R2_CATEGORIES,
-    SPOT_DIR,
 )
 from yp_video.contracts.action import (
-    ACTION_CONTRACT_VERSION,
-    ACTION_CONTRACT_VERSION_ENV,
     ACTION_LABELS_ORDERED,
     LABEL_FILE_GLOB,
-    SPOT_PROGRESS_PREFIX,
     CourtSide,
     event_id,
 )
@@ -41,26 +32,10 @@ from yp_video.web.action_annotations import (
     normalize_events,
     persistable_events,
     pre_annotation_path,
-    save_spot_pre_annotation,
     write_annotation_atomic,
 )
 from yp_video.web.action_waveform import audio_waveform, video_metadata
-from yp_video.web.job_helpers import (
-    ProgressParser,
-    batch_message,
-    batch_progress,
-    cancel_batch_items,
-    fail_job_from_exc,
-    finalize_batch_job,
-    init_batch_items,
-    stream_subprocess,
-    subprocess_failure,
-    terminal_prefix,
-    update_batch_item,
-)
-from yp_video.web.jobs import JobSummary, JobType, job_manager
 from yp_video.web.r2_client import (
-    cut_media_source,
     resolve_cut,
     serve_video_or_r2_redirect,
     sync_to_r2,
@@ -71,7 +46,6 @@ log = logging.getLogger(__name__)
 router = APIRouter()
 
 ACTION_LABELS = ACTION_LABELS_ORDERED
-SPOT_DEFAULT_PREFETCH_FACTOR = 2
 
 
 class ActionEvent(StrictModel):
@@ -109,22 +83,6 @@ class SaveActionAnnotationsRequest(StrictModel):
     events: list[ActionEvent]
 
 
-class SpotPrelabelOptions(StrictModel):
-    checkpoint: str | None = None
-    # 448x448 letterbox inference keeps one clip on the GPU. Larger batches
-    # can exceed the 24 GiB worker even with AMP enabled.
-    batch_size: int = Field(default=1, ge=1, le=128)
-    #: ffmpeg decode threads; 0 lets ffmpeg pick.
-    num_workers: int = Field(default=0, ge=0, le=32)
-    prefetch_factor: int = Field(default=1, ge=1, le=8)
-    overwrite: bool = False
-    use_amp: bool = True
-
-
-class SpotPrelabelBatchRequest(SpotPrelabelOptions):
-    videos: list[str] = Field(min_length=1)
-
-
 def _load_rallies(video: Path) -> list[dict]:
     """This video's rally spans (see core/rallies.py for the source priority)."""
     return load_rallies(video.stem)
@@ -142,112 +100,9 @@ def _prior_events(output_path: Path) -> list[dict]:
         return []
 
 
-
-
-async def _save_spot_action_annotation(
-    *,
-    video: Path,
-    ann_path: Path,
-    meta: dict,
-    pred_file: Path,
-    checkpoint: Path,
-) -> dict:
-    predictions = await asyncio.to_thread(prelabel.load_predictions, pred_file)
-    data = await asyncio.to_thread(
-        save_spot_pre_annotation,
-        video=video,
-        meta=meta,
-        predictions=predictions,
-        checkpoint=checkpoint,
-    )
-    sync_to_r2(ann_path, "action/pre-annotations")
-    return data
-
-
-def _resolve_prelabel_entries(names: list[str], *, overwrite: bool) -> list[tuple[Path, Path]]:
-    entries: list[tuple[Path, Path]] = []
-    missing: list[str] = []
-    existing: list[str] = []
-    seen: set[str] = set()
-
-    for raw_name in names:
-        name = Path(str(raw_name)).name
-        if not name or name in seen:
-            continue
-        seen.add(name)
-        video = resolve_cut(name)
-        if video is None:
-            missing.append(name)
-            continue
-        # Only the machine store gates a re-run: prelabel writes (and with
-        # overwrite, rewrites) pre-annotations exclusively. The human store is
-        # never touched — the editor keeps preferring it either way.
-        pre_path = pre_annotation_path(video.name)
-        if pre_path.exists() and not overwrite:
-            existing.append(video.name)
-            continue
-        entries.append((video, pre_path))
-
-    if missing:
-        sample = ", ".join(missing[:5])
-        suffix = "" if len(missing) <= 5 else f" and {len(missing) - 5} more"
-        raise HTTPException(404, f"Video not found: {sample}{suffix}")
-    if existing:
-        sample = ", ".join(existing[:5])
-        suffix = "" if len(existing) <= 5 else f" and {len(existing) - 5} more"
-        raise HTTPException(409, f"Action pre-label already exists for: {sample}{suffix}; set overwrite=true")
-    if not entries:
-        raise HTTPException(400, "No valid videos selected")
-    return entries
-
-
-def _spot_progress_fraction(data: dict, *, start: float, span: float, cap: float) -> float:
-    """Map SPOT inference progress into a UI band ``[start, start+span]``."""
-    return min(cap, start + span * prelabel.spot_progress_fraction(data))
-
-
-def _spot_app_log_line(prefix: str, line: str) -> str | None:
-    if line.startswith(SPOT_PROGRESS_PREFIX):
-        data = prelabel.parse_spot_progress(line.removeprefix(SPOT_PROGRESS_PREFIX))
-        if data is None:
-            return None
-        video = data.get("video_basename") or Path(str(data.get("video") or "")).name
-        return f"{prefix}{video}: {prelabel.spot_progress_message(data)}"
-    if line.startswith((
-        "Starting inference", "Timing ", "Saved ",
-        "Failed inference", "Failure summary", "Warning:", "Decode pipeline:",
-    )):
-        return f"{prefix}{line}"
-    return None
-
-
-def _spot_subprocess_env() -> dict[str, str]:
-    return {
-        **os.environ,
-        "PYTHONUNBUFFERED": "1",
-        ACTION_CONTRACT_VERSION_ENV: ACTION_CONTRACT_VERSION,
-    }
-
-
-def _spot_decode_settings_text(req: SpotPrelabelOptions) -> str:
-    return f"prefetch={req.prefetch_factor} decode_threads={req.num_workers or 'auto'}"
-
-
 @router.get("/labels")
 def labels() -> dict:
     return {"labels": list(ACTION_LABELS)}
-
-
-@router.get("/spot")
-def spot_status() -> dict:
-    checkpoints = prelabel.list_checkpoints(task="action")
-    default = prelabel.default_checkpoint(task="action")
-    return {
-        "available": prelabel.spot_available(),
-        "spot_dir": str(SPOT_DIR),
-        "default_checkpoint": prelabel.checkpoint_ref(default) if default else "",
-        "checkpoints": checkpoints,
-    }
 
 
 @router.get("/videos")
@@ -384,310 +239,6 @@ async def save_annotations(req: SaveActionAnnotationsRequest) -> dict:
         events=len(events),
     )
     return {"saved": str(output_path), "count": len(events)}
-
-
-@router.post("/prelabel-batch", response_model=JobSummary)
-async def start_spot_prelabel_batch(req: SpotPrelabelBatchRequest) -> dict:
-    if not prelabel.spot_available():
-        raise HTTPException(503, "SPOT is not available at ~/yp-spot")
-
-    entries = _resolve_prelabel_entries(req.videos, overwrite=req.overwrite)
-
-    try:
-        checkpoint = prelabel.resolve_checkpoint(req.checkpoint)
-    except FileNotFoundError as exc:
-        raise HTTPException(404, str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
-
-    total = len(entries)
-    items = init_batch_items([video.name for video, _ann_path in entries])
-    job = job_manager.create_job(
-        JobType.SPOT_PRELABEL_BATCH,
-        {
-            "videos": [video.name for video, _ann_path in entries],
-            "checkpoint": prelabel.checkpoint_ref(checkpoint),
-            "total": total,
-            "completed": 0,
-            "failed": 0,
-            "cancelled": 0,
-            "items": [dict(item) for item in items],
-        },
-        name=f"Action Predict ({total} videos)",
-    )
-
-    async def run_job() -> None:
-        failed = 0
-        try:
-            await job_manager.update_job(
-                job.id,
-                status="running",
-                progress=0.0,
-                message=f"Queued {total} video(s)",
-            )
-            failed = await _run_prelabel_batch_subprocess(
-                job.id,
-                items,
-                entries,
-                checkpoint=checkpoint,
-                req=req,
-            )
-            await finalize_batch_job(job.id, total, failed)
-        except asyncio.CancelledError:
-            await cancel_batch_items(job.id, items)
-            raise
-        except Exception as exc:  # noqa: BLE001
-            log.exception("SPOT batch pre-label failed")
-            await fail_job_from_exc(job.id, exc)
-
-    task = asyncio.create_task(run_job())
-    job_manager.attach_task(job, task)
-    return job.to_dict()
-
-
-async def _run_prelabel_batch_subprocess(
-    job_id: str,
-    items: list[dict],
-    entries: list[tuple[Path, Path]],
-    *,
-    checkpoint: Path,
-    req: SpotPrelabelOptions,
-) -> int:
-    total = len(entries)
-    metas: list[dict] = []
-    prefix = terminal_prefix(job_manager.get_job(job_id))
-
-    with tempfile.TemporaryDirectory(prefix=f"yp-spot-batch-{job_id}-") as tmp_root:
-        tmp_root_path = Path(tmp_root)
-        pred_files: list[Path] = []
-        for idx, (video, _ann_path) in enumerate(entries):
-            await job_manager.update_job(
-                job_id,
-                progress=0.02 + 0.04 * ((idx + 1) / total),
-                message=batch_message(idx, total, video.name, "reading metadata"),
-            )
-            metas.append(await asyncio.to_thread(video_metadata, video))
-            pred_file = tmp_root_path / f"{idx:05d}" / "action" / "predictions.json"
-            pred_file.parent.mkdir(parents=True, exist_ok=True)
-            pred_files.append(pred_file)
-
-        async def convert_predictions(idx: int) -> bool:
-            video, ann_path = entries[idx]
-            meta = metas[idx]
-            pred_file = pred_files[idx]
-            try:
-                if not pred_file.exists():
-                    raise RuntimeError("SPOT did not create prediction output")
-                await update_batch_item(
-                    job_id,
-                    items,
-                    idx,
-                    progress=0.92,
-                    message="Inference complete; saving pre-label",
-                    overall_progress=batch_progress(idx, 0.92, total),
-                    overall_message=batch_message(idx, total, video.name, "saving pre-label"),
-                )
-                data = await _save_spot_action_annotation(
-                    video=video,
-                    ann_path=ann_path,
-                    meta=meta,
-                    pred_file=pred_file,
-                    checkpoint=checkpoint,
-                )
-                log.info("%ssaved %s (%d event(s))", prefix, ann_path.name, data["num_events"])
-                await update_batch_item(
-                    job_id,
-                    items,
-                    idx,
-                    status="completed",
-                    progress=1.0,
-                    message=f"Complete: {data['num_events']} event(s)",
-                    overall_progress=batch_progress(idx, 1.0, total),
-                    overall_message=batch_message(idx, total, video.name, "complete"),
-                    extra={
-                        "count": data["num_events"],
-                        "saved": str(ann_path),
-                    },
-                )
-                return True
-            except Exception as exc:  # noqa: BLE001
-                tb = traceback.format_exc()
-                log.error("SPOT batch conversion failed for %s:\n%s", video.name, tb)
-                job_obj = job_manager.get_job(job_id)
-                if job_obj:
-                    job_obj.logs.append(f"[{video.name}] {type(exc).__name__}: {exc}")
-                    job_obj.logs.extend(tb.splitlines())
-                await update_batch_item(
-                    job_id,
-                    items,
-                    idx,
-                    status="failed",
-                    progress=1.0,
-                    message="Failed",
-                    error=f"{type(exc).__name__}: {exc}",
-                    overall_progress=batch_progress(idx, 1.0, total),
-                    overall_message=batch_message(idx, total, video.name, "failed"),
-                )
-                return False
-
-        def process_error(rc: int, last_line: str, failure_lines: list[str]) -> str:
-            detail = failure_lines[-1] if failure_lines else last_line
-            if rc != 0:
-                return subprocess_failure("SPOT inference", rc, detail)
-            if detail:
-                return f"SPOT did not create prediction output; last output: {detail}"
-            return "SPOT did not create prediction output"
-
-        failed = 0
-        # inference_lock (not gpu_lock) so the batch can run alongside training;
-        # still serialized against other inference jobs.
-        async with job_manager.inference_lock:
-            await job_manager.update_job(job_id, message="Running SPOT inference", progress=0.08)
-            for idx, ((video, _ann_path), pred_file) in enumerate(zip(entries, pred_files)):
-                failure_lines: list[str] = []
-
-                await update_batch_item(
-                    job_id,
-                    items,
-                    idx,
-                    status="running",
-                    progress=0.08,
-                    message="Launching SPOT inference",
-                    overall_progress=batch_progress(idx, 0.08, total),
-                    overall_message=batch_message(idx, total, video.name, "launching SPOT inference"),
-                )
-
-                def start_handler(_match, *, item_idx: int = idx, item_video: Path = video):
-                    asyncio.create_task(
-                        update_batch_item(
-                            job_id,
-                            items,
-                            item_idx,
-                            status="running",
-                            progress=0.10,
-                            message="Preparing first batch (decoding frames)",
-                            overall_progress=batch_progress(item_idx, 0.10, total),
-                            overall_message=batch_message(
-                                item_idx, total, item_video.name, "preparing first batch"
-                            ),
-                        )
-                    )
-                    return None
-
-                def progress_handler(match, *, item_idx: int = idx, item_video: Path = video):
-                    data = prelabel.parse_spot_progress(match.group(1))
-                    if data is None:
-                        return None
-                    item_progress = _spot_progress_fraction(data, start=0.12, span=0.78, cap=0.9)
-                    message = prelabel.spot_progress_message(data)
-                    asyncio.create_task(
-                        update_batch_item(
-                            job_id,
-                            items,
-                            item_idx,
-                            status="running",
-                            progress=item_progress,
-                            message=message,
-                            overall_progress=batch_progress(item_idx, item_progress, total),
-                            overall_message=batch_message(item_idx, total, item_video.name, message),
-                            extra={
-                                "current_frame": int(data.get("end_frame") or 0),
-                                "total_frames": int(data.get("total_frames") or 0),
-                                "clips_done": int(data.get("clips_done") or 0),
-                                "clips_total": int(data.get("clips_total") or 0),
-                            },
-                        )
-                    )
-                    return None
-
-                def failure_handler(match):
-                    failure_lines.append(match.group(1))
-                    return None
-
-                # Rally spans decide where pre-label looks — the same cascade
-                # the selfhost worker runs: dead time only contributes false
-                # positives, and labelable() drops out-of-rally events anyway.
-                # A video without rally annotations still scans in full.
-                segments = None
-                rallies = _load_rallies(video)
-                if rallies:
-                    segments = pad_and_merge_spans(
-                        rallies,
-                        pad_s=2.0,
-                        duration_s=float(video_metadata(video)["duration"]),
-                    )
-
-                # The local file or a presigned R2 URL — yp-spot decodes
-                # either, so an R2-only cut predicts without a local copy.
-                source = cut_media_source(video)
-                if source is None:
-                    raise RuntimeError(f"Video not found: {video.name}")
-
-                cmd = prelabel.build_command(
-                    video_source=source,
-                    checkpoint_path=checkpoint,
-                    tasks=("action",),
-                    save_dir=pred_file.parent.parent,
-                    batch_size=req.batch_size,
-                    num_workers=req.num_workers,
-                    prefetch_factor=req.prefetch_factor,
-                    use_amp=req.use_amp,
-                    segments=segments,
-                )
-
-                rc, last_line = await stream_subprocess(
-                    job_id,
-                    cmd,
-                    SPOT_DIR,
-                    env=_spot_subprocess_env(),
-                    parsers=[
-                        ProgressParser(r"Starting inference (\d+)/(\d+): (.+)", start_handler),
-                        ProgressParser(SPOT_PROGRESS_PREFIX + r"(.+)", progress_handler),
-                        ProgressParser(r"((?:Failed inference \d+/\d+|Failure summary): .+)", failure_handler),
-                    ],
-                    is_key_line=lambda line: (
-                        line.startswith("Starting inference")
-                        or line.startswith("SPOT_PROGRESS ")
-                        or line.startswith("Saved ")
-                        or line.startswith("Timing ")
-                        or line.startswith("Failed inference")
-                        or line.startswith("Failure summary")
-                    ),
-                    push_interval=1.0,
-                    tee_to_terminal=True,
-                    log_command=(
-                        f"{prefix}start video {idx + 1}/{total}: {video.name} "
-                        f"batch={req.batch_size} workers={req.num_workers} "
-                        f"{_spot_decode_settings_text(req)}"
-                    ),
-                    log_line=lambda line: _spot_app_log_line(prefix, line),
-                    update_job=False,
-                )
-
-                if rc != 0 or not pred_file.exists():
-                    failed += 1
-                    error = process_error(rc, last_line, failure_lines)
-                    job_obj = job_manager.get_job(job_id)
-                    if job_obj:
-                        job_obj.logs.append(f"[{video.name}] RuntimeError: {error}")
-                    await update_batch_item(
-                        job_id,
-                        items,
-                        idx,
-                        status="failed",
-                        progress=1.0,
-                        message="Failed",
-                        error=error,
-                        overall_progress=batch_progress(idx, 1.0, total),
-                        overall_message=batch_message(idx, total, video.name, "failed"),
-                    )
-                    continue
-
-                if not await convert_predictions(idx):
-                    failed += 1
-                continue
-
-        return failed
 
 
 @router.get("/export")

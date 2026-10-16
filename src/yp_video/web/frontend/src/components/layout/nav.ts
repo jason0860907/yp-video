@@ -57,22 +57,8 @@ export const NAV: NavSection[] = [
       // association+action) sits right after the labels it consumes.
       { path: '/fusion-train', label: 'Train', icon: ICON.train },
       // Every answer the fusion model gives, in one run: rally + winner,
-      // action, association. The per-stage predict pages below re-run one.
+      // action, association.
       { path: '/inference', label: 'Inference', icon: ICON.predict },
-    ],
-  },
-  {
-    title: 'Rally',
-    collapsible: true,
-    items: [
-      { path: '/spot-predict', label: 'Rally SPOT Predict', icon: ICON.predict },
-    ],
-  },
-  {
-    title: 'Action',
-    collapsible: true,
-    items: [
-      { path: '/action-predict', label: 'Action Predict', icon: ICON.predict },
     ],
   },
   {

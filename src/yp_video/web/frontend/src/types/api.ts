@@ -297,16 +297,6 @@ export interface TrainProgress {
   best_task_metrics?: TaskMetrics;
 }
 
-/** Video record from the SPOT rally predict listing. */
-export interface RallyPredictVideo {
-  name: string;
-  kind: CutKind;
-  status: LabelStatus;
-  has_annotation?: boolean;
-  /** SPOT prediction exists (rally-spot-pre-annotations). */
-  has_pre_annotation?: boolean;
-}
-
 /** One row of the Inference page: which stage outputs the cut already has. */
 export interface InferenceVideo {
   name: string;

@@ -35,8 +35,6 @@ const ACTION_LABELS: Record<string, string> = {
 
   // Training and inference.
   'POST /api/inference/start': 'Start Inference',
-  'POST /api/spot-predict/start': 'Start Rally SPOT Predict',
-  'POST /api/action-annotate/prelabel-batch': 'Start Action Predict',
   'POST /api/fusion-model/train': 'Start Train',
   'POST /api/reid-train/train': 'Start ReID Train',
   'POST /api/reid-train/export': 'Export ReID dataset',

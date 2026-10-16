@@ -181,8 +181,6 @@ export const API = {
   actionAnnotate: {
     labels: '/action-annotate/labels',
     videos: '/action-annotate/videos',
-    spot: '/action-annotate/spot',
-    prelabelBatch: '/action-annotate/prelabel-batch',
     annotations: '/action-annotate/annotations',
     annotation: (name: string, params: QueryParams = {}) =>
       `/action-annotate/annotations/${encodeURIComponent(name)}${q(params)}`,
@@ -195,11 +193,6 @@ export const API = {
     status: '/fusion-model/status',
     train: '/fusion-model/train',
     performance: '/fusion-model/performance',
-  },
-  spotPredict: {
-    videos: '/spot-predict/videos',
-    spot: '/spot-predict/spot',
-    start: '/spot-predict/start',
   },
   // One fusion checkpoint, every stage: rally + winner, action, association.
   inference: {

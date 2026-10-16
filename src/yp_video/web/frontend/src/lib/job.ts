@@ -69,17 +69,15 @@ export const statusLabel = (job: Job): string => {
 // get wired up here instead of in per-page onSettled handlers. Keyed by the
 // backend's JobType enum values (web/jobs.py).
 const STALE_QUERIES: Record<string, string[][]> = {
-  rally_spot_predict: [['spot-predict-videos'], ['annotate-results']],
-  spot_prelabel_batch: [['action-videos']],
   player_detection: [['extraction-videos'], ['association-videos'], ['extraction-records'], ['tracklet-links']],
   fusion_inference: [
-    ['inference-videos'], ['spot-predict-videos'], ['annotate-results'], ['action-videos'],
+    ['inference-videos'], ['annotate-results'], ['action-videos'],
     ['extraction-videos'], ['association-videos'], ['extraction-records'], ['reid-videos'],
     ['tracklets'], ['tracklet-links'], ['tracklet-masks'],
   ],
   player_tracking: [['extraction-videos'], ['reid-videos'], ['tracklets'], ['tracklet-links'], ['tracklet-masks']],
   player_embed: [['reid-videos'], ['reid-clusters'], ['reid-players']],
-  spot_train: [['fusion-model-status'], ['fusion-model-performance'], ['spot-info'], ['spot-predict-info']],
+  spot_train: [['fusion-model-status'], ['fusion-model-performance'], ['inference-spot']],
   reid_dataset_export: [['reid-train-status']],
   reid_train: [['reid-train-status'], ['reid-train-performance'], ['reid-clusters']],
   download: [['cut-videos']],

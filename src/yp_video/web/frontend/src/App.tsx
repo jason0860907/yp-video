@@ -5,8 +5,6 @@ import { DEFAULT_PATH, NAV_ITEMS } from '@/components/layout/nav';
 import { Card } from '@/components/ui/Card';
 import { JobsPage } from '@/pages/JobsPage';
 import { DownloadPage } from '@/pages/DownloadPage';
-import { ActionPredictPage } from '@/pages/ActionPredictPage';
-import { SpotPredictPage } from '@/pages/SpotPredictPage';
 import { UploadPage } from '@/pages/UploadPage';
 import { CutPage } from '@/pages/CutPage';
 import { LabelPage } from '@/pages/label/LabelPage';
@@ -26,8 +24,6 @@ const PAGES: Record<string, ReactElement> = {
   '/cut': <CutPage />,
   '/label': <LabelPage />,
   '/analysis': <AnalysisPage />,
-  '/spot-predict': <SpotPredictPage />,
-  '/action-predict': <ActionPredictPage />,
   '/tracking': <TrackingPage />,
   '/player-detection': <PlayerDetectionPage />,
   '/reid-predict': <ReidPredictPage />,

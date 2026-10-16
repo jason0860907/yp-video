@@ -34,7 +34,6 @@ from yp_video.web.routers import (
     label_stats,
     reid,
     reid_train,
-    spot_predict,
     system,
     tracklets,
     upload,
@@ -222,7 +221,6 @@ app.include_router(action_annotate.router, prefix="/api/action-annotate", tags=[
 app.include_router(annotate.router, prefix="/api/annotate", tags=["annotate"])
 app.include_router(detection_label.router, prefix="/api/detection-label", tags=["detection-label"])
 app.include_router(court.router, prefix="/api/court", tags=["court"])
-app.include_router(spot_predict.router, prefix="/api/spot-predict", tags=["spot-predict"])
 app.include_router(tracklets.router, prefix="/api/tracklets", tags=["tracklets"])
 app.include_router(extraction.router, prefix="/api/extraction", tags=["extraction"])
 app.include_router(fusion_model.router, prefix="/api/fusion-model", tags=["fusion-model"])
