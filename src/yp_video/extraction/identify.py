@@ -97,6 +97,9 @@ class IdentifyResult:
     #: (extraction/feet.py) — what a court calibration later places on the
     #: floor, after this run's records are gone.
     feet: dict[str, list[float] | str]
+    #: Event id → the actor's box at the contact, normalized [x1, y1, x2, y2]
+    #: (extraction/feet.py) — what an exported clip frames its camera around.
+    actors: dict[str, list[float]]
     #: The ball track over the flights between touches (ball/track.py) — what
     #: the court fits 3D trajectories to. Advanced only; None in standard.
     ball: dict | None
@@ -148,7 +151,7 @@ def identify_players(
     from yp_video.core.actor_picks import actor_picks_path, load_actor_picks
     from yp_video.core.person_boxes import person_boxes_path, save_person_boxes
     from yp_video.extraction import links
-    from yp_video.extraction.feet import actor_feet
+    from yp_video.extraction.feet import actor_boxes, actor_feet
     from yp_video.extraction.pipeline import detect_video, embed_video, load_events
     from yp_video.extraction.reassociate import reassociate_video
     from yp_video.extraction.windows import WINDOWED_EMBEDDER, embed_tracklet_windows
@@ -161,7 +164,8 @@ def identify_players(
     events = load_events(stem)
     if not events:
         return IdentifyResult(
-            embedder=embedder, units=(), linkage=(), threshold=threshold_calibration(embedder), feet={}, ball=None,
+            embedder=embedder, units=(), linkage=(), threshold=threshold_calibration(embedder), feet={}, actors={},
+            ball=None,
         )
 
     if (person_boxes is None) != (actor_picks is None):
@@ -217,6 +221,7 @@ def identify_players(
         embed_video(stem, models=[embedder], on_progress=_banded(on_progress, "embedding"))
 
     feet = actor_feet(stem, events)
+    actors = actor_boxes(stem, events)
     if on_progress:
         on_progress(_BANDS["clustering"][0], 100, "creating pairing suggestions...")
     unit_links = links.track_keys(stem)
@@ -248,6 +253,7 @@ def identify_players(
         else (),
         threshold={key: float(value) for key, value in calibration.items()},
         feet=feet,
+        actors=actors,
         ball=ball,
     )
 
@@ -454,6 +460,7 @@ def _main() -> None:
             eid: foot if isinstance(foot, str) else [round(v, 4) for v in foot]
             for eid, foot in result.feet.items()
         },
+        "actors": result.actors,
         "ball": result.ball,
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)

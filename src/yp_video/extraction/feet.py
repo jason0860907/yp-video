@@ -1,5 +1,6 @@
 """Where each touch's actor stood, in the frame — the input court positions
-stand on (court/positions.py).
+stand on (court/positions.py) — and the box they were in, which exported
+clips frame their camera around.
 
 One implementation for the labeling web page and for identify, which ships
 these points in its result so the production court job can place touches
@@ -55,13 +56,10 @@ def _rally_of(time: float, spans: list[dict]) -> int | None:
     return None
 
 
-def actor_feet(stem: str, events: Iterable[dict]) -> dict[str, list[float] | str]:
-    """Event id → the actor's feet (normalized bottom-centre of their box), or
-    why there are none: outside rally, no detection, occluded, no
-    association, no takeoff. Score events name nobody and are skipped.
+def _placeable(stem: str) -> tuple[int, int, float, dict[str, dict]]:
+    """Frame width, height, fps and the labelable extraction records by event id.
 
-    Raises NotReady without extraction records or tracks.
-    """
+    Raises NotReady without extraction records."""
     path = extraction_store.records_path(stem)
     if not path.exists():
         raise NotReady("No extraction records — run Player Detection and Association first")
@@ -70,13 +68,41 @@ def actor_feet(stem: str, events: Iterable[dict]) -> dict[str, list[float] | str
     fps = float(meta.get("fps") or 0)
     if not fps:
         raise NotReady("Extraction records carry no fps")
+    return width, height, fps, {r["id"]: r for r in extraction_store.labelable(records, stem, fps)}
+
+
+def actor_boxes(stem: str, events: Iterable[dict]) -> dict[str, list[float]]:
+    """Event id → the actor's box at the contact, normalized [x1, y1, x2, y2] —
+    what an exported clip frames its camera around. Events whose actor is
+    occluded or unassociated have none.
+
+    Raises NotReady without extraction records.
+    """
+    width, height, _, placeable = _placeable(stem)
+    boxes: dict[str, list[float]] = {}
+    for event in events:
+        r = placeable.get(event_id(event)) if event.get("frame") is not None else None
+        box = r.get("box") if r else None
+        if not box or r.get("resolution") in ("occluded", "unresolved"):
+            continue
+        boxes[r["id"]] = [round(v, 4) for v in (box[0] / width, box[1] / height, box[2] / width, box[3] / height)]
+    return boxes
+
+
+def actor_feet(stem: str, events: Iterable[dict]) -> dict[str, list[float] | str]:
+    """Event id → the actor's feet (normalized bottom-centre of their box), or
+    why there are none: outside rally, no detection, occluded, no
+    association, no takeoff. Score events name nobody and are skipped.
+
+    Raises NotReady without extraction records or tracks.
+    """
+    width, height, fps, placeable = _placeable(stem)
     if not tracks_path(stem).exists():
         raise NotReady("No tracks — run Player Tracking first")
     spans = load_rallies(stem)
     actors = links.event_tracks(stem)
     index = tracklet_index(stem)
     window = round(GROUNDED_WINDOW_S * fps)
-    placeable = {r["id"]: r for r in extraction_store.labelable(records, stem, fps)}
 
     feet: dict[str, list[float] | str] = {}
     for event in events:
