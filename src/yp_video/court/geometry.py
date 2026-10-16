@@ -101,9 +101,14 @@ def fit(points: dict[Landmark, tuple[float, float]]) -> Fit:
     if h is None or abs(np.linalg.det(h)) < 1e-12:
         raise FitError("These points do not span the floor — three of them may lie on one line")
     residual = project(h, image) - court
+    # An inverse carries an arbitrary sign; scale it so the court's centre —
+    # and so every point on the floor in view — maps with a positive w, the
+    # side of the horizon clients take as in front of the camera.
+    inverse = np.linalg.inv(h)
+    inverse /= inverse[2] @ (COURT_LENGTH / 2, COURT_WIDTH / 2, 1.0)
     return Fit(
         image_to_court=h.tolist(),
-        court_to_image=np.linalg.inv(h).tolist(),
+        court_to_image=inverse.tolist(),
         rmse_m=float(np.sqrt((residual**2).sum(axis=1).mean())),
     )
 

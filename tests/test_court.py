@@ -36,6 +36,16 @@ def test_fit_recovers_the_camera_and_projects_feet():
     assert back[0] == pytest.approx(feet[0], abs=1e-6)
 
 
+def test_court_to_image_puts_the_floor_in_front_of_the_camera():
+    # A homography is only defined up to scale: the solver may hand back
+    # the negated matrix, whose inverse puts the floor behind the horizon.
+    solve = geometry.cv2.findHomography
+    with patch.object(geometry.cv2, "findHomography", lambda *a: (-solve(*a)[0], None)):
+        fit = geometry.fit(_marks(["left_near", "left_far", "center_near", "center_far", "right_near"]))
+    corners = np.array([[x, y, 1.0] for x in (0, 18) for y in (0, 9)])
+    assert (corners @ np.array(fit.court_to_image)[2] > 0).all()
+
+
 def test_fit_rejects_too_few_or_collinear_marks():
     with pytest.raises(geometry.FitError, match="at least 4"):
         geometry.fit(_marks(["left_near", "left_far", "center_near"]))
