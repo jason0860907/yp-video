@@ -2,7 +2,7 @@
  *  reads the way the camera sees it. */
 
 import { actionColor, COURT } from '@/lib/actionColors';
-import type { Arc, CourtState, Point, Point3 } from './geometry';
+import type { Arc, CourtState, Point, Point3 } from '@/pages/label/court/geometry';
 
 /** Free zone drawn around the court, metres. */
 const MARGIN = 3;
@@ -102,7 +102,13 @@ export function CourtMap({
             stroke="black"
             strokeWidth={0.08}
           />
-          <text x={ball[0] + 0.6} y={y(ball[1]) + 0.25} fontSize={0.7} fill={COURT.ball}>
+          {/* Laid out at 20× and scaled down: glyphs a fraction of a unit
+              tall get hinted to whole pixels first, and pile up. */}
+          <text
+            transform={`translate(${ball[0] + 0.6} ${y(ball[1]) + 0.25}) scale(0.05)`}
+            fontSize={14}
+            fill={COURT.ball}
+          >
             {ball[2].toFixed(1)} m
           </text>
         </g>

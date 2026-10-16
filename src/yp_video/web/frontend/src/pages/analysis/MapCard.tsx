@@ -6,7 +6,7 @@ import { actionColor } from '@/lib/actionColors';
 import { cn } from '@/lib/cn';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { CourtMap, type MapDot } from './CourtMap';
-import type { Arc, CourtPositions, CourtState, Point3 } from './geometry';
+import type { Arc, CourtPositions, CourtState, Point3 } from '@/pages/label/court/geometry';
 
 type Position = CourtPositions['events'][number];
 

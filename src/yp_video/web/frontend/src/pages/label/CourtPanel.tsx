@@ -1,56 +1,42 @@
 /** Court Label panel: mark where the court's line intersections (and the
  *  net tops) sit in the frame; the server solves the floor homography and the
- *  camera from them, and reconstructs the play in court metres.
+ *  camera from them, and reconstructs the play in court metres — drawn back
+ *  over the zoomable video (court/useZoom) so a mark's error shows. Looking
+ *  at the play itself is the Analysis page's job.
  *
- *  This file composes: data, saving marks, the playhead and the action under
- *  it. Drawing lives in court/VideoOverlay, guide lines in court/useGuides,
- *  the map / side view / positions list / flight statistics in their own
- *  components, shown as Landmarks / Map / Positions / Flights tabs beside the
- *  zoomable video (court/useZoom).
+ *  This file composes: data, saving marks, the playhead. Drawing lives in
+ *  court/VideoOverlay, guide lines in court/useGuides, the landmark list in
+ *  court/LandmarksCard.
  *
  *  No dirty guard: every mark is saved the moment it lands.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { API, apiFetch, apiUrl, errMsg } from '@/lib/api';
 import { firstRallyStart, hasRealTime, seekWhenSeekable, usePlayheadHandover } from '@/lib/playheadHandover';
-import { ActionTimeline, type TimelineEvent } from '@/components/editor/ActionTimeline';
+import { ActionTimeline } from '@/components/editor/ActionTimeline';
 import { ACTION_COLORS } from '@/lib/actionColors';
 import { useActionWaveform } from '@/lib/useActionWaveform';
 import { Button } from '@/components/ui/Button';
 import { Segmented } from '@/components/ui/Segmented';
 import { Card } from '@/components/ui/Card';
-import { SectionLabel } from '@/components/ui/SectionLabel';
-import { Tabs } from '@/components/ui/Tabs';
 import { cn } from '@/lib/cn';
 import { toast } from '@/components/feedback/toast';
 import { useVideoKeys } from '@/components/labeling/useVideoKeys';
-import { buildTrackBoxes, nearestFrame } from '@/components/labeling/masks';
 import { useFrameClock } from '@/components/labeling/useFrameClock';
 import { FrameStats, KeyHints, PlayerTransport } from '@/components/labeling/PlayerTransport';
 import { useVideoLabelingData } from '@/components/labeling/useVideoLabelingData';
-import type { MapDot } from './court/CourtMap';
-import { MapCard } from './court/MapCard';
 import { LandmarksCard } from './court/LandmarksCard';
-import { FlightsCard } from './court/FlightsCard';
-import { PositionsList } from './court/PositionsList';
-import { SideView } from './court/SideView';
 import { useGuides } from './court/useGuides';
 import { trackPointer } from './court/pointer';
 import type { Layers } from './court/layers';
 import { LayerToggles, VideoOverlay } from './court/VideoOverlay';
 import { MAX_ZOOM, useZoom } from './court/useZoom';
-import {
-  apply,
-  ballAt,
-  footOf,
-  rallyArcs,
-  type CourtPositions,
-  type CourtState,
-  type Point,
-} from './court/geometry';
+import { usePlays } from './court/usePlays';
+import { ballAt, type CourtState, type Point } from './court/geometry';
 import type { ModeDescriptor, PlaybackClock } from './mode';
 
 export const COURT_MODE: ModeDescriptor = {
@@ -71,8 +57,6 @@ export const COURT_MODE: ModeDescriptor = {
 };
 
 const round4 = (v: number) => Math.round(v * 1e4) / 1e4;
-
-type SideTab = 'landmarks' | 'court' | 'rally' | 'flights';
 
 const POINT_SCALE_KEY = 'court.pointScale';
 
@@ -105,7 +89,7 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
     queryFn: () => apiFetch<CourtState>(API.court.video(video)),
   });
   const state = query.data;
-  const { meta, tracksQuery } = useVideoLabelingData(video);
+  const { meta } = useVideoLabelingData(video);
   const fps = meta.fps;
 
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -125,7 +109,6 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
   });
   const { zoom, zoomTo, pan, attach: attachViewport } = useZoom();
   const [pointScale, setPointScale] = useStoredNumber(POINT_SCALE_KEY, 1);
-  const [tab, setTab] = useState<SideTab>('landmarks');
   const takeHandover = usePlayheadHandover(clock ? () => clock.read(video) : undefined, video);
 
   const [duration, setDuration] = useState(0);
@@ -228,73 +211,9 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
   };
 
   const fit = state?.fit ?? null;
-  const camera = state?.camera ?? null;
-  // The map and the positions need a floor fit; without one only the
-  // landmarks can be shown.
-  const shownTab: SideTab = fit ? tab : 'landmarks';
-
-  // Actor positions are computed server-side (the export); keyed on the fit
-  // so a moved mark refetches them.
-  const positionsQuery = useQuery({
-    queryKey: ['court-positions', video, fit?.image_to_court],
-    queryFn: () => apiFetch<CourtPositions>(API.court.positions(video)),
-    enabled: Boolean(fit),
-    retry: false,
-  });
-  const positions = useMemo(() => positionsQuery.data?.events ?? [], [positionsQuery.data]);
-
-  const timelineEvents = useMemo<TimelineEvent[]>(
-    () =>
-      positions.map((p) => ({
-        id: p.id,
-        frame: p.frame,
-        label: p.label,
-        rally_id: p.rally_id,
-        visible: p.ball_image != null,
-      })),
-    [positions],
-  );
-
   const t = fps ? frame / fps : 0;
-  const maxFlight = state?.max_flight_s ?? 0;
-  // The action at the playhead: the latest touch not after it, while its
-  // flight could still be in the air.
-  const current = useMemo(() => {
-    const now = t + 0.5 / (fps || 30);
-    let hit: (typeof positions)[number] | null = null;
-    for (const p of positions) if (p.time <= now) hit = p;
-    return hit && t - hit.time <= maxFlight ? hit : null;
-  }, [positions, t, fps, maxFlight]);
-  // The rally under the playhead: its reconstructed flights and the ball on
-  // them right now.
-  const arcs = useMemo(
-    () => rallyArcs(positionsQuery.data?.arcs ?? [], t),
-    [positionsQuery.data, t],
-  );
-  const ball = ballAt(arcs, t);
-
-  // Every tracked player's feet at the playhead, on the court.
-  const trackBoxes = useMemo(
-    () => buildTrackBoxes(tracksQuery.data?.tracklets ?? []),
-    [tracksQuery.data],
-  );
-  const players = useMemo<MapDot[]>(() => {
-    if (!fit || !frameSize) return [];
-    return (nearestFrame(trackBoxes, frame) ?? []).flatMap(({ key, box }) => {
-      const at = apply(fit.image_to_court, footOf(box, frameSize));
-      return at
-        ? [
-            {
-              key: `p${key}`,
-              at,
-              color: '#ffffff',
-              kind: 'player' as const,
-              title: `track ${key} · (${at[0].toFixed(2)}, ${at[1].toFixed(2)}) m`,
-            },
-          ]
-        : [];
-    });
-  }, [fit, frameSize, trackBoxes, frame]);
+  const { positions, timelineEvents, current, rallyFlights } = usePlays(video, state, t, fps);
+  const ball = ballAt(rallyFlights, t);
 
   if (query.isPending)
     return (
@@ -409,13 +328,11 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
                     state={state}
                     margin={margin}
                     layers={layers}
-                    arcs={arcs}
+                    arcs={rallyFlights}
                     ball={ball}
                     current={current}
-                    guides={guides}
-                    editingGuides={tool === 'line'}
                     pointScale={pointScale}
-                    onDragMark={dragMark}
+                    edit={{ guides, editingGuides: tool === 'line', onDragMark: dragMark }}
                   />
                 </div>
                 {/* Catch the pointer only while a tool needs it, so a drag pans
@@ -515,85 +432,30 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
             ['Space', 'play'],
             ['← →', 'frame (⇧ ×10)'],
             ['Esc', 'stop marking'],
-            ['[ ]', 'previous / next flight (Flights)'],
             ['Wheel', 'zoom'],
             ['Drag', 'pan (right-drag while marking)'],
           ]}
         />
       </div>
 
-      {/* Landmarks · Map · Positions */}
+      {/* Landmarks */}
       <div className="min-w-0 xl:w-[420px] xl:flex-shrink-0">
         <Card className="space-y-4">
-          <Tabs
-            tabs={[
-              { key: 'landmarks', label: 'Landmarks' },
-              ...(['court', 'rally', 'flights'] as const).map((key) => ({
-                key,
-                label: { court: 'Map', rally: 'Positions', flights: 'Flights' }[key],
-                disabled: !fit,
-                title: fit ? undefined : 'Mark at least 4 floor points first',
-              })),
-            ]}
-            active={shownTab}
-            onChange={setTab}
+          <LandmarksCard
+            state={state}
+            armed={armed}
+            onArm={arm}
+            onRemove={remove}
+            onNetHeight={(h) => void save(state.points, h)}
+            frameHeight={frameSize?.[1] ?? null}
           />
-          {shownTab === 'landmarks' && (
-            <LandmarksCard
-              state={state}
-              armed={armed}
-              onArm={arm}
-              onRemove={remove}
-              onNetHeight={(h) => void save(state.points, h)}
-              frameHeight={frameSize?.[1] ?? null}
-            />
-          )}
-          {shownTab === 'court' && (
-            <>
-              <MapCard
-                state={state}
-                positions={positions}
-                current={current}
-                players={players}
-                arcs={arcs}
-                ball={ball}
-              />
-              {camera && (
-                <div>
-                  <SectionLabel>Side view{arcs.length > 0 ? ` · rally ${arcs[0]!.rally_id}` : ''}</SectionLabel>
-                  <SideView
-                    length={state.court.length}
-                    netHeight={state.net_height_m}
-                    arcs={arcs}
-                    ball={ball}
-                    time={t}
-                  />
-                </div>
-              )}
-            </>
-          )}
-          {shownTab === 'flights' && (
-            <FlightsCard
-              positions={positionsQuery.data}
-              netHeight={state.net_height_m}
-              time={t}
-              onSeek={(seconds) => {
-                if (fps) seekFrame(Math.floor(seconds * fps));
-              }}
-            />
-          )}
-          {shownTab === 'rally' && (
-            <PositionsList
-              video={video}
-              positions={positions}
-              rallies={meta.rallies ?? []}
-              error={positionsQuery.error}
-              time={t}
-              currentId={current?.id ?? null}
-              onSeek={(seconds) => {
-                if (fps) seekFrame(Math.floor(seconds * fps));
-              }}
-            />
+          {fit && (
+            <Link
+              to={`/analysis?video=${encodeURIComponent(video)}`}
+              className="block text-[11px] text-primary hover:underline"
+            >
+              See the play in Analysis →
+            </Link>
           )}
         </Card>
       </div>

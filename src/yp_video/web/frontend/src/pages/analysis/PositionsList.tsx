@@ -9,7 +9,7 @@ import { scrollActionIntoView, scrollRallyTop } from '@/lib/sidebarScroll';
 import { SectionLabel } from '@/components/ui/SectionLabel';
 import { ActionDot, EventRows, OutsideRow, RallyRow } from '@/components/action/RallyRows';
 import type { Rally } from '@/components/labeling/shared';
-import type { CourtPositions } from './geometry';
+import type { CourtPositions } from '@/pages/label/court/geometry';
 
 type Position = CourtPositions['events'][number];
 

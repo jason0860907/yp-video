@@ -51,6 +51,26 @@ export function apply([a, b, c]: Matrix, [x, y]: Point): Point | null {
   return [(a[0] * x + a[1] * y + a[2]) / w, (b[0] * x + b[1] * y + b[2]) / w];
 }
 
+/** How the camera sees the court: which end of its length is near — that
+ *  half sits lower in the frame, the way the rally model names sides — and
+ *  whether court y runs rightwards across the frame there. */
+export interface CameraView {
+  near: 'left' | 'right';
+  yRight: boolean;
+}
+export function cameraView(courtToImage: Matrix): CameraView {
+  // Points on the court are in view: no horizon to check, and the
+  // division is the same whatever the matrix's overall sign.
+  const [r0, r1, r2] = courtToImage;
+  const image = ([x, y]: Point): Point => {
+    const w = r2[0] * x + r2[1] * y + r2[2];
+    return [(r0[0] * x + r0[1] * y + r0[2]) / w, (r1[0] * x + r1[1] * y + r1[2]) / w];
+  };
+  const near = image([4.5, 4.5])[1] > image([13.5, 4.5])[1] ? 'left' : 'right';
+  const x = near === 'left' ? 4.5 : 13.5;
+  return { near, yRight: image([x, 9])[0] > image([x, 0])[0] };
+}
+
 /** Bottom-centre of a pixel xyxy box, normalized — where the feet touch the
  *  floor, the one part of a person the homography can place. */
 export function footOf(box: [number, number, number, number], [w, h]: [number, number]): Point {

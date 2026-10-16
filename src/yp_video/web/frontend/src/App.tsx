@@ -10,6 +10,7 @@ import { SpotPredictPage } from '@/pages/SpotPredictPage';
 import { UploadPage } from '@/pages/UploadPage';
 import { CutPage } from '@/pages/CutPage';
 import { LabelPage } from '@/pages/label/LabelPage';
+import { AnalysisPage } from '@/pages/analysis/AnalysisPage';
 import { ReidPredictPage } from '@/pages/ReidPredictPage';
 import { PlayerDetectionPage } from '@/pages/PlayerDetectionPage';
 import { TrackingPage } from '@/pages/TrackingPage';
@@ -24,6 +25,7 @@ const PAGES: Record<string, ReactElement> = {
   '/download': <DownloadPage />,
   '/cut': <CutPage />,
   '/label': <LabelPage />,
+  '/analysis': <AnalysisPage />,
   '/spot-predict': <SpotPredictPage />,
   '/action-predict': <ActionPredictPage />,
   '/tracking': <TrackingPage />,

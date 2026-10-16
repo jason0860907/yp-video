@@ -1,6 +1,7 @@
 /** Everything drawn over the video, in frame coordinates: the court and net
  *  as the calibration projects them, the reconstructed flights and ball, the
- *  current action's feet and ball, guide lines and the user's marks.
+ *  current action's feet and ball — and, while calibrating, guide lines and
+ *  the user's marks.
  *
  *  Rendered inside the frame element, so percentages are frame fractions;
  *  `margin` widens the drawing past the frame edge for off-screen marks. */
@@ -19,19 +20,22 @@ import {
   type Point,
   type Point3,
 } from './geometry';
-import { LAYERS, type Layers } from './layers';
+import { LAYERS, type Layer, type Layers } from './layers';
 import type { Guides } from './useGuides';
 
 export function LayerToggles({
   layers,
   onChange,
+  without = [],
 }: {
   layers: Layers;
   onChange: (next: Layers) => void;
+  /** Layers this view never draws. */
+  without?: Layer[];
 }) {
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-text-muted">
-      {LAYERS.map(([key, label]) => (
+      {LAYERS.filter(([key]) => !without.includes(key)).map(([key, label]) => (
         <label key={key} className="inline-flex items-center gap-1.5">
           <input
             type="checkbox"
@@ -102,10 +106,8 @@ export function VideoOverlay({
   arcs,
   ball,
   current,
-  guides,
-  editingGuides,
   pointScale,
-  onDragMark,
+  edit,
 }: {
   state: CourtState;
   margin: number;
@@ -113,12 +115,15 @@ export function VideoOverlay({
   arcs: Arc[];
   ball: Point3 | null;
   current: CourtPositions['events'][number] | null;
-  guides: Guides;
-  /** Line tool active: guide ends get drag handles. */
-  editingGuides: boolean;
   /** Every marker's size, × its default. */
   pointScale: number;
-  onDragMark: (e: ReactPointerEvent, name: string) => void;
+  /** Calibrating: the guide lines and the draggable marks. */
+  edit?: {
+    guides: Guides;
+    /** Line tool active: guide ends get drag handles. */
+    editingGuides: boolean;
+    onDragMark: (e: ReactPointerEvent, name: string) => void;
+  };
 }) {
   const { fit, camera } = state;
   const toImage = (p: Point3) => (camera ? project3(camera.projection, p) : null);
@@ -145,7 +150,8 @@ export function VideoOverlay({
     ];
   }, [camera, state.net_landmarks, state.net_height_m]);
 
-  const guideLines = [...guides.guides, ...(guides.draft ? [guides.draft] : [])].flatMap((g) => {
+  const guides = edit?.guides;
+  const guideLines = (guides ? [...guides.guides, ...(guides.draft ? [guides.draft] : [])] : []).flatMap((g) => {
     const full = extendToFrame(g, margin);
     return full ? [full] : [];
   });
@@ -224,7 +230,7 @@ export function VideoOverlay({
           title="Reconstructed ball"
         />
       )}
-      {guides.crossings.map((c, i) => (
+      {guides?.crossings.map((c, i) => (
         <Dot
           key={i}
           at={c}
@@ -233,7 +239,8 @@ export function VideoOverlay({
           title="Guide crossing"
         />
       ))}
-      {editingGuides &&
+      {guides &&
+        edit.editingGuides &&
         guides.guides.flatMap((g, i) =>
           ([0, 1] as const).map((end) => (
             <button
@@ -247,12 +254,13 @@ export function VideoOverlay({
             />
           )),
         )}
-      {layers.marks &&
+      {edit &&
+        layers.marks &&
         Object.entries(state.points).map(([name, [x, y]]) => (
           <button
             key={name}
             type="button"
-            onPointerDown={(e) => onDragMark(e, name)}
+            onPointerDown={(e) => edit.onDragMark(e, name)}
             className="absolute z-20 h-4 w-4 cursor-grab touch-none rounded-full border-2 border-white bg-yellow-400/80 active:cursor-grabbing"
             style={pin([x, y], pointScale)}
             title={LANDMARK_LABELS[name] ?? name}
