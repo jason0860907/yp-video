@@ -30,7 +30,7 @@ import {
 } from '@/pages/label/court/geometry';
 import type { Layers } from '@/pages/label/court/layers';
 import { usePlays } from '@/pages/label/court/usePlays';
-import { LayerToggles, VideoOverlay } from '@/pages/label/court/VideoOverlay';
+import { LayerToggles, MIN_POINT_SCALE, VideoOverlay } from '@/pages/label/court/VideoOverlay';
 import type { MapDot } from './CourtMap';
 import { Court3D } from './Court3D';
 import { FlightsCard } from './FlightsCard';
@@ -174,7 +174,7 @@ export function AnalysisPanel({ video }: { video: string }) {
                 arcs={arcs}
                 ball={ball}
                 current={current}
-                pointScale={1}
+                pointScale={MIN_POINT_SCALE}
               />
             </div>
           </div>

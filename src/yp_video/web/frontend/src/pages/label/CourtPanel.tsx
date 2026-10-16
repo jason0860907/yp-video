@@ -33,7 +33,7 @@ import { LandmarksCard } from './court/LandmarksCard';
 import { useGuides } from './court/useGuides';
 import { trackPointer } from './court/pointer';
 import type { Layers } from './court/layers';
-import { LayerToggles, VideoOverlay } from './court/VideoOverlay';
+import { LayerToggles, MIN_POINT_SCALE, VideoOverlay } from './court/VideoOverlay';
 import { MAX_ZOOM, useZoom } from './court/useZoom';
 import { usePlays } from './court/usePlays';
 import { ballAt, type CourtState, type Point, type Segment } from './court/geometry';
@@ -108,7 +108,7 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
     marks: true,
   });
   const { zoom, zoomTo, pan, attach: attachViewport } = useZoom();
-  const [pointScale, setPointScale] = useStoredNumber(POINT_SCALE_KEY, 1);
+  const [pointScale, setPointScale] = useStoredNumber(POINT_SCALE_KEY, MIN_POINT_SCALE);
   const takeHandover = usePlayheadHandover(clock ? () => clock.read(video) : undefined, video);
 
   const [duration, setDuration] = useState(0);
@@ -422,7 +422,7 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
               Point size
               <input
                 type="range"
-                min={0.5}
+                min={MIN_POINT_SCALE}
                 max={2.5}
                 step={0.1}
                 value={pointScale}

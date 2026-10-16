@@ -99,6 +99,10 @@ function Dot({
   );
 }
 
+/** The smallest marker size, × its default — what the overlay starts at:
+ *  small enough to leave the paint under a mark visible. */
+export const MIN_POINT_SCALE = 0.5;
+
 export function VideoOverlay({
   state,
   margin,
