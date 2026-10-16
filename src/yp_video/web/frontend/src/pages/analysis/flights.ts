@@ -11,8 +11,8 @@ const WIDTH = 9;
 const NET = 9;
 const LENGTH = 18;
 const ROW = 3;
-/** Where a setter wants the pass: a metre off the net, zones 3–2. */
-const PASS_TARGET = { lateral: 6, along: -1 };
+/** Where a setter wants the pass: a metre off the net, at its middle. */
+const PASS_TARGET = { lateral: 4.5, along: -1 };
 const PERFECT_PASS = 1.5;
 const PLAYABLE_PASS = 3;
 /** Attack direction, degrees off straight across the net. */

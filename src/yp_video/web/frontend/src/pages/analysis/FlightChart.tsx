@@ -15,9 +15,9 @@ const NET = 9;
 /** Free zone drawn past the end lines and the sidelines, metres. */
 const END = 11;
 const SIDE = 1.5;
-/** Where a setter wants the pass (flights.ts: a metre off the net, 6 m
- *  from the passer's left), in court metres per half, and its grade rings. */
-const TARGETS: Record<Half, [number, number]> = { left: [8, 3], right: [10, 6] };
+/** Where a setter wants the pass (flights.ts: a metre off the net, at its
+ *  middle), in court metres per half, and its grade rings. */
+const TARGETS: Record<Half, [number, number]> = { left: [8, 4.5], right: [10, 4.5] };
 const RINGS = [1.5, 3];
 
 /** Court metres to the drawing: the width across, the length down, the
