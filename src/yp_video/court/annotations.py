@@ -1,7 +1,8 @@
 """Human court calibrations: one file per video, the landmarks a user marked.
 
 Only the marks are stored — the homography is derived (geometry.fit), so a
-better solver never leaves stale matrices behind.
+better solver never leaves stale matrices behind — and the guide lines the
+user drew along the paint to place them, so a later fix starts from them.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ OUTSIDE_FRAME = 0.25
 #: A men's net; the calibration a video starts from.
 DEFAULT_NET_HEIGHT = 2.43
 Coordinate = Annotated[float, Field(ge=-OUTSIDE_FRAME, le=1 + OUTSIDE_FRAME, allow_inf_nan=False)]
+FramePoint = tuple[Coordinate, Coordinate]
 
 
 class Calibration(BaseModel):
@@ -33,7 +35,11 @@ class Calibration(BaseModel):
     frame_size: tuple[Annotated[int, Field(gt=0)], Annotated[int, Field(gt=0)]]
     #: Landmark → where it sits in the frame (normalized x, y; may lie
     #: OUTSIDE_FRAME past the edge).
-    points: dict[Landmark, tuple[Coordinate, Coordinate]] = Field(default_factory=dict)
+    points: dict[Landmark, FramePoint] = Field(default_factory=dict)
+    #: Guide lines drawn along the court paint (two frame points each),
+    #: whose crossings the marks snap to. A marking aid: nothing is derived
+    #: from them.
+    guides: list[tuple[FramePoint, FramePoint]] = Field(default_factory=list)
 
 
 def annotation_path(stem: str) -> Path:

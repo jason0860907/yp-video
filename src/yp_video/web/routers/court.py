@@ -39,6 +39,7 @@ def _state(calibration: annotations.Calibration | None) -> dict:
             cam, camera_error = None, str(exc)
     return {
         "points": points,
+        "guides": calibration.guides if calibration else [],
         "net_height_m": calibration.net_height_m if calibration else annotations.DEFAULT_NET_HEIGHT,
         "fit": fit,
         "fit_error": fit_error,
@@ -54,11 +55,13 @@ def _state(calibration: annotations.Calibration | None) -> dict:
 
 
 def _rows(calibration: annotations.Calibration | None) -> list[dict]:
-    """The audit's item view: one row per mark, plus the net height."""
+    """The audit's item view: one row per mark, plus the net height and
+    the guide lines."""
     if calibration is None:
         return []
     return [{"key": name, "value": list(xy)} for name, xy in calibration.points.items()] + [
-        {"key": "net_height_m", "value": calibration.net_height_m}
+        {"key": "net_height_m", "value": calibration.net_height_m},
+        {"key": "guides", "value": [[list(a), list(b)] for a, b in calibration.guides]},
     ]
 
 

@@ -90,6 +90,17 @@ def test_router_round_trips_marks_and_serves_the_fit(client):
     assert client.get("/api/court/video/game.mp4").json()["fit"] == saved["fit"]
 
 
+def test_router_keeps_the_guide_lines(client):
+    assert client.get("/api/court/video/game.mp4").json()["guides"] == []
+    # A guide may reach past the frame edge, to an off-screen corner.
+    guides = [[[0.1, 0.9], [0.6, 0.5]], [[-0.2, 0.7], [0.9, 1.1]]]
+    body = {"points": {}, "frame_size": list(SIZE), "guides": guides}
+    assert client.put("/api/court/video/game.mp4", json=body).json()["guides"] == guides
+    assert client.get("/api/court/video/game.mp4").json()["guides"] == guides
+    body["guides"] = [[[0.1, 0.9], [1.5, 0.5]]]
+    assert client.put("/api/court/video/game.mp4", json=body).status_code == 422
+
+
 def test_router_rejects_unknown_landmarks_and_out_of_frame_marks(client):
     assert client.put("/api/court/video/game.mp4", json={"points": {"net_top": [0.5, 0.5]}}).status_code == 422
     assert client.put("/api/court/video/game.mp4", json={"points": {"left_near": [1.5, 0.5]}}).status_code == 422

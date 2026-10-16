@@ -1,6 +1,8 @@
 /** Guide lines: straight lines drawn along the court paint, whose crossings
  *  locate intersections the eye cannot — including ones past the frame edge.
- *  A marking aid, not a label: they live only in this panel's state. */
+ *  A marking aid saved with the marks, so a later fix starts from them: the
+ *  caller owns them, and hears each change — live while an end is dragged,
+ *  `final` once it lands. */
 
 import { useMemo, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
@@ -24,8 +26,9 @@ export function useGuides(
   toPoint: (cx: number, cy: number) => Point | null,
   reach: number,
   aspect: number,
+  guides: Segment[],
+  onChange: (next: Segment[], final: boolean) => void,
 ) {
-  const [guides, setGuides] = useState<Segment[]>([]);
   const [draft, setDraft] = useState<Segment | null>(null);
 
   const crossings = useMemo(
@@ -64,7 +67,7 @@ export function useGuides(
       () => {
         setDraft(null);
         if (Math.hypot(seg[1][0] - seg[0][0], seg[1][1] - seg[0][1]) > MIN_LENGTH)
-          setGuides((g) => [...g, seg]);
+          onChange([...guides, seg], true);
       },
     );
   };
@@ -73,13 +76,19 @@ export function useGuides(
   const dragEnd = (e: ReactPointerEvent, index: number, end: 0 | 1) => {
     e.preventDefault();
     e.stopPropagation();
-    trackPointer(e, (ev) => {
-      const p = toPoint(ev.clientX, ev.clientY);
-      if (!p) return;
-      setGuides((gs) =>
-        gs.map((g, i) => (i === index ? ((end === 0 ? [p, g[1]] : [g[0], p]) as Segment) : g)),
-      );
-    });
+    let moved = guides;
+    trackPointer(
+      e,
+      (ev) => {
+        const p = toPoint(ev.clientX, ev.clientY);
+        if (!p) return;
+        moved = guides.map((g, i) => (i === index ? ((end === 0 ? [p, g[1]] : [g[0], p]) as Segment) : g));
+        onChange(moved, false);
+      },
+      () => {
+        if (moved !== guides) onChange(moved, true);
+      },
+    );
   };
 
   return {
@@ -89,9 +98,9 @@ export function useGuides(
     snap,
     draw,
     dragEnd,
-    remove: (index: number) => setGuides((gs) => gs.filter((_, i) => i !== index)),
-    undo: () => setGuides((gs) => gs.slice(0, -1)),
-    clear: () => setGuides([]),
+    remove: (index: number) => onChange(guides.filter((_, i) => i !== index), true),
+    undo: () => onChange(guides.slice(0, -1), true),
+    clear: () => onChange([], true),
   };
 }
 

@@ -28,6 +28,8 @@ export type Point = [number, number];
 
 export interface CourtState {
   points: Record<string, Point>;
+  /** Guide lines drawn along the paint, saved with the marks. */
+  guides: Segment[];
   net_height_m: number;
   fit: { image_to_court: Matrix; court_to_image: Matrix; rmse_m: number } | null;
   fit_error: string | null;

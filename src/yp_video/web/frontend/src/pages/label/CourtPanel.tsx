@@ -36,7 +36,7 @@ import type { Layers } from './court/layers';
 import { LayerToggles, VideoOverlay } from './court/VideoOverlay';
 import { MAX_ZOOM, useZoom } from './court/useZoom';
 import { usePlays } from './court/usePlays';
-import { ballAt, type CourtState, type Point } from './court/geometry';
+import { ballAt, type CourtState, type Point, type Segment } from './court/geometry';
 import type { ModeDescriptor, PlaybackClock } from './mode';
 
 export const COURT_MODE: ModeDescriptor = {
@@ -141,21 +141,23 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
     const clamp = (v: number) => Math.min(1 + margin, Math.max(-margin, v));
     return [round4(clamp((cx - r.left) / r.width)), round4(clamp((cy - r.top) / r.height))];
   };
-  const guides = useGuides(clientToPoint, reach, aspect);
-
-  const save = async (points: CourtState['points'], netHeight?: number) => {
+  const save = async (
+    points: CourtState['points'],
+    { netHeight, guides: lines }: { netHeight?: number; guides?: Segment[] } = {},
+  ) => {
     if (!state) return;
     if (!frameSize) {
       toast.error('The video has not loaded yet');
       return;
     }
     const net_height_m = netHeight ?? state.net_height_m;
+    const guides = lines ?? state.guides;
     // Optimistic: the mark moves now; the fit follows the response.
-    qc.setQueryData<CourtState>(['court', video], { ...state, points, net_height_m });
+    qc.setQueryData<CourtState>(['court', video], { ...state, points, net_height_m, guides });
     try {
       const next = await apiFetch<CourtState>(API.court.video(video), {
         method: 'PUT',
-        body: { points, net_height_m, frame_size: frameSize },
+        body: { points, net_height_m, frame_size: frameSize, guides },
       });
       qc.setQueryData(['court', video], next);
       void qc.invalidateQueries({ queryKey: ['court-videos'] });
@@ -165,6 +167,13 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
       void query.refetch();
     }
   };
+
+  // Guide lines are saved with the marks: drawn live, written once they land.
+  const guides = useGuides(clientToPoint, reach, aspect, state?.guides ?? [], (next, final) => {
+    if (!state) return;
+    if (final) void save(state.points, { guides: next });
+    else qc.setQueryData<CourtState>(['court', video], (s) => (s ? { ...s, guides: next } : s));
+  });
 
   const place = (e: ReactPointerEvent) => {
     if (!state || !armed) return;
@@ -446,7 +455,7 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
             armed={armed}
             onArm={arm}
             onRemove={remove}
-            onNetHeight={(h) => void save(state.points, h)}
+            onNetHeight={(h) => void save(state.points, { netHeight: h })}
             frameHeight={frameSize?.[1] ?? null}
           />
           {fit && (
