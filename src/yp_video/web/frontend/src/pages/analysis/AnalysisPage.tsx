@@ -3,8 +3,10 @@
  *  listed; calibrating them is Label → Court. ?video= keeps the pick
  *  shareable and refresh-safe. */
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import { fieldCls } from '@/components/form/Field';
+import { cn } from '@/lib/cn';
 import { useUnionVideos } from '@/lib/useUnionVideos';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -14,13 +16,19 @@ import { VideoCombobox } from '@/components/video/VideoCombobox';
 import { StatusChip } from '@/pages/label/StatusChip';
 import { AnalysisPanel } from './AnalysisPanel';
 
+type KindFilter = 'all' | 'broadcast' | 'sideline';
+
 export function AnalysisPage() {
   const [params, setParams] = useSearchParams();
   const video = params.get('video') ?? '';
   const { videos, query } = useUnionVideos();
+  const [kind, setKind] = useState<KindFilter>('all');
   const calibrated = useMemo(
-    () => videos.filter((v) => v.court && v.court.status !== 'unlabeled'),
-    [videos],
+    () =>
+      videos.filter(
+        (v) => v.court && v.court.status !== 'unlabeled' && (kind === 'all' || v.kind === kind),
+      ),
+    [videos, kind],
   );
   const pick = (name: string) =>
     setParams(
@@ -37,6 +45,18 @@ export function AnalysisPage() {
     <div className="space-y-5">
       <Card>
         <div className="flex flex-wrap items-center gap-2">
+          <label className="inline-flex items-center gap-2 text-xs text-text-muted">
+            Kind
+            <select
+              value={kind}
+              onChange={(e) => setKind(e.target.value as KindFilter)}
+              className={cn(fieldCls, 'h-9 py-0 text-xs')}
+            >
+              <option value="all">All kinds</option>
+              <option value="broadcast">Broadcast</option>
+              <option value="sideline">Sideline</option>
+            </select>
+          </label>
           <VideoCombobox
             className="min-w-[20rem] flex-1"
             items={calibrated}
