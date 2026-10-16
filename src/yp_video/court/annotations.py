@@ -19,7 +19,7 @@ from yp_video.court.geometry import Landmark
 #: How far past the frame edge a mark may sit, as a fraction of the frame:
 #: a corner the camera cut off is still marked, at the crossing of the guide
 #: lines drawn along the paint that is visible.
-OUTSIDE_FRAME = 0.25
+OUTSIDE_FRAME = 1.0
 #: A men's net; the calibration a video starts from.
 DEFAULT_NET_HEIGHT = 2.43
 Coordinate = Annotated[float, Field(ge=-OUTSIDE_FRAME, le=1 + OUTSIDE_FRAME, allow_inf_nan=False)]

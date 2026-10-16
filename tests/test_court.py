@@ -97,13 +97,13 @@ def test_router_keeps_the_guide_lines(client):
     body = {"points": {}, "frame_size": list(SIZE), "guides": guides}
     assert client.put("/api/court/video/game.mp4", json=body).json()["guides"] == guides
     assert client.get("/api/court/video/game.mp4").json()["guides"] == guides
-    body["guides"] = [[[0.1, 0.9], [1.5, 0.5]]]
+    body["guides"] = [[[0.1, 0.9], [2.5, 0.5]]]
     assert client.put("/api/court/video/game.mp4", json=body).status_code == 422
 
 
 def test_router_rejects_unknown_landmarks_and_out_of_frame_marks(client):
     assert client.put("/api/court/video/game.mp4", json={"points": {"net_top": [0.5, 0.5]}}).status_code == 422
-    assert client.put("/api/court/video/game.mp4", json={"points": {"left_near": [1.5, 0.5]}}).status_code == 422
+    assert client.put("/api/court/video/game.mp4", json={"points": {"left_near": [2.5, 0.5]}}).status_code == 422
     # A corner the camera cut off is still markable, a little past the edge.
     assert client.put(
         "/api/court/video/game.mp4", json={"points": {"left_near": [-0.2, 1.1]}, "frame_size": list(SIZE)}

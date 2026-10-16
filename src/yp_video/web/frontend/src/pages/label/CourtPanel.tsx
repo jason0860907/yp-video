@@ -102,9 +102,9 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
   const [draggingMark, setDraggingMark] = useState(false);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const [tool, setTool] = useState<'mark' | 'line'>('mark');
-  // null until toggled: then the video opens with the margin exactly when a
-  // mark already sits out there.
-  const [outside, setOutside] = useState<boolean | null>(null);
+  // How far past the frame the stage reaches, as a fraction of it; null
+  // until the slider moves, opening just wide enough for the marks.
+  const [outside, setOutside] = useState<number | null>(null);
   const [layers, setLayers] = useState<Layers>({
     court: true,
     net: true,
@@ -135,10 +135,15 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
   }, [armed]);
 
   const reach = state?.outside_frame ?? 0;
-  const hasOutsideMark = Object.values(state?.points ?? {}).some(
-    ([x, y]) => x < 0 || x > 1 || y < 0 || y > 1,
+  // The farthest a mark or a guide end sits past the frame: the stage never
+  // shrinks past it, so nothing marked slips out of view.
+  const farthest = Math.max(
+    0,
+    ...[...Object.values(state?.points ?? {}), ...(state?.guides ?? []).flat()].map(([x, y]) =>
+      Math.max(-x, x - 1, -y, y - 1),
+    ),
   );
-  const margin = (outside ?? hasOutsideMark) ? reach : 0;
+  const margin = Math.min(reach, Math.max(farthest, outside ?? Math.ceil(farthest / 0.05) * 0.05));
 
   const clientToPoint = (cx: number, cy: number): Point | null => {
     const r = wrapRef.current?.getBoundingClientRect();
@@ -285,18 +290,26 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
               <Button size="sm" onClick={guides.clear} disabled={!guides.guides.length}>
                 Clear lines
               </Button>
-              <Button
-                size="sm"
-                intent={margin ? 'primary' : 'default'}
-                onClick={() => setOutside(!margin)}
+              <label
+                className="inline-flex items-center gap-2 text-[11px] text-text-muted"
                 title={
-                  hasOutsideMark
-                    ? 'Room around the frame for off-screen corners — some marks sit out there'
+                  farthest > 0
+                    ? 'Room around the frame for off-screen corners — it stays wide enough for the marks out there'
                     : 'Room around the frame for off-screen corners'
                 }
               >
                 Outside frame
-              </Button>
+                <input
+                  type="range"
+                  min={0}
+                  max={reach}
+                  step={0.01}
+                  value={margin}
+                  onChange={(e) => setOutside(Number(e.target.value))}
+                  className="w-24"
+                />
+                <span className="w-8 tabular-nums text-text-secondary">{Math.round(margin * 100)}%</span>
+              </label>
             </div>
           </div>
 
