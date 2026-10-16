@@ -30,6 +30,7 @@ import { useFrameClock } from '@/components/labeling/useFrameClock';
 import { FrameStats, KeyHints, PlayerTransport } from '@/components/labeling/PlayerTransport';
 import { useVideoLabelingData } from '@/components/labeling/useVideoLabelingData';
 import { LandmarksCard } from './court/LandmarksCard';
+import { Loupe } from './court/Loupe';
 import { useGuides } from './court/useGuides';
 import { trackPointer } from './court/pointer';
 import type { Layers } from './court/layers';
@@ -96,6 +97,10 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
   const [aspect, setAspect] = useState(16 / 9);
   const [frameSize, setFrameSize] = useState<[number, number] | null>(null);
   const [armed, setArmed] = useState<string | null>(null);
+  // The loupe: where the pointer is over the stage, and which side of it.
+  const [pointer, setPointer] = useState<{ at: Point; onRight: boolean } | null>(null);
+  const [draggingMark, setDraggingMark] = useState(false);
+  const viewportRef = useRef<HTMLDivElement | null>(null);
   const [tool, setTool] = useState<'mark' | 'line'>('mark');
   // null until toggled: then the video opens with the margin exactly when a
   // mark already sits out there.
@@ -175,6 +180,23 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
     else qc.setQueryData<CourtState>(['court', video], (s) => (s ? { ...s, guides: next } : s));
   });
 
+  // The loupe follows the pointer over the stage while a tool places
+  // something: marking, drawing guides, or dragging a mark.
+  const loupeOn = tool === 'line' || armed != null || draggingMark;
+  useEffect(() => {
+    if (!loupeOn) return;
+    const onMove = (e: PointerEvent) => {
+      const r = viewportRef.current?.getBoundingClientRect();
+      const inside = r && e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+      const at = inside ? clientToPoint(e.clientX, e.clientY) : null;
+      setPointer(at && r ? { at, onRight: e.clientX > r.left + r.width / 2 } : null);
+    };
+    window.addEventListener('pointermove', onMove);
+    return () => window.removeEventListener('pointermove', onMove);
+    // clientToPoint reads the frame's live rect and the margin each call.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loupeOn, margin]);
+
   const place = (e: ReactPointerEvent) => {
     if (!state || !armed) return;
     const raw = clientToPoint(e.clientX, e.clientY);
@@ -192,6 +214,7 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
     e.preventDefault();
     e.stopPropagation();
     let last: Point | null = null;
+    setDraggingMark(true);
     trackPointer(
       e,
       (ev) => {
@@ -203,6 +226,7 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
         );
       },
       () => {
+        setDraggingMark(false);
         if (last) void save({ ...state.points, [name]: guides.snap(last) });
       },
     );
@@ -280,7 +304,10 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
             {/* The stage is the frame plus the optional outside margin; marks
                 and guides are in frame coordinates, so they may sit past 0..1. */}
             <div
-              ref={attachViewport}
+              ref={(el) => {
+                viewportRef.current = el;
+                attachViewport(el);
+              }}
               className="relative mx-auto overflow-hidden"
               style={{
                 aspectRatio: `${aspect}`,
@@ -357,6 +384,19 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
                   )
                 )}
               </div>
+              {loupeOn && pointer && (
+                <div className={cn('absolute top-3 z-20', pointer.onRight ? 'left-3' : 'right-3')}>
+                  <Loupe
+                    video={videoRef}
+                    frame={wrapRef}
+                    point={pointer.at}
+                    guides={[...guides.guides, ...(guides.draft ? [guides.draft] : [])]}
+                    crossings={guides.crossings}
+                    marks={Object.values(state.points)}
+                    margin={margin}
+                  />
+                </div>
+              )}
             </div>
           </div>
 
