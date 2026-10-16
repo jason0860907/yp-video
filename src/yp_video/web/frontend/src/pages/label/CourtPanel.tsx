@@ -4,8 +4,9 @@
  *
  *  This file composes: data, saving marks, the playhead and the action under
  *  it. Drawing lives in court/VideoOverlay, guide lines in court/useGuides,
- *  the map / side view / positions list in their own components, shown as
- *  Landmarks / Court / Rally tabs beside the zoomable video (court/useZoom).
+ *  the map / side view / positions list / flight statistics in their own
+ *  components, shown as Landmarks / Map / Positions / Flights tabs beside the
+ *  zoomable video (court/useZoom).
  *
  *  No dirty guard: every mark is saved the moment it lands.
  */
@@ -33,6 +34,7 @@ import { useVideoLabelingData } from '@/components/labeling/useVideoLabelingData
 import type { MapDot } from './court/CourtMap';
 import { MapCard } from './court/MapCard';
 import { LandmarksCard } from './court/LandmarksCard';
+import { FlightsCard } from './court/FlightsCard';
 import { PositionsList } from './court/PositionsList';
 import { SideView } from './court/SideView';
 import { useGuides } from './court/useGuides';
@@ -70,7 +72,7 @@ export const COURT_MODE: ModeDescriptor = {
 
 const round4 = (v: number) => Math.round(v * 1e4) / 1e4;
 
-type SideTab = 'landmarks' | 'court' | 'rally';
+type SideTab = 'landmarks' | 'court' | 'rally' | 'flights';
 
 const POINT_SCALE_KEY = 'court.pointScale';
 
@@ -513,6 +515,7 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
             ['Space', 'play'],
             ['← →', 'frame (⇧ ×10)'],
             ['Esc', 'stop marking'],
+            ['[ ]', 'previous / next flight (Flights)'],
             ['Wheel', 'zoom'],
             ['Drag', 'pan (right-drag while marking)'],
           ]}
@@ -525,9 +528,9 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
           <Tabs
             tabs={[
               { key: 'landmarks', label: 'Landmarks' },
-              ...(['court', 'rally'] as const).map((key) => ({
+              ...(['court', 'rally', 'flights'] as const).map((key) => ({
                 key,
-                label: key === 'court' ? 'Map' : 'Positions',
+                label: { court: 'Map', rally: 'Positions', flights: 'Flights' }[key],
                 disabled: !fit,
                 title: fit ? undefined : 'Mark at least 4 floor points first',
               })),
@@ -568,6 +571,16 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
                 </div>
               )}
             </>
+          )}
+          {shownTab === 'flights' && (
+            <FlightsCard
+              positions={positionsQuery.data}
+              netHeight={state.net_height_m}
+              time={t}
+              onSeek={(seconds) => {
+                if (fps) seekFrame(Math.floor(seconds * fps));
+              }}
+            />
           )}
           {shownTab === 'rally' && (
             <PositionsList
