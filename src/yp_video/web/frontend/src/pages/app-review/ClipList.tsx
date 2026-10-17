@@ -2,9 +2,9 @@
  *  touch kind, favorite), listed the Label way: rally rows that expand.
  *
  *  Rally: each row is a clip; it opens into its touches, and a touch seeks.
- *  Action / Score: rows group the clips by rally, one group open at a time;
- *  clips outside any rally sit in the closed outside group, which is the
- *  App's default "in rally" membership. A rally the user corrected carries
+ *  Action: rows group the clips by rally, one group open at a time; clips
+ *  outside any rally sit in the closed outside group, which is the App's
+ *  default "in rally" membership. Score: one clip per rally, so a flat list. A rally the user corrected carries
  *  an Edited chip that opens its corrections in Review. */
 
 import { useCallback, useMemo, useState } from 'react';
@@ -157,9 +157,15 @@ export function ClipList({
         <>
           <ActionDot label={c.kind} visible />
           <span className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs">
-            <span className="capitalize text-text-primary">
-              {c.kind} #{c.index}
-            </span>
+            {scope === 'scores' ? (
+              <span className="text-text-primary">
+                {c.rally_index != null ? `Rally #${c.rally_index}` : 'Outside rallies'}
+              </span>
+            ) : (
+              <span className="capitalize text-text-primary">
+                {c.kind} #{c.index}
+              </span>
+            )}
             {c.player && <span className="truncate text-text-secondary">{playerLabel(c.player)}</span>}
             {scope === 'scores' && chips(c)}
           </span>
@@ -238,7 +244,9 @@ export function ClipList({
                 </div>
               );
             })
-          : preview.rallies.map((r) => {
+          : scope === 'scores'
+            ? clips.length > 0 && <div className="[&>div]:ml-0">{clipRows(clips)}</div>
+            : preview.rallies.map((r) => {
               const key = groupOf(r);
               const entries = clips.filter((c) => groupOf(c) === key);
               if (!entries.length) return null;
@@ -253,13 +261,13 @@ export function ClipList({
                     onSelect={() => toggle(key)}
                     onToggle={() => toggle(key)}
                   >
-                    {scope === 'actions' && chips(rallyClip.get(key))}
+                    {chips(rallyClip.get(key))}
                   </RallyRow>
                   {expanded === key && clipRows(entries)}
                 </div>
               );
             })}
-        {scope !== 'rallies' && outside.length > 0 && (
+        {scope === 'actions' && outside.length > 0 && (
           <div className="space-y-1.5">
             <OutsideRow rowKey={OUTSIDE} count={outside.length} open={expanded === OUTSIDE} onToggle={() => toggle(OUTSIDE)} />
             {expanded === OUTSIDE && clipRows(outside)}

@@ -137,6 +137,7 @@ export const ClipPlayer = forwardRef<
             playing={playing}
             waveform={EMPTY_WAVEFORM}
             colors={ACTION_COLORS}
+            bandLabel={(r) => `#${r.rally_id}`}
             onSeekFrame={seekFrame}
             onJumpEvent={(id) => {
               const e = timeline.events.find((x) => x.id === id);

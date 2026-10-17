@@ -3,7 +3,7 @@
  *  explicit, evidenced write-back edits a human annotation, everything else
  *  stays feedback. */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { API, apiFetch, errMsg } from '@/lib/api';
@@ -125,8 +125,22 @@ export function FeedbackPanel({
   });
 
   const candidates = review.data?.candidates ?? detail.candidates;
+  const grouped = groups(candidates);
+  const ordered = grouped.flatMap(([, entries]) => entries);
   const candidate = candidates.find((c) => c.id === selected);
   const decisions = review.data?.decisions ?? {};
+  const loaded = !reviewId || !!review.data;
+
+  // Open on the first correction still to review (also when the URL names
+  // one this snapshot lacks).
+  const first = loaded ? (ordered.find((c) => !decisions[c.id]) ?? ordered[0]) : undefined;
+  useEffect(() => {
+    if (!candidate && first) onSelect(first.id);
+  }, [candidate, first, onSelect]);
+  // Keep the open correction in view as it moves (Edited chip, auto-advance).
+  useEffect(() => {
+    if (selected) document.querySelector(`[data-action-id="${CSS.escape(selected)}"]`)?.scrollIntoView({ block: 'nearest' });
+  }, [selected]);
 
   const run = async (fn: () => Promise<Review>, done: string) => {
     setBusy(true);
@@ -137,14 +151,17 @@ export function FeedbackPanel({
       void queryClient.invalidateQueries({ queryKey: ['app-review', 'match'] });
       void target.refetch();
       toast.success(done);
+      return next;
     } catch (e) {
       toast.error(errMsg(e));
+      return null;
     } finally {
       setBusy(false);
     }
   };
-  const decide = (decision: string, note: string, sameSource: boolean) =>
-    run(async () => {
+  const decide = async (decision: string, note: string, sameSource: boolean) => {
+    const at = ordered.findIndex((c) => c.id === candidate!.id);
+    const next = await run(async () => {
       // The first verdict pins the snapshot it judges.
       const id =
         reviewId ??
@@ -161,6 +178,10 @@ export function FeedbackPanel({
         },
       });
     }, DECISION_LABEL[decision] ?? decision);
+    // Move on to the next correction still to review, wrapping around.
+    const after = next && [...ordered.slice(at + 1), ...ordered.slice(0, at)].find((c) => !next.decisions[c.id]);
+    if (after) onSelect(after.id);
+  };
 
   if (candidates.length === 0)
     return <p className="py-6 text-center text-xs text-text-muted">This match has no user corrections.</p>;
@@ -211,7 +232,7 @@ export function FeedbackPanel({
           key={candidate.id}
           candidate={candidate}
           previous={decisions[candidate.id]}
-          locked={busy || (!!reviewId && !review.data) || review.data?.application != null}
+          locked={busy || !loaded || review.data?.application != null}
           video={video}
           onVideo={setVideo}
           videos={videos}
@@ -220,12 +241,12 @@ export function FeedbackPanel({
         />
       ) : (
         <p className="rounded-xl border border-dashed border-border px-3 py-4 text-center text-xs text-text-muted">
-          Pick a correction below to play it and give a verdict.
+          Loading the review…
         </p>
       )}
 
       <div className="vq-list max-h-[calc(100vh-24rem)] min-h-0 space-y-3 overflow-y-auto pr-1 [&_.ml-6]:ml-0">
-        {groups(candidates).map(([rally, entries]) => (
+        {grouped.map(([rally, entries]) => (
           <div key={rally ?? 'match'} className="space-y-1.5">
             <p className="px-1 text-[11px] font-medium text-text-secondary">
               {rally == null ? 'Whole match' : `Rally #${rally}`}
@@ -324,43 +345,44 @@ function Verdict({
         </Button>
       </div>
       {operation && (
-        <div className="space-y-2 border-t border-border pt-3">
-          <p className="text-xs font-medium text-text-secondary">Write back to the label</p>
-          <VideoCombobox
-            items={videos.data ?? []}
-            value={video}
-            onChange={onVideo}
-            query={videos}
-            placeholder="Pipeline video to write…"
-          />
-          <label className="flex gap-2 text-xs text-text-secondary">
-            <input type="checkbox" checked={sameSource} onChange={(e) => setSameSource(e.target.checked)} />
-            Same source and timeline as the App video, and the change follows the label definition — not a
-            viewing preference.
-          </label>
-          <Button
-            size="sm"
-            intent="danger"
-            disabled={disabled || !sameSource || !note.trim() || !target.data?.[operation]}
-            title={!note.trim() ? 'Write a note first' : undefined}
-            onClick={() => onDecide(operation, note, sameSource)}
-          >
-            {WRITE_BACK[operation]}
-          </Button>
-          {video && target.data && !target.data[operation] && (
-            <p className="text-xs text-amber-400">No human label yet — fully review and save it in Label first.</p>
-          )}
-          {target.error && <p className="text-xs text-red-400">{errMsg(target.error)}</p>}
-          {video && (
-            <div className="flex flex-wrap gap-3 text-xs text-primary">
-              {LABEL_MODES.map(([mode, label]) => (
-                <Link key={mode} target="_blank" to={`/label?video=${encodeURIComponent(video)}&mode=${mode}`}>
-                  Open {label} label
-                </Link>
-              ))}
-            </div>
-          )}
-        </div>
+        <Collapsible label="Write back to the label">
+          <div className="space-y-2">
+            <VideoCombobox
+              items={videos.data ?? []}
+              value={video}
+              onChange={onVideo}
+              query={videos}
+              placeholder="Pipeline video to write…"
+            />
+            <label className="flex gap-2 text-xs text-text-secondary">
+              <input type="checkbox" checked={sameSource} onChange={(e) => setSameSource(e.target.checked)} />
+              Same source and timeline as the App video, and the change follows the label definition — not a
+              viewing preference.
+            </label>
+            <Button
+              size="sm"
+              intent="danger"
+              disabled={disabled || !sameSource || !note.trim() || !target.data?.[operation]}
+              title={!note.trim() ? 'Write a note first' : undefined}
+              onClick={() => onDecide(operation, note, sameSource)}
+            >
+              {WRITE_BACK[operation]}
+            </Button>
+            {video && target.data && !target.data[operation] && (
+              <p className="text-xs text-amber-400">No human label yet — fully review and save it in Label first.</p>
+            )}
+            {target.error && <p className="text-xs text-red-400">{errMsg(target.error)}</p>}
+            {video && (
+              <div className="flex flex-wrap gap-3 text-xs text-primary">
+                {LABEL_MODES.map(([mode, label]) => (
+                  <Link key={mode} target="_blank" to={`/label?video=${encodeURIComponent(video)}&mode=${mode}`}>
+                    Open {label} label
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
+        </Collapsible>
       )}
       <Collapsible label="Raw correction">
         <pre className="max-h-48 overflow-auto rounded bg-surface-100 p-2 text-xs">
