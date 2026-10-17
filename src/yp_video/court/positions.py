@@ -145,7 +145,7 @@ def calibration_summary(calibration: Calibration) -> dict:
     """How well the marks fit, in a form a client can draw without any
     geometry of its own: the floor fit's error, the court's painted lines and
     the net projected back into the frame (normalized image points), and
-    whether a camera — hence heights — could be solved.
+    the camera — hence heights — when one could be solved.
     """
     fit = geometry.fit(calibration.points)
     to_image = np.array(fit.court_to_image)
@@ -167,7 +167,13 @@ def calibration_summary(calibration: Calibration) -> dict:
         "floor_rmse_m": round(fit.rmse_m, 3),
         "lines": lines,
         "net": net,
-        "camera": {"rmse": round(cam.rmse, 4), "center": [round(v, 2) for v in cam.center]} if cam else None,
+        "camera": {
+            "rmse": round(cam.rmse, 4),
+            "center": [round(v, 2) for v in cam.center],
+            # Court metres to normalized image points, so a client can lay
+            # any court point — a flight's every sample — onto the video.
+            "projection": [[round(v, 6) for v in row] for row in cam.projection],
+        } if cam else None,
     }
 
 

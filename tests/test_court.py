@@ -236,6 +236,10 @@ def test_calibration_summary_projects_the_lines_back_onto_the_marks():
     assert summary["lines"][0][1] == pytest.approx(see((18.0, 0.0, 0.0)), abs=1e-3)
     assert summary["net"][0] == pytest.approx(see((9.0, 0.0, 2.43)), abs=1e-3)
     assert summary["camera"]["center"] == pytest.approx([9.0, -12.0, 3.0], abs=0.01)
+    # The projection lays any court point where the video shows it.
+    p = np.array(summary["camera"]["projection"])
+    h = p @ np.array([6.0, 4.0, 3.5, 1.0])
+    assert h[:2] / h[2] == pytest.approx(see((6.0, 4.0, 3.5)), abs=1e-4)
 
 
 def _flight(t):
