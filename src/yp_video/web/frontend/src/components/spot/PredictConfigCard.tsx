@@ -64,7 +64,7 @@ export function PredictConfigCard<S extends BaseSettings>({
       <select
         value={settings.checkpoint}
         onChange={(e) => onChange({ checkpoint: e.target.value } as Partial<S>)}
-        className={cn(fieldCls, 'mb-3 cursor-pointer appearance-none')}
+        className={cn(fieldCls, 'mb-3 cursor-pointer')}
       >
         {checkpoints.length === 0 && <option value="">No checkpoint</option>}
         {checkpoints.map((c) => (

@@ -72,7 +72,7 @@ export function SchemaSelectField({
       <select
         value={String(value)}
         onChange={(e) => set(numeric ? Number(e.target.value) : e.target.value)}
-        className={cn(fieldCls, 'cursor-pointer appearance-none')}
+        className={cn(fieldCls, 'cursor-pointer')}
       >
         {opts.map((option) => (
           <option key={option} value={option}>

@@ -51,7 +51,7 @@ interface VideoMultiSelectListProps<T extends VideoListItem> {
 type KindFilter = 'all' | CutKind;
 
 const selectCls =
-  'h-8 w-auto cursor-pointer appearance-none rounded-lg border border-border-light bg-surface-50 px-3 py-0 text-xs text-text-primary focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary/15';
+  'h-8 w-auto cursor-pointer rounded-lg border border-border-light bg-surface-50 px-3 py-0 text-xs text-text-primary focus:border-primary/50 focus:outline-none focus:ring-2 focus:ring-primary/15';
 
 /** Filterable, multi-select video list: kind + status filters, select-visible,
  *  quick-select presets. Domain-specific status logic and row badges come in

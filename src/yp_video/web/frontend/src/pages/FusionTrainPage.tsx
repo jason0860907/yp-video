@@ -188,7 +188,7 @@ export function FusionTrainPage() {
                 <select
                   value={values.recipe}
                   onChange={(event) => pickRecipe(event.target.value as FusionRecipeId)}
-                  className={cn(fieldCls, 'cursor-pointer appearance-none')}
+                  className={cn(fieldCls, 'cursor-pointer')}
                 >
                   {(status?.recipes ?? []).map((item) => (
                     <option key={item.id} value={item.id}>

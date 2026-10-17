@@ -428,7 +428,7 @@ export function AuditPage() {
           <label className="flex flex-col gap-1.5">
             <span className="text-[11px] text-text-muted">Actor</span>
             <select
-              className={cn(fieldCls, 'cursor-pointer appearance-none')}
+              className={cn(fieldCls, 'cursor-pointer')}
               value={draft.actor}
               onChange={(e) => set({ actor: e.target.value })}
             >
@@ -443,7 +443,7 @@ export function AuditPage() {
           <label className="flex flex-col gap-1.5">
             <span className="text-[11px] text-text-muted">Action</span>
             <select
-              className={cn(fieldCls, 'cursor-pointer appearance-none')}
+              className={cn(fieldCls, 'cursor-pointer')}
               value={draft.action}
               onChange={(e) => set({ action: e.target.value })}
             >

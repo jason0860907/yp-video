@@ -205,7 +205,7 @@ export function ReidTrainPage() {
                 <select
                   value={trainForm.values.dataset || status?.datasets[0]?.name || ''}
                   onChange={(e) => trainForm.set('dataset', e.target.value)}
-                  className={cn(fieldCls, 'cursor-pointer appearance-none')}
+                  className={cn(fieldCls, 'cursor-pointer')}
                 >
                   {(status?.datasets ?? []).map((d) => (
                     <option key={d.name} value={d.name}>

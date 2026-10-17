@@ -53,7 +53,7 @@ const embeddingRetryDelay = (attempt: number, error: Error) =>
     : Math.min(1000 * 2 ** attempt, 5000);
 
 const selectCls =
-  'w-auto cursor-pointer appearance-none rounded-lg border border-border-light bg-surface-50 px-3 py-1 text-xs text-text-primary focus:border-primary/50 focus:outline-none';
+  'w-auto cursor-pointer rounded-lg border border-border-light bg-surface-50 px-3 py-1 text-xs text-text-primary focus:border-primary/50 focus:outline-none';
 
 export const REID_MODE: ModeDescriptor = {
   key: 'reid',

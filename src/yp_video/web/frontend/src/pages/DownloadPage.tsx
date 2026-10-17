@@ -151,7 +151,7 @@ export function DownloadPage() {
             className={cn(fieldCls, 'mb-3 font-mono')}
           />
           <label className="mb-1.5 block text-[10.5px] uppercase tracking-wide text-text-muted">Quality</label>
-          <select value={quality} onChange={(e) => setQuality(e.target.value)} disabled={downloading} className={cn(fieldCls, 'mb-4 cursor-pointer appearance-none')}>
+          <select value={quality} onChange={(e) => setQuality(e.target.value)} disabled={downloading} className={cn(fieldCls, 'mb-4 cursor-pointer')}>
             {QUALITIES.map((q) => (
               <option key={q.value} value={q.value}>
                 {q.label}
