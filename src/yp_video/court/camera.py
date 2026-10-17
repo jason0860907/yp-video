@@ -85,9 +85,15 @@ def solve(calibration: Calibration) -> Camera:
     floor = sum(1 for n in calibration.points if n in geometry.LANDMARKS)
     if floor < geometry.MIN_POINTS:
         raise CameraError(f"Mark at least {geometry.MIN_POINTS} floor points ({floor} marked)")
-    width, height = calibration.frame_size
-    aspect = width / height
     world, norm, off_floor = _world_points(calibration)
+    return fit(world, norm, calibration.frame_size, off_floor)
+
+
+def fit(world: np.ndarray, norm: np.ndarray, frame_size: tuple[int, int], off_floor: int = 0) -> Camera:
+    """Fit focal length and pose to court points (N, 3) seen at normalized
+    image points (N, 2)."""
+    width, height = frame_size
+    aspect = width / height
     image = norm * np.array([aspect, 1.0])
 
     # Focal length is the one non-linear unknown; pose is solved exactly per

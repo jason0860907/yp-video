@@ -101,6 +101,11 @@ def test_router_keeps_the_guide_lines(client):
     assert client.put("/api/court/video/game.mp4", json=body).status_code == 422
 
 
+def test_router_needs_person_detections_to_find_guides(client, tmp_path):
+    with patch.object(routes, "dense_path", return_value=tmp_path / "none.npz"):
+        assert client.get("/api/court/guides/game.mp4").status_code == 409
+
+
 def test_router_rejects_unknown_landmarks_and_out_of_frame_marks(client):
     assert client.put("/api/court/video/game.mp4", json={"points": {"net_top": [0.5, 0.5]}}).status_code == 422
     assert client.put("/api/court/video/game.mp4", json={"points": {"left_near": [2.5, 0.5]}}).status_code == 422

@@ -58,8 +58,9 @@ def video_geometry(video_path: Path) -> VideoGeometry:
     return geometry
 
 
-def read_frames(video_path: Path, frames: Iterable[int]) -> Iterator[tuple[int, object | None]]:
-    """``(frame, BGR image)`` for each distinct requested frame, ascending.
+def read_frames(video_path: Path | str, frames: Iterable[int]) -> Iterator[tuple[int, object | None]]:
+    """``(frame, BGR image)`` for each distinct requested frame, ascending,
+    from a file or a URL OpenCV can open.
 
     The image is None where the frame would not decode. At most a few runs
     are held in memory ahead of the consumer.
@@ -76,7 +77,7 @@ def read_frames(video_path: Path, frames: Iterable[int]) -> Iterator[tuple[int, 
             yield from pending.popleft().result()
 
 
-def _read_run(video_path: Path, run: list[int]) -> list[tuple[int, object | None]]:
+def _read_run(video_path: Path | str, run: list[int]) -> list[tuple[int, object | None]]:
     import cv2
 
     capture = cv2.VideoCapture(str(video_path))
