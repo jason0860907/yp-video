@@ -245,7 +245,9 @@ def test_winner_override_rescores_the_set():
         "left": 1,
         "right": 1,
     }
-    assert [c["id"] for c in feedback.candidates(b)] == ["winner:2"]
+    assert [(c["id"], c["rally_index"]) for c in feedback.candidates(b)] == [
+        ("winner:2", 2)
+    ]
 
 
 @pytest.mark.parametrize(

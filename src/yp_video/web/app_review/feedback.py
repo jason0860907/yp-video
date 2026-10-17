@@ -127,6 +127,7 @@ def candidates(bundle: Bundle) -> list[dict]:
                     "scope": scope,
                     "value": correction.model_dump(),
                     "clip": clip,
+                    "rally_index": clip["rally_index"] if clip else None,
                     "event": events[0].model_dump() if len(events) == 1 else None,
                     "can_remove_event": scope == "actions"
                     and correction.removed
@@ -148,6 +149,7 @@ def candidates(bundle: Bundle) -> list[dict]:
                 "id": f"rally:{index}",
                 "scope": "rally",
                 "value": {"deleted_rally_index": index},
+                "rally_index": index,
                 "clip": {"start": rally.start, "end": rally.end} if rally else None,
                 "rally": rally.model_dump() if rally else None,
                 "reason": None if rally else "The original analysis has no such rally.",
@@ -172,6 +174,7 @@ def candidates(bundle: Bundle) -> list[dict]:
                     "after": [edited.start, edited.end],
                 },
                 "rally": original.model_dump(),
+                "rally_index": edited.index,
                 "bounds": [edited.start, edited.end],
                 "clip": {
                     "start": min(original.start, edited.start),
@@ -191,6 +194,7 @@ def candidates(bundle: Bundle) -> list[dict]:
                     "before": rally.winner if rally else None,
                     "after": side,
                 },
+                "rally_index": index,
                 "clip": {"start": rally.start, "end": rally.end} if rally else None,
                 "reason": "Winner corrections are kept as review feedback; to train on one, change the winner in Label → Rally.",
             }
@@ -200,11 +204,15 @@ def candidates(bundle: Bundle) -> list[dict]:
         events = {e.id: e for e in bundle.result.action_events}
         for event_id, number in player_numbers(bundle).items():
             event = events.get(event_id)
+            rally = event and next(
+                (r for r in bundle.result.rallies if r.start <= event.time <= r.end), None
+            )
             rows.append(
                 {
                     "id": f"player:{event_id}",
                     "scope": "player",
                     "value": {"event_id": event_id, "number": number},
+                    "rally_index": rally.index if rally else None,
                     "clip": {"start": max(0, event.time - 1), "end": event.time + 1}
                     if event
                     else None,
@@ -219,6 +227,7 @@ def candidates(bundle: Bundle) -> list[dict]:
                 "scope": "identification",
                 "value": pi.model_dump(),
                 "clip": None,
+                "rally_index": None,
                 "reason": "Person grouping and thresholds never become training labels directly.",
             }
         )
@@ -229,6 +238,7 @@ def candidates(bundle: Bundle) -> list[dict]:
                 "scope": "roster",
                 "value": [r.model_dump() for r in bundle.roster],
                 "clip": None,
+                "rally_index": None,
                 "reason": "Rosters and cross-match identities stay feedback; names are never used to guess training identities.",
             }
         )
