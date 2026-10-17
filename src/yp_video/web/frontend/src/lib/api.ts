@@ -106,6 +106,7 @@ export const API = {
     video: (name: string) => `/court/video/${encodeURIComponent(name)}`,
     done: (name: string) => `/court/done/${encodeURIComponent(name)}`,
     positions: (name: string) => `/court/positions/${encodeURIComponent(name)}`,
+    guides: (name: string) => `/court/guides/${encodeURIComponent(name)}`,
   },
   detectionLabel: {
     videos: '/detection-label/videos',

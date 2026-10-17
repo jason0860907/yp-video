@@ -185,6 +185,22 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
     else qc.setQueryData<CourtState>(['court', video], (s) => (s ? { ...s, guides: next } : s));
   });
 
+  // A calibration not yet started opens with guides the server found along
+  // the paint (court/paint.py); they are saved with the first mark.
+  const untouched = (s: CourtState) => s.guides.length === 0 && Object.keys(s.points).length === 0;
+  const found = useQuery({
+    queryKey: ['court-guides', video],
+    queryFn: () => apiFetch<{ guides: Segment[] }>(API.court.guides(video)),
+    enabled: state != null && untouched(state),
+    staleTime: Infinity,
+    retry: false,
+  });
+  useEffect(() => {
+    const lines = found.data?.guides;
+    if (!lines?.length) return;
+    qc.setQueryData<CourtState>(['court', video], (s) => (s && untouched(s) ? { ...s, guides: lines } : s));
+  }, [found.data, qc, video]);
+
   // The loupe follows the pointer over the stage while a tool places
   // something: marking, drawing guides, or dragging a mark.
   const loupeOn = tool === 'line' || armed != null || draggingMark;
@@ -290,6 +306,12 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
               <Button size="sm" onClick={guides.clear} disabled={!guides.guides.length}>
                 Clear lines
               </Button>
+              {found.isFetching && <span className="text-[11px] text-text-muted">Finding court lines…</span>}
+              {(found.isError || found.data?.guides.length === 0) && (
+                <span className="text-[11px] text-text-muted" title={found.isError ? errMsg(found.error) : undefined}>
+                  No lines found
+                </span>
+              )}
               <label
                 className="inline-flex items-center gap-2 text-[11px] text-text-muted"
                 title={
