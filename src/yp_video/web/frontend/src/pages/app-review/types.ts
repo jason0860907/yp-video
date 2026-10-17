@@ -1,9 +1,10 @@
 import { SIDE_DISPLAY } from '@/lib/courtSide';
 import type { CourtSide } from '@/types/api';
+import { formatActionTime } from '@/lib/actionEditorModel';
 
 export type WindowMode = 'full_play' | 'to_next' | 'whole_rally';
 export type Scope = 'rallies' | 'actions' | 'scores';
-export type Tab = 'clips' | 'match' | 'review';
+export type Tab = 'clips' | 'review';
 
 export interface AppUser {
   id: string;
@@ -97,7 +98,10 @@ export interface Candidate {
   id: string;
   scope: string;
   value: unknown;
-  clip: { start: number; end: number } | null;
+  /** The full original clip for actions / scores, just the span otherwise. */
+  clip: (Partial<Clip> & { start: number; end: number; anchor_time?: number }) | null;
+  /** The original analysis' rally it belongs to; null for match-wide ones. */
+  rally_index: number | null;
   can_remove_event?: boolean;
   rally?: unknown;
   reason?: string | null;
@@ -152,12 +156,23 @@ export const lossReasonLabel = (code: string) =>
   LOSS_REASON[code] ?? (code.startsWith('custom:') ? code.slice(7) : code);
 
 export const DECISION_LABEL: Record<string, string> = {
-  accepted_feedback: 'Kept as feedback',
-  rejected: 'Rejected',
+  accepted_feedback: 'Adopted as feedback',
+  rejected: 'Not adopted',
   remove_event: 'Label event removed',
   remove_rally: 'Label rally removed',
   update_rally: 'Rally bounds updated',
 };
+
+const RALLY_LEVEL = new Set(['rally', 'rally_bounds', 'winner']);
+const at = (c: Candidate) => c.clip?.anchor_time ?? c.clip?.start ?? Infinity;
+/** Review order: what happened to a rally before what happened inside it,
+ *  then time. */
+export const byReviewOrder = (a: Candidate, b: Candidate) =>
+  Number(!RALLY_LEVEL.has(a.scope)) - Number(!RALLY_LEVEL.has(b.scope)) ||
+  at(a) - at(b);
+
+/** mm:ss.t — two touches in the same second stay apart. */
+export const preciseTime = (t: number) => `${formatActionTime(t)}.${Math.floor((t % 1) * 10)}`;
 
 export const playerLabel = (p: Player) => `#${p.number} ${p.name}`;
 

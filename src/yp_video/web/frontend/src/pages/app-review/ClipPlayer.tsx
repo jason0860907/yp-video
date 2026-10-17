@@ -97,8 +97,9 @@ export const ClipPlayer = forwardRef<
         right={
           clip && (
             <span className="font-mono text-[11px] tabular-nums text-text-muted">
-              <span className="capitalize">{clip.kind}</span>
-              {clip.rally_index != null && ` · Rally ${clip.rally_index}`} · {formatActionTime(clip.start)} →{' '}
+              {clip.kind !== 'rally' && <span className="capitalize">{clip.kind} · </span>}
+              {clip.rally_index != null && `Rally ${clip.rally_index} · `}
+              {formatActionTime(clip.start)} →{' '}
               {formatActionTime(clip.end)}
             </span>
           )

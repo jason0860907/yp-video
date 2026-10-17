@@ -4,7 +4,8 @@
  *  Rally: each row is a clip; it opens into its touches, and a touch seeks.
  *  Action / Score: rows group the clips by rally, one group open at a time;
  *  clips outside any rally sit in the closed outside group, which is the
- *  App's default "in rally" membership. */
+ *  App's default "in rally" membership. A rally the user corrected carries
+ *  an Edited chip that opens its corrections in Review. */
 
 import { useCallback, useMemo, useState } from 'react';
 import { cn } from '@/lib/cn';
@@ -13,7 +14,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Segmented } from '@/components/ui/Segmented';
 import { ActionDot, EventRows, OutsideRow, RallyRow } from '@/components/action/RallyRows';
 import { formatActionTime } from '@/lib/actionEditorModel';
-import type { Clip, Preview, Scope, Tag, Touch } from './types';
+import type { Candidate, Clip, Preview, Scope, Tag, Touch } from './types';
 import { lossReasonLabel, playerLabel, sideLabel } from './types';
 
 const OUTSIDE = '__outside__';
@@ -24,22 +25,27 @@ export function ClipList({
   preview,
   tags,
   rallyTags,
+  edits,
   scope,
   selected,
   onScope,
   onSelect,
   onSeek,
+  onOpenEdit,
 }: {
   preview: Preview;
   tags: Tag[];
   /** Rally UUID (lowercase) → its favorite tag ids. */
   rallyTags: Map<string, string[]>;
+  /** Rally index → the user's corrections inside it. */
+  edits: Map<number, Candidate[]>;
   scope: Scope;
   selected: Clip | null;
   onScope: (scope: Scope) => void;
   /** A clip picked; `queue` is what auto-next walks after it. */
   onSelect: (clip: Clip, queue: Clip[]) => void;
   onSeek: (time: number) => void;
+  onOpenEdit: (first: Candidate) => void;
 }) {
   const [kind, setKind] = useState('');
   const [player, setPlayer] = useState('');
@@ -81,10 +87,27 @@ export function ClipList({
   const rallyClip = useMemo(() => new Map(preview.rallies.map((r) => [String(r.rally_index), r])), [preview.rallies]);
   const rallyBounds = (r: Clip) => ({ rally_id: r.rally_index ?? 0, start: r.start, end: r.end });
 
-  /** The rally's outcome and favorites, on whichever row stands for it. */
-  const chips = (r: Clip | undefined) =>
-    r && (
+  /** The rally's edits, outcome and favorites, on whichever row stands for it. */
+  const chips = (r: Clip | undefined) => {
+    if (!r) return null;
+    const edited = r.rally_index != null ? edits.get(r.rally_index) : undefined;
+    const first = edited?.[0];
+    return (
       <>
+        {edited && first && (
+          <button
+            type="button"
+            title="Open this rally's corrections in Review"
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenEdit(first);
+            }}
+          >
+            <Badge tone="warning" className="hover:bg-amber-500/25">
+              Edited {edited.length}
+            </Badge>
+          </button>
+        )}
         {r.winner && <Badge tone="success">Winner {sideLabel(r.winner)}</Badge>}
         {r.loss_reason && (
           <Badge tone={r.loss_reason_inferred ? 'neutral' : 'warning'}>
@@ -99,6 +122,7 @@ export function ClipList({
         ))}
       </>
     );
+  };
 
   const touchRows = (r: Clip) => (
     <EventRows<Touch & { id: string }>
@@ -169,11 +193,13 @@ export function ClipList({
             </option>
           ))}
         </select>
-        <select aria-label="Kind" className={cn(fieldCls, 'text-xs capitalize')} value={kind} onChange={(e) => setKind(e.target.value)}>
-          <option value="">All kinds</option>
+        <select aria-label="Kind" className={cn(fieldCls, 'text-xs')} value={kind} onChange={(e) => setKind(e.target.value)}>
+          {/* Rally / Score rows hold several touches: the filter keeps those
+              containing the kind, so say so. */}
+          <option value="">{scope === 'actions' ? 'All kinds' : 'Any touches'}</option>
           {KINDS.map((k) => (
             <option key={k} value={k}>
-              {k}
+              {scope === 'actions' ? k.charAt(0).toUpperCase() + k.slice(1) : `Has ${k}`}
             </option>
           ))}
         </select>
@@ -192,13 +218,12 @@ export function ClipList({
       <div className="vq-list max-h-[calc(100vh-24rem)] min-h-0 space-y-1.5 overflow-y-auto pr-1">
         {clips.length === 0 && <p className="py-6 text-center text-xs text-text-muted">No clips match the filters.</p>}
         {scope === 'rallies'
-          ? clips.map((r, i) => {
+          ? clips.map((r) => {
               const key = groupOf(r);
               const open = expanded === key;
               return (
                 <div key={r.key} className="space-y-1.5">
                   <RallyRow
-                    index={i}
                     rally={rallyBounds(r)}
                     count={r.touches.length}
                     open={open}
@@ -213,14 +238,13 @@ export function ClipList({
                 </div>
               );
             })
-          : preview.rallies.map((r, i) => {
+          : preview.rallies.map((r) => {
               const key = groupOf(r);
               const entries = clips.filter((c) => groupOf(c) === key);
               if (!entries.length) return null;
               return (
                 <div key={r.key} className="space-y-1.5">
                   <RallyRow
-                    index={i}
                     rally={rallyBounds(r)}
                     count={entries.length}
                     open={expanded === key}

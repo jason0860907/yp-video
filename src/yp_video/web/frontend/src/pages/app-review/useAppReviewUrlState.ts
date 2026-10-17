@@ -1,4 +1,4 @@
-/** ?user=&match=&tab=&scope=&clip= — the App Review page's shareable,
+/** ?user=&match=&tab=&scope=&clip=&fix= — the App Review page's shareable,
  *  refresh-safe state, the way useLabelUrlState keeps Label's. Writes
  *  replace history; an empty value drops its key. */
 
@@ -6,7 +6,7 @@ import { useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { Scope, Tab } from './types';
 
-const TABS: readonly string[] = ['clips', 'match', 'review'];
+const TABS: readonly string[] = ['clips', 'review'];
 const SCOPES: readonly string[] = ['rallies', 'actions', 'scores'];
 
 export function useAppReviewUrlState() {
@@ -19,6 +19,8 @@ export function useAppReviewUrlState() {
     tab: (tab && TABS.includes(tab) ? tab : 'clips') as Tab,
     scope: (scope && SCOPES.includes(scope) ? scope : 'rallies') as Scope,
     clip: params.get('clip') ?? '',
+    /** The correction open in Review. */
+    fix: params.get('fix') ?? '',
   };
 
   const set = useCallback(

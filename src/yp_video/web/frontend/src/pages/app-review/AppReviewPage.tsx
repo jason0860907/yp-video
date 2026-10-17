@@ -1,10 +1,11 @@
 /** App Review: browse any VolleyIQ user's library the way the App shows it,
  *  and review their corrections as training feedback.
  *
- *  Laid out like Label: a header card (tabs, then the pickers and the App's
- *  framing settings), the player, and a sidebar the tab fills — the App's
- *  feeds, match info, or the correction review. Where you are lives in the
- *  URL (useAppReviewUrlState) so links are shareable.
+ *  Two modes, as tabs: Clips shows the match through the App's feeds and
+ *  framing; Review lists the user's corrections against the original
+ *  analysis, so what they deleted is still on the timeline. A header card
+ *  holds the pickers and a one-line match summary; where you are lives in
+ *  the URL (useAppReviewUrlState) so links are shareable.
  */
 
 import { useCallback, useMemo, useRef, useState } from 'react';
@@ -19,9 +20,10 @@ import { ClipList } from './ClipList';
 import { ClipPlayer, type ClipPlayerHandle } from './ClipPlayer';
 import { FeedbackPanel } from './FeedbackPanel';
 import { LibraryPicker } from './LibraryPicker';
-import { MatchInfo } from './MatchInfo';
+import { MatchSummary } from './MatchSummary';
 import { useAppReviewUrlState } from './useAppReviewUrlState';
-import type { Clip, Library, MatchDetail, VideoMeta, WindowMode } from './types';
+import type { Candidate, Clip, Library, MatchDetail, VideoMeta, WindowMode } from './types';
+import { byReviewOrder } from './types';
 
 const FRAMINGS: { key: WindowMode; label: string }[] = [
   { key: 'full_play', label: 'Full play' },
@@ -30,11 +32,11 @@ const FRAMINGS: { key: WindowMode; label: string }[] = [
 ];
 
 export function AppReviewPage() {
-  const { user, match, tab, scope, clip, set } = useAppReviewUrlState();
+  const { user, match, tab, scope, clip, fix, set } = useAppReviewUrlState();
   const [mode, setMode] = useState<WindowMode>('full_play');
   const [corrected, setCorrected] = useState(true);
-  // A review candidate's span, played without being one of the feed's clips.
-  const [focus, setFocus] = useState<Clip | null>(null);
+  // Review judges the edits against the original analysis.
+  const applied = tab === 'clips' && corrected;
   const queue = useRef<Clip[]>([]);
   const player = useRef<ClipPlayerHandle>(null);
 
@@ -44,11 +46,11 @@ export function AppReviewPage() {
     queryFn: () => apiFetch<Library>(API.appReview.library(user)),
   });
   const detail = useQuery({
-    queryKey: ['app-review', 'match', user, match, mode, corrected],
+    queryKey: ['app-review', 'match', user, match, mode, applied],
     enabled: !!user && !!match,
     // Reframing (mode / corrections) keeps the old clips on screen meanwhile.
     placeholderData: (prev, query) => (query?.queryKey[3] === match ? prev : undefined),
-    queryFn: () => apiFetch<MatchDetail>(API.appReview.match(user, match, mode, corrected)),
+    queryFn: () => apiFetch<MatchDetail>(API.appReview.match(user, match, mode, applied)),
   });
   const meta = useQuery({
     queryKey: ['app-review', 'video-meta', user, match],
@@ -67,18 +69,46 @@ export function AppReviewPage() {
     return out;
   }, [library.data, match]);
 
+  const candidates = detail.data?.candidates;
+  /** Rally index → the user's corrections inside it. */
+  const edits = useMemo(() => {
+    const out = new Map<number, Candidate[]>();
+    for (const c of [...(candidates ?? [])].sort(byReviewOrder))
+      if (c.rally_index != null) out.set(c.rally_index, [...(out.get(c.rally_index) ?? []), c]);
+    return out;
+  }, [candidates]);
+  // The open correction's span, played without being one of the feed's clips.
+  const fixed = candidates?.find((c) => c.id === fix);
+  const fixClip = useMemo<Clip | null>(
+    () =>
+      fixed?.clip
+        ? {
+            key: `fix:${fixed.id}`,
+            kind: fixed.clip.kind ?? (fixed.rally_index != null ? 'rally' : 'other'),
+            rally_index: fixed.rally_index,
+            touches: fixed.clip.touches ?? [],
+            start: fixed.clip.start,
+            end: fixed.clip.end,
+          }
+        : null,
+    [fixed],
+  );
+
   const preview = detail.data?.preview;
-  const active = focus ?? preview?.[scope].find((c) => c.key === clip) ?? null;
+  const feed = preview?.[scope];
+  // Clips opens on the feed's first clip, so a picked match never sits blank.
+  const active = tab === 'review' ? fixClip : (feed?.find((c) => c.key === clip) ?? feed?.[0] ?? null);
   const select = (next: Clip, visible: Clip[]) => {
     queue.current = visible;
-    setFocus(null);
     set({ clip: next.key });
   };
   const playNext = useCallback(() => {
-    const i = queue.current.findIndex((c) => c.key === clip);
-    const next = queue.current[i + 1];
+    if (tab !== 'clips' || !active) return;
+    const list = queue.current.length ? queue.current : (feed ?? []);
+    const i = list.findIndex((c) => c.key === active.key);
+    const next = list[i + 1];
     if (i >= 0 && next) set({ clip: next.key });
-  }, [clip, set]);
+  }, [tab, active, feed, set]);
 
   const error = detail.error ?? meta.error ?? library.error;
   const ready = detail.data && preview && meta.data;
@@ -89,8 +119,7 @@ export function AppReviewPage() {
         <Tabs
           tabs={[
             { key: 'clips', label: 'Clips' },
-            { key: 'match', label: 'Match' },
-            { key: 'review', label: `Review${detail.data ? ` (${detail.data.candidates.length})` : ''}` },
+            { key: 'review', label: `Review${candidates ? ` (${candidates.length})` : ''}` },
           ]}
           active={tab}
           onChange={(t) => set({ tab: t })}
@@ -100,24 +129,23 @@ export function AppReviewPage() {
             user={user}
             match={match}
             library={library.data}
-            onUser={(id) => {
-              setFocus(null);
-              set({ user: id, match: '', clip: '' });
-            }}
-            onMatch={(id) => {
-              setFocus(null);
-              set({ match: id, clip: '' });
-            }}
+            onUser={(id) => set({ user: id, match: '', clip: '', fix: '' })}
+            onMatch={(id) => set({ match: id, clip: '', fix: '' })}
           />
-          <span className="inline-flex items-center gap-2 text-xs text-text-muted">
-            Framing
-            <Segmented options={FRAMINGS} value={mode} onChange={setMode} />
-          </span>
-          <label className="inline-flex items-center gap-1.5 text-xs text-text-secondary">
-            <input type="checkbox" checked={corrected} onChange={(e) => setCorrected(e.target.checked)} />
-            Apply user corrections
-          </label>
+          {tab === 'clips' && (
+            <>
+              <span className="inline-flex items-center gap-2 text-xs text-text-muted">
+                Framing
+                <Segmented options={FRAMINGS} value={mode} onChange={setMode} />
+              </span>
+              <label className="inline-flex items-center gap-1.5 text-xs text-text-secondary">
+                <input type="checkbox" checked={corrected} onChange={(e) => setCorrected(e.target.checked)} />
+                Apply user corrections
+              </label>
+            </>
+          )}
         </div>
+        {detail.data && <MatchSummary match={detail.data.match} preview={detail.data.preview} />}
       </Card>
 
       {!user || !match ? (
@@ -155,33 +183,29 @@ export function AppReviewPage() {
           />
           <div className="min-w-0 xl:w-[460px] xl:flex-shrink-0">
             <Card>
-              {tab === 'clips' && (
+              {tab === 'clips' ? (
                 <ClipList
                   preview={preview}
                   tags={library.data?.tags ?? []}
                   rallyTags={rallyTags}
+                  edits={edits}
                   scope={scope}
-                  selected={focus ? null : active}
-                  onScope={(s) => set({ scope: s, clip: '' })}
+                  selected={active}
+                  onScope={(s) => {
+                    queue.current = [];
+                    set({ scope: s, clip: '' });
+                  }}
                   onSelect={select}
                   onSeek={(t) => player.current?.seek(t)}
+                  onOpenEdit={(c) => set({ tab: 'review', fix: c.id })}
                 />
-              )}
-              {tab === 'match' && <MatchInfo match={detail.data.match} preview={preview} />}
-              {tab === 'review' && (
+              ) : (
                 <FeedbackPanel
                   key={`${match}:${detail.data.review_id}`}
                   user={user}
                   detail={detail.data}
-                  onSeek={(span) =>
-                    setFocus({
-                      key: `focus:${span.start}:${span.end}`,
-                      kind: 'other',
-                      rally_index: null,
-                      touches: [],
-                      ...span,
-                    })
-                  }
+                  selected={fix}
+                  onSelect={(id) => set({ fix: id })}
                 />
               )}
             </Card>
