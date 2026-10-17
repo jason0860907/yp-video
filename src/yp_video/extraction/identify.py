@@ -440,7 +440,7 @@ def _main() -> None:
         on_progress=report,
     )
     payload = {
-        "version": 4,
+        "version": 5,
         "video": args.video.stem,
         "embedder": result.embedder,
         "threshold": result.threshold,
