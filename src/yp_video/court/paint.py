@@ -27,6 +27,7 @@ import cv2
 import numpy as np
 
 from yp_video.court import camera
+from yp_video.court.annotations import OUTSIDE_FRAME
 from yp_video.court.geometry import COURT_LENGTH, COURT_WIDTH, LANDMARKS, LINES
 
 Segment = tuple[tuple[float, float], tuple[float, float]]
@@ -385,16 +386,33 @@ def _refine(hom: np.ndarray, segs: np.ndarray, size: tuple[int, int]) -> np.ndar
 
 
 def _paint_in_view(hom: np.ndarray, segs: np.ndarray, size: tuple[int, int]) -> list[tuple[np.ndarray, np.ndarray]]:
-    """One guide per court line with paint found on it: the line as the fit
-    lays it, across the frame — a short visible stretch still gives a guide
-    long enough to see and to cross the others."""
+    """One guide per court line with paint found on it, the line as the fit
+    lays it: across the whole frame, and on past its edge to the court's end
+    where that end lies outside — as a marker draws it, to cross the next line
+    at an off-screen corner. Never past annotations.OUTSIDE_FRAME."""
     w, h = size
+    reach = OUTSIDE_FRAME * np.array([w, h])
     out = []
     for (x0, y0, x1, y1), (_, _, on) in zip(LINES, _matches(hom, segs, REFINE_RADII[-1], REFINE_ANGLE), strict=True):
         if not on.any():
             continue
-        a, b = cv2.perspectiveTransform(np.array([[[x0, y0]], [[x1, y1]]], np.float64), hom).reshape(2, 2)
-        inside, a, b = cv2.clipLine((0, 0, w, h), tuple(np.round(a).astype(int)), tuple(np.round(b).astype(int)))
-        if inside:
-            out.append((np.array(a, float), np.array(b, float)))
+        ends = hom @ np.array([[x0, x1], [y0, y1], [1.0, 1.0]])
+        if np.any(np.abs(ends[2]) < 1e-9):
+            continue
+        a, b = (ends[:2] / ends[2]).T
+        along = (b - a) / np.linalg.norm(b - a)
+        far = 10 * (w + h)
+        inside, c, d = cv2.clipLine((0, 0, w, h), _px(a - far * along), _px(a + far * along))
+        if not inside:
+            continue
+        # A court end behind the camera projects onto the far side of the line.
+        reached = [c, d] + [end for end, depth in ((a, ends[2, 0]), (b, ends[2, 1])) if depth > 0]
+        t = [float((np.asarray(p, float) - a) @ along) for p in reached]
+        lo, hi = a + min(t) * along + reach, a + max(t) * along + reach
+        _, lo, hi = cv2.clipLine((0, 0, *np.round(2 * reach + [w, h]).astype(int)), _px(lo), _px(hi))
+        out.append((np.array(lo, float) - reach, np.array(hi, float) - reach))
     return out
+
+
+def _px(point: np.ndarray) -> tuple[int, int]:
+    return int(round(point[0])), int(round(point[1]))
