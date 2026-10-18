@@ -11,7 +11,7 @@ from unittest.mock import patch
 from yp_video.action import spot_pass
 from yp_video.ball import track as ball_track
 from yp_video.core.frames import VideoGeometry
-from yp_video.extraction import identify, pipeline
+from yp_video.extraction import court_guides, identify, pipeline
 from yp_video.tracklets import fusion, tracking
 
 
@@ -77,6 +77,7 @@ class AdvancedIdentifyTests(unittest.TestCase):
                 patch.object(fusion, "track_person_boxes"),
                 patch.object(spot_pass, "run_spot_pass"),
                 patch.object(pipeline, "detect_video"),
+                patch.object(court_guides, "court_guides", return_value=[]),
                 patch.object(candidates, "track_paths", return_value={"1:1": {120: [0, 0, 9, 9]}}),
                 patch.object(identify, "video_geometry", return_value=VideoGeometry(30.0, 1920, 1080)),
                 patch.object(actor_picks, "load_actor_picks", return_value={"picks": 1}),

@@ -66,3 +66,23 @@ def test_guides_lie_on_the_painted_court(center, grooves):
 
 def test_grooves_alone_give_no_guides():
     assert paint.guides([_floor(grooves=True)] * 3, floor_top=0.25) == []
+
+
+def test_court_guides_reads_the_floor_off_the_tracks(monkeypatch):
+    from types import SimpleNamespace
+
+    from yp_video.extraction import court_guides as module
+
+    see = _camera()
+    image = _floor(see)
+    # Feet in pixels, the highest just above the far sideline (y ≈ 0.33 H).
+    records = [{"frames": list(range(rally * 100, rally * 100 + 50)),
+                "boxes": [[900, 200, 960, 0.34 * H]] * 50, "scores": [0.9] * 50} for rally in range(3)]
+    tracks = SimpleNamespace(meta={"frame_size": [W, H]}, records=records)
+    picked = []
+    monkeypatch.setattr(module, "tracklet_data", lambda stem: tracks)
+    monkeypatch.setattr(module, "read_frames", lambda video, picks: picked.extend(picks) or [(i, image) for i in picks])
+    guides = module.court_guides("game", "game.mp4")
+    assert len(guides) == len(LINES)
+    # Spread over the tracked rallies, not the gaps between them.
+    assert len(picked) == module.FRAMES and picked[0] == 0 and picked[-1] == 249

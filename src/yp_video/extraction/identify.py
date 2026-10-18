@@ -103,6 +103,9 @@ class IdentifyResult:
     #: The ball track over the flights between touches (ball/track.py) — what
     #: the court fits 3D trajectories to. Advanced only; None in standard.
     ball: dict | None
+    #: Lines along the court paint (extraction/court_guides.py), normalized —
+    #: what the app pre-draws on the first court calibration.
+    court_guides: list
 
 
 def identify_players(
@@ -151,6 +154,7 @@ def identify_players(
     from yp_video.core.actor_picks import actor_picks_path, load_actor_picks
     from yp_video.core.person_boxes import person_boxes_path, save_person_boxes
     from yp_video.extraction import links
+    from yp_video.extraction.court_guides import court_guides
     from yp_video.extraction.feet import actor_boxes, actor_feet
     from yp_video.extraction.pipeline import detect_video, embed_video, load_events
     from yp_video.extraction.reassociate import reassociate_video
@@ -165,7 +169,7 @@ def identify_players(
     if not events:
         return IdentifyResult(
             embedder=embedder, units=(), linkage=(), threshold=threshold_calibration(embedder), feet={}, actors={},
-            ball=None,
+            ball=None, court_guides=[],
         )
 
     if (person_boxes is None) != (actor_picks is None):
@@ -203,6 +207,7 @@ def identify_players(
         )
         detect_video(video_path, person_boxes=person_boxes_path(stem),
                      on_progress=_banded(on_progress, "detecting"))
+    guides = court_guides(stem, video_path)
     geometry = video_geometry(video_path)
     width, height = geometry.width, geometry.height
     associate_cb = _banded(on_progress, "associating")
@@ -255,6 +260,7 @@ def identify_players(
         feet=feet,
         actors=actors,
         ball=ball,
+        court_guides=guides,
     )
 
 
@@ -462,6 +468,7 @@ def _main() -> None:
         },
         "actors": result.actors,
         "ball": result.ball,
+        "court_guides": [[list(a), list(b)] for a, b in result.court_guides],
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")

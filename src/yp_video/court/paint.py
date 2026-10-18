@@ -31,10 +31,12 @@ from yp_video.court.geometry import COURT_LENGTH, COURT_WIDTH, LANDMARKS, LINES
 
 Segment = tuple[tuple[float, float], tuple[float, float]]
 
-#: Detections this confident place feet; the highest of them, less the
-#: margin, is where the floor ends.
+#: Tracked boxes this confident place feet; the highest of them, less the
+#: margin, is where the floor ends. Tracking keeps fewer far players than a
+#: detector sees, hence a low percentile: at 1 % the floor lost the far
+#: sideline on 排島's courts and the fit snapped to the wall.
 FEET_SCORE = 0.5
-FEET_PERCENTILE = 1.0
+FEET_PERCENTILE = 0.3
 FLOOR_MARGIN = 0.03
 #: Segments shorter than this (px) are texture, not paint.
 MIN_SEGMENT = 25.0
@@ -124,8 +126,8 @@ def guides(frames: list[np.ndarray], floor_top: float) -> list[Segment]:
 
 
 def floor_top(boxes: np.ndarray, scores: np.ndarray) -> float:
-    """Normalized height above which nothing is floor, from person boxes
-    (xyxy normalized) seen over the video: the highest feet."""
+    """Normalized height above which nothing is floor, from tracked person
+    boxes (xyxy normalized) over the video: the highest feet."""
     feet = boxes[scores > FEET_SCORE, 3]
     return float(np.percentile(feet, FEET_PERCENTILE)) - FLOOR_MARGIN
 

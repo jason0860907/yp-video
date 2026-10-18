@@ -6,22 +6,17 @@ import asyncio
 from pathlib import Path
 from urllib.parse import unquote
 
-import numpy as np
 from fastapi import APIRouter, HTTPException
 
 from yp_video.core import label_done
-from yp_video.core.frames import read_frames
 from yp_video.court import annotations, camera, geometry, paint
-from yp_video.person.dense import dense_path
+from yp_video.extraction.court_guides import court_guides
+from yp_video.tracklets.store import tracks_path
 from yp_video.web import audit, court_positions, worklists
 from yp_video.web.r2_client import cut_frame_source, resolve_cut, sync_to_r2
 from yp_video.web.schemas import StrictModel
 
 router = APIRouter()
-
-#: Rally frames whose median the paint is found in: the players move, the
-#: paint stays.
-GUIDE_FRAMES = 12
 
 
 def _video(name: str) -> Path:
@@ -112,16 +107,9 @@ async def detect_guides(name: str) -> dict:
 
 def _detect_guides(name: str) -> list[paint.Segment]:
     video = _video(name)
-    dense = dense_path(video.stem)
-    if not dense.exists():
-        raise HTTPException(409, "No person detections yet: the floor is found from the players' feet")
-    with np.load(dense) as d:
-        rally_frames, boxes, scores = d["frames"], d["boxes"], d["scores"]
-    picks = rally_frames[np.linspace(0, len(rally_frames) - 1, GUIDE_FRAMES).astype(int)]
-    frames = [image for _, image in read_frames(cut_frame_source(video), picks) if image is not None]
-    if not frames:
-        raise HTTPException(409, "Could not read the video's frames")
-    return paint.guides(frames, paint.floor_top(boxes.astype(np.float32), scores.astype(np.float32)))
+    if not tracks_path(video.stem).exists():
+        raise HTTPException(409, "No tracks yet: the court is found where the players stand")
+    return court_guides(video.stem, cut_frame_source(video))
 
 
 @router.get("/positions/{name}")
