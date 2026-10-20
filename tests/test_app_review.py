@@ -147,7 +147,7 @@ def test_player_run_scope_override_and_removed_units():
             },
         },
         identification={
-            "version": 4,
+            "version": 5,
             "job_id": "identify",
             "user_id": "user",
             "match_id": "match",
@@ -673,7 +673,7 @@ def test_library_source_joins_synced_rallies_and_named_identification(monkeypatc
     )
     payloads = serve_library(monkeypatch, b)
     payloads[f"reid/user/{MATCH}/identify.json"] = {
-        "version": 4,
+        "version": 5,
         "job_id": "identify",
         "user_id": "user",
         "match_id": MATCH,
@@ -686,6 +686,11 @@ def test_library_source_joins_synced_rallies_and_named_identification(monkeypatc
         "00000001-0000-4000-8000-000000000000"
     ]
     assert loaded.identification.job_id == "identify"
+    # A run the App no longer reads: dropped with a note, as the App does.
+    payloads[f"reid/user/{MATCH}/identify.json"]["version"] = 4
+    old_run, notes = sources.match_bundle(lib, row)
+    assert old_run.identification is None and "version 4" in notes[0]
+    payloads[f"reid/user/{MATCH}/identify.json"]["version"] = 5
     b.corrections.player_identification.result_id = "../x"
     payloads["corrections/user/match.json"] = {
         **b.corrections.model_dump(mode="json"),

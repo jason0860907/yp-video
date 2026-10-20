@@ -10,7 +10,7 @@ from botocore.exceptions import ClientError
 from yp_video.config import load_env
 from yp_video.web.r2_client import R2Client, r2_client
 
-from .models import CORRECTIONS_VERSION, Bundle
+from .models import CORRECTIONS_VERSION, IDENTIFICATION_VERSION, Bundle
 
 
 class CustomerArtifacts(R2Client):
@@ -128,9 +128,16 @@ def match_bundle(lib: dict, row: dict) -> tuple[Bundle, list[str]]:
             if exc.response["Error"]["Code"] != "NoSuchKey":
                 raise
         else:
-            bundle = Bundle.model_validate(
-                {**bundle.model_dump(), "identification": identification}
-            )
+            # Like the App, which reads one version and asks for a re-run.
+            if identification.get("version") != IDENTIFICATION_VERSION:
+                notes.append(
+                    f"Identification run is version {identification.get('version')}; the App reads only "
+                    f"{IDENTIFICATION_VERSION}, so the user currently sees no player mapping from it."
+                )
+            else:
+                bundle = Bundle.model_validate(
+                    {**bundle.model_dump(), "identification": identification}
+                )
     return bundle, notes
 
 

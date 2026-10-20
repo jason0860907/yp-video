@@ -153,8 +153,11 @@ class Unit(Artifact):
     events: list[str]
 
 
+IDENTIFICATION_VERSION = 5
+
+
 class Identification(Artifact):
-    version: Literal[4]
+    version: Literal[5]
     job_id: str
     user_id: str
     match_id: str
