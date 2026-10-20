@@ -82,8 +82,8 @@ function hsb(hue: number, s: number, b: number): string {
   return `hsl(${hue} ${Math.round(sl * 100)}% ${Math.round(l * 100)}%)`;
 }
 /** RosterPlayer.color — the dot on a player chip. */
-export const playerColor = (p: Player) => hsb(p.hue ?? (p.number * 47) % 360, 0.45, 0.55);
+export const playerColor = (p: Player) => hsb(p.hue, 0.45, 0.55);
 /** RosterPlayer.softColor — behind the player chip on cards. */
-export const playerSoftColor = (p: Player) => hsb(p.hue ?? (p.number * 47) % 360, 0.4, 0.92);
+export const playerSoftColor = (p: Player) => hsb(p.hue, 0.4, 0.92);
 /** Tag.color — a favourite category's chip. */
 export const tagColor = (hue: number) => hsb(hue, 0.55, 0.65);

@@ -85,7 +85,7 @@ export interface Library {
 export interface Player {
   number: number;
   name: string;
-  hue?: number;
+  hue: number;
   player_id?: string | null;
 }
 export interface Touch {
@@ -218,8 +218,6 @@ export const byReviewOrder = (a: Candidate, b: Candidate) =>
 
 /** mm:ss.t — two touches in the same second stay apart. */
 export const preciseTime = (t: number) => `${formatActionTime(t)}.${Math.floor((t % 1) * 10)}`;
-
-export const playerLabel = (p: Player) => `#${p.number} ${p.name}`;
 
 /** A court side as Label shows it (遠/近/左/右); anything else verbatim. */
 export const sideLabel = (side: string) => SIDE_DISPLAY[side as CourtSide] ?? side;

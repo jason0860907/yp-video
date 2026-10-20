@@ -21,9 +21,8 @@ export function RallyRow({
   onToggle,
   children,
 }: {
-  /** Position in time order, 0-based; omitted where the rally's own number
-   *  is the only one worth showing (a filtered list's position is not). */
-  index?: number;
+  /** Position in time order, 0-based. */
+  index: number;
   rally: { rally_id: number; start: number; end: number };
   /** How many actions it holds. */
   count: number;
@@ -47,14 +46,9 @@ export function RallyRow({
         live && 'ring-1 ring-accent/50',
       )}
     >
-      {index != null && (
-        <span className="w-4 shrink-0 select-none text-right font-heading text-[10px] text-text-muted/60">{index + 1}</span>
-      )}
+      <span className="w-4 shrink-0 select-none text-right font-heading text-[10px] text-text-muted/60">{index + 1}</span>
       <span
-        className={cn(
-          'w-7 shrink-0 select-none font-mono',
-          index != null ? 'text-[9px] text-text-muted/40' : 'text-[11px] text-text-secondary',
-        )}
+        className="w-7 shrink-0 select-none font-mono text-[9px] text-text-muted/40"
         title={`rally_id ${rally.rally_id} — stable id, not the time order`}
       >
         #{rally.rally_id}

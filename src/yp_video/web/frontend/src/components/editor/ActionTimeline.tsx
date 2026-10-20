@@ -46,9 +46,6 @@ interface ActionTimelineProps {
   playing: boolean;
   waveform: WaveformData;
   colors: Record<string, string>;
-  /** A band's name; R1, R2 … in time order unless the page numbers rallies
-   *  its own way. */
-  bandLabel?: (rally: ActionRally, index: number) => string;
   onSeekFrame: (f: number) => void;
   onJumpEvent: (id: string) => void;
 }
@@ -69,7 +66,6 @@ export function ActionTimeline({
   playing,
   waveform,
   colors,
-  bandLabel = (_, i) => `R${i + 1}`,
   onSeekFrame,
   onJumpEvent,
 }: ActionTimelineProps) {
@@ -248,9 +244,9 @@ export function ActionTimeline({
                   key={rally.rally_id}
                   className={cn('absolute inset-y-1 flex items-center justify-center overflow-hidden rounded-sm border-x text-[10px] font-mono', active ? 'bg-primary/[0.22] text-primary-text' : 'bg-primary/[0.09] text-text-muted')}
                   style={{ left, width, borderColor: active ? 'rgb(var(--primary) / 0.55)' : 'rgb(var(--primary) / 0.2)' }}
-                  title={`${bandLabel(rally, i)} (#${rally.rally_id}) ${fmt(rally.start)}–${fmt(rally.end)}`}
+                  title={`R${i + 1} (#${rally.rally_id}) ${fmt(rally.start)}–${fmt(rally.end)}`}
                 >
-                  {width > 16 && bandLabel(rally, i)}
+                  {width > 16 && `R${i + 1}`}
                 </div>
               );
             })}
