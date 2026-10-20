@@ -14,8 +14,8 @@ import { cn } from '@/lib/cn';
 import type { PipelineState } from '@/types/api';
 
 export const STAGE_HINT: Record<NonNullable<PipelineState['blocked_on']>, string> = {
-  rallies: 'Label rallies (Rally Label) or run Rally SPOT Predict',
-  action: 'Predict or label actions (Action Label)',
+  rallies: 'Label rallies (Rally Label) or run Inference',
+  action: 'Run Inference or label actions (Action Label)',
   tracks: 'Run Rally Tracking',
   records: 'Run ReID extraction',
 };

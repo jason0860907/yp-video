@@ -50,7 +50,7 @@ from yp_video.web.r2_client import materialized_cut
 REQUIRED_TASKS = ("rally", "action", "person", "actor")
 
 #: Action inference scans each rally span with this much slack on both
-#: sides — the same cascade Action Predict and the selfhost worker run.
+#: sides — the same cascade the selfhost worker runs.
 RALLY_PAD_S = 2.0
 
 STAGES = ("rally", "action", "tracking", "detection", "association")

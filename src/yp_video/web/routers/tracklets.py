@@ -55,7 +55,7 @@ async def run(req: TrackRequest) -> dict:
         if not rally_sources(path.stem):
             raise HTTPException(
                 400,
-                f"No rally spans for: {name} — label rallies or run Rally SPOT Predict",
+                f"No rally spans for: {name} — label rallies or run Inference",
             )
         # Tracks that no longer serve — cut against rallies that have since
         # moved, by the pre-mask detector, or never GTA-refined — are redone

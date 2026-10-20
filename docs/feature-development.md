@@ -1,6 +1,6 @@
 # 新增功能準則
 
-這份文件定義 yp-video 新功能的產品、UI、資料與模型整合規則。新增頁面前，先找最接近的既有流程作為模板；目前 Train 以 Fusion Train（所有 SPOT recipe 的單一入口）為準，單階段 Predict 以 Action Predict / Rally SPOT Predict 為準，多階段一鍵執行以 Inference 為準。
+這份文件定義 yp-video 新功能的產品、UI、資料與模型整合規則。新增頁面前，先找最接近的既有流程作為模板；目前 Train 以 Fusion Train（所有 SPOT recipe 的單一入口）為準，單階段 Predict 以 ReID Predict 為準，多階段一鍵執行以 Inference 為準。
 
 ## 1. 先定義功能邊界
 
@@ -92,7 +92,7 @@
 `/inference` 對每支影片依序執行 rally+winner → action → tracking → detection → association。新增或修改階段時：
 
 - 階段邏輯放在 `web/fusion_inference.py`，不依賴 router；router 只負責 job 與 R2 鏡像。
-- 每個階段寫入與對應單階段 Predict 頁相同的 machine store，讓 Label 編輯器、工作清單與 pipeline 狀態不需要分辨來源。
+- 每個階段寫入該任務唯一的 machine store，讓 Label 編輯器、工作清單與 pipeline 狀態不需要分辨來源。
 - 每個階段有自己的 skip 判定，回傳不執行的原因（缺少上游輸出，或既有輸出仍有效且未勾 overwrite），列進結果的 skipped，而不是當成失敗。
 - 需要讀影格的階段使用 `r2_client.materialized_cut` 暫時取得 cut，不假設本機已有影片。
 

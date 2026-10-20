@@ -204,10 +204,10 @@ def save_spot_pre_annotation(
 ) -> dict:
     """Write yp-spot action predictions as this video's machine pre-annotation.
 
-    The one path every SPOT action run takes into the store — the Action
-    Predict page and the fusion Inference job alike — so the editor always
-    finds the same normalized, id-stamped events. Mirroring to R2 is the
-    caller's business: it needs the event loop.
+    The one path the fusion Inference job's action stage takes into the
+    store, so the editor always finds the same normalized, id-stamped
+    events. Mirroring to R2 is the caller's business: it needs the event
+    loop.
     """
     data = prelabel.predictions_to_annotation(
         predictions,

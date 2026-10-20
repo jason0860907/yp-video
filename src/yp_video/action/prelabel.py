@@ -232,21 +232,6 @@ def spot_progress_fraction(data: dict) -> float:
     return max(0.0, min(1.0, ratio))
 
 
-def spot_progress_message(data: dict) -> str:
-    """Human-readable status line from a parsed SPOT progress record."""
-    end_frame = int(data.get("end_frame") or 0)
-    total_frames = int(data.get("total_frames") or 0)
-    batch_done = int(data.get("batch_done") or 0)
-    batch_total = int(data.get("batch_total") or 0)
-    clips_done = int(data.get("clips_done") or 0)
-    clips_total = int(data.get("clips_total") or 0)
-    frame_text = f"frame {min(end_frame, total_frames)}/{total_frames}" if total_frames > 0 else ""
-    batch_text = f"batch {batch_done}/{batch_total}" if batch_total > 0 else ""
-    clip_text = f"clip {clips_done}/{clips_total}" if clips_total > 0 else ""
-    parts = [part for part in (batch_text, clip_text, frame_text) if part]
-    return "SPOT inference " + " · ".join(parts)
-
-
 def normalize_event(event: dict, *, num_frames: int) -> dict | None:
     """Validate + normalize one raw SPOT event into the annotation shape.
 

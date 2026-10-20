@@ -116,7 +116,7 @@ def track_video(
     rallies = load_rallies(stem)
     if not rallies:
         raise ValueError(
-            f"No rally spans for {stem} — label rallies or run Rally SPOT Predict; "
+            f"No rally spans for {stem} — label rallies or run Inference; "
             "tracking scans rallies only"
         )
 
