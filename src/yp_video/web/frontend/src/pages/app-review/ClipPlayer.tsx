@@ -1,21 +1,21 @@
-/** The match's source video, played the Label way: the frame clock stops at
- *  the selected clip's end, the Action timeline shows the rallies and their
- *  touches, and the transport and keys are Label's. One long-lived <video>:
- *  selecting a clip seeks it, so the source is fetched once. */
+/** The match's source video under the App's detail chrome: the frame clock
+ *  stops at the selected clip's end, the App's TouchScrubber runs over the
+ *  clip's window (a rally's attack bands under it) and `children` — the
+ *  clip's marks — follow. Frame stepping and keys stay Label's, for review.
+ *  One long-lived <video>: selecting a clip seeks it, so the source is
+ *  fetched once. */
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { toast } from '@/components/feedback/toast';
-import { ActionTimeline, type TimelineEvent } from '@/components/editor/ActionTimeline';
 import { FrameStats, KeyHints, PlayerTransport } from '@/components/labeling/PlayerTransport';
 import { useFrameClock } from '@/components/labeling/useFrameClock';
 import { useVideoKeys } from '@/components/labeling/useVideoKeys';
-import { ACTION_COLORS } from '@/lib/actionColors';
-import { formatActionTime } from '@/lib/actionEditorModel';
 import { errMsg } from '@/lib/api';
-import { EMPTY_WAVEFORM } from '@/lib/useActionWaveform';
 import { useVideoRecovery } from '@/lib/useVideoRecovery';
+import { AttackBands } from './AttackBands';
+import { TouchScrubber } from './TouchScrubber';
 import type { Clip, VideoMeta } from './types';
 
 export interface ClipPlayerHandle {
@@ -29,12 +29,13 @@ export const ClipPlayer = forwardRef<
     src: string;
     meta: VideoMeta;
     clip: Clip | null;
-    /** The match's rally clips: the timeline's bands and touch marks. */
-    rallies: Clip[];
+    /** What the card header says the clip is. */
+    caption: string;
     /** A clip finished while auto-next is on. */
     onEnded: () => void;
+    children?: ReactNode;
   }
->(function ClipPlayer({ title, src, meta, clip, rallies, onEnded }, ref) {
+>(function ClipPlayer({ title, src, meta, clip, caption, onEnded, children }, ref) {
   const { fps, num_frames: numFrames } = meta;
   const span = useMemo(() => (clip ? { start: clip.start, end: clip.end } : null), [clip]);
   const { videoRef, bindVideo, frame, playing, seekFrame, step, togglePlay } = useFrameClock({
@@ -76,34 +77,11 @@ export const ClipPlayer = forwardRef<
     wasPlaying.current = playing;
   }, [playing, frame, endFrame, autoNext, onEnded]);
 
-  const timeline = useMemo(() => {
-    const bands = rallies.map((r) => ({ rally_id: r.rally_index ?? 0, start: r.start, end: r.end }));
-    const events: TimelineEvent[] = rallies.flatMap((r) =>
-      r.touches.map((t) => ({
-        id: t.event_id,
-        frame: toFrame(t.time),
-        visible: true,
-        rally_id: r.rally_index,
-        label: t.kind,
-      })),
-    );
-    return { bands, events };
-  }, [rallies, toFrame]);
-
   return (
     <div className="min-w-0 flex-1 space-y-4">
       <Card
         label={title}
-        right={
-          clip && (
-            <span className="font-mono text-[11px] tabular-nums text-text-muted">
-              {clip.kind !== 'rally' && <span className="capitalize">{clip.kind} · </span>}
-              {clip.rally_index != null && `Rally ${clip.rally_index} · `}
-              {formatActionTime(clip.start)} →{' '}
-              {formatActionTime(clip.end)}
-            </span>
-          )
-        }
+        right={clip && <span className="text-[11px] tabular-nums text-text-muted">{caption}</span>}
       >
         <div className="overflow-hidden rounded-2xl bg-black ring-1 ring-white/[0.06]">
           <div
@@ -124,43 +102,44 @@ export const ClipPlayer = forwardRef<
             />
           </div>
         </div>
-        <div className="mt-3">
-          <ActionTimeline
-            duration={meta.duration}
-            fps={fps}
-            numFrames={numFrames}
-            frame={frame}
-            rallies={timeline.bands}
-            events={timeline.events}
-            selectedRallyId={clip?.rally_index ?? 'all'}
-            selectedId={null}
-            playing={playing}
-            waveform={EMPTY_WAVEFORM}
-            colors={ACTION_COLORS}
-            bandLabel={(r) => `#${r.rally_id}`}
-            onSeekFrame={seekFrame}
-            onJumpEvent={(id) => {
-              const e = timeline.events.find((x) => x.id === id);
-              if (e) seekFrame(e.frame);
-            }}
-          />
-        </div>
+        {clip && (
+          <div className="mt-3">
+            <TouchScrubber
+              touches={clip.touches.filter((t) => t.kind !== 'score')}
+              start={clip.start}
+              end={clip.end}
+              time={frame / fps}
+              onSeek={(t) => seekFrame(toFrame(t))}
+            >
+              {clip.attacks && (
+                <AttackBands
+                  attacks={clip.attacks}
+                  start={clip.start}
+                  end={clip.end}
+                  time={frame / fps}
+                  onSeek={(t) => seekFrame(toFrame(t))}
+                />
+              )}
+            </TouchScrubber>
+          </div>
+        )}
         <PlayerTransport frame={frame} fps={fps} playing={playing} onTogglePlay={togglePlay} onStep={step}>
           <Button size="sm" disabled={!clip} onClick={() => clip && playFrom(toFrame(clip.start))}>
-            Replay clip
+            重播
           </Button>
           <Button
             size="sm"
             intent={autoNext ? 'primary' : 'default'}
             onClick={() => setAutoNext((v) => !v)}
-            title="At a clip's end, play the next one in the list"
+            title="片段播完接著播清單的下一個"
           >
-            {autoNext ? 'Auto-next on' : 'Auto-next off'}
+            連續播放{autoNext ? '：開' : '：關'}
           </Button>
         </PlayerTransport>
         <div className="mt-2">
           <FrameStats fps={fps} numFrames={numFrames} />
         </div>
+        {children}
       </Card>
       <KeyHints
         keys={[

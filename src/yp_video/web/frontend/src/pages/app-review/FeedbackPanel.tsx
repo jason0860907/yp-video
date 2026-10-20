@@ -19,7 +19,8 @@ import { VideoCombobox } from '@/components/video/VideoCombobox';
 import { formatActionTime } from '@/lib/actionEditorModel';
 import { formatDateTime } from '@/lib/format';
 import type { Candidate, Decision, LibraryMatch, MatchDetail, Review } from './types';
-import { byReviewOrder, DECISION_LABEL, lossReasonLabel, preciseTime, sideLabel } from './types';
+import { lossReasonLabel } from './appTerms';
+import { byReviewOrder, DECISION_LABEL, preciseTime, sideLabel } from './types';
 
 type Value = Record<string, unknown>;
 type Operation = 'remove_event' | 'remove_rally' | 'update_rally';

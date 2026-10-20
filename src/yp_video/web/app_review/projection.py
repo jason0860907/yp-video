@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from yp_video.action import rules
 
 from .models import Bundle, Event, Rally, Window
+from .stats import summary
 
 PAD = 1.0
 
@@ -232,6 +233,37 @@ def court_scores(rallies: list[Rally], winner) -> tuple[dict[int, dict], list[di
     return by_rally, totals
 
 
+def rally_plays(bundle: Bundle, actions: list[dict], scores: list[dict]) -> dict[int, dict]:
+    """``Match.rallyPlays`` + ``attackSpans``: each rally's attacks — the
+    surviving spike clips the backend named attacks, spanning their own
+    touches — and the loss reason its score clip carries."""
+    events = bundle.result.action_events
+    spans = {}
+    for attack in bundle.result.attacks:
+        touches = [events[i] for i in attack.event_indices if 0 <= i < len(events)]
+        if touches:
+            spans[clip_key(touches[-1])] = (touches[0].time, max(touches[0].time, touches[-1].time))
+    plays: dict[int, dict] = {}
+
+    def play(rally_index: int) -> dict:
+        return plays.setdefault(
+            rally_index, {"attacks": [], "loss_reason": None, "loss_reason_inferred": False}
+        )
+
+    for c in actions:
+        if c["kind"] == "spike" and c["key"] in spans and c["rally_index"] is not None:
+            start, end = spans[c["key"]]
+            play(c["rally_index"])["attacks"].append(
+                {"key": c["key"], "start": start, "end": end, "player": c["player"]}
+            )
+    for c in scores:
+        if c["rally_index"] is not None and c["loss_reason"]:
+            play(c["rally_index"]).update(
+                loss_reason=c["loss_reason"], loss_reason_inferred=c["loss_reason_inferred"]
+            )
+    return plays
+
+
 def project(
     bundle: Bundle, *, mode: Window = "full_play", corrected: bool = True
 ) -> dict:
@@ -271,7 +303,13 @@ def project(
         return roster.get(number) if number is not None else None
 
     def touch(e: Event) -> dict:
-        return {"kind": kind(e), "time": e.time, "event_id": e.id, "player": player(e)}
+        return {
+            "kind": kind(e),
+            "time": e.time,
+            "event_id": e.id,
+            "player": player(e),
+            "visible": e.visible,
+        }
 
     def clip(
         context: Context,
@@ -325,6 +363,12 @@ def project(
             1,
         )
     ]
+    # ``actionClips(anchor:)`` numbers a kind's clips among themselves:
+    # 扣球 #3 is the third spike, whatever came between.
+    per_kind = Counter()
+    for c in actions:
+        per_kind[c["kind"]] += 1
+        c["kind_index"] = per_kind[c["kind"]]
 
     def rally_ending(rally: Rally) -> Context:
         whistle = index.whistle(rally.index)
@@ -333,7 +377,7 @@ def project(
         uuid = bundle.rally_ids.get(rally.index)
         key = f"rally-{uuid}" if uuid else f"unmapped-rally-{rally.index}"
         return index.ending(
-            Event(id=key, label="score", time=rally.end, frame=0), key, rally
+            Event(id=key, label="score", time=rally.end, frame=0, visible=False), key, rally
         )
 
     score_contexts = [rally_ending(r) for r in rallies] + [
@@ -355,6 +399,8 @@ def project(
         )
         for number, context in enumerate(visible_scores, 1)
     ]
+
+    plays = rally_plays(bundle, actions, scores)
 
     warnings = []
     if bundle.library_rallies is None:
@@ -379,7 +425,7 @@ def project(
                 "Corrections that could not be mapped (they need the same analysis version / Rally UUID): "
                 + ", ".join(unresolved)
             )
-    return {
+    out = {
         "rallies": [
             {
                 **r.model_dump(),
@@ -387,7 +433,9 @@ def project(
                 "kind": "rally",
                 "rally_index": r.index,
                 "winner": winner(r),
+                "court_score": by_rally.get(r.index),
                 "touches": [touch(e) for e in index.events_in(r.index)],
+                **plays.get(r.index, {"attacks": [], "loss_reason": None, "loss_reason_inferred": False}),
             }
             for r in rallies
         ],
@@ -396,7 +444,8 @@ def project(
         "roster": list(roster.values()),
         "court_totals": totals,
         "warnings": warnings,
-        "loss_reasons": dict(
-            Counter(c["loss_reason"] for c in scores if c["loss_reason"])
-        ),
     }
+    out["stats"] = summary(
+        rallies, out, correction.team_sides if correction else None, winner
+    )
+    return out

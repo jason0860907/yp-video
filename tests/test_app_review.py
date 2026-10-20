@@ -6,8 +6,9 @@ from pydantic import ValidationError
 from yp_video.action import rules
 from yp_video.core.jsonl import read_jsonl, write_jsonl
 from yp_video.web.app_review import feedback
-from yp_video.web.app_review.models import Bundle
+from yp_video.web.app_review.models import Bundle, ClipCorrection
 from yp_video.web.app_review.projection import project
+from yp_video.web.app_review.stats import half_up
 
 
 def correction(key, **values):
@@ -27,7 +28,7 @@ def bundle(events=(), rallies=((1, 9, 20),), **changes):
         **changes.pop("corrections", {}),
     }
     action_events = [
-        {"id": f"f{round(t * 30)}", "label": label, "time": t, "frame": round(t * 30)}
+        {"id": f"f{round(t * 30)}", "label": label, "time": t, "frame": round(t * 30), "visible": True}
         for label, t in events
     ]
     result_rallies = [
@@ -129,7 +130,6 @@ def test_trim_soft_delete_and_outcomes():
     assert changed["actions"][0]["rally_index"] is None
     assert changed["actions"][0]["loss_reason"] is None
     assert changed["scores"][0]["loss_reason"] == "blocked"
-    assert changed["loss_reasons"] == {"blocked": 1}
 
 
 def test_player_run_scope_override_and_removed_units():
@@ -172,6 +172,26 @@ def test_player_run_scope_override_and_removed_units():
     assert numbers() == [None, 8, None]
     assert any("result_id" in w for w in project(b)["warnings"])
 
+
+
+def test_rallies_carry_attacks_score_and_per_kind_numbers():
+    b = bundle(
+        [("serve", 10), ("receive", 11), ("set", 12), ("spike", 13), ("set", 14), ("spike", 15)],
+        corrections={"rally_winner_overrides": {1: "left"}},
+    )
+    out = project(b)
+    [rally] = out["rallies"]
+    assert [(a["start"], a["end"]) for a in rally["attacks"]] == [(11, 13), (14, 15)]
+    assert rally["court_score"] == {"set": 1, "points": {"left": 1, "right": 0}, "unknown": 0}
+    assert [t["visible"] for t in rally["touches"]] == [True] * 6
+    assert [(c["kind"], c["kind_index"]) for c in out["actions"]] == [
+        ("serve", 1), ("receive", 1), ("set", 1), ("spike", 1), ("set", 2), ("spike", 2),
+    ]
+    # A removed spike is no longer an attack, and numbering closes the gap.
+    b.corrections.actions.append(ClipCorrection(**correction("13.000", removed=True)))
+    out = project(b)
+    assert [(a["start"], a["end"]) for a in out["rallies"][0]["attacks"]] == [(14, 15)]
+    assert [c["kind_index"] for c in out["actions"] if c["kind"] == "spike"] == [1]
 
 
 def test_player_candidates_show_the_group_number_they_replace():
@@ -742,3 +762,40 @@ def test_library_source_joins_synced_rallies_and_named_identification(monkeypatc
     row["r2_keys"]["result"] = None
     with pytest.raises(ValueError, match="no analysis"):
         sources.match_bundle(lib, row)
+
+
+def test_summary_stats_follow_team_sides_and_round_half_up():
+    b = bundle(
+        [("serve", 10), ("serve", 21), ("receive", 22), ("serve", 31)],
+        rallies=((1, 9, 12), (2, 20, 24), (3, 30, 33)),
+        corrections={
+            "rally_winner_overrides": {1: "near", 2: "far", 3: "far"},
+            "team_sides": {"start": "near", "switches": [3]},
+            "roster": [{"number": 7, "name": "王", "position": "", "hue": 0}],
+            "player_identification": {
+                "result_id": None,
+                "unit_roster": {},
+                "removed_units": [],
+                "event_overrides": {"f300": 7, "f630": 7},
+            },
+        },
+    )
+    stats = project(b)["stats"]
+    # Rally 3 is after the change of ends: far is ours there.
+    assert stats["team_score"] == {"us": 2, "them": 1}
+    assert stats["has_teams"]
+    assert [s for s in stats["progression"] if s["rally"] == 3] == [
+        {"rally": 3, "side": "them", "points": 1},
+        {"rally": 3, "side": "us", "points": 2},
+    ]
+    # Inferred reasons count: a lone serve is a serve error, serve + receive
+    # a receive error — each charged to the side that lost.
+    assert stats["losses"] == [
+        {"side": "us", "total": 1, "reasons": [{"reason": "receive_error", "count": 1, "percent": 100}]},
+        {"side": "them", "total": 2, "reasons": [{"reason": "serve_error", "count": 2, "percent": 100}]},
+    ]
+    [line] = stats["players"]
+    assert line["player"]["number"] == 7
+    assert line["touches"]["serve"] == 2
+    assert stats["rally_count"] == 3 and stats["in_rally_seconds"] == 10
+    assert [half_up(x) for x in (12.5, 33.5, 66.49)] == [13, 34, 66]

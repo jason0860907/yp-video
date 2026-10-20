@@ -2,10 +2,10 @@
  *  and review their corrections as training feedback.
  *
  *  A user without a picked match shows the Overview: every match with its
- *  jobs and edit counts. A match has two modes, as tabs: Clips shows it
- *  through the App's feeds and framing; Review lists the user's corrections
- *  against the original analysis, so what they deleted is still on the
- *  timeline. A header card holds the pickers and a one-line match summary;
+ *  jobs and edit counts. A match has three tabs: 影片 and 分析 are the App's
+ *  own pages — its feeds, detail chrome and summary, in its words — and
+ *  Review lists the user's corrections against the original analysis, so
+ *  what they deleted is still on the timeline. A header card holds the pickers and a one-line match summary;
  *  where you are lives in the URL (useAppReviewUrlState) so links are
  *  shareable — the admin dashboard links straight to a match.
  */
@@ -18,9 +18,11 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
-import { Segmented } from '@/components/ui/Segmented';
 import { Tabs } from '@/components/ui/Tabs';
-import { ClipList } from './ClipList';
+import { AnalysisSummary } from './AnalysisSummary';
+import { AppFeed } from './AppFeed';
+import { kindOf, rallyTime } from './appTerms';
+import { ClipMarks } from './ClipMarks';
 import { ClipPlayer, type ClipPlayerHandle } from './ClipPlayer';
 import { FeedbackPanel } from './FeedbackPanel';
 import { JobRow } from './JobStatus';
@@ -28,21 +30,15 @@ import { LibraryPicker } from './LibraryPicker';
 import { MatchSummary } from './MatchSummary';
 import { Overview } from './Overview';
 import { useAppReviewUrlState } from './useAppReviewUrlState';
-import type { Candidate, Clip, Library, MatchDetail, VideoMeta, WindowMode } from './types';
+import type { Candidate, Clip, Library, MatchDetail, Tag, VideoMeta, WindowMode } from './types';
 import { byReviewOrder, liveMatches } from './types';
-
-const FRAMINGS: { key: WindowMode; label: string }[] = [
-  { key: 'full_play', label: 'Full play' },
-  { key: 'to_next', label: 'Single touch' },
-  { key: 'whole_rally', label: 'Whole rally' },
-];
 
 export function AppReviewPage() {
   const { user, match, tab, scope, clip, fix, set } = useAppReviewUrlState();
   const [mode, setMode] = useState<WindowMode>('full_play');
   const [corrected, setCorrected] = useState(true);
   // Review judges the edits against the original analysis.
-  const applied = tab === 'clips' && corrected;
+  const applied = tab !== 'review' && corrected;
   const queue = useRef<Clip[]>([]);
   const player = useRef<ClipPlayerHandle>(null);
 
@@ -69,14 +65,19 @@ export function AppReviewPage() {
     queryFn: () => apiFetch<VideoMeta>(API.appReview.videoMeta(user, match)),
   });
 
-  const rallyTags = useMemo(() => {
-    const out = new Map<string, string[]>();
+  const tagsOf = useMemo(() => {
+    const byId = new Map((library.data?.tags ?? []).map((t) => [t.id.toLowerCase(), t]));
+    const byRally = new Map<string, string[]>();
     for (const rt of library.data?.rally_tags ?? []) {
       if (rt.match_id !== match || rt.deleted_at !== null) continue;
       const key = rt.rally_id.toLowerCase();
-      out.set(key, [...(out.get(key) ?? []), rt.tag_id]);
+      byRally.set(key, [...(byRally.get(key) ?? []), rt.tag_id]);
     }
-    return out;
+    // A rally's favourites are library rows; a clip's ride its correction.
+    return (c: Clip) =>
+      ((c.id ? byRally.get(c.id.toLowerCase()) : c.tag_ids) ?? [])
+        .map((t) => byId.get(t.toLowerCase()))
+        .filter((t): t is Tag => !!t && t.deleted_at === null);
   }, [library.data, match]);
 
   const candidates = detail.data?.candidates;
@@ -129,7 +130,8 @@ export function AppReviewPage() {
         {match && (
           <Tabs
             tabs={[
-              { key: 'clips', label: 'Clips' },
+              { key: 'clips', label: '影片' },
+              { key: 'analysis', label: '分析' },
               { key: 'review', label: `Review${candidates ? ` (${candidates.length})` : ''}` },
             ]}
             active={tab}
@@ -149,17 +151,11 @@ export function AppReviewPage() {
               ← All matches
             </Button>
           )}
-          {tab === 'clips' && match && (
-            <>
-              <span className="inline-flex items-center gap-2 text-xs text-text-muted">
-                Framing
-                <Segmented options={FRAMINGS} value={mode} onChange={setMode} />
-              </span>
-              <label className="inline-flex items-center gap-1.5 text-xs text-text-secondary">
-                <input type="checkbox" checked={corrected} onChange={(e) => setCorrected(e.target.checked)} />
-                Apply user corrections
-              </label>
-            </>
+          {tab !== 'review' && match && (
+            <label className="inline-flex items-center gap-1.5 text-xs text-text-secondary">
+              <input type="checkbox" checked={corrected} onChange={(e) => setCorrected(e.target.checked)} />
+              Apply user corrections
+            </label>
           )}
         </div>
         {detail.data && <MatchSummary match={detail.data.match} preview={detail.data.preview} />}
@@ -206,6 +202,8 @@ export function AppReviewPage() {
         <Card>
           <p className="py-12 text-center text-xs text-text-muted">Loading match…</p>
         </Card>
+      ) : tab === 'analysis' ? (
+        <AnalysisSummary match={detail.data.match} preview={preview} />
       ) : (
         <div className="flex flex-col gap-5 xl:flex-row">
           <ClipPlayer
@@ -214,25 +212,30 @@ export function AppReviewPage() {
             src={apiUrl(API.appReview.video(user, match))}
             meta={meta.data}
             clip={active}
-            rallies={preview.rallies}
+            caption={active ? caption(active) : ''}
             onEnded={playNext}
-          />
+          >
+            {tab === 'clips' && active && (
+              <ClipMarks clip={active} scope={scope} mode={mode} number={active.kind_index ?? active.index ?? 0} tags={tagsOf(active)} />
+            )}
+          </ClipPlayer>
           <div className="min-w-0 xl:w-[460px] xl:flex-shrink-0">
             <Card>
               {tab === 'clips' ? (
-                <ClipList
+                <AppFeed
                   preview={preview}
-                  tags={library.data?.tags ?? []}
-                  rallyTags={rallyTags}
+                  totalSeconds={detail.data.match.total_duration_seconds}
+                  tagsOf={tagsOf}
                   edits={edits}
                   scope={scope}
+                  mode={mode}
                   selected={active}
                   onScope={(s) => {
                     queue.current = [];
                     set({ scope: s, clip: '' });
                   }}
+                  onMode={setMode}
                   onSelect={select}
-                  onSeek={(t) => player.current?.seek(t)}
                   onOpenEdit={(c) => set({ tab: 'review', fix: c.id })}
                 />
               ) : (
@@ -250,6 +253,14 @@ export function AppReviewPage() {
       )}
     </div>
   );
+}
+
+/** What the player's header calls the clip, the App's way. */
+function caption(c: Clip): string {
+  const span = `${rallyTime(c.start)}–${rallyTime(c.end)}`;
+  if (c.kind === 'rally') return `Rally #${c.rally_index} · ${span}`;
+  const where = c.rally_index != null ? `Rally #${c.rally_index} · ` : '';
+  return `${kindOf(c.kind).long} · ${where}${span}`;
 }
 
 function PlayIcon() {

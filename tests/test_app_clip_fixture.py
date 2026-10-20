@@ -19,7 +19,7 @@ FIXTURE = (
 
 
 def fixture_bundle(f: dict) -> Bundle:
-    events = [{**e, "frame": round(e["time"] * 30)} for e in f["events"]]
+    events = [{**e, "frame": round(e["time"] * 30), "visible": True} for e in f["events"]]
     position = {e["time"]: i for i, e in enumerate(events)}
     indices = sorted({*map(int, f["whistles"]), *map(int, f["deciding"])})
     rallies = [{**r, "set": 1} for r in f["rallies"]]

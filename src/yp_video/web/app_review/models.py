@@ -17,6 +17,8 @@ class Event(Artifact):
     label: str
     time: float = Field(ge=0)
     frame: int = Field(ge=0)
+    # The ball was seen at contact; the App draws an unseen touch hollow.
+    visible: bool
 
 
 Side = Literal["left", "right", "near", "far"]
@@ -126,6 +128,14 @@ class IdentificationCorrection(Artifact):
 CORRECTIONS_VERSION = "7.0"
 
 
+class TeamSides(Artifact):
+    """Where the user's team stood: its side at the first rally, and the
+    rallies (timeline index) that start after each change of ends."""
+
+    start: Side
+    switches: list[int]
+
+
 class Corrections(Artifact):
     schema_version: Literal["7.0"]
     match_id: str
@@ -137,6 +147,7 @@ class Corrections(Artifact):
     # Rally index (as a JSON object key) → the court side the user says won.
     rally_winner_overrides: dict[int, Side]
     player_identification: IdentificationCorrection | None = None
+    team_sides: TeamSides | None = None
 
     @model_validator(mode="after")
     def unique_keys(self):

@@ -4,7 +4,7 @@ import { formatActionTime } from '@/lib/actionEditorModel';
 
 export type WindowMode = 'full_play' | 'to_next' | 'whole_rally';
 export type Scope = 'rallies' | 'actions' | 'scores';
-export type Tab = 'clips' | 'review';
+export type Tab = 'clips' | 'analysis' | 'review';
 
 export interface AppUser {
   id: string;
@@ -48,6 +48,7 @@ export interface LibraryMatch {
   total_duration_seconds: number;
   recorded_at: number | null;
   folder_id: string | null;
+  created_at: number;
   updated_at: number;
   deleted_at: number | null;
   source_video: { id: string; r2_key: string | null; public_url: string | null } | null;
@@ -84,6 +85,7 @@ export interface Library {
 export interface Player {
   number: number;
   name: string;
+  hue?: number;
   player_id?: string | null;
 }
 export interface Touch {
@@ -91,28 +93,58 @@ export interface Touch {
   time: number;
   event_id: string;
   player: Player | null;
+  /** The ball was seen at contact. */
+  visible: boolean;
+}
+export interface CourtScore {
+  set: number;
+  points: Record<string, number>;
+  unknown: number;
+}
+/** One 組織進攻 of a rally: its own touches' span and the spiker. */
+export interface Attack {
+  key: string;
+  start: number;
+  end: number;
+  player: Player | null;
 }
 export interface Clip {
   key: string;
   kind: string;
   index?: number;
+  /** Actions: the number among clips of the same kind (扣球 #3). */
+  kind_index?: number;
+  /** Rallies: the model's highlight score (★). */
+  score?: number;
   /** Library rally UUID — rallies only. */
   id?: string;
   start: number;
   end: number;
+  set?: number;
   rally_index: number | null;
   player?: Player | null;
   touches: Touch[];
   loss_reason?: string | null;
   loss_reason_inferred?: boolean;
   winner?: string | null;
-  court_score?: { set: number; points: Record<string, number>; unknown: number } | null;
+  court_score?: CourtScore | null;
   tag_ids?: string[];
+  /** Rallies: its attacks, in time order. */
+  attacks?: Attack[];
 }
-export interface CourtTotal {
-  set: number;
-  points: Record<string, number>;
-  unknown: number;
+export type CourtTotal = CourtScore;
+
+/** The App's 分析 → 摘要 numbers (app_review/stats.py). */
+export interface Stats {
+  rally_count: number;
+  in_rally_seconds: number;
+  team_sides: { start: string; switches: number[] } | null;
+  team_score: { us: number; them: number } | null;
+  has_teams: boolean;
+  findings: { kind: 'top_loss_reason'; team: 'us' | null; reason: string; count: number; total: number }[];
+  progression: { rally: number; side: string; points: number }[];
+  players: { player: Player; touches: Record<string, number>; deciding: number }[];
+  losses: { side: string; total: number; reasons: { reason: string; count: number; percent: number }[] }[];
 }
 export interface Preview {
   rallies: Clip[];
@@ -121,7 +153,7 @@ export interface Preview {
   roster: Player[];
   court_totals: CourtTotal[];
   warnings: string[];
-  loss_reasons: Record<string, number>;
+  stats: Stats;
 }
 export interface Candidate {
   id: string;
@@ -167,22 +199,6 @@ export interface Review {
   decisions: Record<string, Decision>;
   application: unknown | null;
 }
-
-const LOSS_REASON: Record<string, string> = {
-  spike_error: 'Spike error',
-  blocked: 'Blocked',
-  set_error: 'Set error',
-  receive_error: 'Receive error',
-  chance_ball_error: 'Free-ball error',
-  defense_error: 'Defense error',
-  serve_error: 'Serve error',
-  other: 'Other',
-};
-
-/** The App's LossReason.displayName: built-ins by code, custom ones carry
- *  the user's own text after the prefix. */
-export const lossReasonLabel = (code: string) =>
-  LOSS_REASON[code] ?? (code.startsWith('custom:') ? code.slice(7) : code);
 
 export const DECISION_LABEL: Record<string, string> = {
   accepted_feedback: 'Adopted as feedback',

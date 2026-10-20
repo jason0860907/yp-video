@@ -6,7 +6,7 @@ import { useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { Scope, Tab } from './types';
 
-const TABS: readonly string[] = ['clips', 'review'];
+const TABS: readonly string[] = ['clips', 'analysis', 'review'];
 const SCOPES: readonly string[] = ['rallies', 'actions', 'scores'];
 
 export function useAppReviewUrlState() {
