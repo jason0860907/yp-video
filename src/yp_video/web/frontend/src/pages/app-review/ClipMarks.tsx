@@ -11,10 +11,10 @@ const span = (c: Clip) => `${rallyTime(c.start)}–${rallyTime(c.end)}`;
 
 export function ClipMarks({ clip, scope, mode, number, tags }: { clip: Clip; scope: Scope; mode: WindowMode; number: number; tags: Tag[] }) {
   return (
-    <div className="mt-3 space-y-2 border-t border-border pt-3 text-xs">
+    <div className="space-y-2.5 px-1 text-xs">
       {scope === 'rallies' ? (
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm font-semibold text-text-primary">Rally #{clip.rally_index}</span>
+          <span className="text-base font-semibold text-text-primary">Rally #{clip.rally_index}</span>
           {clip.score != null && <ScoreBadge score={clip.score} />}
           <span className="font-mono text-text-secondary">{span(clip)}</span>
           {clip.court_score && <CourtScoreText score={clip.court_score} scorer={clip.winner} />}
@@ -23,7 +23,7 @@ export function ClipMarks({ clip, scope, mode, number, tags }: { clip: Clip; sco
         </div>
       ) : scope === 'actions' ? (
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm font-semibold text-text-primary">
+          <span className="text-base font-semibold text-text-primary">
             {kindOf(clip.kind).long} #{number}
           </span>
           <span className="font-mono text-text-secondary">

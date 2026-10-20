@@ -85,8 +85,8 @@ function Row({
       type="button"
       onClick={onClick}
       className={cn(
-        'relative w-full overflow-hidden rounded-xl border p-2 text-left transition-colors',
-        selected ? 'border-primary/70 bg-primary/10' : 'border-border bg-surface-100/60 hover:bg-surface-100',
+        'relative w-full overflow-hidden rounded-xl border-[1.5px] px-2.5 py-2 text-left transition-colors',
+        selected ? 'border-primary bg-primary/[0.12]' : 'border-transparent bg-ink/[0.06] hover:bg-ink/[0.09]',
       )}
     >
       {emphasis && <span className="absolute inset-y-0 left-0 w-[3px]" style={{ background: APP.danger }} />}

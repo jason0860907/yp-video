@@ -57,7 +57,7 @@ export function Overview({
             <tr
               key={m.id}
               onClick={() => onMatch(m.id)}
-              className="cursor-pointer border-b border-border-light/60 align-top last:border-0 hover:bg-surface-100/60"
+              className="cursor-pointer border-b border-border align-top last:border-0 hover:bg-surface-100/60"
             >
               <td className="py-2 pr-3">
                 <span className="text-text-primary">{m.title}</span>

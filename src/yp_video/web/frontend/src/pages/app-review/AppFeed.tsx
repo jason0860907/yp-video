@@ -8,7 +8,7 @@
 import { useMemo, useState } from 'react';
 import { cn } from '@/lib/cn';
 import { Badge } from '@/components/ui/Badge';
-import { Segmented } from '@/components/ui/Segmented';
+import { AppSegmented } from './AppSegmented';
 import { ActionCard, CourtScoreText, RallyCard, ScoreCard } from './AppRows';
 import { APP, displayName, FRAMING, hms, KIND, KINDS, kindOf, lossReasonLabel, OPPOSITE, playerColor, SIDE } from './appTerms';
 import type { Candidate, Clip, Preview, Scope, Tag, WindowMode } from './types';
@@ -108,7 +108,7 @@ export function AppFeed({
   const active = filter.player != null || filter.kind != null;
 
   return (
-    <div className="flex min-h-0 flex-col gap-2">
+    <div className="flex min-h-0 flex-col gap-2.5">
       <p className="text-xs text-text-secondary">
         <span className="font-semibold text-text-primary">{clips.length}</span>{' '}
         {scope === 'rallies' ? (
@@ -122,7 +122,8 @@ export function AppFeed({
           '個得失分片段'
         )}
       </p>
-      <Segmented
+      <AppSegmented
+        fill
         options={SCOPES}
         value={scope}
         onChange={(next) => {
@@ -132,13 +133,18 @@ export function AppFeed({
         }}
       />
 
-      <div className="rounded-lg bg-ink/5 px-2.5 py-2">
-        <div className="flex items-center gap-2 text-xs">
-          <button type="button" className="flex flex-1 items-center gap-1.5 text-left" onClick={() => setOpen(!open)}>
-            <span style={{ color: summary.length ? APP.primary : APP.accent }}>☰</span>
-            <span className="font-semibold text-text-primary">進階選項</span>
-            {summary.length > 0 && <span className="truncate text-text-secondary">{summary.join(' · ')}</span>}
-            <span className="ml-auto text-text-muted">{open ? '▴' : '▾'}</span>
+      <div>
+        <div className="flex items-center gap-2 px-0.5 text-xs">
+          <button type="button" className="flex min-w-0 flex-1 items-center gap-1.5 text-left" onClick={() => setOpen(!open)}>
+            <span
+              className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border text-[8px] leading-none"
+              style={{ color: summary.length ? APP.primary : APP.accent, borderColor: 'currentColor' }}
+            >
+              ≡
+            </span>
+            <span className="text-text-secondary">進階選項</span>
+            {summary.length > 0 && <span className="truncate font-semibold" style={{ color: APP.primary }}>{summary.join(' · ')}</span>}
+            <span className="text-[10px] text-text-muted">{open ? '▴' : '▾'}</span>
           </button>
           {active && (
             <button type="button" className="font-semibold" style={{ color: APP.primary }} onClick={() => setFilter({ ...filter, player: null, kind: null })}>
@@ -147,7 +153,7 @@ export function AppFeed({
           )}
         </div>
         {open && (
-          <div className="mt-2 space-y-2">
+          <div className="mt-2 space-y-2 rounded-xl bg-ink/[0.05] p-2.5">
             {preview.roster.length > 0 && (
               <Axis title="球員">
                 <Chip selected={filter.player == null} onClick={() => setFilter({ ...filter, player: null })}>
@@ -217,7 +223,7 @@ export function AppFeed({
         )}
       </div>
 
-      <div className="vq-list max-h-[calc(100vh-22rem)] min-h-0 space-y-2 overflow-y-auto pr-1">
+      <div className="vq-list max-h-[calc(100vh-17rem)] min-h-0 space-y-1.5 overflow-y-auto pr-1">
         {scope === 'scores' && <ScoreSummary preview={preview} scores={clips} />}
         {clips.length === 0 && (
           <p className="py-6 text-center text-xs text-text-muted">

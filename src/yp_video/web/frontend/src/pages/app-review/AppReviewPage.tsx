@@ -13,14 +13,13 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { API, apiFetch, apiUrl, errMsg } from '@/lib/api';
-import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
-import { Tabs } from '@/components/ui/Tabs';
 import { AnalysisSummary } from './AnalysisSummary';
 import { AppFeed } from './AppFeed';
+import { AppSegmented } from './AppSegmented';
 import { kindOf, rallyTime } from './appTerms';
 import { ClipMarks } from './ClipMarks';
 import { ClipPlayer, type ClipPlayerHandle } from './ClipPlayer';
@@ -30,7 +29,7 @@ import { LibraryPicker } from './LibraryPicker';
 import { MatchSummary } from './MatchSummary';
 import { Overview } from './Overview';
 import { useAppReviewUrlState } from './useAppReviewUrlState';
-import type { Candidate, Clip, Library, MatchDetail, Tag, VideoMeta, WindowMode } from './types';
+import type { Candidate, Clip, Library, MatchDetail, Tab, Tag, VideoMeta, WindowMode } from './types';
 import { byReviewOrder, liveMatches } from './types';
 
 export function AppReviewPage() {
@@ -39,7 +38,7 @@ export function AppReviewPage() {
   const [corrected, setCorrected] = useState(true);
   // Review judges the edits against the original analysis.
   const applied = tab !== 'review' && corrected;
-  const queue = useRef<Clip[]>([]);
+  const [queue, setQueue] = useState<Clip[]>([]);
   const player = useRef<ClipPlayerHandle>(null);
 
   const library = useQuery({
@@ -110,35 +109,28 @@ export function AppReviewPage() {
   // Clips opens on the feed's first clip, so a picked match never sits blank.
   const active = tab === 'review' ? fixClip : (feed?.find((c) => c.key === clip) ?? feed?.[0] ?? null);
   const select = (next: Clip, visible: Clip[]) => {
-    queue.current = visible;
+    setQueue(visible);
     set({ clip: next.key });
   };
-  const playNext = useCallback(() => {
-    if (tab !== 'clips' || !active) return;
-    const list = queue.current.length ? queue.current : (feed ?? []);
-    const i = list.findIndex((c) => c.key === active.key);
-    const next = list[i + 1];
-    if (i >= 0 && next) set({ clip: next.key });
-  }, [tab, active, feed, set]);
+  // What ‹ › and auto-next walk: the list the clip was picked from, else the feed.
+  const walk = useMemo(() => (active && queue.some((c) => c.key === active.key) ? queue : (feed ?? [])), [active, queue, feed]);
+  const at = tab === 'clips' && active ? walk.findIndex((c) => c.key === active.key) : -1;
+  const go = useCallback(
+    (delta: number) => {
+      const next = walk[at + delta];
+      if (at >= 0 && next) set({ clip: next.key });
+    },
+    [walk, at, set],
+  );
+  const playNext = useCallback(() => go(1), [go]);
 
   const error = detail.error ?? meta.error ?? library.error;
   const ready = detail.data && preview && meta.data;
 
   return (
-    <div className="mx-auto max-w-screen-2xl space-y-5">
-      <Card>
-        {match && (
-          <Tabs
-            tabs={[
-              { key: 'clips', label: '影片' },
-              { key: 'analysis', label: '分析' },
-              { key: 'review', label: `Review${candidates ? ` (${candidates.length})` : ''}` },
-            ]}
-            active={tab}
-            onChange={(t) => set({ tab: t })}
-          />
-        )}
-        <div className={cn('flex flex-wrap items-center gap-x-5 gap-y-2', match && 'mt-3')}>
+    <div className="mx-auto max-w-screen-2xl space-y-4">
+      <Card className="space-y-3">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
           <LibraryPicker
             user={user}
             match={match}
@@ -151,14 +143,33 @@ export function AppReviewPage() {
               ← All matches
             </Button>
           )}
-          {tab !== 'review' && match && (
-            <label className="inline-flex items-center gap-1.5 text-xs text-text-secondary">
-              <input type="checkbox" checked={corrected} onChange={(e) => setCorrected(e.target.checked)} />
-              Apply user corrections
-            </label>
-          )}
         </div>
-        {detail.data && <MatchSummary match={detail.data.match} preview={detail.data.preview} />}
+        {match && (
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <AppSegmented<Tab>
+              options={[
+                { key: 'clips', label: '影片' },
+                { key: 'analysis', label: '分析' },
+                { key: 'review', label: `Review${candidates ? ` (${candidates.length})` : ''}` },
+              ]}
+              value={tab}
+              onChange={(t) => set({ tab: t })}
+            />
+            {detail.data && <MatchSummary match={detail.data.match} />}
+            <span className="flex-1" />
+            {tab !== 'review' && (
+              <label className="inline-flex items-center gap-1.5 text-xs text-text-secondary">
+                <input type="checkbox" checked={corrected} onChange={(e) => setCorrected(e.target.checked)} />
+                Apply user corrections
+              </label>
+            )}
+          </div>
+        )}
+        {preview?.warnings.map((w) => (
+          <p key={w} className="rounded-md bg-amber-500/10 px-2 py-1.5 text-xs text-amber-400">
+            {w}
+          </p>
+        ))}
       </Card>
 
       {!user ? (
@@ -205,21 +216,22 @@ export function AppReviewPage() {
       ) : tab === 'analysis' ? (
         <AnalysisSummary match={detail.data.match} preview={preview} />
       ) : (
-        <div className="flex flex-col gap-5 xl:flex-row">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-start">
           <ClipPlayer
             ref={player}
-            title={detail.data.match.title}
             src={apiUrl(API.appReview.video(user, match))}
             meta={meta.data}
             clip={active}
-            caption={active ? caption(active) : ''}
+            nav={at >= 0 ? { at, count: walk.length, go } : undefined}
             onEnded={playNext}
           >
-            {tab === 'clips' && active && (
+            {tab === 'clips' && active ? (
               <ClipMarks clip={active} scope={scope} mode={mode} number={active.kind_index ?? active.index ?? 0} tags={tagsOf(active)} />
+            ) : (
+              active && <p className="px-1 font-mono text-xs text-text-secondary">{caption(active)}</p>
             )}
           </ClipPlayer>
-          <div className="min-w-0 xl:w-[460px] xl:flex-shrink-0">
+          <div className="min-w-0 xl:sticky xl:top-4 xl:w-[420px] xl:flex-shrink-0">
             <Card>
               {tab === 'clips' ? (
                 <AppFeed
@@ -231,7 +243,7 @@ export function AppReviewPage() {
                   mode={mode}
                   selected={active}
                   onScope={(s) => {
-                    queue.current = [];
+                    setQueue([]);
                     set({ scope: s, clip: '' });
                   }}
                   onMode={setMode}
