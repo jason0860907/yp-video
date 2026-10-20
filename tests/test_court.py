@@ -232,6 +232,34 @@ def test_compute_places_feet_lifts_contacts_and_keeps_reasons():
     assert [(a["from"], a["to"]) for a in result["arcs"]] == [("f30", "f60")]
 
 
+def test_segments_place_each_touch_through_the_camera_of_its_time():
+    # The camera moved at 2.5 s: a touch after it is seen through the new one.
+    before, after = _pinhole(), _pinhole(center=(7.0, -11.0, 2.5))
+    segments = positions.Segments([
+        positions.Segment(start=0, calibration=_calibration(before)),
+        positions.Segment(start=2.5, calibration=_calibration(after)),
+    ])
+    events = [
+        {"id": "f30", "frame": 30, "time": 1.0, "label": "set", "ball": before((4.0, 2.0, 2.5)), "rally_id": 1},
+        {"id": "f60", "frame": 60, "time": 2.0, "label": "spike", "ball": before((4.0, 2.0, 3.1)), "rally_id": 1},
+        {"id": "f90", "frame": 90, "time": 3.0, "label": "set", "ball": after((6.0, 3.0, 2.5)), "rally_id": 1},
+    ]
+    feet = {"f30": before((4.0, 2.0, 0.0)), "f60": before((4.0, 2.0, 0.0)), "f90": after((6.0, 3.0, 0.0))}
+    result = positions.compute_segments(segments, events, feet, None)
+    by_id = {e["id"]: e for e in result["events"]}
+    assert by_id["f60"]["court_xy"] == pytest.approx([4.0, 2.0], abs=0.01)
+    assert by_id["f90"]["court_xy"] == pytest.approx([6.0, 3.0], abs=0.01)
+    # No flight joins touches seen through two cameras.
+    assert [(a["from"], a["to"]) for a in result["arcs"]] == [("f30", "f60")]
+
+
+@pytest.mark.parametrize("starts", [[], [1.0], [0, 3.0, 3.0]])
+def test_segments_cover_the_video_in_order(starts):
+    calibration = _calibration(_pinhole())
+    with pytest.raises(ValueError):
+        positions.Segments.model_validate([{"start": s, "calibration": calibration} for s in starts])
+
+
 def test_calibration_summary_projects_the_lines_back_onto_the_marks():
     see = _pinhole()
     summary = positions.calibration_summary(_calibration(see))

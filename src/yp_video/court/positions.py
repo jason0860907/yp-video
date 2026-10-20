@@ -6,7 +6,8 @@ ballistic path joining the two touches.
 The one implementation: the labeling web page and the production worker's
 court job both call `compute`, each gathering the inputs its own way (the web
 from local records and annotations, the worker from the analysis and
-identify results). Pure — no file is read here.
+identify results — through `compute_segments`, as an App match is
+calibrated again wherever its camera moved). Pure — no file is read here.
 
 A position that cannot be real is left out rather than drawn: feet past the
 free zone, or a contact higher than anyone reaches, is a failed projection —
@@ -18,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 
 import numpy as np
+from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
 
 from yp_video.court import camera, geometry, trajectory
 from yp_video.court.annotations import Calibration
@@ -37,6 +39,31 @@ ARC_SAMPLES = 16
 
 #: An event's feet: normalized image (x, y), or why there are none.
 Feet = Mapping[str, Sequence[float] | str]
+
+
+class Segment(BaseModel):
+    """One camera position of a video: the calibration that holds from
+    `start` until the next segment's start (a camera moved mid-match is
+    calibrated again)."""
+
+    model_config = ConfigDict(extra="forbid")
+    #: Video seconds the calibration holds from.
+    start: float = Field(ge=0, allow_inf_nan=False)
+    calibration: Calibration
+
+
+class Segments(RootModel[list[Segment]]):
+    """A video's segments, covering it whole: the first from 0, each later
+    one starting after the one before."""
+
+    @model_validator(mode="after")
+    def _cover(self) -> "Segments":
+        starts = [s.start for s in self.root]
+        if not starts or starts[0] != 0:
+            raise ValueError("the first segment starts at 0")
+        if any(b <= a for a, b in zip(starts, starts[1:])):
+            raise ValueError("each segment starts after the one before")
+        return self
 
 
 def _in_play_area(court_xy: np.ndarray) -> bool:
@@ -245,4 +272,23 @@ def compute(calibration: Calibration, events: Sequence[Mapping], feet: Feet, tra
         "court": {"length": length, "width": width},
         "events": [out(e) for e in placed],
         "arcs": arcs,
+    }
+
+
+def compute_segments(segments: Segments, events: Sequence[Mapping], feet: Feet, track: Mapping | None) -> dict:
+    """`compute` for a video calibrated once per camera position: each
+    segment places the events from its start until the next one's, so no
+    arc joins touches seen through two cameras. Raises geometry.FitError
+    when any segment's marks cannot fit the floor."""
+    parts = segments.root
+    ends = [s.start for s in parts[1:]] + [float("inf")]
+    placed = [
+        compute(part.calibration, [e for e in events if part.start <= e["time"] < end], feet, track)
+        for part, end in zip(parts, ends)
+    ]
+    return {
+        "units": "m",
+        "court": {"length": geometry.COURT_LENGTH, "width": geometry.COURT_WIDTH},
+        "events": [e for p in placed for e in p["events"]],
+        "arcs": [a for p in placed for a in p["arcs"]],
     }
