@@ -202,16 +202,35 @@ def candidates(bundle: Bundle) -> list[dict]:
     pi = c.player_identification if c else None
     if pi:
         events = {e.id: e for e in bundle.result.action_events}
-        for event_id, number in player_numbers(bundle).items():
+        # The person group the identification put each touch in, when the
+        # mapping still belongs to that run: what the user's number replaced.
+        identification = bundle.identification
+        group = (
+            {e: u.key for u in identification.units for e in u.events}
+            if identification and pi.result_id == identification.job_id
+            else {}
+        )
+        numbers = player_numbers(bundle)
+        # A null override is the user's "nobody" mark: an edit with no number.
+        for event_id in sorted(numbers.keys() | pi.event_overrides.keys()):
             event = events.get(event_id)
             rally = event and next(
                 (r for r in bundle.result.rallies if r.start <= event.time <= r.end), None
             )
+            unit = group.get(event_id)
             rows.append(
                 {
                     "id": f"player:{event_id}",
                     "scope": "player",
-                    "value": {"event_id": event_id, "number": number},
+                    "value": {
+                        "event_id": event_id,
+                        "number": numbers.get(event_id),
+                        "unit": unit,
+                        "unit_number": pi.unit_roster.get(unit)
+                        if unit and unit not in pi.removed_units
+                        else None,
+                        "override": event_id in pi.event_overrides,
+                    },
                     "rally_index": rally.index if rally else None,
                     "clip": {"start": max(0, event.time - 1), "end": event.time + 1}
                     if event

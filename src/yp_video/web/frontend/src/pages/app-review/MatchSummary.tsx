@@ -1,18 +1,15 @@
-/** One line of what the App shows around the feeds — angle, analysis,
- *  court-side score per set, loss reasons, roster — plus the projection's
- *  warnings. */
+/** One line of what the App shows around the feeds — angle, date,
+ *  court-side score per set, loss reasons, roster — then the worker's jobs
+ *  and the projection's warnings. */
 
 import { formatDateTime } from '@/lib/format';
+import { JobRow } from './JobStatus';
 import type { LibraryMatch, Preview } from './types';
 import { lossReasonLabel, playerLabel, sideLabel } from './types';
 
 export function MatchSummary({ match, preview }: { match: LibraryMatch; preview: Preview }) {
   const losses = Object.entries(preview.loss_reasons);
-  const parts = [
-    match.angle,
-    formatDateTime(match.recorded_at ?? match.updated_at),
-    `analysis ${match.analysis?.status ?? 'none'}`,
-  ];
+  const parts = [match.angle, formatDateTime(match.recorded_at ?? match.updated_at)];
   return (
     <div className="mt-3 space-y-1.5 border-t border-border pt-3 text-xs text-text-muted">
       <p
@@ -42,6 +39,7 @@ export function MatchSummary({ match, preview }: { match: LibraryMatch; preview:
           {preview.roster.length === 0 ? 'No roster' : `${preview.roster.length} players`}
         </span>
       </p>
+      <JobRow match={match} />
       {preview.warnings.map((w) => (
         <p key={w} className="rounded-md bg-amber-500/10 px-2 py-1.5 text-amber-400">
           {w}

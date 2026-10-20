@@ -1,16 +1,20 @@
 /** App Review: browse any VolleyIQ user's library the way the App shows it,
  *  and review their corrections as training feedback.
  *
- *  Two modes, as tabs: Clips shows the match through the App's feeds and
- *  framing; Review lists the user's corrections against the original
- *  analysis, so what they deleted is still on the timeline. A header card
- *  holds the pickers and a one-line match summary; where you are lives in
- *  the URL (useAppReviewUrlState) so links are shareable.
+ *  A user without a picked match shows the Overview: every match with its
+ *  jobs and edit counts. A match has two modes, as tabs: Clips shows it
+ *  through the App's feeds and framing; Review lists the user's corrections
+ *  against the original analysis, so what they deleted is still on the
+ *  timeline. A header card holds the pickers and a one-line match summary;
+ *  where you are lives in the URL (useAppReviewUrlState) so links are
+ *  shareable — the admin dashboard links straight to a match.
  */
 
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { API, apiFetch, apiUrl, errMsg } from '@/lib/api';
+import { cn } from '@/lib/cn';
+import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ErrorState } from '@/components/ui/ErrorState';
@@ -19,11 +23,13 @@ import { Tabs } from '@/components/ui/Tabs';
 import { ClipList } from './ClipList';
 import { ClipPlayer, type ClipPlayerHandle } from './ClipPlayer';
 import { FeedbackPanel } from './FeedbackPanel';
+import { JobRow } from './JobStatus';
 import { LibraryPicker } from './LibraryPicker';
 import { MatchSummary } from './MatchSummary';
+import { Overview } from './Overview';
 import { useAppReviewUrlState } from './useAppReviewUrlState';
 import type { Candidate, Clip, Library, MatchDetail, VideoMeta, WindowMode } from './types';
-import { byReviewOrder } from './types';
+import { byReviewOrder, liveMatches } from './types';
 
 const FRAMINGS: { key: WindowMode; label: string }[] = [
   { key: 'full_play', label: 'Full play' },
@@ -45,16 +51,20 @@ export function AppReviewPage() {
     enabled: !!user,
     queryFn: () => apiFetch<Library>(API.appReview.library(user)),
   });
+  const picked = library.data?.matches.find((m) => m.id === match);
+  // Until its analysis has a result there is nothing to project: the match
+  // shows its jobs instead.
+  const analysed = !!picked?.r2_keys.result;
   const detail = useQuery({
     queryKey: ['app-review', 'match', user, match, mode, applied],
-    enabled: !!user && !!match,
+    enabled: !!user && !!match && analysed,
     // Reframing (mode / corrections) keeps the old clips on screen meanwhile.
     placeholderData: (prev, query) => (query?.queryKey[3] === match ? prev : undefined),
     queryFn: () => apiFetch<MatchDetail>(API.appReview.match(user, match, mode, applied)),
   });
   const meta = useQuery({
     queryKey: ['app-review', 'video-meta', user, match],
-    enabled: !!user && !!match,
+    enabled: !!user && !!match && analysed,
     staleTime: Infinity,
     queryFn: () => apiFetch<VideoMeta>(API.appReview.videoMeta(user, match)),
   });
@@ -116,15 +126,17 @@ export function AppReviewPage() {
   return (
     <div className="mx-auto max-w-screen-2xl space-y-5">
       <Card>
-        <Tabs
-          tabs={[
-            { key: 'clips', label: 'Clips' },
-            { key: 'review', label: `Review${candidates ? ` (${candidates.length})` : ''}` },
-          ]}
-          active={tab}
-          onChange={(t) => set({ tab: t })}
-        />
-        <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2">
+        {match && (
+          <Tabs
+            tabs={[
+              { key: 'clips', label: 'Clips' },
+              { key: 'review', label: `Review${candidates ? ` (${candidates.length})` : ''}` },
+            ]}
+            active={tab}
+            onChange={(t) => set({ tab: t })}
+          />
+        )}
+        <div className={cn('flex flex-wrap items-center gap-x-5 gap-y-2', match && 'mt-3')}>
           <LibraryPicker
             user={user}
             match={match}
@@ -132,7 +144,12 @@ export function AppReviewPage() {
             onUser={(id) => set({ user: id, match: '', clip: '', fix: '' })}
             onMatch={(id) => set({ match: id, clip: '', fix: '' })}
           />
-          {tab === 'clips' && (
+          {match && (
+            <Button size="sm" intent="ghost" onClick={() => set({ match: '', clip: '', fix: '' })}>
+              ← All matches
+            </Button>
+          )}
+          {tab === 'clips' && match && (
             <>
               <span className="inline-flex items-center gap-2 text-xs text-text-muted">
                 Framing
@@ -148,13 +165,32 @@ export function AppReviewPage() {
         {detail.data && <MatchSummary match={detail.data.match} preview={detail.data.preview} />}
       </Card>
 
-      {!user || !match ? (
+      {!user ? (
         <Card>
           <EmptyState
             icon={<PlayIcon />}
-            title={user ? 'Pick a match' : 'Pick a user'}
+            title="Pick a user"
             subtitle="See their matches, clips and corrections the way the App shows them"
           />
+        </Card>
+      ) : !match ? (
+        <Card>
+          {library.error ? (
+            <ErrorState message={errMsg(library.error)} onRetry={() => void library.refetch()} />
+          ) : library.data ? (
+            <Overview user={user} matches={liveMatches(library.data)} onMatch={(id) => set({ match: id, clip: '', fix: '' })} />
+          ) : (
+            <p className="py-12 text-center text-xs text-text-muted">Loading library…</p>
+          )}
+        </Card>
+      ) : picked && !analysed ? (
+        <Card>
+          <div className="space-y-3 py-6 text-center text-xs text-text-muted">
+            <p className="text-sm text-text-secondary">{picked.title} has no analysis result yet</p>
+            <div className="flex justify-center">
+              <JobRow match={picked} />
+            </div>
+          </div>
         </Card>
       ) : error ? (
         <Card>

@@ -16,7 +16,29 @@ export interface AppUser {
   updated_at: number;
 }
 
-/** A match row as the App's /sync serves it, plus the R2 keys behind its URLs. */
+export type JobKind = 'analysis' | 'identify' | 'court';
+
+/** The newest job of one kind for a match (admin library). */
+export interface MatchJob {
+  kind: JobKind;
+  mode: 'standard' | 'advanced' | null;
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'superseded';
+  step: string | null;
+  progress: number;
+  error_code: string | null;
+  error: string | null;
+  created_at: number;
+  started_at: number | null;
+  finished_at: number | null;
+}
+
+/** GET …/overview, per analysed match: the user's corrections by kind. */
+export type MatchEdits =
+  | { edits: Record<string, number>; edited_at: string | null; warnings: string[] }
+  | { error: string };
+
+/** A match row as the App's /sync serves it, plus the R2 keys behind its URLs
+ *  and its newest job of each kind. */
 export interface LibraryMatch {
   id: string;
   owner_id: string;
@@ -30,6 +52,7 @@ export interface LibraryMatch {
   deleted_at: number | null;
   source_video: { id: string; r2_key: string | null; public_url: string | null } | null;
   analysis: { id: string; status: string | null; step: string | null } | null;
+  jobs: Partial<Record<JobKind, MatchJob>>;
   r2_keys: {
     source: string | null;
     result: string | null;
@@ -37,6 +60,12 @@ export interface LibraryMatch {
     reid: string | null;
   };
 }
+
+/** The library's live matches, newest first — the picker's and Overview's order. */
+export const liveMatches = (library: Library | undefined) =>
+  (library?.matches ?? [])
+    .filter((m) => m.deleted_at === null)
+    .sort((a, b) => (b.recorded_at ?? b.updated_at) - (a.recorded_at ?? a.updated_at));
 
 export interface Tag {
   id: string;

@@ -7,6 +7,7 @@ import { formatDateTime } from '@/lib/format';
 import { SearchSelect } from '@/components/form/SearchSelect';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import type { AppUser, Library } from './types';
+import { liveMatches } from './types';
 
 const STATUS_TONE: Record<string, BadgeTone> = {
   ready: 'success',
@@ -31,9 +32,7 @@ export function LibraryPicker({
     queryKey: ['app-review', 'users'],
     queryFn: () => apiFetch<AppUser[]>(API.appReview.users),
   });
-  const matches = (library?.matches ?? [])
-    .filter((m) => m.deleted_at === null)
-    .sort((a, b) => (b.recorded_at ?? b.updated_at) - (a.recorded_at ?? a.updated_at));
+  const matches = liveMatches(library);
 
   return (
     <>

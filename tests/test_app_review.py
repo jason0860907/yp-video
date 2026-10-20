@@ -174,6 +174,41 @@ def test_player_run_scope_override_and_removed_units():
 
 
 
+def test_player_candidates_show_the_group_number_they_replace():
+    b = bundle(
+        [("set", 12), ("spike", 13), ("receive", 14)],
+        corrections={
+            "player_identification": {
+                "result_id": "identify",
+                "unit_roster": {"a": 7, "b": 9},
+                "removed_units": ["b"],
+                "event_overrides": {"f390": 8, "f420": None},
+            },
+        },
+        identification={
+            "version": 5,
+            "job_id": "identify",
+            "user_id": "user",
+            "match_id": "match",
+            "units": [
+                {"key": "a", "events": ["f360", "f390"]},
+                {"key": "b", "events": ["f420"]},
+            ],
+        },
+    )
+    players = {
+        c["value"]["event_id"]: c["value"]
+        for c in feedback.candidates(b)
+        if c["scope"] == "player"
+    }
+    assert players == {
+        "f360": {"event_id": "f360", "number": 7, "unit": "a", "unit_number": 7, "override": False},
+        "f390": {"event_id": "f390", "number": 8, "unit": "a", "unit_number": 7, "override": True},
+        # Cleared by the user: still an edit, on a removed group.
+        "f420": {"event_id": "f420", "number": None, "unit": "b", "unit_number": None, "override": True},
+    }
+
+
 def test_filed_match_names_players_from_its_folder_roster():
     b = bundle(
         [("spike", 13)],

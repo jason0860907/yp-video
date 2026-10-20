@@ -119,6 +119,7 @@ export const API = {
   appReview: {
     users: '/app-review/users',
     library: (user: string) => `/app-review/users/${encodeURIComponent(user)}/library`,
+    overview: (user: string) => `/app-review/users/${encodeURIComponent(user)}/overview`,
     match: (user: string, match: string, mode: string, corrected: boolean) =>
       `/app-review/users/${encodeURIComponent(user)}/matches/${encodeURIComponent(match)}${q({ mode, corrected })}`,
     video: (user: string, match: string) =>

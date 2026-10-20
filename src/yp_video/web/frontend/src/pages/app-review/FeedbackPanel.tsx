@@ -39,15 +39,20 @@ const WRITE_BACK: Record<Operation, string> = {
 
 const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
-/** What the user changed, without the rally — the group header says that. */
+/** What the user changed, without the rally — the group header says that.
+ *  Each change reads original → user's value where the analysis had one. */
 function title(c: Candidate): string {
   const v = c.value as Value;
   const span = (a: [number, number]) => `${formatActionTime(a[0])}–${formatActionTime(a[1])}`;
   if (c.scope === 'actions' || c.scope === 'scores') {
+    const was = c.clip?.loss_reason
+      ? `${lossReasonLabel(c.clip.loss_reason)}${c.clip.loss_reason_inferred ? ' (inferred)' : ''}`
+      : 'none';
     const parts = [
       v.removed && 'removed',
-      v.trim_start != null && `trimmed to ${span([v.trim_start as number, v.trim_end as number])}`,
-      v.loss_reason && `loss reason ${lossReasonLabel(v.loss_reason as string)}`,
+      v.trim_start != null &&
+        `trimmed ${c.clip ? `${span([c.clip.start, c.clip.end])} → ` : 'to '}${span([v.trim_start as number, v.trim_end as number])}`,
+      v.loss_reason && `loss reason ${was} → ${lossReasonLabel(v.loss_reason as string)}`,
       (v.tag_ids as string[]).length > 0 && 'favorited',
     ].filter(Boolean);
     const at = c.clip?.anchor_time;
@@ -62,10 +67,20 @@ function title(c: Candidate): string {
     return `Winner ${side(v.before)} → ${side(v.after)}`;
   }
   // A player candidate's span is the touch ± 1 s.
-  if (c.scope === 'player')
-    return `Touch${c.clip ? ` ${preciseTime(c.clip.end - 1)}` : ''} assigned #${v.number as number}`;
-  if (c.scope === 'identification') return 'Person grouping and thresholds';
-  if (c.scope === 'roster') return 'Roster';
+  if (c.scope === 'player') {
+    const touch = `Touch${c.clip ? ` ${preciseTime(c.clip.end - 1)}` : ''}`;
+    const player = (n: unknown) => (n != null ? `#${n as number}` : 'no player');
+    const group = v.unit != null ? `group ${v.unit as string}` : 'no group';
+    if (!v.override) return `${touch}: ${group} → ${player(v.number)}`;
+    return `${touch}: ${v.unit_number != null ? player(v.unit_number) : group} → ${player(v.number)} (override)`;
+  }
+  if (c.scope === 'identification') {
+    const named = Object.keys(v.unit_roster as Record<string, number>).length;
+    const removed = (v.removed_units as string[]).length;
+    const threshold = v.threshold != null ? `, threshold ${v.threshold as number}` : '';
+    return `Person grouping: ${named} groups numbered, ${removed} removed${threshold}`;
+  }
+  if (c.scope === 'roster') return `Roster: ${(c.value as unknown[]).length} players`;
   return c.id;
 }
 

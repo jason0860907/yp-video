@@ -1,6 +1,8 @@
 """Browse any VolleyIQ user's App library and review their corrections."""
 
 import asyncio
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from typing import Literal
 
 from botocore.exceptions import BotoCoreError, ClientError
@@ -51,6 +53,36 @@ def users():
 @router.get("/users/{user}/library")
 def library(user: str):
     return checked(sources.library, user)
+
+
+@router.get("/users/{user}/overview")
+def overview(user: str):
+    """Per analysed match: the user's corrections counted by kind and when
+    they last edited, or why that match could not be read."""
+    lib = checked(sources.library, user)
+    rows = [m for m in lib["matches"] if m["deleted_at"] is None and m["r2_keys"]["result"]]
+
+    def summarize(row: dict) -> tuple[str, dict]:
+        try:
+            bundle, notes = sources.match_bundle(lib, row)
+        except (BotoCoreError, ClientError, ValueError) as exc:
+            return row["id"], {"error": str(exc)}
+        return row["id"], {
+            "edits": Counter(edit_kind(c) for c in feedback.candidates(bundle)),
+            "edited_at": bundle.corrections.updated_at if bundle.corrections else None,
+            "warnings": notes,
+        }
+
+    with ThreadPoolExecutor(8) as pool:
+        return dict(pool.map(summarize, rows))
+
+
+def edit_kind(candidate: dict) -> str:
+    """A candidate's scope, with player numbers split into the user's
+    per-touch overrides and the touches a named person group numbers."""
+    if candidate["scope"] != "player":
+        return candidate["scope"]
+    return "player_override" if candidate["value"]["override"] else "player_group"
 
 
 @router.get("/users/{user}/matches/{match}")
