@@ -89,7 +89,7 @@ def fixture_bundle(f: dict) -> Bundle:
                 "team_sides": f["team_sides"],
             },
             "identification": {
-                "version": 5,
+                "version": 6,
                 "job_id": "identify",
                 "user_id": "user",
                 "match_id": "match",

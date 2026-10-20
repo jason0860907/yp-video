@@ -164,11 +164,11 @@ class Unit(Artifact):
     events: list[str]
 
 
-IDENTIFICATION_VERSION = 5
+IDENTIFICATION_VERSION = 6
 
 
 class Identification(Artifact):
-    version: Literal[5]
+    version: Literal[6]
     job_id: str
     user_id: str
     match_id: str
