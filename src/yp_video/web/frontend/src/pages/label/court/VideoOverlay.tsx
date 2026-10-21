@@ -12,6 +12,7 @@ import { actionColor } from '@/lib/actionColors';
 import {
   LANDMARK_LABELS,
   apply,
+  arcParts,
   extendToFrame,
   project3,
   type Arc,
@@ -187,22 +188,25 @@ export function VideoOverlay({
           <Lines lines={netLines} stroke="#f472b6" strokeWidth={1.5} strokeDasharray="4 3" />
         )}
         {layers.path &&
-          arcs.map((a) => (
-            <polyline
-              key={`${a.from}-${a.to}`}
-              points={a.points
-                .flatMap((p) => {
-                  const at = toImage(p);
-                  return at ? [`${at[0]},${at[1]}`] : [];
-                })
-                .join(' ')}
-              fill="none"
-              stroke={actionColor(a.label)}
-              strokeWidth={2}
-              strokeOpacity={0.85}
-              vectorEffect="non-scaling-stroke"
-            />
-          ))}
+          arcs.flatMap((a) =>
+            arcParts(a).map((part, i) => (
+              <polyline
+                key={`${a.from}-${i}`}
+                points={part.points
+                  .flatMap((p) => {
+                    const at = toImage(p);
+                    return at ? [`${at[0]},${at[1]}`] : [];
+                  })
+                  .join(' ')}
+                fill="none"
+                stroke={actionColor(a.label)}
+                strokeWidth={2}
+                strokeOpacity={0.85}
+                strokeDasharray={part.dashed ? '6 4' : undefined}
+                vectorEffect="non-scaling-stroke"
+              />
+            )),
+          )}
         <Lines lines={guideLines} stroke="#22d3ee" strokeWidth={1} />
         {layers.action && (
           <Lines lines={lift} stroke="white" strokeWidth={1.5} strokeDasharray="3 3" />

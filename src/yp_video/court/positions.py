@@ -81,16 +81,17 @@ def _lift(cam: camera.Camera | None, ball: Sequence[float] | None, court_xy: np.
     return point if point is not None and 0 <= point[2] <= MAX_CONTACT_Z_M else None
 
 
-def _observations(track: Mapping, a: dict, b: dict) -> tuple[np.ndarray, np.ndarray]:
-    """The flight's ball sightings: every detected box between the two
-    touches, plus each touch's own ball point — (seconds from a, image xy)."""
+def _observations(track: Mapping, a: dict, last: int, touches: Sequence[dict]) -> tuple[np.ndarray, np.ndarray]:
+    """The flight's ball sightings: every detected box from touch a's frame
+    to frame `last`, plus the ball point of each of `touches` — (seconds
+    from a, image xy)."""
     fps = float(track["fps"])
     t, xy = [], []
-    for e in (a, b):
+    for e in touches:
         if e.get("ball"):
             t.append(e["time"] - a["time"])
             xy.append(e["ball"])
-    for frame in range(a["frame"], b["frame"] + 1):
+    for frame in range(a["frame"], last + 1):
         for x, y, _score in track["frames"].get(str(frame), ()):
             t.append(frame / fps - a["time"])
             xy.append((x, y))
@@ -124,6 +125,10 @@ def _flights(events: list[dict], cam: camera.Camera | None, aspect: float, track
     fitted touch positions replace those events' ball_3d, so dots sit on the
     arcs. An arc is "ball" when enough of its flight was seen on it, else
     "touches" — the gravity path between its two placed touches.
+
+    A placed touch no arc leaves — its next touch unplaced, or the two not
+    joinable, or none following within MAX_FLIGHT_S — still gets the flight
+    seen after it (`_open_flight`).
     """
     rng = np.random.default_rng(0)
     arcs = []
@@ -135,7 +140,9 @@ def _flights(events: list[dict], cam: camera.Camera | None, aspect: float, track
         if cam is not None:
             empty = (np.zeros(0), np.zeros((0, 2)))
             chain = trajectory.fit_chain(cam, aspect, [
-                trajectory.Flight(*(_observations(track, a, b) if track is not None else empty), b["time"] - a["time"])
+                trajectory.Flight(
+                    *(_observations(track, a, b["frame"], (a, b)) if track is not None else empty), b["time"] - a["time"],
+                )
                 for a, b in zip(run, run[1:])
             ], anchors, rng)
             touches, shifts, seen = chain.touches, chain.shifts, chain.seen
@@ -165,7 +172,55 @@ def _flights(events: list[dict], cam: camera.Camera | None, aspect: float, track
                 "points": [[round(float(v), 2) for v in p] for p in camera.arc(pa, pb, duration, ARC_SAMPLES)],
                 **evidence,
             })
+    if cam is not None and track is not None:
+        sent = {arc["from"] for arc in arcs}
+        for a, b in zip(events, [*events[1:], None]):
+            # A landing sends nothing: what follows it is a bounce.
+            if a["id"] in sent or a["ball_3d"] is None or a["rally_id"] is None or a["label"] == LANDING_LABEL:
+                continue
+            if b is not None and (b["rally_id"] != a["rally_id"] or not 0 < b["time"] - a["time"] <= MAX_FLIGHT_S):
+                b = None
+            arc = _open_flight(cam, aspect, track, a, b, rng)
+            if arc is not None:
+                arcs.append(arc)
+        arcs.sort(key=lambda arc: arc["start"])
     return arcs
+
+
+def _open_flight(
+    cam: camera.Camera, aspect: float, track: Mapping, a: dict, b: dict | None, rng: np.random.Generator,
+) -> dict | None:
+    """The flight from a placed touch no arc leaves — a shank out past the
+    free zone, a ball that left the shot, a touch nothing followed: fitted
+    from the touch and the boxes seen after it alone, then followed down to
+    the floor, or to the next touch `b` if that comes first. Past
+    `seen_until` the path is extrapolated. None when too little of it was
+    seen.
+    """
+    window = b["time"] - a["time"] if b is not None else MAX_FLIGHT_S
+    last = b["frame"] if b is not None else a["frame"] + int(MAX_FLIGHT_S * float(track["fps"]))
+    t, xy = _observations(track, a, last, (a,))
+    fitted = trajectory.fit_open(cam, aspect, t, xy, a["ball_3d"], rng)
+    if fitted is None:
+        return None
+    end = min(fitted.landing(), window)
+    pa, pb = fitted.at(np.array([0.0, end]))
+    if end <= 0 or not trajectory.plausible(pa, pb, end):
+        return None
+    return {
+        "rally_id": a["rally_id"],
+        "label": a["label"],
+        "from": a["id"],
+        # None when nothing followed within MAX_FLIGHT_S.
+        "to": b["id"] if b is not None else None,
+        "start": round(a["time"], 3),
+        "end": round(a["time"] + end, 3),
+        "points": [[round(float(v), 2) for v in p] for p in camera.arc(pa, pb, end, ARC_SAMPLES)],
+        "source": "ball",
+        "frames": fitted.frames,
+        "rmse": round(fitted.rmse, 4),
+        "seen_until": round(a["time"] + min(fitted.last, end), 3),
+    }
 
 
 def calibration_summary(calibration: Calibration) -> dict:

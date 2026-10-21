@@ -2,7 +2,7 @@
  *  reads the way the camera sees it. */
 
 import { actionColor, COURT } from '@/lib/actionColors';
-import type { Arc, CourtState, Point, Point3 } from '@/pages/label/court/geometry';
+import { arcParts, type Arc, type CourtState, type Point, type Point3 } from '@/pages/label/court/geometry';
 
 /** Free zone drawn around the court, metres. */
 const MARGIN = 3;
@@ -51,17 +51,19 @@ export function CourtMap({
           strokeWidth={0.06}
         />
       ))}
-      {arcs.map((a) => (
-        <polyline
-          key={`${a.from}-${a.to}`}
-          points={a.points.map((p) => `${p[0]},${y(p[1])}`).join(' ')}
-          fill="none"
-          stroke={actionColor(a.label)}
-          strokeWidth={0.07}
-          strokeOpacity={0.7}
-          strokeDasharray={a.source === 'ball' ? undefined : '0.25 0.18'}
-        />
-      ))}
+      {arcs.flatMap((a) =>
+        arcParts(a).map((part, i) => (
+          <polyline
+            key={`${a.from}-${i}`}
+            points={part.points.map((p) => `${p[0]},${y(p[1])}`).join(' ')}
+            fill="none"
+            stroke={actionColor(a.label)}
+            strokeWidth={0.07}
+            strokeOpacity={0.7}
+            strokeDasharray={part.dashed ? '0.25 0.18' : undefined}
+          />
+        )),
+      )}
       {dots.map((d) =>
         d.kind === 'player' ? (
           <circle

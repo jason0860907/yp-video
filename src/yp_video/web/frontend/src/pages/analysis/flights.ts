@@ -136,7 +136,7 @@ export function touchFlights(positions: CourtPositions, netHeight: number): Touc
     const seen = ([x, y]: [number, number, number]): SidePoint =>
       fromLeft ? { lateral: WIDTH - y, along: x - NET } : { lateral: y, along: NET - x };
     const e = { arc, from: seen(p), to: seen(q), half: (fromLeft ? 'left' : 'right') as Half };
-    if (arc.label === 'serve' && e.to.along > 0) servesMet.add(arc.to);
+    if (arc.label === 'serve' && e.to.along > 0 && arc.to) servesMet.add(arc.to);
     return [e];
   });
 
@@ -146,7 +146,7 @@ export function touchFlights(positions: CourtPositions, netHeight: number): Touc
     const stats = flightStats(arc, NET, netHeight);
     if (!event || !stats || sent.has(arc.from)) return [];
     sent.add(arc.from);
-    const next = events.get(arc.to)?.label;
+    const next = arc.to ? events.get(arc.to)?.label : undefined;
     const crossed = to.along > 0;
     const blocked = arc.label === 'spike' && next === 'block';
 
@@ -171,7 +171,7 @@ export function touchFlights(positions: CourtPositions, netHeight: number): Touc
   for (const f of flights) if (f.pass) f.servedZone = serveInto.get(f.event.id)?.landing ?? null;
   // A set: how well the receive or dig it came off reached the setter.
   for (const f of flights) {
-    if (f.arc.label !== 'receive' || events.get(f.arc.to)?.label !== 'set') continue;
+    if (f.arc.label !== 'receive' || !f.arc.to || events.get(f.arc.to)?.label !== 'set') continue;
     const setter = byEvent.get(f.arc.to);
     if (setter) setter.passed = f.pass ?? grade(f.to, f.crossed);
   }

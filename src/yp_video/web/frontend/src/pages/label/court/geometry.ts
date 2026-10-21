@@ -129,13 +129,32 @@ export interface Arc {
   /** The touch that sent the ball — the flight takes its action colour. */
   label: string | null;
   from: string;
-  to: string;
+  /** null when nothing followed the touch within the longest flight. */
+  to: string | null;
   start: number;
   end: number;
   points: Point3[];
   /** "ball": fitted to the detected ball; "touches": the gravity path
    *  joining its two touches, nothing seen in between. */
   source: 'ball' | 'touches';
+  /** A flight followed from its touch alone (the ball went out or left the
+   *  shot): seen up to this second, extrapolated after it. */
+  seen_until?: number;
+}
+
+/** A flight's stretches, in order: solid where the ball was seen, dashed
+ *  where it is implied — by its two touches, or extrapolated past
+ *  `seen_until`. Neighbouring stretches share their joining point. */
+export function arcParts(arc: Arc): { points: Point3[]; dashed: boolean }[] {
+  if (arc.source === 'touches') return [{ points: arc.points, dashed: true }];
+  if (arc.seen_until == null || arc.seen_until >= arc.end) return [{ points: arc.points, dashed: false }];
+  const last = arc.points.length - 1;
+  const k = Math.round(((arc.seen_until - arc.start) / (arc.end - arc.start)) * last);
+  if (k <= 0) return [{ points: arc.points, dashed: true }];
+  return [
+    { points: arc.points.slice(0, k + 1), dashed: false },
+    { points: arc.points.slice(k), dashed: true },
+  ];
 }
 
 const GRAVITY = 9.81;

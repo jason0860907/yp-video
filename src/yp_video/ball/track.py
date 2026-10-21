@@ -3,7 +3,9 @@
 Between two touches the ball flies free, and that is where a 3D trajectory
 can be fitted (court/trajectory.py). So only those frames are detected: the
 spans between consecutive touches (score included — it is where the ball
-came down) no more than court.positions.MAX_FLIGHT_S apart. Picking the
+came down) no more than court.positions.MAX_FLIGHT_S apart, and the
+MAX_FLIGHT_S after a touch nothing follows that closely — a ball shanked
+out, or out of the shot, whose flight is followed from its touch alone. Picking the
 ball among a frame's boxes is left to the fit: physics separates the ball
 from a head or a lamp far better than a score does.
 
@@ -40,18 +42,18 @@ def track_path(stem: str) -> Path:
 
 
 def flight_spans(frames: Iterable[int], fps: float) -> list[tuple[int, int]]:
-    """[first, last] frame spans covering every gap between consecutive
-    touches up to MAX_FLIGHT_S, chained gaps merged into one span."""
+    """[first, last] frame spans covering every touch's flight: up to the
+    next touch, or MAX_FLIGHT_S on when none comes that soon; overlapping
+    flights merged into one span."""
     ordered = sorted(set(frames))
-    longest = MAX_FLIGHT_S * fps
+    longest = int(MAX_FLIGHT_S * fps)
     spans: list[list[int]] = []
-    for a, b in zip(ordered, ordered[1:]):
-        if b - a > longest:
-            continue
+    for a, b in zip(ordered, [*ordered[1:], None]):
+        end = b if b is not None and b - a <= longest else a + longest
         if spans and a <= spans[-1][1]:
-            spans[-1][1] = b
+            spans[-1][1] = max(spans[-1][1], end)
         else:
-            spans.append([a, b])
+            spans.append([a, end])
     return [(a, b) for a, b in spans]
 
 

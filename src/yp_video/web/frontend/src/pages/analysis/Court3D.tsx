@@ -8,7 +8,7 @@
 
 import { useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { actionColor, COURT } from '@/lib/actionColors';
-import type { Arc, CourtState, Point3 } from '@/pages/label/court/geometry';
+import { arcParts, type Arc, type CourtState, type Point3 } from '@/pages/label/court/geometry';
 import type { Position } from '@/pages/label/court/usePlays';
 import type { MapDot } from './CourtMap';
 
@@ -120,7 +120,7 @@ export function Court3D({
         {/* Shadows first, so the flights read above the floor. */}
         {arcs.map((a) => (
           <polyline
-            key={`s${a.from}-${a.to}`}
+            key={`s${a.from}`}
             points={path(a.points.map(([x, y]) => [x, y, 0]))}
             fill="none"
             stroke="black"
@@ -164,16 +164,18 @@ export function Court3D({
           strokeOpacity={0.7}
           strokeWidth={0.05}
         />
-        {arcs.map((a) => (
-          <polyline
-            key={`${a.from}-${a.to}`}
-            points={path(a.points)}
-            fill="none"
-            stroke={actionColor(a.label)}
-            strokeWidth={0.1}
-            strokeDasharray={a.source === 'ball' ? undefined : '0.3 0.2'}
-          />
-        ))}
+        {arcs.flatMap((a) =>
+          arcParts(a).map((part, i) => (
+            <polyline
+              key={`${a.from}-${i}`}
+              points={path(part.points)}
+              fill="none"
+              stroke={actionColor(a.label)}
+              strokeWidth={0.1}
+              strokeDasharray={part.dashed ? '0.3 0.2' : undefined}
+            />
+          )),
+        )}
         {lift && (
           <polyline
             points={path(lift)}

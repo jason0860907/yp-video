@@ -331,6 +331,72 @@ def test_compute_fits_arcs_to_the_ball_track():
     assert positions.compute(calibration, events, {}, None)["arcs"] == []
 
 
+def test_open_fit_follows_a_ball_that_left_the_shot_down_to_the_floor():
+    see = _pinhole()
+    cam = camera.solve(_calibration(see))
+    rng = np.random.default_rng(1)
+    # Seen for its first 0.4 s only, over a lamp boxed the whole second: the
+    # lamp would win a closed fit's vote, and the ball covers too little of it.
+    times = np.arange(0, 0.4, 1 / 15)
+    lamp = np.arange(0, 1.0, 1 / 15)
+    t = np.concatenate([times, lamp])
+    xy = np.vstack([[see(p) for p in _flight(times)], np.tile([0.9, 0.1], (len(lamp), 1))])
+    start = _flight([0.0])[0] + [0.3, 0.0, 0.2]  # placed from the feet: off by a little
+    assert trajectory.fit(cam, SIZE[0] / SIZE[1], t, xy, 1.0, rng, [(0.0, start)]) is None
+    fit = trajectory.fit_open(cam, SIZE[0] / SIZE[1], t, xy, start, rng)
+    assert fit is not None and fit.frames == len(times)
+    # Where it came down, 0.8 s past the last box, to a quarter metre.
+    true_landing = (3.4 + np.sqrt(3.4**2 + 2 * 9.81 * 2.5)) / 9.81
+    assert fit.landing() == pytest.approx(true_landing, abs=0.02)
+    assert fit.at(np.array([fit.landing()]))[0] == pytest.approx(_flight([true_landing])[0], abs=0.25)
+
+
+def test_compute_follows_a_flight_whose_next_touch_is_unplaced():
+    see = _pinhole()
+    calibration = _calibration(see)
+    # The set at frame 30 is placed from its actor's feet; the next touch,
+    # a dig past the free zone, is not — so no two-ended arc joins them.
+    events = [
+        {"id": "f30", "frame": 30, "time": 1.0, "label": "set", "ball": see(_flight([0.0])[0]), "rally_id": 1},
+        {"id": "f60", "frame": 60, "time": 2.0, "label": "dig", "ball": None, "rally_id": 1},
+    ]
+    feet = {"f30": see((4.0, 2.0, 0.0)), "f60": "off court"}
+    frames = range(32, 46, 2)
+    track = {"fps": 30.0, "frames": {
+        str(f): [[*see(p), 0.9]] for f, p in zip(frames, _flight([(f - 30) / 30 for f in frames]))
+    }}
+    assert positions.compute(calibration, events, feet, None)["arcs"] == []
+    (arc,) = positions.compute(calibration, events, feet, track)["arcs"]
+    assert (arc["from"], arc["to"], arc["source"]) == ("f30", "f60", "ball")
+    # It flew the whole second to the dig, still above the floor.
+    assert arc["end"] == pytest.approx(2.0)
+    assert arc["points"][-1] == pytest.approx(_flight([1.0])[0], abs=0.1)
+
+
+def test_compute_follows_a_flight_nothing_followed_down_to_the_floor():
+    see = _pinhole()
+    calibration = _calibration(see)
+    events = [{"id": "f30", "frame": 30, "time": 1.0, "label": "set", "ball": see(_flight([0.0])[0]), "rally_id": 1}]
+    frames = range(32, 46, 2)
+    track = {"fps": 30.0, "frames": {
+        str(f): [[*see(p), 0.9]] for f, p in zip(frames, _flight([(f - 30) / 30 for f in frames]))
+    }}
+    (arc,) = positions.compute(calibration, events, {"f30": see((4.0, 2.0, 0.0))}, track)["arcs"]
+    assert arc["to"] is None
+    # Seen until the last box, extrapolated from there to the floor.
+    assert arc["seen_until"] == pytest.approx(1.0 + 14 / 30, abs=1e-3)
+    assert arc["points"][-1][2] == pytest.approx(0.0, abs=0.01)
+    assert arc["end"] == pytest.approx(1.0 + (3.4 + np.sqrt(3.4**2 + 2 * 9.81 * 2.5)) / 9.81, abs=0.03)
+
+
+def test_ball_is_detected_up_to_each_next_touch_or_two_seconds_on():
+    from yp_video.ball.track import flight_spans
+
+    # At 30 fps: 10→40 and 40→70 chain; 200 has nothing within 60 frames
+    # after it (330 is 130 on), so it gets 60; 330 is last.
+    assert flight_spans([40, 10, 70, 200, 330], 30.0) == [(10, 130), (200, 260), (330, 390)]
+
+
 def test_chain_meets_at_every_touch_and_finds_its_time():
     see = _pinhole()
     cam = camera.solve(_calibration(see))
