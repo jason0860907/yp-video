@@ -33,6 +33,13 @@ MAX_CONTACT_Z_M = 4.5
 MAX_FLIGHT_S = 2.0
 #: A score marks where the ball came down, not a touch anyone made.
 LANDING_LABEL = "score"
+SERVE_LABEL = "serve"
+#: How far inside its end line a server's feet may still be placed: a jump
+#: serve is struck in the air past the line, and far feet project long.
+SERVE_INSIDE_M = 2.0
+#: A camera nearer an end line than this looks along it: where a ray
+#: crosses that line says nothing about depth.
+MIN_LINE_OFFSET_M = 1.0
 
 #: Points sampled along each arc.
 ARC_SAMPLES = 16
@@ -79,6 +86,37 @@ def _lift(cam: camera.Camera | None, ball: Sequence[float] | None, court_xy: np.
         return None
     point = camera.lift(cam, tuple(ball), tuple(court_xy))
     return point if point is not None and 0 <= point[2] <= MAX_CONTACT_Z_M else None
+
+
+def _serve_end(placed: list[dict], k: int) -> float | None:
+    """The end line (court x) the serve at placed[k] was struck from: the
+    far end from the next touch of its rally that was placed — the receive,
+    on the other side of the net. None when no later touch tells."""
+    serve = placed[k]
+    for e in placed[k + 1:]:
+        if e["rally_id"] != serve["rally_id"]:
+            return None
+        if e["court_xy"] is not None and e["label"] != SERVE_LABEL:
+            return geometry.COURT_LENGTH if e["court_xy"][0] < geometry.COURT_LENGTH / 2 else 0.0
+    return None
+
+
+def _place_serve(cam: camera.Camera | None, e: dict, end: float | None) -> dict:
+    """A serve's feet where they can be the server's — behind the serving
+    end line (SERVE_INSIDE_M) — else its ball where the ball's image ray
+    crosses that line: the server is often out of the shot, or another
+    player was picked. Unchanged when neither is known."""
+    xy = e["court_xy"]
+    if end is None or (xy is not None and abs(xy[0] - end) <= SERVE_INSIDE_M):
+        return e
+    if cam is None or e.get("ball") is None or abs(cam.center[0] - end) < MIN_LINE_OFFSET_M:
+        return {**e, "court_xy": None, "ball_3d": None, "reason": "not the server"}
+    c, d = np.array(cam.center), cam.ray(tuple(e["ball"]))
+    s = (end - c[0]) / d[0] if abs(d[0]) > 1e-9 else -1.0
+    point = c + s * d
+    if s <= 0 or not (0 <= point[2] <= MAX_CONTACT_Z_M and _in_play_area(point[:2])):
+        return {**e, "court_xy": None, "ball_3d": None, "reason": "not the server"}
+    return {**e, "foot": None, "court_xy": point[:2], "ball_3d": point, "reason": None}
 
 
 def _observations(track: Mapping, a: dict, last: int, touches: Sequence[dict]) -> tuple[np.ndarray, np.ndarray]:
@@ -300,6 +338,12 @@ def compute(calibration: Calibration, events: Sequence[Mapping], feet: Feet, tra
             ball_3d = _lift(cam, ball, court_xy) if court_xy is not None else None
         placed.append({**event, "foot": foot, "court_xy": court_xy, "ball_3d": ball_3d, "reason": reason})
 
+    # The serving end is read off the receive, so serves go second.
+    placed = [
+        _place_serve(cam, e, _serve_end(placed, k)) if e["label"] == SERVE_LABEL else e
+        for k, e in enumerate(placed)
+    ]
+
     length, width = geometry.COURT_LENGTH, geometry.COURT_WIDTH
 
     def out(e: dict) -> dict:
@@ -316,7 +360,8 @@ def compute(calibration: Calibration, events: Sequence[Mapping], feet: Feet, tra
             "in_court": xy is not None and bool(0 <= xy[0] <= length and 0 <= xy[1] <= width),
             "ball_3d": [round(float(v), 2) for v in e["ball_3d"]] if e["ball_3d"] is not None else None,
             # Why court_xy is null: occluded, no association, no detection,
-            # outside rally, no takeoff, off court or ball hidden.
+            # outside rally, no takeoff, off court, ball hidden, or not the
+            # server (a serve whose actor stands nowhere near its end line).
             "reason": e["reason"],
         }
 

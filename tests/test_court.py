@@ -389,6 +389,37 @@ def test_compute_follows_a_flight_nothing_followed_down_to_the_floor():
     assert arc["end"] == pytest.approx(1.0 + (3.4 + np.sqrt(3.4**2 + 2 * 9.81 * 2.5)) / 9.81, abs=0.03)
 
 
+def test_a_serve_is_placed_behind_the_end_line_its_receive_faces():
+    see = _pinhole()
+    calibration = _calibration(see)
+    # The receive is at x = 14, so the serves came from the x = 0 end.
+    events = [
+        {"id": "s1", "frame": 30, "time": 1.0, "label": "serve", "ball": see((-0.5, 3.0, 2.8)), "rally_id": 1},
+        {"id": "r1", "frame": 60, "time": 2.0, "label": "receive", "ball": see((14.0, 4.0, 0.8)), "rally_id": 1},
+        {"id": "s2", "frame": 300, "time": 10.0, "label": "serve", "ball": see((0.0, 6.0, 2.6)), "rally_id": 2},
+        {"id": "r2", "frame": 330, "time": 11.0, "label": "receive", "ball": see((14.0, 4.0, 0.8)), "rally_id": 2},
+        {"id": "s3", "frame": 600, "time": 20.0, "label": "serve", "ball": see((0.0, 6.0, 2.6)), "rally_id": 3},
+    ]
+    feet = {
+        "s1": see((-0.5, 3.0, 0.0)),  # the server, behind the line: kept
+        "r1": see((14.0, 4.0, 0.0)),
+        "s2": see((13.0, 5.0, 0.0)),  # a receiver picked instead: the ball crosses the end line
+        "r2": see((14.0, 4.0, 0.0)),
+        "s3": see((13.0, 5.0, 0.0)),  # no receive to name the end: left alone
+    }
+    by_id = {e["id"]: e for e in positions.compute(calibration, events, feet, None)["events"]}
+    assert by_id["s1"]["court_xy"] == pytest.approx([-0.5, 3.0], abs=0.01)
+    assert by_id["s1"]["foot_image"] is not None
+    assert by_id["s2"]["court_xy"] == pytest.approx([0.0, 6.0], abs=0.01)
+    assert by_id["s2"]["ball_3d"] == pytest.approx([0.0, 6.0, 2.6], abs=0.01)
+    assert by_id["s2"]["foot_image"] is None and by_id["s2"]["reason"] is None
+    assert by_id["s3"]["court_xy"] == pytest.approx([13.0, 5.0], abs=0.01)
+    # Without its ball the wrong actor is dropped, not kept.
+    events[2] = {**events[2], "ball": None}
+    by_id = {e["id"]: e for e in positions.compute(calibration, events, feet, None)["events"]}
+    assert by_id["s2"]["court_xy"] is None and by_id["s2"]["reason"] == "not the server"
+
+
 def test_ball_is_detected_up_to_each_next_touch_or_two_seconds_on():
     from yp_video.ball.track import flight_spans
 

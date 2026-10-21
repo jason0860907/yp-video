@@ -24,6 +24,7 @@ const REASONS: Record<string, string> = {
   'no takeoff': 'Airborne touch, but the actor is not tracked on the floor within 0.7 s of it',
   'off court': 'Projects more than 3 m past the court lines — a failed projection',
   'ball hidden': 'Score with no visible ball point — nowhere to land it',
+  'not the server': 'Serve whose actor stands nowhere near the end line its receive faces, and no ball ray to cross that line',
 };
 
 export function PositionsList({

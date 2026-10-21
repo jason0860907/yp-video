@@ -117,7 +117,8 @@ export interface CourtPositions {
     /** The ball at the touch, metres; null without a camera or ball point. */
     ball_3d: Point3 | null;
     /** Why there is no court position: occluded, no association, no
-     *  detection, outside rally, no takeoff, off court or ball hidden. */
+     *  detection, outside rally, no takeoff, off court, ball hidden or not
+     *  the server. */
     reason: string | null;
   }[];
   /** Ballistic flights between consecutive touches, sampled evenly in time. */
