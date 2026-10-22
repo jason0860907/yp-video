@@ -56,7 +56,7 @@ def list_videos() -> list[dict]:
             "name": path.name,
             "kind": cut_kind_of(path),
             "has_rally_spot": fusion_inference.rally_spot_pre_annotation_path(stem).exists(),
-            "has_action_pre": pre_annotation_path(stem).exists(),
+            "has_action_pre": pre_annotation_path(path.name).exists(),
             "tracks_current": fusion_tracks_fresh(stem),
             "tracks_refined": tracks_refined(stem),
             "pipeline": prerequisites(stem).payload(),

@@ -99,6 +99,14 @@ class StagePlanTests(unittest.TestCase):
         self.assertEqual(kept, {"rally": "kept existing rallies", "action": "kept existing actions"})
         self.assertEqual(redo, {"rally": None, "action": None})
 
+    def test_dotted_stem_finds_its_action_pre_annotation(self):
+        # "vs. #Team" must not be read as a file suffix.
+        stem = "G103 #A vs. #B_set2"
+        with patch.object(fi, "pre_annotation_path", wraps=fi.pre_annotation_path) as path:
+            fi.plan_spot_stages(stem, overwrite=False)
+        self.assertEqual(path.call_args.args[0], f"{stem}.mp4")
+        self.assertEqual(fi.pre_annotation_path(f"{stem}.mp4").name, f"{stem}_actions.jsonl")
+
 
 class PerceptionPlanTests(unittest.TestCase):
     """Tracking only survives when it provably matches today's rallies;

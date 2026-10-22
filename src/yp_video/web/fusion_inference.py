@@ -278,7 +278,7 @@ def plan_spot_stages(stem: str, *, overwrite: bool) -> dict[str, str | None]:
             else "kept existing rallies"
         ),
         "action": (
-            None if overwrite or not pre_annotation_path(stem).exists()
+            None if overwrite or not pre_annotation_path(f"{stem}.mp4").exists()
             else "kept existing actions"
         ),
     }
