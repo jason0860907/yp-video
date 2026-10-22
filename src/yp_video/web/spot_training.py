@@ -192,6 +192,9 @@ def build_command(
         ):
             if task in recipe.tasks:
                 cmd.extend(["--task_sample_fps", f"{task}={fps}"])
+        for task, frames in (("rally", req.rally_clip_len), ("winner", req.winner_clip_len)):
+            if task in recipe.tasks and frames is not None:
+                cmd.extend(["--task_clip_len", f"{task}={frames}"])
         for task, backend in (
             ("action", req.audio_backend), ("rally", "none"), ("winner", "none")
         ):
@@ -234,6 +237,8 @@ def build_command(
         cmd.extend(["--init_checkpoint", str(init_checkpoint)])
     if req.epoch_num_frames is not None:
         cmd.extend(["--epoch_num_frames", str(req.epoch_num_frames)])
+    if req.activation_checkpointing:
+        cmd.append("--activation_checkpointing")
 
     if req.validation == "ratio":
         if mixed:

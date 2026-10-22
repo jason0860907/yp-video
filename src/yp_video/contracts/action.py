@@ -246,6 +246,8 @@ _MULTI_FPS_FIELDS = (
     "action_sample_fps",
     "rally_sample_fps",
     "winner_sample_fps",
+    "rally_clip_len",
+    "winner_clip_len",
     "video_limit",
     "audio_backend",
     "action_learning_rate",
@@ -282,6 +284,8 @@ _MULTI_FPS_DEFAULTS = {
     "action_sample_fps": 30.0,
     "rally_sample_fps": 5.0,
     "winner_sample_fps": 5.0,
+    "rally_clip_len": None,
+    "winner_clip_len": None,
     "video_limit": 0,
 }
 

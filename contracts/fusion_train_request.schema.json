@@ -102,9 +102,9 @@
     },
     "sample_fps": {
       "default": 30.0,
-      "description": "Per-video frame stride targeting this sampling rate. 0 = every frame.",
+      "description": "Per-video frame stride targeting this sampling rate.",
+      "exclusiveMinimum": 0,
       "maximum": 120,
-      "minimum": 0,
       "title": "Sample Fps",
       "type": "number"
     },
@@ -131,6 +131,36 @@
       "maximum": 120,
       "title": "Winner Sample Fps",
       "type": "number"
+    },
+    "rally_clip_len": {
+      "anyOf": [
+        {
+          "maximum": 256,
+          "minimum": 8,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Mixed recipe: frames per rally clip; empty = Clip len. At 5 fps, 128 frames span 25.6 s of play.",
+      "title": "Rally Clip Len"
+    },
+    "winner_clip_len": {
+      "anyOf": [
+        {
+          "maximum": 256,
+          "minimum": 8,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Mixed recipe: frames per winner clip; empty = Clip len.",
+      "title": "Winner Clip Len"
     },
     "acc_grad_iter": {
       "default": 1,
@@ -202,6 +232,12 @@
       "minimum": 8,
       "title": "Clip Len",
       "type": "integer"
+    },
+    "activation_checkpointing": {
+      "default": false,
+      "description": "Recompute the backbone's activations in the backward pass instead of keeping them: slower steps, far less GPU memory (128-frame clips at 448 need it on a 24 GB card).",
+      "title": "Activation Checkpointing",
+      "type": "boolean"
     },
     "batch_size": {
       "default": 8,

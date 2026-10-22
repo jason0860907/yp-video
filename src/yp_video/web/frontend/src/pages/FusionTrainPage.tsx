@@ -279,6 +279,12 @@ export function FusionTrainPage() {
                   <SectionLabel className="mb-1.5">Trainer</SectionLabel>
                   <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3">
                     <SchemaNumberField name="clip_len" label="Clip len" />
+                    {visible.has('rally_clip_len') && (
+                      <SchemaNumberField name="rally_clip_len" label="Rally clip len" />
+                    )}
+                    {visible.has('winner_clip_len') && (
+                      <SchemaNumberField name="winner_clip_len" label="Winner clip len" />
+                    )}
                     {visible.has('action_fg_upsample') && (
                       <SchemaNumberField name="action_fg_upsample" label="Action FG rate" step={0.05} />
                     )}
@@ -299,6 +305,7 @@ export function FusionTrainPage() {
                     <SchemaNumberField name="start_val_epoch" label="Start val" />
                     <SchemaNumberField name="epoch_num_frames" label="Epoch frames" />
                   </div>
+                  <SchemaCheckboxField name="activation_checkpointing" label="Activation checkpointing" />
                 </div>
               </div>
             </Collapsible>

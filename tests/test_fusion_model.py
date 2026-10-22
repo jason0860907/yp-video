@@ -181,6 +181,41 @@ class BuildCommandTests(unittest.TestCase):
         self.assertNotIn("--action_class_upsample", joined)
         self.assertNotIn("--person_giou_weight", joined)
         self.assertNotIn("--task_stream_weight", joined)
+        self.assertNotIn("--activation_checkpointing", joined)
+
+    def test_activation_checkpointing_reaches_the_trainer(self) -> None:
+        req = FusionTrainRequest(recipe="action_rally_winner", validation="ratio",
+                                 clip_len=128, activation_checkpointing=True)
+        prepared = PreparedLabels(
+            label_dirs={"action": Path("/a"), "rally": Path("/r")},
+            label_subdirs=(), frame_dir=Path("/frames"), dataset="yp_action_rally",
+        )
+        cmd = spot_training.build_command(
+            req, RECIPES["action_rally_winner"], prepared,
+            save_dir=Path("/run"), init_checkpoint=None, audio_dir=None,
+        )
+        self.assertIn("--activation_checkpointing", cmd)
+        self.assertIn("--clip_len 128", " ".join(cmd))
+
+    def test_rally_and_winner_take_their_own_clip_length(self) -> None:
+        recipe = RECIPES["action_rally_winner_actor"]
+        req = FusionTrainRequest(
+            recipe=recipe.id, validation="ratio",
+            **{**{k: v for k, v in recipe.defaults.items() if k != "feature_arch"},
+               "clip_len": 64, "rally_clip_len": 128, "winner_clip_len": 128},
+        )
+        prepared = PreparedLabels(
+            label_dirs={"action": Path("/a"), "rally": Path("/r")},
+            label_subdirs=(), frame_dir=Path("/frames"), dataset="yp_action_rally",
+            extra_args=["--actor_dir", "/actors", "--person_dir", "/persons"],
+        )
+        joined = " ".join(spot_training.build_command(
+            req, recipe, prepared, save_dir=Path("/run"), init_checkpoint=None, audio_dir=None,
+        ))
+        self.assertIn("--clip_len 64", joined)
+        self.assertIn("--task_clip_len rally=128", joined)
+        self.assertIn("--task_clip_len winner=128", joined)
+        self.assertNotIn("--task_clip_len action", joined)
 
     def test_a_view_keeps_only_its_own_cuts_before_any_cache_is_built(self) -> None:
         side = (Path("a.jsonl"), CUT_KINDS["sideline"].local_dir / "a.mp4")

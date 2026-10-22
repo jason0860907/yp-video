@@ -147,6 +147,21 @@ class FusionTrainRequest(StrictModel):
         le=120,
         description="Mixed recipe: winner batch sampling rate.",
     )
+    rally_clip_len: int | None = Field(
+        default=None,
+        ge=8,
+        le=256,
+        description=(
+            "Mixed recipe: frames per rally clip; empty = Clip len. At 5 fps, "
+            "128 frames span 25.6 s of play."
+        ),
+    )
+    winner_clip_len: int | None = Field(
+        default=None,
+        ge=8,
+        le=256,
+        description="Mixed recipe: frames per winner clip; empty = Clip len.",
+    )
     # ── Action recipes ───────────────────────────────────────────
     acc_grad_iter: int = Field(
         default=1,
@@ -174,6 +189,14 @@ class FusionTrainRequest(StrictModel):
     )
     clip_len: int = Field(
         default=64, ge=8, le=256, description="Frames per training clip."
+    )
+    activation_checkpointing: bool = Field(
+        default=False,
+        description=(
+            "Recompute the backbone's activations in the backward pass instead "
+            "of keeping them: slower steps, far less GPU memory (128-frame "
+            "clips at 448 need it on a 24 GB card)."
+        ),
     )
     batch_size: int = Field(default=8, ge=1, le=64)
     num_epochs: int = Field(default=50, ge=1, le=1000)
