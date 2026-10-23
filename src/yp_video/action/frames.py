@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import threading
 from collections.abc import Callable
+from contextlib import AbstractContextManager
 from pathlib import Path
 
 from yp_video.config import (
@@ -36,6 +37,12 @@ class ActionFrameCacheError(RuntimeError):
     """Raised when an action frame cache cannot be created."""
 
 
+#: Puts a cut's bytes at its canonical path for the duration of a build. The
+#: web layer passes ``r2_client.materialized_cut``; this module stays
+#: import-clean of storage clients (like ``training.CutResolver``).
+SourceFetcher = Callable[[Path], AbstractContextManager[Path]]
+
+
 def action_frame_dir(video_path: Path, *, cache_root: Path = ACTION_FRAMES_DIR) -> Path:
     return cache_root / video_path.stem
 
@@ -43,6 +50,7 @@ def action_frame_dir(video_path: Path, *, cache_root: Path = ACTION_FRAMES_DIR) 
 def ensure_action_frame_cache(
     video_path: Path,
     *,
+    fetch: SourceFetcher,
     cache_root: Path = ACTION_FRAMES_DIR,
     expected_frames: int | None = None,
 ) -> dict:
@@ -61,32 +69,10 @@ def ensure_action_frame_cache(
         if cached["ready"]:
             return {**cached, "created": False}
 
-        # Only a (re)build needs the source bytes — a ready cache serves videos
-        # whose cut now lives only in R2.
-        if not video_path.exists():
-            raise ActionFrameCacheError(
-                f"Frame cache for {video_path.stem} is missing or stale and the source "
-                f"video is not on local disk ({video_path}); download that cut to rebuild it"
-            )
-        # Holding the lock, a leftover partial can only be a killed build.
-        for stale in (output_dir, cache_root / f".{video_path.stem}.partial"):
-            if stale.exists():
-                shutil.rmtree(stale)
-        cache_root.mkdir(parents=True, exist_ok=True)
-        cmd = [
-            str(SPOT_PYTHON), "-m", SPOT_FRAME_CACHE_MODULE,
-            "--video", video_path.stem,
-            "--source", str(video_path),
-            "--output", str(cache_root),
-            "--longest-edge", str(FRAME_LONGEST_EDGE),
-        ]
-        with _EXTRACT_SEMAPHORE:
-            result = subprocess.run(cmd, cwd=SPOT_DIR, capture_output=True, text=True, check=False)
-        if result.returncode != 0:
-            detail = (result.stderr or result.stdout or "").strip()[-500:]
-            raise ActionFrameCacheError(
-                f"Failed to extract action frames for {video_path.name}: {detail}"
-            )
+        # Only a (re)build needs the source bytes, fetched for just this build —
+        # a ready cache serves a cut that lives only in R2 untouched.
+        with fetch(video_path):
+            _build(video_path, output_dir, cache_root)
         built = inspect_action_frame_cache(
             video_path, cache_root=cache_root, expected_frames=expected_frames
         )
@@ -96,6 +82,29 @@ def ensure_action_frame_cache(
                 f"contract ({built['frame_count']} frames, expected {expected_frames})"
             )
         return {**built, "created": True}
+
+
+def _build(video_path: Path, output_dir: Path, cache_root: Path) -> None:
+    """yp-spot's frame extractor over the (now local) cut."""
+    # Holding the lock, a leftover partial can only be a killed build.
+    for stale in (output_dir, cache_root / f".{video_path.stem}.partial"):
+        if stale.exists():
+            shutil.rmtree(stale)
+    cache_root.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        str(SPOT_PYTHON), "-m", SPOT_FRAME_CACHE_MODULE,
+        "--video", video_path.stem,
+        "--source", str(video_path),
+        "--output", str(cache_root),
+        "--longest-edge", str(FRAME_LONGEST_EDGE),
+    ]
+    with _EXTRACT_SEMAPHORE:
+        result = subprocess.run(cmd, cwd=SPOT_DIR, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()[-500:]
+        raise ActionFrameCacheError(
+            f"Failed to extract action frames for {video_path.name}: {detail}"
+        )
 
 
 def _cache_lock(output_dir: Path) -> threading.Lock:
@@ -146,6 +155,7 @@ def inspect_action_frame_cache(
 def ensure_action_frame_caches(
     items: list[tuple[Path, int | None]],
     *,
+    fetch: SourceFetcher,
     cache_root: Path = ACTION_FRAMES_DIR,
     progress: Callable[[int, int, str], None] | None = None,
 ) -> dict:
@@ -159,6 +169,7 @@ def ensure_action_frame_caches(
             progress(idx - 1, total, f"Preparing frames: {video_path.name}")
         info = ensure_action_frame_cache(
             video_path,
+            fetch=fetch,
             cache_root=cache_root,
             expected_frames=expected_frames,
         )

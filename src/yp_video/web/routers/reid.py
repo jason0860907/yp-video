@@ -21,11 +21,10 @@ from urllib.parse import unquote
 from fastapi import APIRouter, HTTPException
 from pydantic import Field
 
-from yp_video.config import find_cut
 from yp_video.extraction import done, links, pipeline
 from yp_video.extraction import store as extraction_store
 from yp_video.reid import checkpoints, identity, store
-from yp_video.web.r2_client import sync_to_r2
+from yp_video.web.r2_client import resolve_cut, sync_to_r2
 from yp_video.reid.embedder import (
     DEFAULT_EMBEDDER,
     EMBEDDER_NAMES,
@@ -100,7 +99,8 @@ async def embed(req: EmbedRequest) -> dict:
         raise HTTPException(400, f"Unknown embedders: {', '.join(sorted(unknown))} (have: {', '.join(registry)})")
     video_paths: list[Path] = []
     for name in req.videos:
-        path = find_cut(name)
+        # Embedding reads extraction's crops, never the mp4: an R2-only cut embeds too.
+        path = resolve_cut(name)
         if path is None:
             raise HTTPException(404, f"Video not found: {name}")
         if not extraction_store.records_path(path.stem).exists():

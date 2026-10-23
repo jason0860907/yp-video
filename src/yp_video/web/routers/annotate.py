@@ -19,7 +19,6 @@ from yp_video.config import (
     RALLY_ANNOTATIONS_DIR,
     RAW_VIDEOS_DIR,
     VIDEOS_DIR,
-    find_cut,
 )
 from yp_video.core import label_done
 from yp_video.core.ffmpeg import FFmpegError, export_segment
@@ -31,7 +30,13 @@ from yp_video.core.rallies import (
     resolve_rally_ids,
 )
 from yp_video.web import audit, worklists
-from yp_video.web.r2_client import r2_client, serve_video_or_r2_redirect, sync_to_r2
+from yp_video.web.r2_client import (
+    cut_media_source,
+    r2_client,
+    resolve_cut,
+    serve_video_or_r2_redirect,
+    sync_to_r2,
+)
 from yp_video.web.schemas import StrictModel
 from yp_video.web.rally_annotations import Annotation, write_annotations_atomic
 
@@ -226,24 +231,22 @@ class ClipZipRequest(StrictModel):
     segments: list[ClipSegment]
 
 
-def _resolve_clip_source(video: str) -> Path:
-    """Resolve an annotation's stored video path to a real file on disk.
+def _resolve_clip_source(video: str) -> tuple[str, str]:
+    """An annotation's stored video path → ``(stem, ffmpeg source)``.
 
     Annotation files store the source video as the path it was cut from.
     Accept either an absolute path or a bare filename resolved against the
-    cut dirs. The file must be present locally — FFmpeg needs to read it.
+    cut dirs. A cut that lives only in R2 is read over a presigned URL:
+    FFmpeg input-seeks to the segment, so only its bytes are fetched.
     """
     p = Path(video)
     if p.is_absolute() and p.is_file():
-        return p
-    found = find_cut(p.name)
-    if found is not None:
-        return found
-    raise HTTPException(
-        404,
-        f"Source video not found locally: {video}. "
-        "The cut video must be on this machine to export clips.",
-    )
+        return p.stem, str(p)
+    cut = resolve_cut(p.name)
+    source = cut_media_source(cut) if cut is not None else None
+    if source is None:
+        raise HTTPException(404, f"Source video not found locally or in R2: {video}")
+    return cut.stem, source
 
 
 def _clip_name(stem: str, seg: ClipSegment, idx: int) -> str:
@@ -251,7 +254,7 @@ def _clip_name(stem: str, seg: ClipSegment, idx: int) -> str:
     return f"{stem}_{seg.label}{idx:03d}_{int(seg.start)}-{int(seg.end)}.mp4"
 
 
-async def _cut(source: Path, seg: ClipSegment, out: Path) -> None:
+async def _cut(source: str, seg: ClipSegment, out: Path) -> None:
     """Stream-copy one segment, surfacing FFmpeg failures as HTTP 500."""
     if seg.end <= seg.start:
         raise HTTPException(400, f"Segment end must be after start ({seg.start}–{seg.end})")
@@ -267,10 +270,10 @@ async def _cut(source: Path, seg: ClipSegment, out: Path) -> None:
 @router.post("/clip")
 async def cut_clip(req: ClipRequest):
     """Cut a single rally segment and return it as an mp4 download."""
-    source = _resolve_clip_source(req.video)
-    audit.detail(target=source.stem, segments=1)
+    stem, source = _resolve_clip_source(req.video)
+    audit.detail(target=stem, segments=1)
     tmp = Path(tempfile.mkdtemp(prefix="rally-clip-"))
-    out = tmp / _clip_name(source.stem, req.segment, 1)
+    out = tmp / _clip_name(stem, req.segment, 1)
     try:
         await _cut(source, req.segment, out)
     except BaseException:
@@ -288,15 +291,15 @@ async def cut_clip_zip(req: ClipZipRequest):
     """Cut multiple rally segments and bundle them into one zip."""
     if not req.segments:
         raise HTTPException(400, "No segments selected")
-    source = _resolve_clip_source(req.video)
-    audit.detail(target=source.stem, segments=len(req.segments))
+    stem, source = _resolve_clip_source(req.video)
+    audit.detail(target=stem, segments=len(req.segments))
     tmp = Path(tempfile.mkdtemp(prefix="rally-clips-"))
     try:
         buf = io.BytesIO()
         # ZIP_STORED — mp4 is already compressed, deflating just burns CPU.
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as zf:
             for i, seg in enumerate(req.segments, 1):
-                out = tmp / _clip_name(source.stem, seg, i)
+                out = tmp / _clip_name(stem, seg, i)
                 await _cut(source, seg, out)
                 zf.write(out, out.name)
     finally:

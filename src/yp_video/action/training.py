@@ -129,8 +129,8 @@ def label_items(
     label of the same name always wins over the prediction.
 
     ``resolve`` maps each cut filename to its canonical path; a cut whose
-    bytes live only in R2 trains fine off its existing frame cache, and the
-    cache phase raises if that cache would need a rebuild.
+    bytes live only in R2 trains off its frame cache, which the cache phase
+    builds from a one-off download when it is missing or stale.
     """
     label_files = sorted(ACTION_ANNOTATIONS_DIR.glob(LABEL_FILE_GLOB))
     if include_predictions:

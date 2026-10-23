@@ -32,7 +32,7 @@ from yp_video.contracts.action import (
     spotting_task,
     spotting_tasks,
 )
-from yp_video.web.r2_client import resolve_cut
+from yp_video.web.r2_client import materialized_cut, resolve_cut
 from yp_video.web.train_requests import FusionTrainRequest
 
 Progress = Callable[[int, int, str], None]
@@ -85,6 +85,7 @@ class RallySource:
             raise RuntimeError("No rally annotations with a cut video (local or R2)")
         ensure_action_frame_caches(
             [(video_path, None) for _ann, video_path in items],
+            fetch=materialized_cut,
             cache_root=ACTION_FRAMES_DIR,
             progress=progress,
         )
@@ -124,6 +125,7 @@ class ActionSource:
         # extracted cache in the next step.
         ensure_action_frame_caches(
             [(video_path, None) for _label, video_path in items],
+            fetch=materialized_cut,
             cache_root=ACTION_FRAMES_DIR,
             progress=progress,
         )
