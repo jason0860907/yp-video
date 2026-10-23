@@ -18,7 +18,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from yp_video.contracts.action import ACTION_LABELS
+from yp_video.contracts.action import ACTION_LABELS, ACTOR_LABELS, END_LABELS
 
 # Position in the 接→舉→打 build-up. A serve is the opponent's ball into play
 # and a block answers *their* attack, so neither is part of one.
@@ -124,14 +124,14 @@ def rally_outcomes(
     out = []
     for index, touches in _by_rally(rallies, events):
         kinds = {kind(events[i]) for i in touches}
-        whistles = [i for i in touches if kind(events[i]) == "score"]
+        whistles = [i for i in touches if kind(events[i]) in END_LABELS]
         # Only what happened before the final whistle can have decided it.
         cutoff = events[whistles[-1]]["time"] if whistles else float("inf")
         rally_attacks = [
             a for a in _rally_attacks(events, touches) if events[a[-1]]["time"] < cutoff
         ]
         plays = [
-            i for i in touches if kind(events[i]) != "score" and events[i]["time"] < cutoff
+            i for i in touches if kind(events[i]) in ACTOR_LABELS and events[i]["time"] < cutoff
         ]
         out.append(
             {
@@ -153,11 +153,11 @@ def touch_sides(events: Sequence[Event], serve_side: str) -> list[str | None]:
     answers. Where the order stops determining sides the walk stops and the
     rest stay None: a block (the ball may come back to either side), a
     receive in mid-possession (a free ball came over — or a second pass), a
-    fourth touch. Whistles name no side. A rally not opening with its serve
-    yields all None.
+    fourth touch. Ball events (net, ground, score) name no side. A rally not
+    opening with its serve yields all None.
     """
     sides: list[str | None] = [None] * len(events)
-    touches = [i for i, event in enumerate(events) if kind(event) != "score"]
+    touches = [i for i, event in enumerate(events) if kind(event) in ACTOR_LABELS]
     if not touches or kind(events[touches[0]]) != "serve":
         return sides
     side, touched, crossing, previous = serve_side, 0, False, None

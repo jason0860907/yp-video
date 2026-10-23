@@ -26,7 +26,7 @@ from yp_video.config import (
     ACTION_PRE_ANNOTATIONS_DIR,
     EXTRACTION_DIR,
 )
-from yp_video.contracts.action import LABEL_FILE_SUFFIX, event_id
+from yp_video.contracts.action import BALL_LABELS, LABEL_FILE_SUFFIX, event_id
 from yp_video.core.jsonl import read_jsonl_cached
 from yp_video.core.rallies import (
     load_rallies,
@@ -40,11 +40,11 @@ CROPS_DIR = EXTRACTION_DIR / "crops"
 # every masked embed run.
 MASKED_CROPS_DIR = EXTRACTION_DIR / "crops-masked"
 
-# Action labels with nobody to re-identify: "score" marks where the ball
-# lands, not a person. Applied at extraction AND at read time: labels are
-# overlaid from the live action annotation (ACTION_FIELDS), so an event
-# re-labelled "score" after extraction must drop out too.
-SKIP_LABELS = frozenset({"score"})
+# Action labels with nobody to re-identify: net / ground / score mark where
+# the ball met something other than a person. Applied at extraction AND at
+# read time: labels are overlaid from the live action annotation
+# (ACTION_FIELDS), so an event re-labelled after extraction must drop out too.
+SKIP_LABELS = BALL_LABELS
 
 # These describe the ACTION, not the detector output.  Old extraction files
 # contain snapshots of them, but action annotations are the sole authority:
@@ -137,7 +137,7 @@ def labelable(records: Iterable[dict], stem: str, fps: float) -> list[dict]:
 
     Three exclusions, one reason — there is nobody/current event to name:
 
-    - SKIP_LABELS: a "score" marks where the ball landed, not a player.
+    - SKIP_LABELS: net / ground / score mark the ball, not a player.
     - Outside every rally span: nobody is TRACKED between rallies (see
       tracklets/tracking.py, which scans rally spans and nothing else), so
       there is no tracklet for an actor to be, and in practice these are

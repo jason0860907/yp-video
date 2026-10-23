@@ -5,6 +5,7 @@
  *  and what came of it. Mirrored here so the rules can be checked against the
  *  video before the app ships them. */
 
+import { END_LABELS } from '@/lib/actionEditorModel';
 import { flightStats, type Arc, type CourtPositions, type FlightStats } from '@/pages/label/court/geometry';
 
 const WIDTH = 9;
@@ -177,8 +178,9 @@ export function touchFlights(positions: CourtPositions, netHeight: number): Touc
   }
   const setInto = new Map(positions.arcs.filter((a) => a.label === 'set').map((a) => [a.to, a]));
   const rallies = new Map<number, Event[]>();
+  // A net contact is no touch: what came of an attack is read off the plays around it.
   for (const e of [...positions.events].sort((a, b) => a.time - b.time)) {
-    if (e.rally_id != null) rallies.set(e.rally_id, [...(rallies.get(e.rally_id) ?? []), e]);
+    if (e.rally_id != null && e.label !== 'net') rallies.set(e.rally_id, [...(rallies.get(e.rally_id) ?? []), e]);
   }
   for (const f of flights) {
     if (f.arc.label !== 'spike') continue;
@@ -224,7 +226,7 @@ function resultOf(
   if (!next) return [null, null];
   const ours = (e: Event) => halfOf(e) === f.half;
 
-  if (next.label === 'score') {
+  if (END_LABELS.has(next.label)) {
     if (!f.crossed) return ['error', 'net'];
     const at = next.court_xy;
     if (!at) return [null, null];
@@ -235,7 +237,7 @@ function resultOf(
     if (!then) return [null, null];
     // Off the block and down on the attackers' own court is a stuff block;
     // anywhere else the block touched it out or it fell on their side.
-    if (then.label === 'score') {
+    if (END_LABELS.has(then.label)) {
       return then.court_xy && inCourt(then.court_xy) && ours(then) ? ['blocked', null] : ['kill', null];
     }
     return ours(then) ? ['covered', null] : ['dug', null];
@@ -243,7 +245,7 @@ function resultOf(
   // Played by the other side: a dig that ended the rally is a kill, a poor
   // one put them under pressure, a good one dug it.
   if (ours(next)) return [null, null];
-  if (then?.label === 'score') return ['kill', null];
+  if (then && END_LABELS.has(then.label)) return ['kill', null];
   const dig = byEvent.get(next.id);
   if (!dig) return [null, null];
   return [grade(dig.to, dig.crossed) === 'poor' ? 'tough' : 'dug', null];

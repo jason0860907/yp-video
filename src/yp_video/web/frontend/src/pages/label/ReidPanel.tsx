@@ -34,6 +34,7 @@ import { useVideoLabelingData } from '@/components/labeling/useVideoLabelingData
 import { LiveJob } from '@/components/job/LiveJob';
 import type { Job, ReidClusters, ReidOptions, ReidPlayers, ReidRecord, ReidVideo } from '@/types/api';
 import { reidStatus } from '@/lib/labelStatus';
+import { BALL_LABELS } from '@/lib/actionEditorModel';
 import { STATUS_OPTIONS, type ModeDescriptor, type PlaybackClock, type RegisterGuard } from './mode';
 
 // Embedders and their threshold-slider calibration both come from
@@ -216,12 +217,12 @@ export function ReidPanel({ video, registerGuard, clock }: { video: string; regi
     return () => registerGuard(null);
   }, [registerGuard, boardDirty]);
 
-  // The denominator is deliberately simple: every action except score (the
-  // ball-landing marker — nobody performs it). Off-frame and occluded events
+  // The denominator is deliberately simple: every action except the ball
+  // events (net / ground / score — nobody performs them). Off-frame and occluded events
   // stay in the count, so the ratio understates rather than surprises; the
   // Done confirm is a confirm, not a gate.
   const actionableCount = actionEvents.length
-    ? actionEvents.filter((a) => a.label !== 'score').length
+    ? actionEvents.filter((a) => !BALL_LABELS.has(a.label)).length
     : records.length;
   // Events that already carry an identity: member of a named group on the
   // live board (unsaved edits count — the board is the source of truth).
@@ -306,7 +307,7 @@ export function ReidPanel({ video, registerGuard, clock }: { video: string; regi
             {video && (
               <span
                 className="font-mono text-[11px] leading-none tabular-nums text-text-muted"
-                title="Assigned to a player or marked occluded / all actions except score (off-frame events included, so 100% is not always reachable)"
+                title="Assigned to a player or marked occluded / all actions except net / ground / score (off-frame events included, so 100% is not always reachable)"
               >
                 <span className={resolvedCount >= actionableCount ? 'text-primary-light' : undefined}>{resolvedCount}</span>/{actionableCount} actions
               </span>

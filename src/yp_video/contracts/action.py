@@ -354,14 +354,22 @@ class ActionLabel(str, Enum):
     spike = "spike"
     block = "block"
     score = "score"
+    net = "net"
+    ground = "ground"
 
 
 # Canonical labels: ordered tuple for UI/display, frozenset for membership.
+# The order is also the editor's 1–8 hotkeys, so new labels go last.
 ACTION_LABELS_ORDERED = tuple(label.value for label in ActionLabel)
 ACTION_LABELS = frozenset(ACTION_LABELS_ORDERED)
+#: How a rally ends: the ball on the floor (ground), or any other end
+#: (score — out off a wall, the ceiling, the antenna, a fault).
+END_LABELS = frozenset({ActionLabel.ground.value, ActionLabel.score.value})
+#: Where the ball meets something other than a player — nobody to point at.
+BALL_LABELS = END_LABELS | {ActionLabel.net.value}
 #: Touches a player makes — the actor head's classes (yp_spot
-#: model/actor_head.CLASSES). A score has nobody to point at.
-ACTOR_LABELS = ACTION_LABELS - {ActionLabel.score.value}
+#: model/actor_head.CLASSES).
+ACTOR_LABELS = ACTION_LABELS - BALL_LABELS
 
 
 class CourtSide(str, Enum):

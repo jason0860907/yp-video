@@ -31,8 +31,9 @@ MAX_CONTACT_Z_M = 4.5
 #: Longest gap between two touches still drawn as one flight. Past this the
 #: ball has surely been touched in between by something unlabeled.
 MAX_FLIGHT_S = 2.0
-#: A score marks where the ball came down, not a touch anyone made.
-LANDING_LABEL = "score"
+#: Where the ball came down, not a touch anyone made. The model does not
+#: spot ground yet, so its floor landings still arrive as score.
+LANDING_LABELS = frozenset({"ground", "score"})
 SERVE_LABEL = "serve"
 #: How far inside its end line a server's feet may still be placed: a jump
 #: serve is struck in the air past the line, and far feet project long.
@@ -214,7 +215,7 @@ def _flights(events: list[dict], cam: camera.Camera | None, aspect: float, track
         sent = {arc["from"] for arc in arcs}
         for a, b in zip(events, [*events[1:], None]):
             # A landing sends nothing: what follows it is a bounce.
-            if a["id"] in sent or a["ball_3d"] is None or a["rally_id"] is None or a["label"] == LANDING_LABEL:
+            if a["id"] in sent or a["ball_3d"] is None or a["rally_id"] is None or a["label"] in LANDING_LABELS:
                 continue
             if b is not None and (b["rally_id"] != a["rally_id"] or not 0 < b["time"] - a["time"] <= MAX_FLIGHT_S):
                 b = None
@@ -317,7 +318,7 @@ def compute(calibration: Calibration, events: Sequence[Mapping], feet: Feet, tra
     for event in sorted(events, key=lambda e: e["time"]):
         ball = event.get("ball")
         foot = None
-        if event["label"] == LANDING_LABEL:
+        if event["label"] in LANDING_LABELS:
             # On the floor, so the floor homography places it on its own.
             court_xy = geometry.project(to_court, np.array([ball]))[0] if ball else None
             reason = "ball hidden" if ball is None else None if _in_play_area(court_xy) else "off court"

@@ -18,6 +18,12 @@ from yp_video.core.rallies import load_rallies
 
 log = logging.getLogger(__name__)
 
+#: SPOT still learns the six classes it shipped with while the corpus is
+#: re-reviewed for the ball events: a floor landing trains as the score it was
+#: labelled before ground existed, and net is not a class yet.
+TRAINED_AS = {"ground": "score"}
+UNTRAINED = frozenset({"net"})
+
 
 def prepare_action_training_labels(
     *,
@@ -76,7 +82,11 @@ def prepare_action_training_labels(
                 "%s: dropped %d action event(s) beyond the %d-frame cache",
                 path.name, dropped, cache_frames,
             )
-        records = kept
+        records = [
+            {**event, "label": TRAINED_AS.get(event["label"], event["label"])}
+            for event in records
+            if event["label"] not in UNTRAINED
+        ]
 
         original_frames = int(meta.get("num_frames") or 0)
         # Explicit field pick, not {**meta}: the snapshot must carry only

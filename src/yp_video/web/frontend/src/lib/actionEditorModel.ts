@@ -8,7 +8,12 @@ import type {
   CourtSide,
 } from '@/types/api';
 
-export const DEFAULT_ACTION_LABELS = ['serve', 'receive', 'set', 'spike', 'block', 'score'];
+export const DEFAULT_ACTION_LABELS = ['serve', 'receive', 'set', 'spike', 'block', 'score', 'net', 'ground'];
+/** Where the ball meets something other than a player — nobody to point at
+ *  (backend contracts/action.BALL_LABELS). */
+export const BALL_LABELS = new Set<string | null | undefined>(['net', 'ground', 'score']);
+/** How a rally ends: on the floor (ground) or any other end (score). */
+export const END_LABELS = new Set<string | null | undefined>(['ground', 'score']);
 export const OUTSIDE_RALLY_KEY = '__outside__';
 
 export interface ActionEditor {
