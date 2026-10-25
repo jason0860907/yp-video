@@ -13,6 +13,7 @@ import asyncio
 import logging
 import os
 import re
+import subprocess
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -50,6 +51,7 @@ from yp_video.web.label_sources import (
     label_stem,
     source_for,
 )
+from yp_video.web.r2_client import materialized_cut, resolve_cut
 from yp_video.web.spot_runs import (
     PackageExporter,
     TrainProgress,
@@ -114,13 +116,11 @@ def _audio_backend(req: FusionTrainRequest, recipe: Recipe) -> str:
 
 
 def _audio_precompute_command(
-    backend: str, *, label_dir: Path, audio_dir: Path
+    backend: str, *, label_files: list[Path], audio_dir: Path
 ) -> list[str]:
-    """``yp_spot.audio.precompute`` over the run-local labels. Features are
-    keyed by video and reused across runs (already-cached videos are skipped)."""
-    label_files = sorted(label_dir.glob(TASKS["action"].label_glob))
-    if not label_files:
-        raise RuntimeError(f"No action labels to precompute audio from in {label_dir}")
+    """``yp_spot.audio.precompute`` over run-local labels. Features are keyed
+    by video and reused across runs (already-cached videos are skipped); a
+    video with no local cut is skipped too (see _precompute_remote_audio)."""
     return [
         str(SPOT_PYTHON),
         "-m",
@@ -273,6 +273,27 @@ def build_command(
     return cmd
 
 
+def _precompute_remote_audio(backend: str, label_files: list[Path], audio_dir: Path) -> int:
+    """Audio features for the videos whose cut lives only in R2: each one is
+    fetched into the layout, precomputed and removed again, one at a time so
+    the disk never holds more than one extra cut. Returns how many ran."""
+    done = 0
+    for label_file in label_files:
+        video = label_stem(label_file.name)
+        if (audio_dir / f"{video}.npy").exists():
+            continue
+        cut = resolve_cut(f"{video}.mp4")
+        if cut is None:
+            raise RuntimeError(f"No cut for {video}: its audio features cannot be computed")
+        with materialized_cut(cut):
+            subprocess.run(
+                _audio_precompute_command(backend, label_files=[label_file], audio_dir=audio_dir),
+                cwd=SPOT_DIR, check=True, capture_output=True,
+            )
+        done += 1
+    return done
+
+
 def _export_package(
     *,
     run_dir: Path,
@@ -397,20 +418,24 @@ async def start_training_job(req: FusionTrainRequest) -> dict:
             if backend != "none":
                 audio_dir = ACTION_AUDIO_DIR / backend
                 audio_dir.mkdir(parents=True, exist_ok=True)
+                label_files = sorted(prepared.label_dirs["action"].glob(TASKS["action"].label_glob))
+                if not label_files:
+                    raise RuntimeError("No action labels to precompute audio from")
                 await job_manager.update_job(
                     job.id, message=f"Precomputing {backend} audio features..."
                 )
                 rc, last_line = await stream_subprocess(
                     job.id,
-                    _audio_precompute_command(
-                        backend,
-                        label_dir=prepared.label_dirs["action"],
-                        audio_dir=audio_dir,
-                    ),
+                    _audio_precompute_command(backend, label_files=label_files, audio_dir=audio_dir),
                     cwd=SPOT_DIR,
                 )
                 if rc != 0:
                     raise RuntimeError(subprocess_failure("Audio precompute", rc, last_line))
+                fetched = await asyncio.to_thread(
+                    _precompute_remote_audio, backend, label_files, audio_dir
+                )
+                if fetched:
+                    print(f"{terminal_prefix(job)}Audio features of {fetched} R2-only cut(s) precomputed", flush=True)
 
             cmd = build_command(
                 req, recipe, prepared,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -196,6 +197,34 @@ class BuildCommandTests(unittest.TestCase):
         )
         self.assertIn("--activation_checkpointing", cmd)
         self.assertIn("--clip_len 128", " ".join(cmd))
+
+    def test_audio_of_an_r2_only_cut_is_precomputed_one_cut_at_a_time(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            labels, audio = Path(tmp) / "labels", Path(tmp) / "audio"
+            labels.mkdir(); audio.mkdir()
+            for stem in ("cached", "remote"):
+                (labels / f"{stem}_actions.jsonl").write_text("{}\n")
+            (audio / "cached.npy").write_bytes(b"")
+            calls, fetched = [], []
+
+            @contextmanager
+            def materialized(path):
+                fetched.append(path.name)
+                yield path
+
+            with (
+                patch.object(spot_training, "resolve_cut", lambda name: Path("/cuts") / name),
+                patch.object(spot_training, "materialized_cut", materialized),
+                patch.object(spot_training.subprocess, "run", lambda cmd, **kw: calls.append(cmd)),
+            ):
+                done = spot_training._precompute_remote_audio(
+                    "atst_logmel", sorted(labels.glob("*_actions.jsonl")), audio)
+
+        self.assertEqual(done, 1)
+        self.assertEqual(fetched, ["remote.mp4"])
+        self.assertEqual(len(calls), 1)
+        self.assertIn(str(labels / "remote_actions.jsonl"), calls[0])
+        self.assertNotIn(str(labels / "cached_actions.jsonl"), calls[0])
 
     def test_rally_and_winner_take_their_own_clip_length(self) -> None:
         recipe = RECIPES["action_rally_winner_actor"]
