@@ -4,8 +4,8 @@
   "version": "3.1.0",
   "description": "Source of truth for the *_actions.jsonl label records and frame cache layout exchanged between yp-video (producer) and yp-spot (consumer). Generated from yp_video/contracts/action.py via make_schema.py \u2014 do not edit by hand. yp-spot mirrors these constants in yp_spot/contract.py under the same version.",
   "x-frame-layout": {
-    "height": 224,
-    "ffmpeg_pattern": "%06d.jpg",
+    "format": "spot-native-jpeg448-v1",
+    "longest_edge": 448,
     "py_pattern": "{:06d}.jpg",
     "glob": "*.jpg",
     "zero_based": true
@@ -227,11 +227,14 @@
         "action_sample_fps",
         "rally_sample_fps",
         "winner_sample_fps",
+        "rally_clip_len",
+        "winner_clip_len",
         "video_limit",
         "audio_backend",
         "action_learning_rate",
         "rally_learning_rate",
         "winner_learning_rate",
+        "audio_learning_rate",
         "action_stream_weight",
         "rally_stream_weight",
         "winner_stream_weight",
@@ -253,6 +256,7 @@
         "action_learning_rate": 3e-05,
         "rally_learning_rate": 3e-05,
         "winner_learning_rate": 3e-05,
+        "audio_learning_rate": null,
         "action_stream_weight": 1,
         "rally_stream_weight": 1,
         "winner_stream_weight": 1,
@@ -263,6 +267,8 @@
         "action_sample_fps": 30.0,
         "rally_sample_fps": 5.0,
         "winner_sample_fps": 5.0,
+        "rally_clip_len": null,
+        "winner_clip_len": null,
         "video_limit": 0
       }
     },
@@ -282,11 +288,14 @@
         "action_sample_fps",
         "rally_sample_fps",
         "winner_sample_fps",
+        "rally_clip_len",
+        "winner_clip_len",
         "video_limit",
         "audio_backend",
         "action_learning_rate",
         "rally_learning_rate",
         "winner_learning_rate",
+        "audio_learning_rate",
         "action_stream_weight",
         "rally_stream_weight",
         "winner_stream_weight",
@@ -309,6 +318,7 @@
         "action_learning_rate": 3e-05,
         "rally_learning_rate": 3e-05,
         "winner_learning_rate": 3e-05,
+        "audio_learning_rate": null,
         "action_stream_weight": 1,
         "rally_stream_weight": 1,
         "winner_stream_weight": 1,
@@ -319,6 +329,8 @@
         "action_sample_fps": 30.0,
         "rally_sample_fps": 5.0,
         "winner_sample_fps": 5.0,
+        "rally_clip_len": null,
+        "winner_clip_len": null,
         "video_limit": 0,
         "actor_stream_weight": 2
       }
@@ -421,7 +433,6 @@
           "type": "integer"
         },
         "fps": {
-          "default": 30.0,
           "exclusiveMinimum": 0,
           "title": "Fps",
           "type": "number"
@@ -436,7 +447,8 @@
       },
       "required": [
         "video",
-        "num_frames"
+        "num_frames",
+        "fps"
       ],
       "title": "ActionLabelRecord",
       "type": "object"

@@ -245,6 +245,9 @@ export function FusionTrainPage() {
                     {visible.has('winner_learning_rate') && (
                       <SchemaNumberField name="winner_learning_rate" label="Winner" />
                     )}
+                    {visible.has('audio_learning_rate') && (
+                      <SchemaNumberField name="audio_learning_rate" label="Audio" />
+                    )}
                   </div>
                 </div>
                 <div>
@@ -306,6 +309,7 @@ export function FusionTrainPage() {
                     <SchemaNumberField name="epoch_num_frames" label="Epoch frames" />
                   </div>
                   <SchemaCheckboxField name="activation_checkpointing" label="Activation checkpointing" />
+                  <SchemaCheckboxField name="freeze_backbone" label="Freeze backbone" />
                 </div>
               </div>
             </Collapsible>

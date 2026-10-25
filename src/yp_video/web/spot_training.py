@@ -207,6 +207,8 @@ def build_command(
         ):
             if task in recipe.tasks and learning_rate is not None:
                 cmd.extend(["--task_learning_rate", f"{task}={learning_rate}"])
+        if req.audio_learning_rate is not None:
+            cmd.extend(["--audio_learning_rate", str(req.audio_learning_rate)])
         for task, weight in (
             ("action", req.action_stream_weight),
             ("rally", req.rally_stream_weight),
@@ -239,6 +241,8 @@ def build_command(
         cmd.extend(["--epoch_num_frames", str(req.epoch_num_frames)])
     if req.activation_checkpointing:
         cmd.append("--activation_checkpointing")
+    if req.freeze_backbone:
+        cmd.append("--freeze_backbone")
 
     if req.validation == "ratio":
         if mixed:

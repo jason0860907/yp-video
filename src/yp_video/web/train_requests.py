@@ -172,12 +172,14 @@ class FusionTrainRequest(StrictModel):
             "divide evenly)."
         ),
     )
-    audio_backend: Literal["logmel", "none"] = Field(
+    audio_backend: Literal["logmel", "atst_logmel", "none"] = Field(
         default="logmel",
         description=(
             "Action recipes: logmel adds late-fusion audio (precomputed before "
-            "training); none trains a pure-visual model. Must match at "
-            "inference. Rally recipes are always visual-only."
+            "training); atst_logmel adds the pretrained ATST-Frame encoder's "
+            "40 ms embedding to it (GPU precompute, ~3 GB per 60 videos); none "
+            "trains a pure-visual model. Must match at inference. Rally recipes "
+            "are always visual-only."
         ),
     )
     # ── Common ───────────────────────────────────────────────────
@@ -196,6 +198,14 @@ class FusionTrainRequest(StrictModel):
             "Recompute the backbone's activations in the backward pass instead "
             "of keeping them: slower steps, far less GPU memory (128-frame "
             "clips at 448 need it on a 24 GB card)."
+        ),
+    )
+    freeze_backbone: bool = Field(
+        default=False,
+        description=(
+            "Train the heads, temporal models and audio encoder only; the "
+            "backbone keeps the init checkpoint's weights. Needs an init "
+            "checkpoint; no activation checkpointing."
         ),
     )
     batch_size: int = Field(default=8, ge=1, le=64)
@@ -219,6 +229,14 @@ class FusionTrainRequest(StrictModel):
     winner_learning_rate: float | None = Field(
         default=None, gt=0,
         description="Optional Winner head learning rate override for mixed training.",
+    )
+    audio_learning_rate: float | None = Field(
+        default=None, gt=0,
+        description=(
+            "Optional audio encoder learning rate; empty = Learning rate. A new "
+            "audio branch on a fine-tuned checkpoint (atst_logmel from a logmel "
+            "model) needs far more than a fine-tuning rate."
+        ),
     )
     #: Relative share of the shared epoch frame budget per stream (integer;
     #: 2/1/1 gives the action stream half of every epoch). 1 each = even split.

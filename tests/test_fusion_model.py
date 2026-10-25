@@ -183,6 +183,7 @@ class BuildCommandTests(unittest.TestCase):
         self.assertNotIn("--person_giou_weight", joined)
         self.assertNotIn("--task_stream_weight", joined)
         self.assertNotIn("--activation_checkpointing", joined)
+        self.assertNotIn("--freeze_backbone", joined)
 
     def test_activation_checkpointing_reaches_the_trainer(self) -> None:
         req = FusionTrainRequest(recipe="action_rally_winner", validation="ratio",
@@ -197,6 +198,19 @@ class BuildCommandTests(unittest.TestCase):
         )
         self.assertIn("--activation_checkpointing", cmd)
         self.assertIn("--clip_len 128", " ".join(cmd))
+
+    def test_freeze_backbone_reaches_the_trainer(self) -> None:
+        req = FusionTrainRequest(recipe="action_rally_winner", validation="ratio",
+                                 freeze_backbone=True)
+        prepared = PreparedLabels(
+            label_dirs={"action": Path("/a"), "rally": Path("/r")},
+            label_subdirs=(), frame_dir=Path("/frames"), dataset="yp_action_rally",
+        )
+        cmd = spot_training.build_command(
+            req, RECIPES["action_rally_winner"], prepared,
+            save_dir=Path("/run"), init_checkpoint=Path("/init.pt"), audio_dir=None,
+        )
+        self.assertIn("--freeze_backbone", cmd)
 
     def test_audio_of_an_r2_only_cut_is_precomputed_one_cut_at_a_time(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -245,6 +259,25 @@ class BuildCommandTests(unittest.TestCase):
         self.assertIn("--task_clip_len rally=128", joined)
         self.assertIn("--task_clip_len winner=128", joined)
         self.assertNotIn("--task_clip_len action", joined)
+
+    def test_audio_encoder_learning_rate_reaches_the_trainer(self) -> None:
+        recipe = RECIPES["action_rally_winner_actor"]
+        prepared = PreparedLabels(
+            label_dirs={"action": Path("/a"), "rally": Path("/r")},
+            label_subdirs=(), frame_dir=Path("/frames"), dataset="yp_action_rally",
+            extra_args=["--actor_dir", "/actors", "--person_dir", "/persons"],
+        )
+        defaults = {k: v for k, v in recipe.defaults.items() if k != "feature_arch"}
+        for rate, expected in ((1e-4, "--audio_learning_rate 0.0001"), (None, None)):
+            req = FusionTrainRequest(recipe=recipe.id, validation="ratio",
+                                     **{**defaults, "audio_learning_rate": rate})
+            joined = " ".join(spot_training.build_command(
+                req, recipe, prepared, save_dir=Path("/run"), init_checkpoint=None, audio_dir=None,
+            ))
+            if expected:
+                self.assertIn(expected, joined)
+            else:
+                self.assertNotIn("--audio_learning_rate", joined)
 
     def test_a_view_keeps_only_its_own_cuts_before_any_cache_is_built(self) -> None:
         side = (Path("a.jsonl"), CUT_KINDS["sideline"].local_dir / "a.mp4")

@@ -172,9 +172,10 @@
     },
     "audio_backend": {
       "default": "logmel",
-      "description": "Action recipes: logmel adds late-fusion audio (precomputed before training); none trains a pure-visual model. Must match at inference. Rally recipes are always visual-only.",
+      "description": "Action recipes: logmel adds late-fusion audio (precomputed before training); atst_logmel adds the pretrained ATST-Frame encoder's 40 ms embedding to it (GPU precompute, ~3 GB per 60 videos); none trains a pure-visual model. Must match at inference. Rally recipes are always visual-only.",
       "enum": [
         "logmel",
+        "atst_logmel",
         "none"
       ],
       "title": "Audio Backend",
@@ -237,6 +238,12 @@
       "default": false,
       "description": "Recompute the backbone's activations in the backward pass instead of keeping them: slower steps, far less GPU memory (128-frame clips at 448 need it on a 24 GB card).",
       "title": "Activation Checkpointing",
+      "type": "boolean"
+    },
+    "freeze_backbone": {
+      "default": false,
+      "description": "Train the heads, temporal models and audio encoder only; the backbone keeps the init checkpoint's weights. Needs an init checkpoint; no activation checkpointing.",
+      "title": "Freeze Backbone",
       "type": "boolean"
     },
     "batch_size": {
@@ -308,6 +315,20 @@
       "default": null,
       "description": "Optional Winner head learning rate override for mixed training.",
       "title": "Winner Learning Rate"
+    },
+    "audio_learning_rate": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Optional audio encoder learning rate; empty = Learning rate. A new audio branch on a fine-tuned checkpoint (atst_logmel from a logmel model) needs far more than a fine-tuning rate.",
+      "title": "Audio Learning Rate"
     },
     "action_stream_weight": {
       "default": 1,
