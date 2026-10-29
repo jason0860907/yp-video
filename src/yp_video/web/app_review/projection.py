@@ -20,6 +20,9 @@ from .models import Bundle, Event, Rally, Window
 from .stats import summary
 
 PAD = 1.0
+# Lead-in before a chain's first touch, short so a play opens on its own
+# receive rather than on the serve or attack 0.5–1.3 s before it.
+CHAIN_LEAD = 0.3
 
 
 def kind(event: Event) -> str:
@@ -70,12 +73,12 @@ class Context:
         anchor = self.anchor.time
         chain_start = self.chain[0].time if self.chain else anchor
         if kind(self.anchor) == "score":
-            start = max(0, chain_start - PAD)
+            start = max(0, chain_start - CHAIN_LEAD)
             return start, max(start, anchor + PAD)
         result = (
             self.next.time if self.next else self.rally.end if self.rally else anchor
         )
-        start = max(0, (chain_start if mode == "full_play" else anchor) - PAD)
+        start = max(0, chain_start - CHAIN_LEAD if mode == "full_play" else anchor - PAD)
         return start, max(start, result + PAD)
 
 

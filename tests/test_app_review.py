@@ -57,7 +57,7 @@ def bundle(events=(), rallies=((1, 9, 20),), **changes):
 @pytest.mark.parametrize(
     "mode,bounds,kinds",
     [
-        ("full_play", (10, 15), ["receive", "set", "spike"]),
+        ("full_play", (10.7, 15), ["receive", "set", "spike"]),
         ("to_next", (12, 15), ["spike"]),
         ("whole_rally", (9, 20), ["serve", "receive", "set", "spike", "receive"]),
     ],
@@ -96,19 +96,19 @@ def test_score_last_whistle_and_spike_not_defensive_receive():
         c = clips[0]
         assert c["key"] == "16.000"
         assert c["event_id"] == "f390"
-        assert (c["start"], c["end"]) == (10, 17)
+        assert (c["start"], c["end"]) == (10.7, 17)
 
 
 def test_empty_rally_and_standalone_score():
     r = project(bundle([("score", 25)]))
-    assert [(c["start"], c["end"]) for c in r["scores"]] == [(9, 20), (24, 26)]
+    assert [(c["start"], c["end"]) for c in r["scores"]] == [(9, 20), (24.7, 26)]
     assert r["scores"][0]["key"] == "unmapped-rally-1"
 
 
 def test_non_spike_deciding_touch():
     c = project(bundle([("receive", 11), ("set", 12), ("score", 14)]))["scores"][0]
     assert [t["kind"] for t in c["touches"]] == ["set"]
-    assert (c["start"], c["end"]) == (11, 15)
+    assert (c["start"], c["end"]) == (11.7, 15)
 
 
 def test_trim_soft_delete_and_outcomes():
