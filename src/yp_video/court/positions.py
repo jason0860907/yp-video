@@ -32,8 +32,9 @@ MAX_CONTACT_Z_M = 4.5
 #: ball has surely been touched in between by something unlabeled.
 MAX_FLIGHT_S = 2.0
 #: Where the ball came down, not a touch anyone made. The model does not
-#: spot ground yet, so its floor landings still arrive as score.
-LANDING_LABELS = frozenset({"ground", "score"})
+#: spot ground yet, so its floor landings still arrive as score. An antenna
+#: hit stays with them, as it did when it was labelled score.
+LANDING_LABELS = frozenset({"ground", "antenna", "score"})
 SERVE_LABEL = "serve"
 #: How far inside its end line a server's feet may still be placed: a jump
 #: serve is struck in the air past the line, and far feet project long.

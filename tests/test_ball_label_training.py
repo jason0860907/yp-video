@@ -1,5 +1,5 @@
 """The training snapshot keeps SPOT on its six classes while the corpus is
-re-reviewed for the ball events: ground trains as score, net not at all."""
+re-reviewed for the ball events: ground and antenna train as score, net not at all."""
 
 from __future__ import annotations
 
@@ -28,6 +28,7 @@ class BallLabelTrainingTests(unittest.TestCase):
                     {"id": "b", "frame": 40, "label": "net"},
                     {"id": "c", "frame": 60, "label": "ground"},
                     {"id": "d", "frame": 90, "label": "score"},
+                    {"id": "e", "frame": 120, "label": "antenna"},
                 ],
             )
             with (
@@ -41,7 +42,7 @@ class BallLabelTrainingTests(unittest.TestCase):
                 )
             written = next((root / "run" / "labels").rglob("match_actions.jsonl"))
             rows = [json.loads(line) for line in written.read_text().splitlines()[1:]]
-            self.assertEqual([(r["id"], r["label"]) for r in rows], [("a", "serve"), ("c", "score"), ("d", "score")])
+            self.assertEqual([(r["id"], r["label"]) for r in rows], [("a", "serve"), ("c", "score"), ("d", "score"), ("e", "score")])
 
 
 if __name__ == "__main__":

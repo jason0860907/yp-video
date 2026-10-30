@@ -153,7 +153,7 @@ def touch_sides(events: Sequence[Event], serve_side: str) -> list[str | None]:
     answers. Where the order stops determining sides the walk stops and the
     rest stay None: a block (the ball may come back to either side), a
     receive in mid-possession (a free ball came over — or a second pass), a
-    fourth touch. Ball events (net, ground, score) name no side. A rally not
+    fourth touch. Ball events (net, ground, antenna, score) name no side. A rally not
     opening with its serve yields all None.
     """
     sides: list[str | None] = [None] * len(events)

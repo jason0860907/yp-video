@@ -40,7 +40,7 @@ CROPS_DIR = EXTRACTION_DIR / "crops"
 # every masked embed run.
 MASKED_CROPS_DIR = EXTRACTION_DIR / "crops-masked"
 
-# Action labels with nobody to re-identify: net / ground / score mark where
+# Action labels with nobody to re-identify: net / ground / antenna / score mark where
 # the ball met something other than a person. Applied at extraction AND at
 # read time: labels are overlaid from the live action annotation
 # (ACTION_FIELDS), so an event re-labelled after extraction must drop out too.
@@ -137,7 +137,7 @@ def labelable(records: Iterable[dict], stem: str, fps: float) -> list[dict]:
 
     Three exclusions, one reason — there is nobody/current event to name:
 
-    - SKIP_LABELS: net / ground / score mark the ball, not a player.
+    - SKIP_LABELS: net / ground / antenna / score mark the ball, not a player.
     - Outside every rally span: nobody is TRACKED between rallies (see
       tracklets/tracking.py, which scans rally spans and nothing else), so
       there is no tracklet for an actor to be, and in practice these are

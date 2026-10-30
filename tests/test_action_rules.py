@@ -142,6 +142,15 @@ def test_touch_sides_stop_at_a_fourth_touch() -> None:
     assert sides == ["near", "far", "far", "far", None]
 
 
+def test_an_antenna_hit_ends_the_rally() -> None:
+    events = _events(("serve", 1.0), ("receive", 2.0), ("spike", 3.0), ("antenna", 3.6))
+
+    assert touch_sides([{"label": e["label"]} for e in events], "near") == ["near", "far", "far", None]
+    assert rally_outcomes(RALLY, events) == [
+        {"rally_index": 1, "serve_point": False, "score_event_index": 3, "deciding_event_indices": [1, 2]},
+    ]
+
+
 def test_a_net_contact_is_no_touch_and_ground_ends_the_rally() -> None:
     """A serve off the net cord still crosses to the receiver, and the floor
     landing is the rally's end like a score."""

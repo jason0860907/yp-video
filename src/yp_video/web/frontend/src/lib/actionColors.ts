@@ -9,6 +9,7 @@ export const ACTION_COLORS: Record<string, string> = {
   score: '#FBBF24',
   net: '#F472B6',
   ground: '#FBBF24',
+  antenna: '#FBBF24',
 };
 
 export const actionColor = (label?: string | null) => ACTION_COLORS[label ?? ''] ?? '#8E8E93';

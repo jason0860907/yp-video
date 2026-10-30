@@ -20,8 +20,9 @@ log = logging.getLogger(__name__)
 
 #: SPOT still learns the six classes it shipped with while the corpus is
 #: re-reviewed for the ball events: a floor landing trains as the score it was
-#: labelled before ground existed, and net is not a class yet.
-TRAINED_AS = {"ground": "score"}
+#: labelled before ground existed, an antenna hit likewise, and net is not a
+#: class yet.
+TRAINED_AS = {"ground": "score", "antenna": "score"}
 UNTRAINED = frozenset({"net"})
 
 

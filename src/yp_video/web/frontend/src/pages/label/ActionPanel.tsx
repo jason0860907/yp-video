@@ -537,7 +537,7 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, registerGu
       }
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-      if (e.key >= '1' && e.key <= '6') {
+      if (e.key >= '1' && e.key <= '9') {
         const l = labels[Number(e.key) - 1];
         if (l) setSelectedLabel(l);
         return;
@@ -677,7 +677,7 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, registerGu
         <KeyHints
           keys={[
             ['Space', 'play'],
-            ['1-6', 'label'],
+            ['1-9', 'label'],
             ['← →', 'frame (⇧ ×10)'],
             ['Enter', 'add'],
             ['Right-click', 'add off-screen'],

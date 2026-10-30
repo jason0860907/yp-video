@@ -358,15 +358,16 @@ class ActionLabel(str, Enum):
     score = "score"
     net = "net"
     ground = "ground"
+    antenna = "antenna"
 
 
 # Canonical labels: ordered tuple for UI/display, frozenset for membership.
-# The order is also the editor's 1–8 hotkeys, so new labels go last.
+# The order is also the editor's 1–9 hotkeys, so new labels go last.
 ACTION_LABELS_ORDERED = tuple(label.value for label in ActionLabel)
 ACTION_LABELS = frozenset(ACTION_LABELS_ORDERED)
-#: How a rally ends: the ball on the floor (ground), or any other end
-#: (score — out off a wall, the ceiling, the antenna, a fault).
-END_LABELS = frozenset({ActionLabel.ground.value, ActionLabel.score.value})
+#: How a rally ends: the ball on the floor (ground), off the antenna (antenna),
+#: or any other end (score — out off a wall, the ceiling, a fault).
+END_LABELS = frozenset({ActionLabel.ground.value, ActionLabel.antenna.value, ActionLabel.score.value})
 #: Where the ball meets something other than a player — nobody to point at.
 BALL_LABELS = END_LABELS | {ActionLabel.net.value}
 #: Touches a player makes — the actor head's classes (yp_spot

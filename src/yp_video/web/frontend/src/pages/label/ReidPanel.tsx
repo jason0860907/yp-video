@@ -218,7 +218,7 @@ export function ReidPanel({ video, registerGuard, clock }: { video: string; regi
   }, [registerGuard, boardDirty]);
 
   // The denominator is deliberately simple: every action except the ball
-  // events (net / ground / score — nobody performs them). Off-frame and occluded events
+  // events (net / ground / antenna / score — nobody performs them). Off-frame and occluded events
   // stay in the count, so the ratio understates rather than surprises; the
   // Done confirm is a confirm, not a gate.
   const actionableCount = actionEvents.length
@@ -307,7 +307,7 @@ export function ReidPanel({ video, registerGuard, clock }: { video: string; regi
             {video && (
               <span
                 className="font-mono text-[11px] leading-none tabular-nums text-text-muted"
-                title="Assigned to a player or marked occluded / all actions except net / ground / score (off-frame events included, so 100% is not always reachable)"
+                title="Assigned to a player or marked occluded / all actions except net / ground / antenna / score (off-frame events included, so 100% is not always reachable)"
               >
                 <span className={resolvedCount >= actionableCount ? 'text-primary-light' : undefined}>{resolvedCount}</span>/{actionableCount} actions
               </span>
