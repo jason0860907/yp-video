@@ -40,7 +40,7 @@ uv sync
 
 # 所有設定都在 workspace 根目錄的單一 .env（R2 金鑰、服務 token、
 # Cloudflare Access、稽核資料庫全都在裡面）
-cp ../.env.example ../.env    # 填好之後 ../scripts/sync-env.sh 會散佈給後端兩個元件
+# ../.env 是所有元件的設定來源，後端兩個元件的副本要手動更新（見 volleyiq-backend/ENV.md）
 
 # 稽核資料庫（本機 Postgres，只綁 loopback）
 make db-up
