@@ -153,14 +153,15 @@ TASKS: dict[str, TaskSpec] = {
         ),
         # Who touched the ball, per action event: the person/action head
         # scoring the event's candidate boxes (the SPOT pass picks among the
-        # person head's own; advanced identify among GTA-refined tracklets).
+        # person head's own when the run trains one; advanced identify among
+        # GTA-refined tracklets).
         # Supervised by the association annotations: actor/training_labels.py
         # writes one row per labelled event (the actor's box first, then the
         # event frame's other 2XLarge boxes), and the trainer draws them as
         # their own stream, split by the action stream's videos.
         TaskSpec(
             "actor", "Actor", "aux", "actor-events", "*_actor_events.jsonl",
-            (), ("action", "location", "person"), "actor_hit", False,
+            (), ("action", "location"), "actor_hit", False,
         ),
     )
 }
