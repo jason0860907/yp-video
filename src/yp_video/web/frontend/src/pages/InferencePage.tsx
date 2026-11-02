@@ -50,9 +50,9 @@ const NUM_FIELDS: Array<NumField<PredSettings>> = [
 
 const hasDetections = (v: InferenceVideo) => v.pipeline.has_records;
 
-/** Fusion supplies rallies, actions and person boxes in one decode.
- *  ByteTrack links the boxes and GTA repairs them; the actor head picks who acted
- *  among each event's tracklets, as App advanced identify does. */
+/** Fusion supplies rallies and actions in one decode. RF-DETR Seg + ByteTrack +
+ *  GTA track the rallies; the actor head picks who acted among each event's
+ *  tracklets, as App identify does. */
 export function InferencePage() {
   const navigate = useNavigate();
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -123,7 +123,7 @@ export function InferencePage() {
         subtitle={
           <Prereqs
             extras={[
-              { label: 'Fusion Checkpoint', hint: 'A rally + action + person + actor package' },
+              { label: 'Fusion Checkpoint', hint: 'A rally + action + actor package' },
             ]}
           />
         }

@@ -25,13 +25,12 @@ from __future__ import annotations
 
 import json
 import math
-import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
 from yp_video.core.frames import video_geometry
 from yp_video.core.progress import ProgressFn
-from yp_video.reid.embedder import DEFAULT_EMBEDDER, threshold_calibration
+from yp_video.reid.embedder import threshold_calibration
 
 #: Overall-percent band per phase, tuned to measured cost: dense tracking is
 #: the GPU bill (~14.5 ms/frame over every rally frame); everything after it
@@ -47,9 +46,9 @@ _BANDS = {
 }
 
 
-#: Advanced tracking detects every 2nd frame: tracking F1 held (0.44 vs 0.39
-#: at stride 1, measured with McByte++) while the dense pass costs 2.5× less.
-ADVANCED_STRIDE = 2
+#: Tracking detects every 2nd frame: tracking F1 held (0.44 vs 0.39 at
+#: stride 1, measured with McByte++) while the dense pass costs 2.5× less.
+TRACKING_STRIDE = 2
 
 
 @dataclass(frozen=True)
@@ -101,7 +100,7 @@ class IdentifyResult:
     #: (extraction/feet.py) — what an exported clip frames its camera around.
     actors: dict[str, list[float]]
     #: The ball track over the flights between touches (ball/track.py) — what
-    #: the court fits 3D trajectories to. Advanced only; None in standard.
+    #: the court fits 3D trajectories to. None when the video has no events.
     ball: dict | None
     #: Lines along the court paint (extraction/court_guides.py), normalized —
     #: what the app pre-draws on the first court calibration.
@@ -112,9 +111,6 @@ def identify_players(
     video_path: Path,
     *,
     fusion_checkpoint: Path,
-    person_boxes: Path | None = None,
-    actor_picks: Path | None = None,
-    advanced: bool = False,
     reps_per_unit: int = 3,
     on_progress: ProgressFn | None = None,
 ) -> IdentifyResult:
@@ -124,46 +120,33 @@ def identify_players(
     spans (core/rallies.py) and an action annotation file
     (extraction/store.action_annotation_path). Raises when either is missing.
 
-    ``fusion_checkpoint`` pins one package: the fusion model with its person
-    and actor heads.
+    ``fusion_checkpoint`` pins one package: the fusion model with its actor
+    head.
 
-    Standard identify takes the analysis's own SPOT pass outputs —
-    ``person_boxes`` and ``actor_picks``, both or neither; without them it
-    runs that pass itself. The actor head already picked who touched the
-    ball at each event it spotted (core/actor_picks.py).
-
-    ``advanced`` swaps the fast perception (fusion person boxes + ByteTrack)
-    for dense RF-DETR Seg + ByteTrack + GTA at stride 2: tracklets hold one
-    person far longer (pairwise F1 .477 → .633 over plain ByteTrack on six
-    labeled sideline videos) for a few extra GPU minutes per video. It reads no fusion boxes, so
-    ``person_boxes`` and ``actor_picks`` must be None. Those tracklets also carry the identity
-    vectors: advanced embeds with extraction/windows.py (masked crops averaged
-    over ±1 s of the actor's tracklet) instead of the registered
-    ``DEFAULT_EMBEDDER`` that standard identify uses. And they are
-    the actor candidates: the person/action head picks among each event's
-    tracklets within ±3 frames instead of its own proposals (actor hit
-    77.6% → 82.6% on the model's 7-video validation split).
+    Perception is dense RF-DETR Seg + ByteTrack + GTA at stride 2: tracklets
+    hold one person far longer (pairwise F1 .477 → .633 over plain ByteTrack
+    on six labeled sideline videos). Those tracklets carry the identity
+    vectors — extraction/windows.py embeds masked crops averaged over ±1 s of
+    the actor's tracklet — and they are the actor candidates: the
+    person/action head picks among each event's tracklets within ±3 frames
+    (actor hit 82.6% on the model's 7-video validation split).
     """
     # Deferred imports: this module is also imported for its dataclasses by
     # code that must not pull the GPU stack in.
 
-    from yp_video.action.spot_pass import RallyOptions, SpotOptions, run_spot_pass
     from yp_video.actor.candidates import track_paths
-    from yp_video.actor.person_action import build_policy, policy_from_spot_picks
+    from yp_video.actor.person_action import build_policy
     from yp_video.ball.track import track_video as track_ball
-    from yp_video.core.actor_picks import actor_picks_path, load_actor_picks
-    from yp_video.core.person_boxes import person_boxes_path, save_person_boxes
     from yp_video.extraction import links
     from yp_video.extraction.court_guides import court_guides
     from yp_video.extraction.feet import actor_boxes, actor_feet
-    from yp_video.extraction.pipeline import detect_video, embed_video, load_events
+    from yp_video.extraction.pipeline import detect_video, load_events
     from yp_video.extraction.reassociate import reassociate_video
     from yp_video.extraction.windows import WINDOWED_EMBEDDER, embed_tracklet_windows
     from yp_video.reid import identity
-    from yp_video.tracklets.fusion import track_person_boxes
     from yp_video.tracklets.tracking import track_video
 
-    embedder = WINDOWED_EMBEDDER if advanced else DEFAULT_EMBEDDER
+    embedder = WINDOWED_EMBEDDER
     stem = video_path.stem
     events = load_events(stem)
     if not events:
@@ -172,58 +155,19 @@ def identify_players(
             ball=None, court_guides=[],
         )
 
-    if (person_boxes is None) != (actor_picks is None):
-        raise ValueError("person_boxes and actor_picks come from one SPOT pass: pass both or neither")
-    tracking_cb = _banded(on_progress, "tracking")
-    if advanced:
-        if person_boxes is not None:
-            raise ValueError("advanced identify runs its own detector and picker; pass no SPOT outputs")
-        track_video(
-            video_path, stride=ADVANCED_STRIDE,
-            event_frames={e["frame"] for e in events}, on_progress=tracking_cb,
-        )
-        ball = track_ball(video_path, _touch_frames(stem), on_progress=_banded(on_progress, "ball"))
-        detect_video(video_path, on_progress=_banded(on_progress, "detecting"))
-    else:
-        ball = None
-        if person_boxes is not None:
-            save_person_boxes(person_boxes, person_boxes_path(stem), fusion_checkpoint)
-            shutil.copyfile(actor_picks, actor_picks_path(stem))
-        else:
-            run_spot_pass(
-                video_path, checkpoint=fusion_checkpoint, tasks=("rally", "action"),
-                rally=RallyOptions(min_score=0.5, max_gap_s=2.0, min_duration_s=4.0),
-                spot=SpotOptions(batch_size=1, num_workers=0), rally_pad_s=2.0,
-                person_output=person_boxes_path(stem),
-                actor_output=actor_picks_path(stem),
-                on_progress=(lambda fraction: tracking_cb(int(fraction * 80), 100, "fusion person boxes"))
-                if tracking_cb else None,
-            )
-        track_person_boxes(
-            video_path,
-            refine=False,
-            on_progress=(lambda done, total, msg: tracking_cb(80 + int(20 * done / max(total, 1)), 100, msg))
-            if tracking_cb else None,
-        )
-        detect_video(video_path, person_boxes=person_boxes_path(stem),
-                     on_progress=_banded(on_progress, "detecting"))
+    track_video(
+        video_path, stride=TRACKING_STRIDE,
+        event_frames={e["frame"] for e in events}, on_progress=_banded(on_progress, "tracking"),
+    )
+    ball = track_ball(video_path, _touch_frames(stem), on_progress=_banded(on_progress, "ball"))
+    detect_video(video_path, on_progress=_banded(on_progress, "detecting"))
     guides = court_guides(stem, video_path)
     geometry = video_geometry(video_path)
     width, height = geometry.width, geometry.height
-    associate_cb = _banded(on_progress, "associating")
-    if advanced:
-        # The actor head picks among the GTA-refined tracklets themselves.
-        policy = build_policy(video_path, fusion_checkpoint, events, width=width, height=height,
-                              tracks=track_paths(stem), on_progress=associate_cb)
-    else:
-        policy = policy_from_spot_picks(events, load_actor_picks(actor_picks_path(stem)),
-                                        width=width, height=height)
+    policy = build_policy(video_path, fusion_checkpoint, events, width=width, height=height,
+                          tracks=track_paths(stem), on_progress=_banded(on_progress, "associating"))
     reassociate_video(video_path, policy, on_progress=_banded(on_progress, "cropping"))
-
-    if advanced:
-        embed_tracklet_windows(stem, video_path, on_progress=_banded(on_progress, "embedding"))
-    else:
-        embed_video(stem, models=[embedder], on_progress=_banded(on_progress, "embedding"))
+    embed_tracklet_windows(stem, video_path, on_progress=_banded(on_progress, "embedding"))
 
     feet = actor_feet(stem, events)
     actors = actor_boxes(stem, events)
@@ -425,11 +369,6 @@ def _main() -> None:
     parser.add_argument("--video", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--fusion-checkpoint", type=Path, required=True)
-    parser.add_argument("--person-boxes", type=Path, help="Reuse whole-video Fusion boxes from this analysis")
-    parser.add_argument("--actor-picks", type=Path, help="Reuse the actor picks of that same SPOT pass")
-    parser.add_argument("--advanced", action="store_true",
-                        help="RF-DETR Seg + ByteTrack + GTA tracking and tracklet-window embeddings "
-                             "(default: fusion boxes + ByteTrack, masked single-crop embeddings)")
     parser.add_argument("--reps-per-unit", type=int, default=3)
     args = parser.parse_args()
 
@@ -439,9 +378,6 @@ def _main() -> None:
     result = identify_players(
         args.video,
         fusion_checkpoint=args.fusion_checkpoint,
-        person_boxes=args.person_boxes,
-        actor_picks=args.actor_picks,
-        advanced=args.advanced,
         reps_per_unit=args.reps_per_unit,
         on_progress=report,
     )

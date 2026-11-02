@@ -102,7 +102,7 @@ def boxes_on(
 ) -> list[tuple[str, list[float]]]:
     """``candidates_on`` with each tracklet's nearest box, normalized.
 
-    The candidate set the person/action head scores in advanced identify —
+    The candidate set the person/action head scores in identify —
     one box per tracklet, on the event frame, at the same reach.
     """
     out = []

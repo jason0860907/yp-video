@@ -27,7 +27,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 # Bump on ANY breaking change to the label record, frame layout, or label set.
-ACTION_CONTRACT_VERSION = "3.1.0"
+ACTION_CONTRACT_VERSION = "4.0.0"
 
 # Env var carrying ACTION_CONTRACT_VERSION from producer to consumer.
 ACTION_CONTRACT_VERSION_ENV = "YP_ACTION_CONTRACT_VERSION"
@@ -142,18 +142,8 @@ TASKS: dict[str, TaskSpec] = {
             "jump", "Jump", "aux", "action-annotations", "*_actions.jsonl",
             ("jump",), ("action",), "jump_balanced_accuracy", False,
         ),
-        # Where the people are, per frame: the model's own boxes, distilled
-        # from RF-DETR Seg 2XLarge (actor/person_labels.py writes the sidecar
-        # from the dense pass). Rides the rally stream — rally spans are where
-        # the pass ran — so every covered video supervises it, action labels
-        # or not.
-        TaskSpec(
-            "person", "Person", "aux", "person-boxes", "*_person.npz",
-            (), ("rally",), "person_ap50", False,
-        ),
         # Who touched the ball, per action event: the person/action head
-        # scoring the event's candidate boxes (the SPOT pass picks among the
-        # person head's own when the run trains one; advanced identify among
+        # scoring the event's candidate boxes (identify picks among
         # GTA-refined tracklets).
         # Supervised by the association annotations: actor/training_labels.py
         # writes one row per labelled event (the actor's box first, then the
@@ -261,7 +251,6 @@ _MULTI_FPS_FIELDS = (
     "action_fg_upsample",
     "action_block_upsample",
     "action_dilate_len",
-    "person_giou_weight",
     "acc_grad_iter",
 )
 _MULTI_FPS_DEFAULTS = {
@@ -283,7 +272,6 @@ _MULTI_FPS_DEFAULTS = {
     "action_fg_upsample": None,
     "action_block_upsample": None,
     "action_dilate_len": 0,
-    "person_giou_weight": 0.0,
     "action_sample_fps": 30.0,
     "rally_sample_fps": 5.0,
     "winner_sample_fps": 5.0,
@@ -312,29 +300,27 @@ RECIPES: dict[str, Recipe] = {
         ),
         Recipe(
             "action_rally_winner",
-            "Action + Rally + Winner + Person",
-            ("action", "location", "side", "jump", "rally", "winner", "person"),
+            "Action + Rally + Winner",
+            ("action", "location", "side", "jump", "rally", "winner"),
             "One backbone; Action uses audio and geometry supervision plus the actor's "
-            "side and jump, Rally/Winner are visual-only, Person distils the tracker's "
-            "boxes on the rally stream.",
+            "side and jump, Rally/Winner are visual-only.",
             _MULTI_FPS_FIELDS,
             _MULTI_FPS_DEFAULTS,
         ),
-        # The production fusion model. Its extra defaults are what the runs
-        # that shipped the actor head trained with: person GIoU weight 1, and
-        # a tenth of the Action clips anchored on the rare block.
+        # The production fusion model. Its extra default is what the runs
+        # that shipped the actor head trained with: a tenth of the Action
+        # clips anchored on the rare block.
         Recipe(
             "action_rally_winner_actor",
-            "Action + Rally + Winner + Person + Actor",
-            ("action", "location", "rally", "winner", "person", "actor"),
-            "One backbone for every SPOT pass stage: Action with its contact point, "
-            "Rally/Winner, Person on the rally stream, and Actor — who touched the "
-            "ball — trained per labelled event from the association annotations.",
+            "Action + Rally + Winner + Actor",
+            ("action", "location", "rally", "winner", "actor"),
+            "One backbone for the SPOT pass (Action with its contact point, "
+            "Rally/Winner) and Actor — who touched the ball — trained per labelled "
+            "event from the association annotations.",
             (*_MULTI_FPS_FIELDS, "actor_stream_weight"),
             # The actor stream gets two shares: Rally and Winner saturate
             # within a few epochs, while picking the actor is the weakest stage.
-            {**_MULTI_FPS_DEFAULTS, "action_block_upsample": 0.1, "person_giou_weight": 1.0,
-             "actor_stream_weight": 2},
+            {**_MULTI_FPS_DEFAULTS, "action_block_upsample": 0.1, "actor_stream_weight": 2},
         ),
     )
 }

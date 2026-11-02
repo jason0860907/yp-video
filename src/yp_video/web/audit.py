@@ -51,7 +51,7 @@ _TARGET_KEYS = ("name", "job_id", "session_id", "video")
 #: Named explicitly so this stays a decision rather than a heuristic that
 #: quietly swallows real edits — a deletion is never folded.
 #: One entry per panel of the Label page — Rally, Action, Association, ReID,
-#: Detection, Court.
+#: Court.
 #: Rally/Action/ReID autosave on a timer; Association fires once per event the
 #: reviewer re-points. Either way it is a stretch of labeling, and folding it
 #: is what makes an afternoon of work read as hours instead of as hundreds of
@@ -61,7 +61,6 @@ _COALESCING = frozenset({
     "POST /api/action-annotate/annotations",
     "POST /api/actor-association/fix/{name}",
     "PUT /api/reid/players/{name}",
-    "PUT /api/detection-label/frame/{name}",
     "PUT /api/court/video/{name}",
 })
 

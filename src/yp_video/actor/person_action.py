@@ -1,14 +1,9 @@
 """Who touched the ball at each event, as an actor policy.
 
-Two sources, one model (the fusion package's actor head):
-
-* Standard identify reads the SPOT pass's own picks (core/actor_picks.py):
-  the head already scored the person head's boxes at every event it
-  spotted, so the answer is a box and nothing re-runs.
-* Advanced identify hands the head each event's tracklets
-  (``actor/candidates.boxes_on``) across the SPOT boundary and answers with
-  the tracklet it picked, so every later step — crop, window embedding,
-  units — stands on that tracklet rather than re-matching a box onto one.
+The fusion package's actor head gets each event's tracklets
+(``actor/candidates.boxes_on``) across the SPOT boundary and answers with
+the tracklet it picked, so every later step — crop, window embedding,
+units — stands on that tracklet rather than re-matching a box onto one.
 """
 from __future__ import annotations
 
@@ -22,52 +17,29 @@ from yp_video.actor.candidates import boxes_on, normalized_paths
 from yp_video.actor.policy import ActorPick
 from yp_video.config import SPOT_DIR, SPOT_PYTHON
 from yp_video.contracts.action import event_id
-from yp_video.core.actor_picks import SpotActorPick
 from yp_video.core.progress import ProgressFn
 from yp_video.tracklets.geometry import TrackRef
 
-SPOT_PASS_POLICY = "fusion-spot-pass"
 TRACKLET_POLICY = "fusion-person-action:tracklet"
 
 
 class PersonActionPolicy:
     """The person/action head's answers, decided and validated up front."""
 
-    def __init__(self, picks: dict[str, ActorPick], *, name: str, needs_tracklets: bool):
+    name = TRACKLET_POLICY
+
+    def __init__(self, picks: dict[str, ActorPick]):
         self.picks = picks
-        self.name = name
-        #: Tracklet answers resolve through the tracks and their masks.
-        self.needs_tracklets = needs_tracklets
 
     def decide(self, event_id: str) -> ActorPick:
         return self.picks[event_id]
-
-
-def policy_from_spot_picks(events: list[dict], picks: Mapping[tuple[int, str], SpotActorPick], *,
-                           width: int, height: int) -> PersonActionPolicy:
-    """Standard identify's policy: each event takes the SPOT pass's pick at its
-    frame and label. An event the pass did not spot that way (a label changed
-    since, a hand-added touch) gets no pick — the user assigns it by hand."""
-    decided = {}
-    for event in events:
-        pick = picks.get((int(event["frame"]), event["label"]))
-        if pick is None:
-            decided[event_id(event)] = ActorPick(diagnostic={"source": SPOT_PASS_POLICY, "status": "not_spotted"})
-            continue
-        box = pick.box
-        decided[event_id(event)] = ActorPick(
-            box=(box[0] * width, box[1] * height, box[2] * width, box[3] * height) if box else None,
-            candidates=pick.candidates,
-            diagnostic={"source": SPOT_PASS_POLICY, "status": "selected" if box else "no_candidate"},
-        )
-    return PersonActionPolicy(decided, name=SPOT_PASS_POLICY, needs_tracklets=False)
 
 
 def build_policy(video: Path, checkpoint: Path, events: list[dict], *,
                  width: int, height: int,
                  tracks: Mapping[str, Mapping[int, Sequence[float]]],
                  on_progress: ProgressFn | None = None) -> PersonActionPolicy:
-    """Advanced identify's policy: the actor head over each event's tracklets
+    """The actor head over each event's tracklets
     (``actor/candidates.track_paths``), following them across its window.
     ``checkpoint`` is a fusion package's weights carrying the actor head."""
     rows = [{"id": event_id(e), "frame": int(e["frame"]), "label": e["label"]}
@@ -133,4 +105,4 @@ def policy_from_answers(rows: list[dict], answers: list[dict], *,
             track=TrackRef.parse(options[pick]) if pick is not None else None, candidates=count,
             diagnostic={"source": TRACKLET_POLICY, "status": answer["status"]},
         )
-    return PersonActionPolicy(picks, name=TRACKLET_POLICY, needs_tracklets=True)
+    return PersonActionPolicy(picks)

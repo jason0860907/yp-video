@@ -17,8 +17,7 @@ from yp_video.action import prelabel
 from yp_video.action.spot_pass import RallyOptions, SpotOptions
 from yp_video.config import SPOT_CHECKPOINTS_DIR, SPOT_DIR, cut_kind_of
 from yp_video.extraction.prerequisites import prerequisites
-from yp_video.tracklets.fusion import fusion_tracks_fresh
-from yp_video.tracklets.store import tracks_refined
+from yp_video.tracklets.store import tracks_current, tracks_refined
 from yp_video.web import fusion_inference
 from yp_video.web.action_annotations import pre_annotation_path
 from yp_video.web.job_helpers import init_batch_items, spawn_batch_video_job
@@ -32,7 +31,7 @@ router = APIRouter()
 
 class InferenceRequest(StrictModel):
     videos: list[str] = Field(min_length=1)
-    #: Fusion package for rally + action + person + actor; empty = newest.
+    #: Fusion package for rally + action + actor; empty = newest.
     checkpoint: str = ""
     rally_min_score: float = Field(default=0.5, ge=0.0, le=1.0)
     max_gap_s: float = Field(default=2.0, ge=0.0, le=30.0)
@@ -57,7 +56,7 @@ def list_videos() -> list[dict]:
             "kind": cut_kind_of(path),
             "has_rally_spot": fusion_inference.rally_spot_pre_annotation_path(stem).exists(),
             "has_action_pre": pre_annotation_path(path.name).exists(),
-            "tracks_current": fusion_tracks_fresh(stem),
+            "tracks_current": tracks_current(stem),
             "tracks_refined": tracks_refined(stem),
             "pipeline": prerequisites(stem).payload(),
         })
@@ -76,8 +75,8 @@ def spot_info() -> dict:
     info["default_checkpoint"] = fusion_inference.default_checkpoint()
     if not checkpoints:
         info["error"] = (
-            f"No package under {SPOT_CHECKPOINTS_DIR} serves rally, action, person and "
-            "actor together; train the Action + Rally + Winner + Person + Actor recipe in Fusion Train first."
+            f"No package under {SPOT_CHECKPOINTS_DIR} serves rally, action and actor "
+            "together; train the Action + Rally + Winner + Actor recipe in Fusion Train first."
         )
     return info
 

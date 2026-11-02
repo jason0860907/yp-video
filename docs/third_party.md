@@ -58,9 +58,9 @@ package）；哪組權重產生了哪個矩陣，看 extraction 時 `embedder.we
 
 ## pip 層級的外部模型（不需 checkout）
 
-- **RF-DETR Seg Medium**（`rfdetr` 套件）：action frame 的人物框、crop masking，以及離線 rally tracking 的密集偵測（`tracklets/tracking.py`，產生 Fusion person head 的 pseudo labels）；Inference 的 tracking 改吃 SPOT fusion 人物框（`tracklets/fusion.py`），不另跑 RF-DETR。權重自動下載到 `~/.roboflow/`
+- **RF-DETR Seg Medium**（`rfdetr` 套件）：action frame 的人物框、crop masking，以及 rally tracking 的密集偵測（`tracklets/tracking.py`，App 分析與 Inference 共用）。權重自動下載到 `~/.roboflow/`
 - **CLIP-ReID**（`clip-reid` embedder）：HF `occurra/person_vit_clip_reid` 的 ONNX，onnxruntime CPU 推論，首次使用自動下載
-- **ByteTrack**：來自 `supervision` 套件，`tracklets/tracking.py` 與 `tracklets/fusion.py` 共用
+- **ByteTrack**：來自 `supervision` 套件，`tracklets/tracking.py` 使用
 
 ## 升級注意事項
 

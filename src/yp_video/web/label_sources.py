@@ -1,8 +1,7 @@
 """How each recipe family turns its annotation corpus into a run's label snapshot.
 
 A SPOT stream reads one label directory plus optional task sidecars. Rally recipes draw from the
-rally annotations at a reduced extraction fps, plus the person-box sidecar
-(the 2XLarge dense boxes) when the person head is trained; action recipes
+rally annotations at a reduced extraction fps; action recipes
 from the action annotations at native fps, plus the actor-event sidecar (the
 association annotations) when the actor head is trained. A mixed recipe
 carries both directories explicitly.
@@ -18,7 +17,6 @@ from typing import Protocol
 from yp_video.action import rally as rally_spot
 from yp_video.action import training
 from yp_video.action.frames import ensure_action_frame_caches
-from yp_video.actor.person_labels import write_person_labels
 from yp_video.actor.training_labels import write_actor_labels
 from yp_video.action.training_labels import prepare_action_training_labels
 from yp_video.config import ACTION_FRAMES_DIR, cut_kind_of
@@ -47,8 +45,7 @@ class PreparedLabels:
     frame_dir: Path
     #: yp-spot's positional dataset name (class list / default paths).
     dataset: str
-    #: Extra ``yp_spot.train`` arguments the tasks need (``--person_dir``,
-    #: ``--actor_dir``).
+    #: Extra ``yp_spot.train`` arguments the tasks need (``--actor_dir``).
     extra_args: list[str] = field(default_factory=list)
     summary: dict = field(default_factory=dict)
     #: Videos whose labels are SPOT predictions, not human work.
@@ -91,17 +88,11 @@ class RallySource:
         )
         label_dir = save_dir / "labels" / TASKS["rally"].label_subdir
         summary = rally_spot.write_training_labels(items, label_dir=label_dir)
-        extra_args: list[str] = []
-        if "person" in recipe.tasks:
-            person_dir = save_dir / "labels" / TASKS["person"].label_subdir
-            summary["person"] = write_person_labels(items, label_dir=person_dir)
-            extra_args = ["--person_dir", str(person_dir)]
         return PreparedLabels(
             label_dirs={"rally": label_dir},
             label_subdirs=label_subdirs(recipe.tasks),
             frame_dir=ACTION_FRAMES_DIR,
             dataset="yp_rally",
-            extra_args=extra_args,
             summary={**summary, "missing_videos": missing},
             all_stems={video_path.stem for _ann, video_path in items},
         )
@@ -202,16 +193,13 @@ def check_task_supervision(recipe: Recipe, prepared: PreparedLabels) -> None:
     the loaded labels; this one names the corpus fix instead.
     """
     summary = prepared.summary
-    rally_summary = summary.get("rally", summary)
     action_summary = summary.get("action", summary)
     present = {
         "winner": bool(summary.get("rallies_with_winner")),
-        "person": bool((rally_summary.get("person") or {}).get("boxes")),
         "actor": bool((action_summary.get("actor") or {}).get("events")),
     }
     hints = {
         "winner": "annotate the winning side in the rally editor first",
-        "person": "run Rally Tracking on the rally-annotated videos first",
         "actor": "label actors in Association Label on videos with a dense person pass first",
     }
     for task in recipe.tasks:

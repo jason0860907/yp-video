@@ -297,9 +297,6 @@ export function FusionTrainPage() {
                     {visible.has('action_dilate_len') && (
                       <SchemaNumberField name="action_dilate_len" label="Action dilate" />
                     )}
-                    {visible.has('person_giou_weight') && (
-                      <SchemaNumberField name="person_giou_weight" label="Person GIoU" step={0.5} />
-                    )}
                     {visible.has('acc_grad_iter') && <SchemaNumberField name="acc_grad_iter" label="Grad accum" />}
                     <SchemaNumberField name="warm_up_epochs" label="Warmup" />
                     <SchemaNumberField name="num_workers" label="Workers" />

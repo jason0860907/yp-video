@@ -396,14 +396,6 @@
       "title": "Action Dilate Len",
       "type": "integer"
     },
-    "person_giou_weight": {
-      "default": 0.0,
-      "description": "Mixed recipes: GIoU weight on the person head's decoded boxes, on top of its heatmap and size losses. 0 = no GIoU term.",
-      "maximum": 10,
-      "minimum": 0,
-      "title": "Person Giou Weight",
-      "type": "number"
-    },
     "num_workers": {
       "default": 8,
       "description": "Actual training DataLoader worker processes; validation uses at most 4.",

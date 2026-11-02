@@ -108,14 +108,6 @@ export const API = {
     positions: (name: string) => `/court/positions/${encodeURIComponent(name)}`,
     guides: (name: string) => `/court/guides/${encodeURIComponent(name)}`,
   },
-  detectionLabel: {
-    videos: '/detection-label/videos',
-    video: (name: string) => `/detection-label/video/${encodeURIComponent(name)}`,
-    frame: (name: string, frame: number) =>
-      `/detection-label/frame/${encodeURIComponent(name)}?frame=${frame}`,
-    image: (name: string, frame: number) =>
-      `/detection-label/image/${encodeURIComponent(name)}?frame=${frame}`,
-  },
   appReview: {
     users: '/app-review/users',
     library: (user: string) => `/app-review/users/${encodeURIComponent(user)}/library`,

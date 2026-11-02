@@ -44,11 +44,7 @@ from yp_video.extraction.store import (
     masked_crop_dir,
     records_path,
 )
-from yp_video.tracklets.store import (
-    TrackMasks,
-    open_track_masks,
-    tracks_path,
-)
+from yp_video.tracklets.store import open_track_masks, tracks_path
 
 log = logging.getLogger(__name__)
 
@@ -126,27 +122,6 @@ class _Absent:
 _ABSENT = _Absent()
 
 
-def _target(
-    stem: str, record: dict, pick: ActorPick, masks: TrackMasks | None
-) -> CropTarget | None:
-    """Where the pick says to crop.
-
-    A box answer never snaps: it already IS one of the stored detections (the
-    rule chooses among them), so there is nothing to snap onto. An unresolvable
-    tracklet answers nothing at all — unlike a human's label, a policy is free
-    to abstain and be asked again.
-    """
-    return crop_target(
-        stem,
-        record,
-        pick.track,
-        CropTarget(pick.box, record["frame"], snap=False)
-        if pick.box is not None
-        else None,
-        masks=masks,
-    )
-
-
 def reassociate_video(
     video_path: Path,
     policy: ActorPolicy,
@@ -159,16 +134,12 @@ def reassociate_video(
     if not path.exists():
         raise FileNotFoundError(f"No extraction records for {stem}")
 
-    masks = None
-    if policy.needs_tracklets:
-        tracks = tracks_path(stem)
-        if not tracks.exists():
-            raise FileNotFoundError(
-                f"{policy.name} needs tracklets; {stem} has not been tracked"
-            )
-        # Held open for the whole video: every event reads the same archive,
-        # and a policy that ignores outlines never unpacks a single entry.
-        masks = open_track_masks(stem)
+    if not tracks_path(stem).exists():
+        raise FileNotFoundError(
+            f"{policy.name} needs tracklets; {stem} has not been tracked"
+        )
+    # Held open for the whole video: every event reads the same archive.
+    masks = open_track_masks(stem)
 
     meta, records = read_jsonl(path)
     current = {
@@ -242,7 +213,9 @@ def reassociate_video(
                     counts.unchanged += 1
                 continue
 
-            target = _target(stem, record, pick, masks)
+            # An unresolvable tracklet answers nothing at all — unlike a
+            # human's label, a policy is free to abstain and be asked again.
+            target = crop_target(stem, record, pick.track, masks=masks)
             if target is None:
                 counts.unresolvable += 1
                 dirty |= _clear(record)
@@ -253,7 +226,7 @@ def reassociate_video(
             # today. Written after the comparison, which reads the old one.
             dirty |= _update(
                 record,
-                track=pick.track.key if pick.track is not None else _ABSENT,
+                track=pick.track.key,
             )
             if settled:
                 counts.unchanged += 1
@@ -390,7 +363,7 @@ def _same_pick(
         or int(record.get("crop_frame") or record["frame"]) != target.frame
     ):
         return False
-    if pick.track is not None and record.get("track") != pick.track.key:
+    if record.get("track") != pick.track.key:
         return False
     stored = clamp_box(target.box, frame_w, frame_h)
     return all(int(a) == int(b) for a, b in zip(current, stored))

@@ -92,26 +92,18 @@ class CropTarget:
 def crop_target(
     stem: str,
     record: dict,
-    track: TrackRef | None,
-    fallback: CropTarget | None,
+    track: TrackRef,
     *,
     masks: TrackMasks | None = None,
 ) -> CropTarget | None:
-    """Where a policy's answer says to crop, resolving its tracklet if it
-    named one.
+    """Where a policy's tracklet says to crop, or None when it resolves nowhere.
 
     A tracklet is re-resolved from the tracklet every time (see
     extraction/links.resolve_track), so a re-extraction with fresh detections
     self-heals instead of IoU-guessing which box the old answer meant.
-
-    ``fallback`` is what the answer means without a resolvable tracklet: the
-    policy's own box, or nothing at all — a policy can simply abstain.
     """
-    if track is not None:
-        pick = resolve_track(stem, record, track, masks=masks)
-        if pick is not None:
-            return CropTarget(pick.box, pick.frame, pick.snap)
-    return fallback
+    pick = resolve_track(stem, record, track, masks=masks)
+    return None if pick is None else CropTarget(pick.box, pick.frame, pick.snap)
 
 
 def label_target(stem: str, record: dict, label: ActorLabel) -> CropTarget | None:

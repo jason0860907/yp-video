@@ -52,16 +52,11 @@ def tracks_refined(stem: str) -> bool | None:
 
 
 def tracks_current(stem: str) -> bool:
-    """Tracks must match today's rallies; segmentation tracks also need masks.
-
-    Fusion box-only tracks do not claim a mask resolution or require masks.
-    """
+    """Tracks must match today's rallies and come with their masks."""
     path = tracks_path(stem)
-    if not path.exists():
+    if not path.exists() or not tracks_masks_path(stem).exists():
         return False
     header = read_jsonl_header(path)
-    if header.get("mask_res") is not None and not tracks_masks_path(stem).exists():
-        return False
     stored = (header.get("rallies") or {}).get("fingerprint")
     return bool(stored) and stored == rally_fingerprint(stem)
 

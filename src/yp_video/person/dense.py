@@ -1,11 +1,10 @@
-"""Every rally frame's people from the strongest RF-DETR Seg: person-head supervision.
+"""Every rally frame's people from the strongest RF-DETR Seg: the boxes actor
+labels are picked from and the actor head's candidates train on.
 
-The person head learns boxes per frame. Its labels were the tracker's boxes,
-which only hold detections that joined a tracklet — the occluded and
-far-side players a tracker drops are exactly the ones the head should learn.
-This pass keeps every detection of the largest seg model above a low floor,
-with its score, so the label threshold is chosen when the labels are written
-rather than baked in here.
+A tracker's boxes only hold detections that joined a tracklet — the occluded
+and far-side players it drops are exactly the ones a label may need. This
+pass keeps every detection of the largest seg model above a low floor, with
+its score, so the cut is chosen by the reader rather than baked in here.
 
 One ``<stem>_dense.npz`` per video in PERSON_DENSE_DIR: ``frames`` (int32,
 cv2 frame indices — the tracks' convention — of the detected rally-span

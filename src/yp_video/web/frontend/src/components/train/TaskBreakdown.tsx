@@ -223,39 +223,30 @@ function LocationView({ bd }: { bd: LocationBreakdown }) {
   );
 }
 
-/** Per touch: whether the actor was among the person head's boxes, and
- *  how often the head picked them (and the touch) — beside the pick among
- *  the annotated boxes, the bound a perfect detector would allow. */
+/** Per touch: how often the head picked the actor among the annotated
+ *  boxes (and the touch with it). */
 function ActorView({ bd }: { bd: ActorBreakdown }) {
-  const served = bd.predicted_proposals;
-  const bound = bd.annotated_proposals;
-  const rows = [
-    { name: 'all', served, bound },
-    ...Object.entries(served.by_class ?? {}).map(([name, row]) => ({ name, served: row, bound: bound.by_class?.[name] })),
-  ];
+  const all = bd.annotated_proposals;
+  const rows = [{ name: 'all', row: all }, ...Object.entries(all.by_class ?? {}).map(([name, row]) => ({ name, row }))];
   return (
     <div className={BOX}>
-      <div className={CAPTION}>Held-out events · served = person head boxes · bound = annotated boxes</div>
+      <div className={CAPTION}>Held-out events · candidates = annotated boxes</div>
       <table className={TABLE}>
         <thead>
           <tr className="text-text-muted">
             <th className={HEAD}>touch</th>
             <th className={NUM_HEAD}>events</th>
-            <th className={NUM_HEAD}>proposed</th>
             <th className={NUM_HEAD}>actor</th>
             <th className={NUM_HEAD}>actor + action</th>
-            <th className={cn(NUM_HEAD, 'border-l border-border')}>bound actor</th>
           </tr>
         </thead>
         <tbody>
-          {rows.map(({ name, served: row, bound: upper }) => (
+          {rows.map(({ name, row }) => (
             <tr key={name}>
               <td className="py-0.5 pr-2 text-left text-text-secondary">{name}</td>
               <td className={cn(NUM, 'text-text-secondary')}>{row.events.toLocaleString()}</td>
-              <td className={cn(NUM, 'text-text-secondary')}>{pct(row.proposal_hit)}</td>
               <td className={cn(NUM, 'text-text-primary')}>{pct(row.actor_hit)}</td>
               <td className={cn(NUM, 'text-text-primary')}>{pct(row.joint_hit)}</td>
-              <td className={cn(NUM, 'border-l border-border text-text-secondary')}>{pct(upper?.actor_hit)}</td>
             </tr>
           ))}
         </tbody>

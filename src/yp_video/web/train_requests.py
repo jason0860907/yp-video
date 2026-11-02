@@ -271,15 +271,6 @@ class FusionTrainRequest(StrictModel):
             "annotated touch as positive too. 0 = only the annotated frame."
         ),
     )
-    person_giou_weight: float = Field(
-        default=0.0,
-        ge=0,
-        le=10,
-        description=(
-            "Mixed recipes: GIoU weight on the person head's decoded boxes, on "
-            "top of its heatmap and size losses. 0 = no GIoU term."
-        ),
-    )
     num_workers: int = Field(
         default=8,
         ge=0,

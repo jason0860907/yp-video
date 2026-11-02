@@ -2,7 +2,7 @@
 on its event's frame.
 
 Actor labels are boxes from the dense pass (person/dense.py) — the box style
-the person head learns. A box from anywhere else (an automatic pick's
+the actor head learns on. A box from anywhere else (an automatic pick's
 segmentation box) is replaced by the dense box it clearly matches; when none
 does, or another person's box competes, nothing is guessed. The actor
 head's training rows (actor/training_labels.py), the confirmation of an

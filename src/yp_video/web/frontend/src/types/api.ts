@@ -14,7 +14,7 @@ export type LabelStatus = 'unlabeled' | 'pre-annotate' | 'in-progress' | 'done';
 /** GET /label/stats — per-mode status tally of the union video list,
  *  keys in pipeline order (web/routers/label_stats.py). */
 export type LabelStats = Record<
-  'rally' | 'action' | 'association' | 'reid' | 'detection' | 'court',
+  'rally' | 'action' | 'association' | 'reid' | 'court',
   Record<LabelStatus, number>
 >;
 
@@ -161,7 +161,7 @@ export type FusionRecipeId =
   | 'action'
   | 'action_rally_winner'
   | 'action_rally_winner_actor';
-export type SpotTask = 'rally' | 'winner' | 'action' | 'location' | 'side' | 'jump' | 'person' | 'actor';
+export type SpotTask = 'rally' | 'winner' | 'action' | 'location' | 'side' | 'jump' | 'actor';
 
 /** One entry of the contract's task-set registry (yp_video.contracts.action.RECIPES). */
 export interface FusionRecipe {
@@ -231,11 +231,9 @@ export interface ActorEventSummary {
   by_class?: Record<string, Omit<ActorEventSummary, 'by_class'>>;
 }
 
-/** The actor head over held-out events: picking among the annotated boxes
- *  (the upper bound) and among the person head's own (what is served). */
+/** The actor head over held-out events, picking among the annotated boxes. */
 export interface ActorBreakdown {
   annotated_proposals: ActorEventSummary;
-  predicted_proposals: ActorEventSummary;
 }
 
 export type TaskBreakdown = SpottingBreakdown | LocationBreakdown | ConfusionBreakdown | ActorBreakdown;

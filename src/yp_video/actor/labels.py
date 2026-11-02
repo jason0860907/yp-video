@@ -14,7 +14,7 @@ One event, one label — ``videos/association/annotations/<stem>_actors.json``:
 A label answers one question: which person on screen performed this event.
 The answer is a box in pixels on ``frame`` — written on the event's own
 frame, and picked from the RF-DETR Seg 2XLarge dense pass (person/dense.py),
-the box style the person head learns. Nothing in it points at a tracklet or
+the box style the actor head learns on. Nothing in it points at a tracklet or
 a detection: those are derived data that a re-run renumbers or replaces,
 while a box on a frame means the same person forever.
 

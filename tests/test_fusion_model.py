@@ -51,7 +51,7 @@ class FusionModelStatusTests(unittest.TestCase):
         self.assertEqual(recipes["rally_winner"]["defaults"]["sample_fps"], 5.0)
         self.assertEqual(
             recipes["action_rally_winner"]["tasks"],
-            ["action", "location", "side", "jump", "rally", "winner", "person"],
+            ["action", "location", "side", "jump", "rally", "winner"],
         )
         self.assertEqual(
             recipes["action_rally_winner"]["defaults"]["action_sample_fps"],
@@ -122,7 +122,7 @@ class BuildCommandTests(unittest.TestCase):
             audio_dir=None,
         )
         joined = " ".join(cmd)
-        self.assertIn("--tasks action,location,side,jump,rally,winner,person", joined)
+        self.assertIn("--tasks action,location,side,jump,rally,winner", joined)
         self.assertIn("--task_sample_fps action=30.0", joined)
         self.assertIn("--task_sample_fps rally=5.0", joined)
         self.assertIn("--task_sample_fps winner=5.0", joined)
@@ -152,20 +152,18 @@ class BuildCommandTests(unittest.TestCase):
         prepared = PreparedLabels(
             label_dirs={"action": Path("/run/labels/action-annotations"),
                         "rally": Path("/run/labels/rally-annotations")},
-            label_subdirs=("action-annotations", "rally-annotations", "person-boxes", "actor-events"),
+            label_subdirs=("action-annotations", "rally-annotations", "actor-events"),
             frame_dir=Path("/frames"),
             dataset="yp_action_rally",
-            extra_args=["--actor_dir", "/run/labels/actor-events",
-                        "--person_dir", "/run/labels/person-boxes"],
+            extra_args=["--actor_dir", "/run/labels/actor-events"],
         )
         cmd = spot_training.build_command(
             req, recipe, prepared, save_dir=Path("/run"), init_checkpoint=None, audio_dir=None,
         )
         joined = " ".join(cmd)
-        self.assertIn("--tasks action,location,rally,winner,person,actor", joined)
+        self.assertIn("--tasks action,location,rally,winner,actor", joined)
         self.assertIn("--actor_dir /run/labels/actor-events", joined)
         self.assertIn("--action_class_upsample block=0.1", joined)
-        self.assertIn("--person_giou_weight 1.0", joined)
         # Two shares of each epoch go to the actor's event clips.
         self.assertIn("--task_stream_weight actor=2", joined)
 
@@ -180,7 +178,6 @@ class BuildCommandTests(unittest.TestCase):
             save_dir=Path("/run"), init_checkpoint=None, audio_dir=None,
         ))
         self.assertNotIn("--action_class_upsample", joined)
-        self.assertNotIn("--person_giou_weight", joined)
         self.assertNotIn("--task_stream_weight", joined)
         self.assertNotIn("--activation_checkpointing", joined)
         self.assertNotIn("--freeze_backbone", joined)
@@ -325,8 +322,7 @@ class SupervisionGateTests(unittest.TestCase):
 
     def test_actor_head_needs_actor_rows(self) -> None:
         def summary(actor_events: int) -> dict:
-            return {"rallies_with_winner": 3, "rally": {"person": {"boxes": 9}},
-                    "action": {"actor": {"events": actor_events}}}
+            return {"rallies_with_winner": 3, "action": {"actor": {"events": actor_events}}}
         with self.assertRaises(RuntimeError) as caught:
             check_task_supervision(RECIPES["action_rally_winner_actor"], self._prepared(summary(0)))
         self.assertIn("actor", str(caught.exception))

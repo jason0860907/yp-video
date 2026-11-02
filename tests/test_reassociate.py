@@ -15,7 +15,20 @@ from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import read_jsonl, write_jsonl
 from yp_video.extraction import done, reassociate
 from yp_video.extraction import store as extraction_store
+from yp_video.extraction.links import TrackPick
 from yp_video.tracklets.geometry import TrackRef
+
+#: Where each stub tracklet resolves on its event frame.
+TRACK_BOXES = {
+    TrackRef(1, 1): (0, 0, 50, 50),
+    TrackRef(1, 2): (100, 100, 200, 300),
+    TrackRef(1, 3): (410, 510, 510, 690),
+}
+
+
+def _resolve(stem, record, ref, *, masks=None):
+    box = TRACK_BOXES.get(ref)
+    return None if box is None else TrackPick(box, record["frame"], snap=False)
 
 
 def _detection(box, score=0.9):
@@ -26,7 +39,6 @@ class _StubPolicy:
     """Answers with whatever the test hands it, keyed by event id."""
 
     name = "stub"
-    needs_tracklets = False
 
     def __init__(self, picks: dict[str, ActorPick]):
         self._picks = picks
@@ -67,6 +79,7 @@ class ReassociationTests(unittest.TestCase):
                 "actor_box": [410, 510, 510, 690],
                 "crop": "auto.jpg",
                 "crop_schema": reassociate.CROP_SCHEMA_VERSION,
+                "track": "1:3",
                 "score": 0.7,
                 "detections": [
                     _detection([410, 510, 510, 690]),
@@ -75,6 +88,8 @@ class ReassociationTests(unittest.TestCase):
             },
         ]
         write_jsonl(self.records, self.meta, self.rows)
+        self.tracks = root / "match_tracks.jsonl"
+        self.tracks.write_text("")
         (self.crops / "human.jpg").write_bytes(b"human")
         (self.crops / "auto.jpg").write_bytes(b"auto")
 
@@ -95,6 +110,9 @@ class ReassociationTests(unittest.TestCase):
                 extraction_store, "action_annotation_path", return_value=self.action
             ),
             patch.object(reassociate, "records_path", return_value=self.records),
+            patch.object(reassociate, "tracks_path", return_value=self.tracks),
+            patch.object(reassociate, "open_track_masks", return_value=None),
+            patch("yp_video.extraction.cropping.resolve_track", side_effect=_resolve),
             patch.object(reassociate, "crop_dir", return_value=self.crops),
             patch.object(
                 reassociate, "masked_crop_dir", return_value=self.crops / "masked"
@@ -129,7 +147,7 @@ class ReassociationTests(unittest.TestCase):
         counts = self._run(
             _StubPolicy(
                 # A pick that WOULD move the human event, if it were consulted.
-                {"human": ActorPick(box=(0, 0, 50, 50)), "auto": ActorPick()},
+                {"human": ActorPick(track=TrackRef(1, 1)), "auto": ActorPick()},
             )
         )
 
@@ -155,7 +173,7 @@ class ReassociationTests(unittest.TestCase):
         write_jsonl(self.records, self.meta, [self.rows[0], {**self.rows[1], "crop": None}])
         actor_labels.save("match", "auto", ActorLabel(ActorVerdict.MANUAL, 190, (410, 510, 510, 690)))
 
-        counts = self._run(_StubPolicy({"auto": ActorPick(box=(100, 100, 200, 300))}))
+        counts = self._run(_StubPolicy({"auto": ActorPick(track=TrackRef(1, 2))}))
 
         record = read_jsonl(self.records)[1][1]
         self.assertEqual(counts["unresolvable"], 1)
@@ -168,7 +186,7 @@ class ReassociationTests(unittest.TestCase):
         the one that was already there."""
         counts = self._run(
             _StubPolicy(
-                {"auto": ActorPick(box=(410, 510, 510, 690))},
+                {"auto": ActorPick(track=TrackRef(1, 3))},
             )
         )
 
@@ -191,14 +209,9 @@ class ReassociationTests(unittest.TestCase):
         self.assertEqual(record["resolution"], "unresolved")
 
     def test_a_tracklet_pick_that_resolves_nowhere_is_not_forced(self) -> None:
-        """No tracklets on disk → resolve_track finds nothing. The event must
-        end unresolved, not cropped from the tracklet's own box."""
-        with patch("yp_video.extraction.cropping.resolve_track", return_value=None):
-            counts = self._run(
-                _StubPolicy(
-                    {"auto": ActorPick(track=TrackRef(3, 7))},
-                    )
-            )
+        """resolve_track finds nothing for the tracklet. The event must end
+        unresolved, not cropped from the tracklet's own box."""
+        counts = self._run(_StubPolicy({"auto": ActorPick(track=TrackRef(3, 7))}))
 
         self.assertEqual(counts["unresolvable"], 1)
         self.assertIsNone(read_jsonl(self.records)[1][1]["box"])
@@ -214,7 +227,7 @@ class ReassociationTests(unittest.TestCase):
 
         counts = self._run(
             _StubPolicy(
-                {"auto": ActorPick(box=(0, 0, 50, 50))}
+                {"auto": ActorPick(track=TrackRef(1, 1))}
             )
         )
 
@@ -229,7 +242,7 @@ class ReassociationTests(unittest.TestCase):
 
         counts = self._run(
             _StubPolicy(
-                {"auto": ActorPick(box=(410, 510, 510, 690))},
+                {"auto": ActorPick(track=TrackRef(1, 3))},
             )
         )
 
@@ -242,12 +255,17 @@ class ReassociationTests(unittest.TestCase):
         """New machine output nobody vouched for stays visibly unreviewed."""
         counts = self._run(
             _StubPolicy(
-                {"auto": ActorPick(box=(410, 510, 510, 690))},
+                {"auto": ActorPick(track=TrackRef(1, 3))},
             )
         )
 
         self.assertEqual(counts["confirmed"], 0)
         self.assertNotIn("auto", actor_labels.load("match"))
+
+    def test_an_untracked_video_is_refused(self) -> None:
+        self.tracks.unlink()
+        with self.assertRaises(FileNotFoundError):
+            self._run(_StubPolicy({}))
 
     def test_the_policy_name_is_recorded_in_the_header(self) -> None:
         self._run(_StubPolicy({}))
@@ -262,7 +280,7 @@ class ReassociationTests(unittest.TestCase):
         reassociate.reassociate_video(
             Path("/nonexistent/match.mp4"),
             _StubPolicy(
-                {"auto": ActorPick(box=(100, 100, 200, 300))},
+                {"auto": ActorPick(track=TrackRef(1, 2))},
             ),
             on_progress=lambda *args: calls.append(args),
         )

@@ -15,7 +15,6 @@ const ACTION_LABELS: Record<string, string> = {
   'POST /api/annotate/annotations': 'Save Rally labels',
   'POST /api/action-annotate/annotations': 'Save Action labels',
   'POST /api/actor-association/fix/{name}': 'Save Association labels',
-  'PUT /api/detection-label/frame/{name}': 'Save Detection labels',
   'PUT /api/court/video/{name}': 'Save Court calibration',
   'PUT /api/reid/players/{name}': 'Save ReID labels',
   'PUT /api/annotate/done/{name}': 'Rally labels done',

@@ -475,12 +475,12 @@ class StagesStopWhereTheyShouldTests(unittest.TestCase):
     """
 
     def test_detection_neither_associates_nor_embeds(self) -> None:
-        """Detection accepts a box archive, never association policy or embedding weights."""
+        """Detection takes no association policy or embedding weights."""
         import inspect
 
         params = inspect.signature(pipeline.detect_video).parameters
         self.assertEqual(
-            sorted(params), ["on_progress", "person_boxes", "video_path"]
+            sorted(params), ["on_progress", "video_path"]
         )
         source = inspect.getsource(pipeline.detect_video)
         for forbidden in ("cut(", "embed_video"):

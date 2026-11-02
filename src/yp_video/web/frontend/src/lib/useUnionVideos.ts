@@ -1,4 +1,4 @@
-/** Client-side union of the four labeling work lists, keyed by cut filename.
+/** Client-side union of the labeling work lists, keyed by cut filename.
  *
  *  Fetches with the EXISTING query keys so panel-level invalidations keep
  *  working. Base is `action-videos` — the backend lists every cut there, the
@@ -35,11 +35,6 @@ export function useUnionVideos() {
     queryFn: () => apiFetch<ReidVideo[]>(API.reid.videos),
   });
 
-  const detectionQuery = useQuery({
-    queryKey: ['detection-videos'],
-    queryFn: () => apiFetch<NonNullable<UnionVideo['detection']>[]>(API.detectionLabel.videos),
-  });
-
   const courtQuery = useQuery({
     queryKey: ['court-videos'],
     queryFn: () => apiFetch<NonNullable<UnionVideo['court']>[]>(API.court.videos),
@@ -60,10 +55,6 @@ export function useUnionVideos() {
       const row = byStem.get(stem(v.name));
       if (row) row.reid = v;
     }
-    for (const v of detectionQuery.data ?? []) {
-      const row = byStem.get(stem(v.name));
-      if (row) row.detection = v;
-    }
     for (const v of courtQuery.data ?? []) {
       const row = byStem.get(stem(v.name));
       if (row) row.court = v;
@@ -81,13 +72,13 @@ export function useUnionVideos() {
         });
     }
     return rows;
-  }, [rallyQuery.data, actionQuery.data, assocQuery.data, reidQuery.data, detectionQuery.data, courtQuery.data]);
+  }, [rallyQuery.data, actionQuery.data, assocQuery.data, reidQuery.data, courtQuery.data]);
 
   // Rows come from action + rally only (assoc/reid enrich existing rows), so
   // pending tracks just those two — partial data should show, not wait for
   // the slowest list. Errors surface from all four: a failed enrichment
   // silently marks rows "not ready" otherwise.
-  const all = [actionQuery, rallyQuery, assocQuery, reidQuery, detectionQuery, courtQuery];
+  const all = [actionQuery, rallyQuery, assocQuery, reidQuery, courtQuery];
   const failed = all.filter((q) => q.isError);
   const query: ListQuery = {
     isPending: actionQuery.isPending || rallyQuery.isPending,

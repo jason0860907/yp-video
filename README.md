@@ -15,22 +15,21 @@
 
 SPOT 模型本體住在獨立的 `~/yp-spot` repo（自己的 venv），yp-video 透過 subprocess + JSON 檔案跨進程呼叫它——這裡只負責組指令、解析 checkpoint、轉換輸出格式。
 
-Dashboard 的完整 **Inference** 使用含 `rally`、`action`、`person`、`actor` 的 fusion
-checkpoint（單一檔案）：一次解碼產生回合、事件與人物框，再以 ByteTrack 串成回合內的
-tracklet，最後由同一個 checkpoint 的 actor head 從每個事件附近的
-tracklet 選 actor——和 App 進階分析同一條呼叫（`actor/person_action.build_policy`）。
-這個 checkpoint 由 Fusion Train 的 Action + Rally + Winner + Person + Actor recipe
+Dashboard 的完整 **Inference** 使用含 `rally`、`action`、`actor` 的 fusion
+checkpoint（單一檔案）：一次解碼產生回合與事件；接著以 RF-DETR Seg + ByteTrack + GTA
+追蹤每個回合（和 App 分析同一個 stride，`extraction/identify.TRACKING_STRIDE`），
+事件偵測直接讀 tracking 在事件幀留下的偵測結果；最後由同一個 checkpoint 的 actor head
+從每個事件附近的 tracklet 選 actor——和 App 分析同一條呼叫（`actor/person_action.build_policy`）。
+這個 checkpoint 由 Fusion Train 的 Action + Rally + Winner + Actor recipe
 一次訓練：actor head 吃 Association 標註（`actor/training_labels.py` 寫成每事件一列），
 和其他 task 用同一份 train/val 影片切分。
-App 標準分析則直接用 SPOT pass 在偵測事件時順便挑的人（`tracks/<stem>_actor_picks.json`，
-見 `core/actor_picks.py`），不再重跑骨幹。人物框保留在
-`tracks/<stem>_persons.npz`，tracking 與事件候選都讀同一份框，不會另跑
-RF-DETR。框保留原始 frame 編號與取樣 stride；這條路徑沒有 instance mask。
-RF-DETR 的獨立 tracking／detection 工具仍供離線標註使用。
 
-完整 Inference 若缺少人物框，會跑全片 fusion pass；已有的回合／動作預標註
-在未選 Overwrite 時保留。人物框會比對 checkpoint，新的框會使下游 tracking
-與事件候選重建。缺少 person head 或輸出不完整會直接報錯。
+App 的球員配對（`extraction/identify.py`）只有一條路徑：RF-DETR Seg + ByteTrack + GTA
+tracklet、actor head 從 tracklet 候選挑人、tracklet 視窗 embedding
+（`extraction/windows.py`）與球軌跡。分析階段的 SPOT pass 只產生回合、得分方與動作事件。
+
+完整 Inference 已有的回合／動作預標註在未選 Overwrite 時保留；tracking 只在
+與目前回合相符、帶 mask 且經 GTA 修補時保留。
 
 ## 安裝
 
@@ -125,7 +124,6 @@ Download → Cut → Predict → Annotate → Train → Inference
 
 - [VolleyIQ iOS App 使用者功能整理](docs/ios-user-features.md)：目前的匯入、回看、球員配對、收藏、匯出與分享功能，以及使用上的限制。
 - [App 結果預覽與修正審核](docs/app-review.md) — 操作流程、來源格式與標註匯入規則。
-- [Person 偵測標註](docs/detection-label.md)：逐幀人物框的來源、審核狀態與訓練標籤規則。
 - [Web 功能開發準則](docs/feature-development.md)：前端頁面骨架、共用元件與資料規則。
 - [提案筆記](docs/proposals/)：尚未實作的產品與模型構想，例如 [Jev 式決策模型與 VolleyIQ 整合構想](docs/proposals/decision-models-volleyiq.md)。
 
@@ -135,8 +133,7 @@ yp-video/
 │   ├── config.py               # 集中管理路徑與設定
 │   ├── core/                   # 核心邏輯（無 Web 依賴）
 │   │   ├── ffmpeg.py           # FFmpeg 影片處理
-│   │   ├── jsonl.py            # JSONL 讀寫
-│   │   └── person_boxes.py     # Fusion 人物框檔案格式，供推論、追蹤、偵測共用
+│   │   └── jsonl.py            # JSONL 讀寫
 │   ├── action/                 # SPOT 流程編排：frame 快取、預標、推論輸出轉換
 │   ├── contracts/              # 跨 repo 資料格式（yp-video ↔ yp-spot / yp-reid / selfhost-worker）
 │   ├── person/                 # 感知基元：人物偵測與 instance mask

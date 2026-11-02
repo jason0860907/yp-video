@@ -6,10 +6,13 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import patch
 
+from yp_video.action.spot_pass import RallyOptions, SpotOptions
 from yp_video.contracts.action import ACTION_CONTRACT_VERSION, SPOT_PACKAGE_TYPE
+from yp_video.extraction.identify import TRACKING_STRIDE
 from yp_video.tracklets import store as tracks_store
 from yp_video.web import fusion_inference as fi
 
@@ -30,11 +33,10 @@ class CheckpointTests(unittest.TestCase):
     def test_only_packages_with_every_required_head_list(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            _make_package(root, "fusion", ["action", "location", "actor", "rally", "winner", "person"])
-            _make_package(root, "without_people", ["action", "rally", "winner"])
+            _make_package(root, "fusion", ["action", "location", "actor", "rally", "winner"])
             _make_package(root, "rally_only", ["rally", "winner"])
             _make_package(root, "action_only", ["action", "location"])
-            _make_package(root, "no_actor", ["action", "rally", "person"])
+            _make_package(root, "no_actor", ["action", "rally", "winner"])
             rows = fi.list_checkpoints(root)
             self.assertEqual([row["experiment"] for row in rows], ["fusion"])
             self.assertTrue(fi.default_checkpoint(root).endswith("fusion/checkpoint_best.pt"))
@@ -59,7 +61,7 @@ class CheckpointTests(unittest.TestCase):
 
     def test_resolve_rejects_a_package_without_an_actor_head(self):
         with tempfile.TemporaryDirectory() as tmp:
-            checkpoint = _make_package(Path(tmp), "fusion", ["rally", "action", "person"])
+            checkpoint = _make_package(Path(tmp), "fusion", ["rally", "action"])
             with (
                 patch.object(fi.prelabel, "resolve_checkpoint", return_value=checkpoint),
                 self.assertRaises(ValueError) as ctx,
@@ -116,13 +118,16 @@ class PerceptionPlanTests(unittest.TestCase):
     def test_tracking_needs_rallies_and_keeps_only_matching_tracks(self):
         skip = lambda **kw: fi.tracking_skip("m", **kw)  # noqa: E731
         self.assertEqual(skip(overwrite=False, rallies=False), "no rallies")
-        with patch.object(fi, "fusion_tracks_current", return_value=True):
-            self.assertEqual(skip(overwrite=False, rallies=True), "kept existing tracks")
-            self.assertIsNone(skip(overwrite=True, rallies=True))
-        with patch.object(fi, "fusion_tracks_current", return_value=False):
+        with patch.object(fi, "tracks_current", return_value=True):
+            with patch.object(fi, "tracks_refined", return_value=True):
+                self.assertEqual(skip(overwrite=False, rallies=True), "kept existing tracks")
+                self.assertIsNone(skip(overwrite=True, rallies=True))
+            with patch.object(fi, "tracks_refined", return_value=False):
+                self.assertIsNone(skip(overwrite=False, rallies=True))
+        with patch.object(fi, "tracks_current", return_value=False):
             self.assertIsNone(skip(overwrite=False, rallies=True))
 
-    def test_maskless_tracks_are_current_but_segmented_tracks_require_masks(self):
+    def test_current_tracks_match_the_rallies_and_carry_masks(self):
         with tempfile.TemporaryDirectory() as tmp:
             tracks = Path(tmp) / "m.jsonl"
             masks = Path(tmp) / "m_masks.npz"
@@ -141,10 +146,6 @@ class PerceptionPlanTests(unittest.TestCase):
             self.assertTrue(check({"rallies": {"fingerprint": "abc"}}, fingerprint="abc"))
             self.assertFalse(check({"rallies": {"fingerprint": "abc"}}, fingerprint="moved"))
             self.assertFalse(
-                check({"rallies": {"fingerprint": "abc"}, "mask_res": [96, 48]},
-                      fingerprint="abc", masks_path=Path(tmp) / "none.npz")
-            )
-            self.assertTrue(
                 check({"rallies": {"fingerprint": "abc"}}, fingerprint="abc", masks_path=Path(tmp) / "none.npz")
             )
 
@@ -215,6 +216,37 @@ class AssociationStageTests(unittest.TestCase):
                 video=Path("m.mp4"), checkpoint=Path("c.pt"), events=[], on_progress=lambda *a: None
             )
         build.assert_not_called()
+
+
+class RunVideoTests(unittest.TestCase):
+    def test_kept_spot_outputs_skip_the_pass_and_perception_runs_identify_tracking(self):
+        video = Path("/videos/cuts-sideline/match.mp4")
+        checkpoint = Path("/ckpt/fusion/checkpoint_best.pt")
+        events = [{"id": "e1", "frame": 20, "label": "spike"}]
+        with (
+            patch.object(fi, "materialized_cut", return_value=nullcontext()),
+            patch.object(fi, "plan_spot_stages", return_value={
+                "rally": "kept existing rallies", "action": "kept existing actions"}),
+            patch.object(fi, "run_spot_pass") as spot,
+            patch.object(fi, "load_rallies", return_value=[{"rally_id": 1, "start": 0, "end": 3}]),
+            patch.object(fi, "load_events", return_value=events),
+            patch.object(fi, "tracks_current", return_value=False),
+            patch.object(fi, "track_video", return_value={"tracklets": 4}) as track,
+            patch.object(fi, "detect_video", return_value={"detections": 9}) as detect,
+            patch.object(fi, "association_skip", return_value=None),
+            patch.object(fi, "run_association_stage", return_value={"changed": 1}),
+        ):
+            result = fi.run_video(
+                video=video, checkpoint=checkpoint, rally=RallyOptions(0.5, 2, 4),
+                spot=SpotOptions(1, 0), overwrite=False, on_progress=lambda *a: None,
+            )
+        spot.assert_not_called()
+        self.assertEqual(track.call_args.kwargs["stride"], TRACKING_STRIDE)
+        self.assertEqual(track.call_args.kwargs["event_frames"], {20})
+        # Fresh tracks re-detect: detection reads their event-frame sidecar.
+        detect.assert_called_once()
+        self.assertEqual((result.tracklets, result.detections), (4, 9))
+        self.assertEqual(result.association, {"changed": 1})
 
 
 class SummaryTests(unittest.TestCase):

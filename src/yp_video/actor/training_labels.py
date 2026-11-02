@@ -7,7 +7,7 @@ the association annotations (actor/labels.py). One row per line:
     {"video", "id", "frame", "label", "boxes", "box_source", "snapped", "verdict"}
 
 ``boxes`` are normalized source-frame xyxy on the event frame, in the
-RF-DETR Seg 2XLarge style the person head learns (person/dense.py): the
+RF-DETR Seg 2XLarge style of the dense pass (person/dense.py): the
 actor's box first, then every other dense box at or above
 PERSON_LABEL_MIN_SCORE that is not a duplicate of it — candidates, not
 "no action" negatives. The actor's box is the label's box replaced by the

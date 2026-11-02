@@ -86,7 +86,6 @@ CUTS_DIRS = (CUTS_BROADCAST_DIR, CUTS_SIDELINE_DIR)
 RALLY_ANNOTATIONS_DIR = VIDEOS_DIR / "rally-spot" / "annotations"
 ACTION_ANNOTATIONS_DIR = VIDEOS_DIR / "action" / "annotations"
 ACTION_PRE_ANNOTATIONS_DIR = VIDEOS_DIR / "action" / "pre-annotations"
-PERSON_ANNOTATIONS_DIR = VIDEOS_DIR / "person" / "annotations"
 PERSON_DENSE_DIR = VIDEOS_DIR / "person" / "dense"
 # Ball: candidates/ caches the ball detector's boxes on the frames
 # between hand-marked contacts; pseudo-labels/ holds the boxes chosen from
@@ -177,7 +176,6 @@ R2_CATEGORIES: dict[str, R2Category] = {
     "cuts-sideline": R2Category(CUTS_SIDELINE_DIR, "*.mp4", "Cuts (Sideline)"),
     "rally-spot/annotations": R2Category(RALLY_ANNOTATIONS_DIR, "*.jsonl", "Rally Annotations"),
     "rally-spot/pre-annotations": R2Category(RALLY_SPOT_PRE_ANNOTATIONS_DIR, "*.jsonl", "Rally Predictions (SPOT)"),
-    "person/annotations": R2Category(PERSON_ANNOTATIONS_DIR, "*.json", "Person Detection Annotations"),
     "court/annotations": R2Category(COURT_ANNOTATIONS_DIR, "*.json", "Court Calibrations"),
     "action/annotations": R2Category(ACTION_ANNOTATIONS_DIR, "*.jsonl", "Action Annotations"),
     "action/pre-annotations": R2Category(ACTION_PRE_ANNOTATIONS_DIR, "*.jsonl", "Action Pre-Annotations"),
