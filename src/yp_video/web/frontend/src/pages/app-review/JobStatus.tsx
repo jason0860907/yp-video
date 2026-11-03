@@ -4,6 +4,7 @@
 
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { formatDateTime, formatDuration } from '@/lib/format';
+import { IDENTIFY } from './appTerms';
 import type { JobKind, LibraryMatch, MatchJob } from './types';
 
 const TONE: Record<MatchJob['status'], BadgeTone> = {
@@ -16,21 +17,19 @@ const TONE: Record<MatchJob['status'], BadgeTone> = {
 
 const KINDS: JobKind[] = ['analysis', 'identify', 'court'];
 
-const jobLabel = (kind: JobKind, job?: MatchJob) =>
-  kind === 'analysis' ? 'Analysis' : kind === 'court' ? 'Court 3D' : job?.mode === 'advanced' ? 'Advanced ID' : 'Identify';
+const LABEL: Record<JobKind, string> = { analysis: 'Analysis', identify: IDENTIFY, court: 'Court 3D' };
 
 function title(job: MatchJob): string {
   const run = job.started_at && job.finished_at ? ` · ran ${formatDuration(job.finished_at - job.started_at)}` : '';
   return `${job.status} · created ${formatDateTime(job.created_at)}${run}${job.error ? `\n${job.error}` : ''}`;
 }
 
-export function JobBadge({ kind, job }: { kind: JobKind; job?: MatchJob }) {
+export function JobBadge({ job }: { job?: MatchJob }) {
   if (!job) return <span className="text-text-muted">—</span>;
   const active = job.status === 'pending' || job.status === 'running';
   return (
     <span className="inline-flex flex-col items-start gap-0.5" title={title(job)}>
       <Badge tone={TONE[job.status]} dot={job.status === 'running'}>
-        {kind === 'identify' && job.mode === 'advanced' ? 'advanced · ' : ''}
         {job.status}
         {active && ` ${Math.round(job.progress)}%`}
       </Badge>
@@ -48,8 +47,8 @@ export function JobRow({ match }: { match: LibraryMatch }) {
     <span className="flex flex-wrap items-center gap-x-4 gap-y-1">
       {KINDS.map((kind) => (
         <span key={kind} className="inline-flex items-center gap-1.5">
-          {jobLabel(kind, match.jobs[kind])}
-          <JobBadge kind={kind} job={match.jobs[kind]} />
+          {LABEL[kind]}
+          <JobBadge job={match.jobs[kind]} />
         </span>
       ))}
     </span>

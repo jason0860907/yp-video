@@ -6,6 +6,7 @@ import { API, apiFetch, errMsg } from '@/lib/api';
 import { formatDateTime } from '@/lib/format';
 import { Badge } from '@/components/ui/Badge';
 import { ErrorState } from '@/components/ui/ErrorState';
+import { IDENTIFY } from './appTerms';
 import { JobBadge } from './JobStatus';
 import type { LibraryMatch, MatchEdits } from './types';
 
@@ -46,7 +47,7 @@ export function Overview({
           <tr className="border-b border-border text-[11px] uppercase tracking-[0.06em] text-text-muted">
             <th className="pb-2 pr-3 font-normal">Match</th>
             <th className="pb-2 pr-3 font-normal">Analysis</th>
-            <th className="pb-2 pr-3 font-normal">Identify</th>
+            <th className="pb-2 pr-3 font-normal">{IDENTIFY}</th>
             <th className="pb-2 pr-3 font-normal">Court 3D</th>
             <th className="pb-2 pr-3 font-normal">User edits</th>
             <th className="pb-2 font-normal">Last edited</th>
@@ -65,13 +66,13 @@ export function Overview({
                 <div className="text-[11px] text-text-muted">{formatDateTime(m.recorded_at ?? m.updated_at)}</div>
               </td>
               <td className="py-2 pr-3">
-                <JobBadge kind="analysis" job={m.jobs.analysis} />
+                <JobBadge job={m.jobs.analysis} />
               </td>
               <td className="py-2 pr-3">
-                <JobBadge kind="identify" job={m.jobs.identify} />
+                <JobBadge job={m.jobs.identify} />
               </td>
               <td className="py-2 pr-3">
-                <JobBadge kind="court" job={m.jobs.court} />
+                <JobBadge job={m.jobs.court} />
               </td>
               <td className="py-2 pr-3">
                 <Edits edits={overview.data?.[m.id]} analysed={!!m.r2_keys.result} loading={overview.isPending} />

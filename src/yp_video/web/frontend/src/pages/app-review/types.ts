@@ -21,7 +21,6 @@ export type JobKind = 'analysis' | 'identify' | 'court';
 /** The newest job of one kind for a match (admin library). */
 export interface MatchJob {
   kind: JobKind;
-  mode: 'standard' | 'advanced' | null;
   status: 'pending' | 'running' | 'completed' | 'failed' | 'superseded';
   step: string | null;
   progress: number;

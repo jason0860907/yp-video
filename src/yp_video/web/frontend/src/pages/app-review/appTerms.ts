@@ -18,6 +18,9 @@ export const KIND: Record<Kind, { short: string; long: string; color: string }> 
 };
 export const kindOf = (kind: string) => KIND[kind as Kind] ?? { short: '·', long: '其他', color: '#8E8E93' };
 
+/** The identify job, as the App's button and quota bar name it. */
+export const IDENTIFY = '進階分析';
+
 /** Palette: primary (dark mode), accent, danger. */
 export const APP = { primary: '#4E9A6A', accent: '#E8B23A', danger: '#FF3B30' };
 
