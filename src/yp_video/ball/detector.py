@@ -35,8 +35,12 @@ CLASS_ID = 0
 # 224 -> 247 and 231 -> 240 of 252 / 247 vs round 1). An occluded ball at a
 # contact can still score ~0.1.
 SCORE_FLOOR = 0.1
-# Detect at about this rate: neighbouring frames are near-duplicates.
-HZ = 15.0
+# Detect at about this rate — every frame of a 30 fps sideline cut. A spike
+# flies ~0.7 s: at 15 Hz its ~11 frames were too few once blur and the
+# blockers took some, and only 62% of spike->receive flights fitted the
+# ball; at 30 Hz 83% (two calibrated videos, work/ball-segmentation-eval-
+# 20261104; every flight 77-79% -> 87-92%).
+HZ = 30.0
 
 _detector = BatchSegDetector(VARIANT, BATCH_SIZE, resolution=RESOLUTION, weights=str(WEIGHTS), class_id=CLASS_ID)
 
