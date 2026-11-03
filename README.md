@@ -188,6 +188,7 @@ videos/
 ├── tracks/                  # 追蹤輸出：誰在場上（衍生）
 ├── extraction/              # 偵測記錄與 actor crop（records/、crops/、crops-masked/；衍生）
 ├── association/annotations/ # 人工 actor verdict（<stem>_actors.json）
+├── person/dense/            # RF-DETR Seg 2XLarge 逐幀密集偵測（<stem>_dense.npz；衍生）
 ├── reid/
 │   ├── annotations/         # 人工球員身分（<stem>_players.json）
 │   ├── checkpoints/         # yp-reid checkpoint package

@@ -10,7 +10,7 @@
 
 - **Pipeline 結果**：選擇現有影片，讀取目前 Rally／Action 標註或預測與人工 ReID 名稱。
 - **雲端修正**：列出 customer bucket 的 corrections，選擇比賽和明確的 analysis job，再保存來源快照。使用工作區既有 `R2_BUCKET_CUSTOMER` 與 R2 憑證；原始影片透過短效簽名 URL 播放。
-- **匯入 JSON**：載入 analysis result、corrections 6.0，以及選用的 identify v4、Library Rally 快照。
+- **匯入 JSON**：載入 analysis result、corrections 7.0，以及選用的 identify v6、Library Rally 快照。
 - **審核紀錄**：重新開啟已保存的來源快照、審核意見及匯入結果。
 
 預覽提供 Rally／Action／Score、球員和動作篩選、In Rally／全部、指定回合的 Action、動作時間定位與連續播放。Action 可切換「組織進攻／單一動作／整個 Rally」。Score 顯示篩選後的失分原因次數，以及不受片段篩選影響的完整場邊累計；場邊累計不推測換場後的球隊身分。
