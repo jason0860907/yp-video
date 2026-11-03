@@ -10,7 +10,7 @@ from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import patch
 
-from yp_video.action.spot_pass import RallyOptions, SpotOptions
+from yp_video.action.spot_pass import RallyOptions, SpotOptions, SpotPassResult
 from yp_video.contracts.action import ACTION_CONTRACT_VERSION, SPOT_PACKAGE_TYPE
 from yp_video.extraction.identify import TRACKING_STRIDE
 from yp_video.tracklets import store as tracks_store
@@ -100,6 +100,15 @@ class StagePlanTests(unittest.TestCase):
             redo = fi.plan_spot_stages("match", overwrite=True)
         self.assertEqual(kept, {"rally": "kept existing rallies", "action": "kept existing actions"})
         self.assertEqual(redo, {"rally": None, "action": None})
+
+    def test_action_beside_kept_rallies_needs_saved_rallies(self):
+        a, b = self._paths(rally_exists=True, action_exists=False)
+        with a, b, patch.object(fi, "load_rallies", return_value=[]):
+            empty = fi.plan_spot_stages("match", overwrite=False)
+        with a, b, patch.object(fi, "load_rallies", return_value=[{"start": 0, "end": 3}]):
+            saved = fi.plan_spot_stages("match", overwrite=False)
+        self.assertEqual(empty, {"rally": "kept existing rallies", "action": "no rallies"})
+        self.assertEqual(saved, {"rally": "kept existing rallies", "action": None})
 
     def test_dotted_stem_finds_its_action_pre_annotation(self):
         # "vs. #Team" must not be read as a file suffix.
@@ -247,6 +256,44 @@ class RunVideoTests(unittest.TestCase):
         detect.assert_called_once()
         self.assertEqual((result.tracklets, result.detections), (4, 9))
         self.assertEqual(result.association, {"changed": 1})
+
+
+class SpotStageTests(unittest.TestCase):
+    """The pass runs only the heads asked for; an action-only pass decodes
+    the saved rallies instead of the whole video."""
+
+    def _run(self, tasks):
+        result = SpotPassResult(
+            fps=30.0, num_frames=300, duration_s=10.0, checkpoint=Path("c.pt"),
+            rallies=[{"start": 0.0, "end": 3.0}] if "rally" in tasks else None,
+            actions=[{"events": []}],
+        )
+        saved = [{"rally_id": 1, "start": 1.0, "end": 4.0, "label": "rally", "winner": None}]
+        with (
+            patch.object(fi, "run_spot_pass", return_value=result) as spot,
+            patch.object(fi, "load_rallies", return_value=saved),
+            patch.object(fi, "save_rally_pre_annotation", return_value=(Path("r.jsonl"), 1)),
+            patch.object(fi, "save_spot_pre_annotation", return_value={"num_events": 0}),
+        ):
+            out = fi.run_spot_stages(
+                video=Path("/videos/cuts-sideline/match.mp4"), source="match.mp4",
+                checkpoint=Path("c.pt"), tasks=tasks, rally=RallyOptions(0.5, 2, 4),
+                spot=SpotOptions(1, 0), on_progress=lambda *a: None,
+            )
+        return spot.call_args.kwargs, saved, out
+
+    def test_action_only_pass_is_seeded_with_the_saved_rallies(self):
+        kwargs, saved, out = self._run(("action",))
+        self.assertEqual(kwargs["tasks"], ("action",))
+        self.assertIs(kwargs["rallies"], saved)
+        self.assertNotIn("rallies", out)
+        self.assertEqual(out["events"], 0)
+
+    def test_joint_pass_cuts_actions_to_its_own_rallies(self):
+        kwargs, _saved, out = self._run(("rally", "action"))
+        self.assertEqual(kwargs["tasks"], ("rally", "action"))
+        self.assertIsNone(kwargs["rallies"])
+        self.assertEqual(out["rallies"], 1)
 
 
 class SummaryTests(unittest.TestCase):

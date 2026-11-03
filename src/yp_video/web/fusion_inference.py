@@ -147,15 +147,19 @@ def run_spot_stages(
     spot: SpotOptions,
     on_progress: StageProgress,
 ) -> dict:
-    """Run a whole-video rally + action pass; save the requested labels."""
+    """Run the requested SPOT heads in one pass and save their labels. With
+    the rally head the action events are cut to its fresh rallies; without
+    it the action head decodes only the video's saved rallies — the same
+    cascade the worker's action_only rerun runs."""
     tasks = tuple(tasks)
     result = run_spot_pass(
         source,
         checkpoint=checkpoint,
-        tasks=("rally", "action"),
+        tasks=tasks,
         rally=rally,
         spot=spot,
         rally_pad_s=RALLY_PAD_S,
+        rallies=None if "rally" in tasks else load_rallies(video.stem),
         on_progress=lambda fraction: on_progress(fraction, "inference"),
     )
     out: dict = {"written": []}
@@ -263,17 +267,19 @@ def _fractional(on_progress: StageProgress):
 def plan_spot_stages(stem: str, *, overwrite: bool) -> dict[str, str | None]:
     """Per SPOT stage: None to run it, else why it is kept. Without
     ``overwrite`` a stage whose machine output exists is kept, so a run fills
-    the gaps."""
-    return {
-        "rally": (
-            None if overwrite or not rally_spot_pre_annotation_path(stem).exists()
-            else "kept existing rallies"
-        ),
-        "action": (
-            None if overwrite or not pre_annotation_path(f"{stem}.mp4").exists()
-            else "kept existing actions"
-        ),
-    }
+    the gaps. An action pass beside kept rallies decodes only those rallies,
+    so it has nothing to scan when they are empty."""
+    rally = (
+        None if overwrite or not rally_spot_pre_annotation_path(stem).exists()
+        else "kept existing rallies"
+    )
+    if not overwrite and pre_annotation_path(f"{stem}.mp4").exists():
+        action = "kept existing actions"
+    elif rally is not None and not load_rallies(stem):
+        action = "no rallies"
+    else:
+        action = None
+    return {"rally": rally, "action": action}
 
 
 @dataclass
