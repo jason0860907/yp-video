@@ -106,7 +106,7 @@ export const API = {
     video: (name: string) => `/court/video/${encodeURIComponent(name)}`,
     done: (name: string) => `/court/done/${encodeURIComponent(name)}`,
     positions: (name: string) => `/court/positions/${encodeURIComponent(name)}`,
-    guides: (name: string) => `/court/guides/${encodeURIComponent(name)}`,
+    prefill: (name: string) => `/court/prefill/${encodeURIComponent(name)}`,
   },
   appReview: {
     users: '/app-review/users',

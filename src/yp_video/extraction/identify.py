@@ -102,9 +102,13 @@ class IdentifyResult:
     #: The ball track over the flights between touches (ball/track.py) — what
     #: the court fits 3D trajectories to. None when the video has no events.
     ball: dict | None
-    #: Lines along the court paint (extraction/court_guides.py), normalized —
+    #: Lines along the court paint (extraction/court_prefill.py), normalized —
     #: what the app pre-draws on the first court calibration.
     court_guides: list
+    #: Floor landmark → normalized point, when the court fit is trusted
+    #: (court/paint.py PREFILL_CAMERA_RMSE) — what the app places on the
+    #: first court calibration, for the user to confirm.
+    court_points: dict
 
 
 def identify_players(
@@ -138,7 +142,7 @@ def identify_players(
     from yp_video.actor.person_action import build_policy
     from yp_video.ball.track import track_video as track_ball
     from yp_video.extraction import links
-    from yp_video.extraction.court_guides import court_guides
+    from yp_video.extraction.court_prefill import court_prefill
     from yp_video.extraction.feet import actor_boxes, actor_feet
     from yp_video.extraction.pipeline import detect_video, load_events
     from yp_video.extraction.reassociate import reassociate_video
@@ -152,7 +156,7 @@ def identify_players(
     if not events:
         return IdentifyResult(
             embedder=embedder, units=(), linkage=(), threshold=threshold_calibration(embedder), feet={}, actors={},
-            ball=None, court_guides=[],
+            ball=None, court_guides=[], court_points={},
         )
 
     track_video(
@@ -161,7 +165,7 @@ def identify_players(
     )
     ball = track_ball(video_path, _touch_frames(stem), on_progress=_banded(on_progress, "ball"))
     detect_video(video_path, on_progress=_banded(on_progress, "detecting"))
-    guides = court_guides(stem, video_path)
+    court = court_prefill(stem, video_path)
     geometry = video_geometry(video_path)
     width, height = geometry.width, geometry.height
     policy = build_policy(video_path, fusion_checkpoint, events, width=width, height=height,
@@ -204,7 +208,8 @@ def identify_players(
         feet=feet,
         actors=actors,
         ball=ball,
-        court_guides=guides,
+        court_guides=court.guides if court else [],
+        court_points=court.points if court else {},
     )
 
 
@@ -405,6 +410,7 @@ def _main() -> None:
         "actors": result.actors,
         "ball": result.ball,
         "court_guides": [[list(a), list(b)] for a, b in result.court_guides],
+        "court_points": {name: list(point) for name, point in result.court_points.items()},
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")

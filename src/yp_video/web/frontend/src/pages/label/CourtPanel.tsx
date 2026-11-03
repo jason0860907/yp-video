@@ -185,20 +185,23 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
     else qc.setQueryData<CourtState>(['court', video], (s) => (s ? { ...s, guides: next } : s));
   });
 
-  // A calibration not yet started opens with guides the server found along
-  // the paint (court/paint.py); they are saved with the first mark.
+  // A calibration not yet started opens with what the server found along
+  // the paint (court/paint.py): guides, and the floor marks when it trusts
+  // the fit. Both are saved with the first change.
   const untouched = (s: CourtState) => s.guides.length === 0 && Object.keys(s.points).length === 0;
   const found = useQuery({
-    queryKey: ['court-guides', video],
-    queryFn: () => apiFetch<{ guides: Segment[] }>(API.court.guides(video)),
+    queryKey: ['court-prefill', video],
+    queryFn: () => apiFetch<{ guides: Segment[]; points: CourtState['points'] }>(API.court.prefill(video)),
     enabled: state != null && untouched(state),
     staleTime: Infinity,
     retry: false,
   });
   useEffect(() => {
-    const lines = found.data?.guides;
-    if (!lines?.length) return;
-    qc.setQueryData<CourtState>(['court', video], (s) => (s && untouched(s) ? { ...s, guides: lines } : s));
+    const prefill = found.data;
+    if (!prefill?.guides.length) return;
+    qc.setQueryData<CourtState>(['court', video], (s) =>
+      s && untouched(s) ? { ...s, guides: prefill.guides, points: prefill.points } : s,
+    );
   }, [found.data, qc, video]);
 
   // The loupe follows the pointer over the stage while a tool places

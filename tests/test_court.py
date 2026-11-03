@@ -101,9 +101,9 @@ def test_router_keeps_the_guide_lines(client):
     assert client.put("/api/court/video/game.mp4", json=body).status_code == 422
 
 
-def test_router_needs_tracks_to_find_guides(client, tmp_path):
+def test_router_needs_tracks_to_find_the_court(client, tmp_path):
     with patch.object(routes, "tracks_path", return_value=tmp_path / "none.jsonl"):
-        assert client.get("/api/court/guides/game.mp4").status_code == 409
+        assert client.get("/api/court/prefill/game.mp4").status_code == 409
 
 
 def test_router_rejects_unknown_landmarks_and_out_of_frame_marks(client):

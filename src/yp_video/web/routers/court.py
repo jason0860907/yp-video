@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException
 
 from yp_video.core import label_done
 from yp_video.court import annotations, camera, geometry, paint
-from yp_video.extraction.court_guides import court_guides
+from yp_video.extraction.court_prefill import court_prefill
 from yp_video.tracklets.store import tracks_path
 from yp_video.web import audit, court_positions, worklists
 from yp_video.web.r2_client import cut_frame_source, resolve_cut, sync_to_r2
@@ -98,18 +98,20 @@ async def save_calibration(name: str, calibration: annotations.Calibration) -> d
     return _state(calibration)
 
 
-@router.get("/guides/{name}")
-async def detect_guides(name: str) -> dict:
-    """Guide lines along the court paint (court/paint.py): drawn before the
-    marking starts, saved only with the marks."""
-    return {"guides": await asyncio.to_thread(_detect_guides, name)}
+@router.get("/prefill/{name}")
+async def detect_prefill(name: str) -> dict:
+    """The court found in the paint (court/paint.py): guides, and the floor
+    marks when the fit is trusted — drawn before the marking starts, saved
+    only with the user's first change."""
+    found = await asyncio.to_thread(_detect_prefill, name)
+    return {"guides": found.guides, "points": found.points} if found else {"guides": [], "points": {}}
 
 
-def _detect_guides(name: str) -> list[paint.Segment]:
+def _detect_prefill(name: str) -> paint.Found | None:
     video = _video(name)
     if not tracks_path(video.stem).exists():
         raise HTTPException(409, "No tracks yet: the court is found where the players stand")
-    return court_guides(video.stem, cut_frame_source(video))
+    return court_prefill(video.stem, cut_frame_source(video))
 
 
 @router.get("/positions/{name}")

@@ -1,9 +1,11 @@
-"""Guide lines drawn ahead of the marking: find the court's paint in a video.
+"""Guides and marks drawn ahead of the marking: find the court's paint in a video.
 
 The marker draws guides along the paint and snaps marks to their crossings
-(annotations.Calibration.guides). This pre-draws them. Its answer is only
-ever guides — straight runs of real paint — never marks: a wrong guide costs
-one delete, a wrong mark a bad calibration.
+(annotations.Calibration.guides). This pre-draws them, and — when a pinhole
+camera reproduces the fit closely enough to trust it (PREFILL_CAMERA_RMSE)
+— places the floor marks too, for the user to confirm or drag. Below that
+the answer is only guides: a wrong guide costs one delete, a wrong mark a
+bad calibration.
 
 The court model is what tells paint from clutter. Line segments come from
 the median of frames spread over the video (the players walk out of it),
@@ -16,21 +18,33 @@ camera could have seen wins — clutter that lines up rarely makes one — and
 the answer is one guide per court line it found paint on, drawn across the
 frame.
 
+Measured over 387 sideline videos (work/court-autofit-eval-20261103): at
+PREFILL_CAMERA_RMSE the marks are placed on 202 of the 206 fits judged
+right and on 15 of the 104 judged wrong.
+
 Pixel units throughout; the result is normalized to the frame.
 """
 
 from __future__ import annotations
 
 import itertools
+from typing import NamedTuple
 
 import cv2
 import numpy as np
 
 from yp_video.court import camera
 from yp_video.court.annotations import OUTSIDE_FRAME
-from yp_video.court.geometry import COURT_LENGTH, COURT_WIDTH, LANDMARKS, LINES
+from yp_video.court.geometry import (
+    COURT_LENGTH,
+    COURT_WIDTH,
+    LANDMARKS,
+    LINES,
+    FloorLandmark,
+)
 
-Segment = tuple[tuple[float, float], tuple[float, float]]
+Point = tuple[float, float]
+Segment = tuple[Point, Point]
 
 #: Tracked boxes this confident place feet; the highest of them, less the
 #: margin, is where the floor ends. Tracking keeps fewer far players than a
@@ -80,6 +94,9 @@ REFINE_ANGLE = np.deg2rad(2.0)
 MAX_CAMERA_RMSE = 0.04
 MAX_CAMERA_DISTANCE = 40.0
 MIN_PAINT_FOUND = 0.6
+#: A fit the camera reproduces within this (frame heights) places the floor
+#: marks as well as the guides.
+PREFILL_CAMERA_RMSE = 0.012
 
 #: Court positions of the lines along the court (y) and across it (x).
 ALONG_Y = sorted({y0 for _, y0, _, y1 in LINES if y0 == y1})
@@ -105,25 +122,37 @@ _PAINT = np.concatenate(
 )
 
 
-def guides(frames: list[np.ndarray], floor_top: float) -> list[Segment]:
-    """Guide lines along the court paint in these frames (BGR, one video),
-    normalized; empty when no court fits.
+class Found(NamedTuple):
+    """The court found in a video, normalized to the frame."""
+
+    #: One per court line with paint found on it.
+    guides: list[Segment]
+    #: Floor landmark → where the fit puts it (within OUTSIDE_FRAME of the
+    #: frame); empty unless the camera reproduces the fit within
+    #: PREFILL_CAMERA_RMSE.
+    points: dict[FloorLandmark, Point]
+
+
+def find(frames: list[np.ndarray], floor_top: float) -> Found | None:
+    """The court in these frames (BGR, one video); None when none fits.
 
     ``floor_top`` is the normalized height above which nothing is floor —
     the highest feet seen."""
     background = np.median(np.stack(frames), axis=0).astype(np.uint8)
     h, w = background.shape[:2]
+    size = (w, h)
     segs = _segments(background, floor_top * h)
     families = _vanishing_families(_merge(segs))
     if len(families) < 2:
-        return []
-    homography = _fit(segs, families, floor_top * h, (w, h))
+        return None
+    homography = _fit(segs, families, floor_top * h, size)
     if homography is None:
-        return []
-    return [
-        ((round(a[0] / w, 4), round(a[1] / h, 4)), (round(b[0] / w, 4), round(b[1] / h, 4)))
-        for a, b in _paint_in_view(homography, segs, (w, h))
-    ]
+        return None
+    guides = [(_normalized(a, size), _normalized(b, size)) for a, b in _paint_in_view(homography, segs, size)]
+    oriented = _oriented(homography, size)
+    if oriented is None or oriented[1].rmse > PREFILL_CAMERA_RMSE:
+        return Found(guides, {})
+    return Found(guides, _landmarks(oriented[0], size))
 
 
 def floor_top(boxes: np.ndarray, scores: np.ndarray) -> float:
@@ -295,14 +324,50 @@ def _plausible(hom: np.ndarray, distance: np.ndarray, top: float, size: tuple[in
 
 
 def _camera_fits(hom: np.ndarray, size: tuple[int, int]) -> bool:
-    court = np.array(list(LANDMARKS.values()), np.float64)
-    image = cv2.perspectiveTransform(court.reshape(-1, 1, 2), hom).reshape(-1, 2) / size
-    try:
-        cam = camera.fit(np.c_[court, np.zeros(len(court))], image, size)
-    except (camera.CameraError, cv2.error):  # the court collapses to a sliver
+    cam = _camera(hom, size)
+    if cam is None:
         return False
     centre = (COURT_LENGTH / 2, COURT_WIDTH / 2, 0.0)
     return cam.rmse <= MAX_CAMERA_RMSE and np.linalg.norm(np.subtract(cam.center, centre)) <= MAX_CAMERA_DISTANCE
+
+
+def _camera(hom: np.ndarray, size: tuple[int, int]) -> camera.Camera | None:
+    """The pinhole camera that best sees the court's landmarks where ``hom``
+    puts them; None when the court collapses to a sliver."""
+    court = np.array(list(LANDMARKS.values()), np.float64)
+    image = cv2.perspectiveTransform(court.reshape(-1, 1, 2), hom).reshape(-1, 2) / size
+    try:
+        return camera.fit(np.c_[court, np.zeros(len(court))], image, size)
+    except (camera.CameraError, cv2.error):
+        return None
+
+
+def _oriented(hom: np.ndarray, size: tuple[int, int]) -> tuple[np.ndarray, camera.Camera] | None:
+    """The fit laid out as geometry names the court — seen from above the
+    floor, from the y = 0 sideline's side, so x runs to the right — with its
+    camera. The paint alone can't tell the court's four symmetries apart;
+    two of them put the camera under the floor, and of the other two the
+    camera stands nearer one sideline."""
+    seen = [(h, cam) for h in (hom @ s for s in _SYMMETRIES) if (cam := _camera(h, size)) and cam.center[2] > 0]
+    return min(seen, key=lambda c: c[1].center[1], default=None)
+
+
+def _landmarks(hom: np.ndarray, size: tuple[int, int]) -> dict[FloorLandmark, Point]:
+    """Each floor landmark where ``hom`` puts it, normalized; those behind
+    the camera or past OUTSIDE_FRAME are left for the user."""
+    out = {}
+    for name, (x, y) in LANDMARKS.items():
+        p = hom @ np.array([x, y, 1.0])
+        if p[2] <= 0:
+            continue
+        nx, ny = _normalized(p[:2] / p[2], size)
+        if -OUTSIDE_FRAME <= nx <= 1 + OUTSIDE_FRAME and -OUTSIDE_FRAME <= ny <= 1 + OUTSIDE_FRAME:
+            out[name] = (nx, ny)
+    return out
+
+
+def _normalized(point, size: tuple[int, int]) -> Point:
+    return round(float(point[0]) / size[0], 4), round(float(point[1]) / size[1], 4)
 
 
 def _score(hom: np.ndarray, distance: np.ndarray, top: float) -> float:

@@ -1,12 +1,13 @@
-"""Pre-drawn guides: paint found in a rendered court lands on its lines;
-grooves between floor mats alone give nothing."""
+"""Pre-drawn guides and marks: paint found in a rendered court lands on its
+lines, the marks on its landmarks as geometry names them; grooves between
+floor mats alone give nothing."""
 
 import cv2
 import numpy as np
 import pytest
 
 from yp_video.court import paint
-from yp_video.court.geometry import LINES
+from yp_video.court.geometry import LANDMARKS, LINES
 
 W, H = 1920, 1080
 
@@ -53,25 +54,37 @@ def _distance_to(line_ends, point):
         ((9.0, -11.0, 2.5), False),  # square on to the sideline: its lines run level
     ],
 )
-def test_guides_lie_on_the_painted_court(center, grooves):
+def test_the_court_is_found_on_its_paint(center, grooves):
     see = _camera(center=center)
-    guides = paint.guides([_floor(see, grooves=grooves)] * 3, floor_top=0.25)
+    found = paint.find([_floor(see, grooves=grooves)] * 3, floor_top=0.25)
     painted = [(see(x0, y0), see(x1, y1)) for x0, y0, x1, y1 in LINES]
-    assert len(guides) == len(LINES)
-    for a, b in guides:
+    assert len(found.guides) == len(LINES)
+    for a, b in found.guides:
         ends = [np.array(a) * (W, H), np.array(b) * (W, H)]
         # Each guide runs along one 6 px painted line, end to end.
         assert min(max(_distance_to(line, e) for e in ends) for line in painted) < 5
+    # A true pinhole: every landmark in view is marked, the court named from
+    # the camera's side (left_near is the near-left corner as it sees it).
+    in_view = {name for name, (x, y) in LANDMARKS.items() if 0 <= see(x, y)[0] < W and 0 <= see(x, y)[1] < H}
+    assert in_view <= set(found.points)
+    for name in in_view:
+        assert np.linalg.norm(np.array(found.points[name]) * (W, H) - see(*LANDMARKS[name])) < 5
 
 
-def test_grooves_alone_give_no_guides():
-    assert paint.guides([_floor(grooves=True)] * 3, floor_top=0.25) == []
+def test_a_fit_no_camera_reproduces_gets_guides_only(monkeypatch):
+    monkeypatch.setattr(paint, "PREFILL_CAMERA_RMSE", 0.0)
+    found = paint.find([_floor(_camera())] * 3, floor_top=0.25)
+    assert found.guides and found.points == {}
+
+
+def test_grooves_alone_find_no_court():
+    assert paint.find([_floor(grooves=True)] * 3, floor_top=0.25) is None
 
 
 def test_court_guides_reads_the_floor_off_the_tracks(monkeypatch):
     from types import SimpleNamespace
 
-    from yp_video.extraction import court_guides as module
+    from yp_video.extraction import court_prefill as module
 
     see = _camera()
     image = _floor(see)
@@ -82,7 +95,7 @@ def test_court_guides_reads_the_floor_off_the_tracks(monkeypatch):
     picked = []
     monkeypatch.setattr(module, "tracklet_data", lambda stem: tracks)
     monkeypatch.setattr(module, "read_frames", lambda video, picks: picked.extend(picks) or [(i, image) for i in picks])
-    guides = module.court_guides("game", "game.mp4")
-    assert len(guides) == len(LINES)
+    found = module.court_prefill("game", "game.mp4")
+    assert len(found.guides) == len(LINES)
     # Spread over the tracked rallies, not the gaps between them.
     assert len(picked) == module.FRAMES and picked[0] == 0 and picked[-1] == 249
