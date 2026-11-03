@@ -10,7 +10,7 @@ from pathlib import Path
 
 import numpy as np
 
-from yp_video.actor.person_labels import DensePass
+from yp_video.person.dense import DensePass
 
 
 def write_dense(path: Path, *, frames, counts, boxes, scores, stride) -> None:

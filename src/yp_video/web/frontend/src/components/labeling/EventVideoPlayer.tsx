@@ -30,7 +30,7 @@ import { OUTSIDE, RallySidebar } from './RallySidebar';
 import { canConfirm, fmtTime, needsReview, rallyOf, trackColor, trackKeyOf, verdictOf, VERDICT, type ActorFix, type ActorVerdict, type Rally, type SidebarAction, type TrackData, type TrackLinks, type TrackMasks } from './shared';
 import { buildFrameRows, buildFrameSilhouettes, buildTrackBoxes, nearestFrame, SilhouetteRenderer, decodeMaskData } from './masks';
 
-// The pickable 2XLarge boxes: the actor label cut (actor/person_labels
+// The pickable 2XLarge boxes: the actor label cut (person/dense.py
 // PERSON_LABEL_MIN_SCORE) — weaker boxes draw dashed.
 const DENSE_LABEL_SCORE = 0.4;
 const DENSE_BOX_COLOR = '#67e8f9';

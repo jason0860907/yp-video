@@ -17,11 +17,11 @@ from yp_video.actor import box_style
 from yp_video.actor import labels as actor_labels
 from yp_video.actor.box_check import box_check, pending_count
 from yp_video.actor.labels import ActorLabel, ActorVerdict
-from yp_video.actor.person_labels import DensePass
 from yp_video.core.cache import DiskStatCache, StatCache
 from yp_video.core.jsonl import write_jsonl
 from yp_video.extraction import done
 from yp_video.extraction import store as extraction_store
+from yp_video.person.dense import DensePass
 from yp_video.web.routers import actor_association as router
 
 

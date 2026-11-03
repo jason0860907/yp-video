@@ -27,9 +27,8 @@ from collections.abc import Mapping
 import numpy as np
 
 from yp_video.actor.labels import ActorLabel, Box
-from yp_video.actor.person_labels import DensePass
 from yp_video.core.cache import StatCache
-from yp_video.person.dense import DENSE_SCORE_FLOOR, dense_path
+from yp_video.person.dense import DENSE_SCORE_FLOOR, DensePass, dense_path
 from yp_video.person.detector import iou
 
 # A box takes the dense box it overlaps by this much ...

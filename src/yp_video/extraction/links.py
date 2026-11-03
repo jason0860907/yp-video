@@ -33,7 +33,6 @@ from typing import Sequence
 
 from yp_video.actor import labels as actor_labels
 from yp_video.actor.box_style import DUPLICATE_IOU, dense_pass, event_box, pixels
-from yp_video.actor.person_labels import PERSON_LABEL_MIN_SCORE
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import read_jsonl_cached
 from yp_video.extraction.store import (
@@ -41,7 +40,7 @@ from yp_video.extraction.store import (
     labelable,
     records_path,
 )
-from yp_video.person.dense import dense_path
+from yp_video.person.dense import PERSON_LABEL_MIN_SCORE, dense_path
 from yp_video.person.detector import iou
 from yp_video.tracklets.geometry import (
     BOX_MATCH_IOU,

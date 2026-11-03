@@ -34,10 +34,9 @@ from pathlib import Path
 
 from yp_video.actor import labels as actor_labels
 from yp_video.actor.box_style import resolve_target, settle
-from yp_video.actor.person_labels import PERSON_LABEL_MIN_SCORE, DensePass
 from yp_video.contracts.action import ACTOR_LABELS, TASKS
 from yp_video.core.jsonl import read_jsonl
-from yp_video.person.dense import dense_path
+from yp_video.person.dense import PERSON_LABEL_MIN_SCORE, DensePass, dense_path
 from yp_video.person.detector import iou
 
 ACTOR_FILE_SUFFIX = TASKS["actor"].label_glob.removeprefix("*")
