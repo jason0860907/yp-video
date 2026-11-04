@@ -62,6 +62,8 @@ class SpotPartialReaderTests(unittest.TestCase):
         seen: list[tuple[str, list[dict]]] = []
 
         def fake_build_command(**kwargs):
+            # A reader is attached, so yp-spot is asked to stream.
+            self.assertTrue(kwargs["emit_partial"])
             return _stub_command(lines, kwargs["save_dir"], tuple(kwargs["tasks"]))
 
         with (
@@ -130,6 +132,14 @@ class NormalizeEventParityTests(unittest.TestCase):
         # No confidence cut: only the unknown label drops, and scores survive.
         self.assertEqual([e["score"] for e in final], [0.9, 0.05, 0.8])
 
+
+
+class SpotCommandTests(unittest.TestCase):
+    def test_partial_streaming_is_an_explicit_flag(self):
+        common = dict(video_source="v.mp4", checkpoint_path=Path("c.pt"), tasks=("rally",),
+                      save_dir=Path("/out"), batch_size=8, num_workers=0)
+        self.assertNotIn("--emit_partial", prelabel.build_command(**common))
+        self.assertIn("--emit_partial", prelabel.build_command(**common, emit_partial=True))
 
 if __name__ == "__main__":
     unittest.main()

@@ -152,6 +152,7 @@ def build_command(
     prefetch_factor: int | None = None,
     use_amp: bool = True,
     segments: Sequence[tuple[float, float]] | None = None,
+    emit_partial: bool = False,
 ) -> list[str]:
     """The yp-spot inference command line.
 
@@ -183,6 +184,8 @@ def build_command(
     if prefetch_factor is not None:
         cmd.extend(["--prefetch_factor", str(prefetch_factor)])
     cmd.append("--amp" if use_amp else "--no-amp")
+    if emit_partial:
+        cmd.append("--emit_partial")
     if segments is not None:
         cmd.extend([
             "--segments",

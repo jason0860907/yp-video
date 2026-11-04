@@ -128,17 +128,15 @@ def run_spot_inference(
             num_workers=num_workers,
             use_amp=use_amp,
             segments=segments,
+            # Settled events stream only when a consumer wants them, so runs
+            # don't emit SPOT_PARTIAL lines nobody reads.
+            emit_partial=on_events is not None,
         )
         env = {
             **os.environ,
             "PYTHONUNBUFFERED": "1",
             ACTION_CONTRACT_VERSION_ENV: ACTION_CONTRACT_VERSION,
         }
-        # Ask yp-spot to stream settled foreground events only when a consumer
-        # wants them. Leaving it off otherwise keeps runs from emitting
-        # SPOT_PARTIAL lines nobody reads.
-        if on_events is not None:
-            env["SPOT_EMIT_PARTIAL"] = "1"
         proc = subprocess.Popen(
             cmd,
             cwd=SPOT_DIR,
