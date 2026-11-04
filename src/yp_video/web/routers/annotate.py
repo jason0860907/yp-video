@@ -17,8 +17,6 @@ from starlette.background import BackgroundTask
 from yp_video.config import (
     CUT_R2_CATEGORIES,
     RALLY_ANNOTATIONS_DIR,
-    RAW_VIDEOS_DIR,
-    VIDEOS_DIR,
 )
 from yp_video.core import label_done
 from yp_video.core.ffmpeg import FFmpegError, export_segment
@@ -37,8 +35,8 @@ from yp_video.web.r2_client import (
     serve_video_or_r2_redirect,
     sync_to_r2,
 )
-from yp_video.web.schemas import StrictModel
 from yp_video.web.rally_annotations import Annotation, write_annotations_atomic
+from yp_video.web.schemas import StrictModel
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -139,28 +137,14 @@ async def get_result(name: str, source: str) -> dict:
 
 @router.get("/video/{path:path}")
 def stream_video(path: str):
-    from yp_video.config import find_cut
-    decoded_path = unquote(path)
-    basename = Path(decoded_path).name
-    if decoded_path.startswith("/"):
-        video_path = Path(decoded_path)
-    else:
-        # Try the split cut dirs first (the common case for annotations
-        # produced by the detect → review pipeline), then VIDEOS_DIR for
-        # historical paths, then raw-videos as a final fallback.
-        resolved = find_cut(basename)
-        if resolved is not None:
-            video_path = resolved
-        else:
-            video_path = VIDEOS_DIR / decoded_path
-            if not video_path.exists():
-                alt = RAW_VIDEOS_DIR / decoded_path
-                if alt.exists():
-                    video_path = alt
-    response = serve_video_or_r2_redirect(video_path, (*CUT_R2_CATEGORIES, "videos"))
+    # Only the basename names a cut; the rest of the path is never trusted.
+    video_path = resolve_cut(Path(unquote(path)).name)
+    if video_path is None:
+        raise HTTPException(404, "Video not found")
+    response = serve_video_or_r2_redirect(video_path, CUT_R2_CATEGORIES)
     if response:
         return response
-    raise HTTPException(404, f"Video not found: {video_path}")
+    raise HTTPException(404, "Video not found")
 
 
 @router.post("/annotations")
