@@ -57,7 +57,7 @@ def bundle(events=(), rallies=((1, 9, 20),), **changes):
 @pytest.mark.parametrize(
     "mode,bounds,kinds",
     [
-        ("full_play", (10.7, 15), ["receive", "set", "spike"]),
+        ("full_play", (9.7, 15), ["serve", "receive", "set", "spike"]),
         ("to_next", (12, 15), ["spike"]),
         ("whole_rally", (9, 20), ["serve", "receive", "set", "spike", "receive"]),
     ],
@@ -69,6 +69,14 @@ def test_spike_build_up_three_windows(mode, bounds, kinds):
     c = project(b, mode=mode)["actions"][3]
     assert (c["start"], c["end"]) == bounds
     assert [t["kind"] for t in c["touches"]] == kinds
+
+
+def test_receive_opening_the_rally_plays_from_its_start():
+    b = bundle([("receive", 11), ("set", 12), ("spike", 13), ("receive", 14)])
+    spike = project(b)["actions"][2]
+    assert (spike["start"], spike["end"]) == (9, 15)
+    assert [t["kind"] for t in spike["touches"]] == ["receive", "set", "spike"]
+    assert project(b, mode="to_next")["actions"][0]["start"] == 10
 
 
 def test_exact_containment_and_outside_window():

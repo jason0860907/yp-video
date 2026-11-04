@@ -58,6 +58,8 @@ class Context:
     next: Event | None
     rally: Rally | None
     key: str
+    # The build-up opens on a receive with no touch before it in the rally.
+    opens_on_receive: bool = False
 
     @property
     def markable(self) -> Event:
@@ -78,7 +80,13 @@ class Context:
         result = (
             self.next.time if self.next else self.rally.end if self.rally else anchor
         )
-        start = max(0, chain_start - CHAIN_LEAD if mode == "full_play" else anchor - PAD)
+        if mode != "full_play":
+            lo = anchor - PAD
+        elif self.opens_on_receive and self.rally:
+            lo = self.rally.start
+        else:
+            lo = chain_start - CHAIN_LEAD
+        start = max(0, lo)
         return start, max(start, result + PAD)
 
 
@@ -149,17 +157,42 @@ class TouchIndex:
             tuple(kinds)
         )
 
+    def scope(self, position: int) -> range:
+        rally = self.rally_of[position]
+        return self.ranges[rally.index] if rally else range(len(self.all))
+
     def chain(self, position: int) -> list[Event]:
+        """The anchor's attack up to it, from the serve it was received off."""
         attack = self.attack_of.get(position)
         if attack is None:
             return [self.all[position]]
-        return [self.all[p] for p in attack[: attack.index(position) + 1]]
+        serve = self.serve_before(attack)
+        lead = [] if serve is None else [self.all[serve]]
+        return lead + [self.all[p] for p in attack[: attack.index(position) + 1]]
+
+    def serve_before(self, attack: list[int]) -> int | None:
+        first = attack[0]
+        if (
+            kind(self.all[first]) == "receive"
+            and self.rally_of[first] is not None
+            and first - 1 in self.scope(first)
+            and kind(self.all[first - 1]) == "serve"
+        ):
+            return first - 1
+        return None
+
+    def opens_on_receive(self, position: int) -> bool:
+        head = self.attack_of.get(position, [position])[0]
+        return (
+            kind(self.all[head]) == "receive"
+            and self.rally_of[head] is not None
+            and self.scope(head).start == head
+        )
 
     def context(self, position: int) -> Context:
         anchor = self.all[position]
         rally = self.rally_of[position]
-        scope = self.ranges[rally.index] if rally else range(len(self.all))
-        scoped = [self.all[p] for p in scope]
+        scoped = [self.all[p] for p in self.scope(position)]
         return Context(
             anchor=anchor,
             chain=self.chain(position),
@@ -167,13 +200,15 @@ class TouchIndex:
             next=next((e for e in scoped if e.time > anchor.time), None),
             rally=rally,
             key=clip_key(anchor),
+            opens_on_receive=self.opens_on_receive(position),
         )
 
     def framing(
         self, position: int, mode: Window
     ) -> tuple[tuple[float, float], list[Event]]:
         """Playback bounds and timeline events; 組織進攻 runs a receive or a
-        set on through its attack's spike."""
+        set on through its attack's spike, a received attack from its serve,
+        and one opening the rally on its receive from the rally's start."""
         original = self.context(position)
         terminal = (
             self.attack_of.get(position, [position])[-1]
