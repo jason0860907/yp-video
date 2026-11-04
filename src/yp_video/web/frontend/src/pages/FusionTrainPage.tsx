@@ -253,7 +253,6 @@ export function FusionTrainPage() {
                 <div>
                   <SectionLabel className="mb-1.5">Sample fps</SectionLabel>
                   <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
-                    {visible.has('sample_fps') && <SchemaNumberField name="sample_fps" label="All tasks" />}
                     {visible.has('action_sample_fps') && (
                       <SchemaNumberField name="action_sample_fps" label="Action" />
                     )}

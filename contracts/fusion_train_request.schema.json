@@ -100,17 +100,9 @@
       "title": "Video Limit",
       "type": "integer"
     },
-    "sample_fps": {
-      "default": 30.0,
-      "description": "Per-video frame stride targeting this sampling rate.",
-      "exclusiveMinimum": 0,
-      "maximum": 120,
-      "title": "Sample Fps",
-      "type": "number"
-    },
     "action_sample_fps": {
       "default": 30.0,
-      "description": "Mixed recipe: action batch sampling rate.",
+      "description": "Action stream sampling rate (per-video frame stride).",
       "exclusiveMinimum": 0,
       "maximum": 120,
       "title": "Action Sample Fps",
@@ -118,7 +110,7 @@
     },
     "rally_sample_fps": {
       "default": 5.0,
-      "description": "Mixed recipe: rally batch sampling rate.",
+      "description": "Rally stream sampling rate (per-video frame stride).",
       "exclusiveMinimum": 0,
       "maximum": 120,
       "title": "Rally Sample Fps",
@@ -126,7 +118,7 @@
     },
     "winner_sample_fps": {
       "default": 5.0,
-      "description": "Mixed recipe: winner batch sampling rate.",
+      "description": "Winner stream sampling rate (per-video frame stride).",
       "exclusiveMinimum": 0,
       "maximum": 120,
       "title": "Winner Sample Fps",

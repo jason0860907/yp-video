@@ -46,9 +46,13 @@ class FusionModelStatusTests(unittest.TestCase):
         recipes = {row["id"]: row for row in payload["recipes"]}
         self.assertEqual(set(recipes), set(RECIPES))
         self.assertEqual(recipes["rally_winner"]["tasks"], ["rally", "winner"])
-        self.assertEqual(recipes["rally_winner"]["fields"], ["sample_fps", "acc_grad_iter", "video_limit"])
-        self.assertEqual(recipes["rally"]["defaults"]["sample_fps"], 5.0)
-        self.assertEqual(recipes["rally_winner"]["defaults"]["sample_fps"], 5.0)
+        self.assertEqual(
+            recipes["rally_winner"]["fields"],
+            ["rally_sample_fps", "winner_sample_fps", "acc_grad_iter", "video_limit"],
+        )
+        self.assertEqual(recipes["rally"]["defaults"]["rally_sample_fps"], 5.0)
+        self.assertEqual(recipes["rally_winner"]["defaults"]["winner_sample_fps"], 5.0)
+        self.assertEqual(recipes["action"]["defaults"]["action_sample_fps"], 30.0)
         self.assertEqual(
             recipes["action_rally_winner"]["tasks"],
             ["action", "location", "side", "jump", "rally", "winner"],
@@ -77,7 +81,10 @@ class BuildCommandTests(unittest.TestCase):
         )
 
     def test_rally_winner_command(self) -> None:
-        req = FusionTrainRequest(recipe="rally_winner", validation="ratio", sample_fps=5, audio_backend="logmel", acc_grad_iter=4, batch_size=8)
+        # A hidden mixed-recipe knob the form still sends must not reach the run.
+        req = FusionTrainRequest(recipe="rally_winner", validation="ratio", rally_sample_fps=5,
+                                 winner_sample_fps=4, audio_backend="logmel", acc_grad_iter=4,
+                                 batch_size=8, rally_learning_rate=1e-3)
         cmd = spot_training.build_command(
             req, RECIPES["rally_winner"], self._prepared("yp_rally"),
             save_dir=Path("/run"), init_checkpoint=None, audio_dir=None,
@@ -85,12 +92,16 @@ class BuildCommandTests(unittest.TestCase):
         joined = " ".join(cmd)
         self.assertIn(" yp_rally /frames ", joined)
         self.assertIn("--tasks rally,winner", joined)
-        self.assertIn("--sample_fps 5", joined)
+        # One stream per label family, each with its own rate.
+        self.assertIn("--task_sample_fps rally=5.0 --task_sample_fps winner=4.0", joined)
         # Rally is visual-only whatever the form sent; accumulation passes through.
-        self.assertIn("--audio_backend none", joined)
+        self.assertIn("--task_audio_backend rally=none --task_audio_backend winner=none", joined)
         self.assertIn("--acc_grad_iter 4", joined)
-        self.assertIn("--label_dir /run/labels/x --val_ratio 0.1 --split_seed 42", joined)
+        self.assertIn("--task_label_dir rally=/run/labels/x --val_ratio 0.1 --split_seed 42", joined)
+        self.assertNotIn("--task_learning_rate", joined)
         self.assertNotIn("--predict", joined)
+        self.assertNotIn("--sample_fps ", joined)
+        self.assertNotIn("--audio_backend ", joined)
 
     def test_multi_fps_command_has_independent_streams(self) -> None:
         req = FusionTrainRequest(
@@ -141,7 +152,7 @@ class BuildCommandTests(unittest.TestCase):
             "--task_label_dir rally=/run/labels/rally-annotations", joined
         )
         self.assertNotIn("--sample_fps ", joined)
-        self.assertIn("--audio_backend logmel", joined)
+        self.assertNotIn("--audio_backend ", joined)
 
     def test_actor_recipe_command_carries_its_sidecar_and_fine_tune_knobs(self) -> None:
         recipe = RECIPES["action_rally_winner_actor"]

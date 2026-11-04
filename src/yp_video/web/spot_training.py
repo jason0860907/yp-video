@@ -146,7 +146,6 @@ def build_command(
     audio_dir: Path | None,
 ) -> list[str]:
     spotting = spotting_tasks(recipe.tasks)
-    mixed = len(spotting) > 1
     cmd = [
         str(SPOT_PYTHON),
         "-m",
@@ -180,55 +179,54 @@ def build_command(
         str(req.start_val_epoch),
         "-s",
         str(save_dir),
-        "--audio_backend",
-        _audio_backend(req, recipe),
         *prepared.extra_args,
     ]
-    if mixed:
-        for task, fps in (
-            ("action", req.action_sample_fps),
-            ("rally", req.rally_sample_fps),
-            ("winner", req.winner_sample_fps),
-        ):
-            if task in recipe.tasks:
-                cmd.extend(["--task_sample_fps", f"{task}={fps}"])
-        for task, frames in (("rally", req.rally_clip_len), ("winner", req.winner_clip_len)):
-            if task in recipe.tasks and frames is not None:
-                cmd.extend(["--task_clip_len", f"{task}={frames}"])
-        for task, backend in (
-            ("action", req.audio_backend), ("rally", "none"), ("winner", "none")
-        ):
-            if task in recipe.tasks:
-                cmd.extend(["--task_audio_backend", f"{task}={backend}"])
-        for task, learning_rate in (
-            ("action", req.action_learning_rate),
-            ("rally", req.rally_learning_rate),
-            ("winner", req.winner_learning_rate),
-        ):
-            if task in recipe.tasks and learning_rate is not None:
-                cmd.extend(["--task_learning_rate", f"{task}={learning_rate}"])
-        if req.audio_learning_rate is not None:
-            cmd.extend(["--audio_learning_rate", str(req.audio_learning_rate)])
-        for task, weight in (
-            ("action", req.action_stream_weight),
-            ("rally", req.rally_stream_weight),
-            ("winner", req.winner_stream_weight),
-            ("actor", req.actor_stream_weight),
-        ):
-            if task in recipe.tasks and weight != 1:
-                cmd.extend(["--task_stream_weight", f"{task}={weight}"])
-        if "action" in recipe.tasks and req.action_fg_upsample is not None:
-            cmd.extend(
-                ["--task_fg_upsample", f"action={req.action_fg_upsample}"]
-            )
-        if "action" in recipe.tasks and req.action_dilate_len:
-            cmd.extend(["--task_dilate_len", f"action={req.action_dilate_len}"])
-        if "action" in recipe.tasks and req.action_block_upsample is not None:
-            cmd.extend(["--action_class_upsample", f"block={req.action_block_upsample}"])
-    else:
-        cmd.extend(["--sample_fps", str(req.sample_fps)])
-        if "action" in recipe.tasks and req.action_dilate_len:
-            cmd.extend(["--dilate_len", str(req.action_dilate_len)])
+    # Every run is a set of task streams; each label stream names its own
+    # sampling rate and audio backend. Tuning fields outside the recipe's
+    # ``fields`` are ignored (the form sends every field).
+    def applies(field: str) -> bool:
+        return field in recipe.fields
+
+    for task, fps in (
+        ("action", req.action_sample_fps),
+        ("rally", req.rally_sample_fps),
+        ("winner", req.winner_sample_fps),
+    ):
+        if task in recipe.tasks:
+            cmd.extend(["--task_sample_fps", f"{task}={fps}"])
+    for task, frames in (("rally", req.rally_clip_len), ("winner", req.winner_clip_len)):
+        if applies(f"{task}_clip_len") and frames is not None:
+            cmd.extend(["--task_clip_len", f"{task}={frames}"])
+    for task, backend in (
+        ("action", _audio_backend(req, recipe)), ("rally", "none"), ("winner", "none")
+    ):
+        if task in recipe.tasks:
+            cmd.extend(["--task_audio_backend", f"{task}={backend}"])
+    for task, learning_rate in (
+        ("action", req.action_learning_rate),
+        ("rally", req.rally_learning_rate),
+        ("winner", req.winner_learning_rate),
+    ):
+        if applies(f"{task}_learning_rate") and learning_rate is not None:
+            cmd.extend(["--task_learning_rate", f"{task}={learning_rate}"])
+    if applies("audio_learning_rate") and req.audio_learning_rate is not None:
+        cmd.extend(["--audio_learning_rate", str(req.audio_learning_rate)])
+    for task, weight in (
+        ("action", req.action_stream_weight),
+        ("rally", req.rally_stream_weight),
+        ("winner", req.winner_stream_weight),
+        ("actor", req.actor_stream_weight),
+    ):
+        if applies(f"{task}_stream_weight") and weight != 1:
+            cmd.extend(["--task_stream_weight", f"{task}={weight}"])
+    if applies("action_fg_upsample") and req.action_fg_upsample is not None:
+        cmd.extend(
+            ["--task_fg_upsample", f"action={req.action_fg_upsample}"]
+        )
+    if applies("action_dilate_len") and req.action_dilate_len:
+        cmd.extend(["--task_dilate_len", f"action={req.action_dilate_len}"])
+    if applies("action_block_upsample") and req.action_block_upsample is not None:
+        cmd.extend(["--action_class_upsample", f"block={req.action_block_upsample}"])
     if audio_dir is not None:
         cmd.extend(["--audio_dir", str(audio_dir)])
     if req.camera_view != "all":
@@ -243,35 +241,21 @@ def build_command(
         cmd.append("--freeze_backbone")
 
     if req.validation == "ratio":
-        if mixed:
-            for task in spotting:
-                cmd.extend(
-                    ["--task_label_dir", f"{task}={prepared.label_dirs[task]}"]
-                )
-        else:
-            cmd.extend(["--label_dir", str(prepared.label_dirs[spotting[0]])])
+        for task in spotting:
+            cmd.extend(["--task_label_dir", f"{task}={prepared.label_dirs[task]}"])
         cmd.extend(["--val_ratio", str(req.val_ratio), "--split_seed", str(req.split_seed)])
     elif req.validation == "manual":
-        if mixed:
-            for task in spotting:
-                split_dir = save_dir / "label-splits" / task
-                cmd.extend(["--task_train_labels", f"{task}={split_dir / 'train'}"])
-                cmd.extend(["--task_val_labels", f"{task}={split_dir / 'val'}"])
-        else:
-            split_dir = save_dir / "label-splits" / spotting[0]
-            cmd.extend(
-                ["--train_labels", str(split_dir / "train"),
-                 "--val_labels", str(split_dir / "val")]
-            )
+        for task in spotting:
+            split_dir = save_dir / "label-splits" / task
+            cmd.extend(["--task_train_labels", f"{task}={split_dir / 'train'}"])
+            cmd.extend(["--task_val_labels", f"{task}={split_dir / 'val'}"])
     else:
-        if mixed:
-            for task in spotting:
-                label_dir = prepared.label_dirs[task]
-                cmd.extend(["--task_train_labels", f"{task}={label_dir}"])
-                cmd.extend(["--task_val_labels", f"{task}={label_dir}"])
-        else:
-            label_dir = prepared.label_dirs[spotting[0]]
-            cmd.extend(["--train_labels", str(label_dir), "--val_labels", str(label_dir)])
+        # The same labels for train and validation: yp-spot reads that as a
+        # final fit, not a leak.
+        for task in spotting:
+            label_dir = prepared.label_dirs[task]
+            cmd.extend(["--task_train_labels", f"{task}={label_dir}"])
+            cmd.extend(["--task_val_labels", f"{task}={label_dir}"])
     return cmd
 
 

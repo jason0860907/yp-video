@@ -123,29 +123,23 @@ class FusionTrainRequest(StrictModel):
             "experiment doesn't extract hundreds of hours of frames first."
         ),
     )
-    sample_fps: float = Field(
-        default=30.0,
-        gt=0,
-        le=120,
-        description="Per-video frame stride targeting this sampling rate.",
-    )
     action_sample_fps: float = Field(
         default=30.0,
         gt=0,
         le=120,
-        description="Mixed recipe: action batch sampling rate.",
+        description="Action stream sampling rate (per-video frame stride).",
     )
     rally_sample_fps: float = Field(
         default=5.0,
         gt=0,
         le=120,
-        description="Mixed recipe: rally batch sampling rate.",
+        description="Rally stream sampling rate (per-video frame stride).",
     )
     winner_sample_fps: float = Field(
         default=5.0,
         gt=0,
         le=120,
-        description="Mixed recipe: winner batch sampling rate.",
+        description="Winner stream sampling rate (per-video frame stride).",
     )
     rally_clip_len: int | None = Field(
         default=None,

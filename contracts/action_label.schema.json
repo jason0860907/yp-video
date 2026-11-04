@@ -131,7 +131,7 @@
       ],
       "description": "Rally on/off segments from the rally annotations.",
       "fields": [
-        "sample_fps",
+        "rally_sample_fps",
         "acc_grad_iter",
         "video_limit"
       ],
@@ -142,7 +142,8 @@
         "warm_up_epochs": 2,
         "learning_rate": 3e-05,
         "audio_backend": "none",
-        "sample_fps": 5.0
+        "rally_sample_fps": 5.0,
+        "winner_sample_fps": 5.0
       }
     },
     "rally_winner": {
@@ -154,7 +155,8 @@
       ],
       "description": "Rally segments plus which court side won each rally.",
       "fields": [
-        "sample_fps",
+        "rally_sample_fps",
+        "winner_sample_fps",
         "acc_grad_iter",
         "video_limit"
       ],
@@ -165,7 +167,8 @@
         "warm_up_epochs": 2,
         "learning_rate": 3e-05,
         "audio_backend": "none",
-        "sample_fps": 5.0
+        "rally_sample_fps": 5.0,
+        "winner_sample_fps": 5.0
       }
     },
     "action": {
@@ -179,7 +182,7 @@
       ],
       "description": "Touch spotting with the contact-point, actor side and jump heads.",
       "fields": [
-        "sample_fps",
+        "action_sample_fps",
         "acc_grad_iter",
         "audio_backend",
         "action_dilate_len",
@@ -192,7 +195,8 @@
         "warm_up_epochs": 3,
         "learning_rate": 3e-05,
         "audio_backend": "logmel",
-        "action_dilate_len": 0
+        "action_dilate_len": 0,
+        "action_sample_fps": 30.0
       }
     },
     "action_rally_winner": {

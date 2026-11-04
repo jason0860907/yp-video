@@ -207,7 +207,8 @@ class Recipe:
     defaults: Mapping[str, object]
 
 
-_RALLY_FIELDS = ("sample_fps", "acc_grad_iter", "video_limit")
+_RALLY_FIELDS = ("rally_sample_fps", "acc_grad_iter", "video_limit")
+_RALLY_WINNER_FIELDS = ("rally_sample_fps", "winner_sample_fps", "acc_grad_iter", "video_limit")
 # Every recipe defaults to the same base learning rate (3e-5, matching the
 # yp-spot CLI default); per-task overrides start equal to it so the form
 # shows one number everywhere until the operator deliberately diverges.
@@ -219,10 +220,10 @@ _RALLY_FIELDS = ("sample_fps", "acc_grad_iter", "video_limit")
 _RALLY_DEFAULTS = {
     "batch_size": 64, "acc_grad_iter": 32, "num_epochs": 30,
     "warm_up_epochs": 2, "learning_rate": 3e-5, "audio_backend": "none",
-    "sample_fps": 5.0,
+    "rally_sample_fps": 5.0, "winner_sample_fps": 5.0,
 }
 _ACTION_FIELDS = (
-    "sample_fps",
+    "action_sample_fps",
     "acc_grad_iter",
     "audio_backend",
     "action_dilate_len",
@@ -231,7 +232,7 @@ _ACTION_FIELDS = (
 _ACTION_DEFAULTS = {
     "batch_size": 64, "acc_grad_iter": 32, "num_epochs": 100,
     "warm_up_epochs": 3, "learning_rate": 3e-5, "audio_backend": "logmel",
-    "action_dilate_len": 0,
+    "action_dilate_len": 0, "action_sample_fps": 30.0,
 }
 _MULTI_FPS_FIELDS = (
     "action_sample_fps",
@@ -291,7 +292,7 @@ RECIPES: dict[str, Recipe] = {
         Recipe(
             "rally_winner", "Rally + Winner", ("rally", "winner"),
             "Rally segments plus which court side won each rally.",
-            _RALLY_FIELDS, _RALLY_DEFAULTS,
+            _RALLY_WINNER_FIELDS, _RALLY_DEFAULTS,
         ),
         Recipe(
             "action", "Action", ("action", "location", "side", "jump"),
