@@ -26,7 +26,9 @@ from yp_video.court.annotations import Calibration
 
 GRAVITY = 9.81
 
-Matrix = list[list[float]]
+_Row4 = tuple[float, float, float, float]
+#: A 3×4 projection, row-major.
+Matrix = tuple[_Row4, _Row4, _Row4]
 
 
 class Camera(BaseModel):

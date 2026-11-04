@@ -22,7 +22,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import Literal
+from typing import Literal, get_args
 
 from pydantic import BaseModel, Field
 
@@ -155,6 +155,10 @@ TASKS: dict[str, TaskSpec] = {
         ),
     )
 }
+
+#: ``TASKS``'s names as a type, for the wire shapes that list heads.
+SpotTask = Literal["rally", "winner", "action", "location", "side", "jump", "actor"]
+assert set(get_args(SpotTask)) == set(TASKS), "SpotTask must name exactly TASKS"
 
 SPOTTING_KINDS = ("segment", "point")
 

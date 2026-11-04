@@ -7,7 +7,7 @@ Path(__file__).parent.parent chains throughout the codebase (DIP).
 import os
 from collections.abc import Iterator
 from pathlib import Path
-from typing import NamedTuple
+from typing import Literal, NamedTuple
 
 
 def _env_path(name: str, default: Path) -> Path:
@@ -228,7 +228,10 @@ def find_cut(name: str) -> Path | None:
     return None
 
 
-def cut_kind_of(path: Path) -> str:
+CutKind = Literal["broadcast", "sideline"]
+
+
+def cut_kind_of(path: Path) -> CutKind:
     """Return the cut kind ('broadcast' / 'sideline') based on parent dir."""
     parent = path.parent.resolve()
     for kind, info in CUT_KINDS.items():

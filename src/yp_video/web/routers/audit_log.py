@@ -7,12 +7,95 @@ shadowing the other.
 
 from collections import defaultdict
 from datetime import datetime
+from typing import Any, Literal, NotRequired, TypedDict
 
 from fastapi import APIRouter, HTTPException, Query
 
 from yp_video.web import audit, db
 
 router = APIRouter()
+
+
+class AuditEvent(TypedDict):
+    """One row of the trail.
+
+    ``action`` is the FastAPI route template ("POST /api/annotate/annotations")
+    or a job transition ("job.completed"); ``repeats`` counts the autosaves
+    folded into this row (see web/audit.py).
+    """
+
+    id: int
+    #: Session start — the first save folded into this row.
+    first_at: datetime
+    #: Session end — the last save folded into this row.
+    at: datetime
+    actor: str
+    action: str
+    target: str | None
+    summary: dict[str, Any]
+    outcome: Literal["ok", "error"]
+    status: int | None
+    duration_ms: int | None
+    repeats: int
+
+
+class AuditPage(TypedDict):
+    events: list[AuditEvent]
+    #: Cursor for the next page, or None at the end of the trail.
+    next_before: int | None
+
+
+class AuditChange(TypedDict):
+    """One item changed by a save (``audit.diff``): added / removed / edited,
+    or a truncation marker when one save changed more items than are listed."""
+
+    op: Literal["added", "removed", "edited", "truncated"]
+    #: The changed item's key; absent on the truncation marker.
+    id: NotRequired[str | int]
+    #: The whole item, for added and removed.
+    item: NotRequired[dict[str, Any]]
+    #: Only the fields that moved: field -> [before, after].
+    fields: NotRequired[dict[str, tuple[Any, Any]]]
+    #: How many further changes were not listed (op "truncated").
+    count: NotRequired[int]
+
+
+class AuditSave(TypedDict):
+    #: ISO-8601, as written by audit._write.
+    at: str
+    changes: list[AuditChange]
+
+
+class AuditSaves(TypedDict):
+    #: Oldest first.
+    saves: list[AuditSave]
+
+
+class WorklogSession(TypedDict):
+    #: First and last save of an unbroken run of work.
+    start: datetime
+    end: datetime
+    saves: int
+
+
+class WorklogPerson(TypedDict):
+    actor: str
+    #: Chronological within a person.
+    sessions: list[WorklogSession]
+
+
+class Worklog(TypedDict):
+    since: datetime
+    until: datetime
+    #: Longest total first.
+    people: list[WorklogPerson]
+
+
+class AuditFilters(TypedDict):
+    actors: list[str]
+    actions: list[str]
+    #: Video names / categories already present in the trail.
+    targets: list[str]
 
 #: One page. The table is read newest-first and paged with a keyset cursor on
 #: `id`, which is monotonic with `at` — so the primary key's btree, scanned
@@ -49,7 +132,7 @@ async def list_events(
     until: datetime | None = None,
     before: int | None = None,
     limit: int = Query(default=100, ge=1, le=_MAX_LIMIT),
-) -> dict:
+) -> AuditPage:
     """One page of events, newest first.
 
     ``before`` is the ``next_before`` of the previous page; omit it for the
@@ -76,7 +159,7 @@ async def list_events(
 
 
 @router.get("/events/{event_id}/saves")
-async def event_saves(event_id: int) -> dict:
+async def event_saves(event_id: int) -> AuditSaves:
     """Each save folded into one row: when it happened and what it changed.
 
     Fetched only when the reader expands a row. A session holds one entry per
@@ -123,7 +206,7 @@ SELECT actor, island, min(t) AS start, max(t) AS "end", count(*) AS saves
 
 
 @router.get("/worklog")
-async def worklog(since: datetime, until: datetime) -> dict:
+async def worklog(since: datetime, until: datetime) -> Worklog:
     """Labeling time per person over a date range.
 
     A session is a run of one person's saves in which no two consecutive
@@ -152,7 +235,7 @@ async def worklog(since: datetime, until: datetime) -> dict:
     }
     async with db.pool().connection() as conn:
         rows = await (await conn.execute(_WORKLOG, params)).fetchall()
-    people: dict[str, list[dict]] = defaultdict(list)
+    people: dict[str, list[WorklogSession]] = defaultdict(list)
     for actor, _island, start, end, saves in rows:
         people[actor].append({"start": start, "end": end, "saves": saves})
     worked = lambda sessions: sum((s["end"] - s["start"]).total_seconds() for s in sessions)
@@ -167,7 +250,7 @@ async def worklog(since: datetime, until: datetime) -> dict:
 
 
 @router.get("/filters")
-async def list_filters() -> dict:
+async def list_filters() -> AuditFilters:
     """What the trail actually contains, for the filter controls.
 
     One round trip rather than three endpoints the page would always call

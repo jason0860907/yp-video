@@ -7,30 +7,83 @@ recipe can warm-start from, and launches ``spot_training.start_training_job``.
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Any, TypedDict
+
 from fastapi import APIRouter
 
 from yp_video.action import rally as rally_spot
 from yp_video.action import training
-from yp_video.config import SPOT_CHECKPOINTS_DIR, SPOT_DIR, SPOT_PYTHON, cut_kind_of
-from yp_video.contracts.action import LABEL_FILE_SUFFIX, RECIPES, TASKS
+from yp_video.config import (
+    SPOT_CHECKPOINTS_DIR,
+    SPOT_DIR,
+    SPOT_PYTHON,
+    CutKind,
+    cut_kind_of,
+)
+from yp_video.contracts.action import LABEL_FILE_SUFFIX, RECIPES, TASKS, SpotTask
 from yp_video.web.jobs import JobSummary, JobType, job_manager
 from yp_video.web.r2_client import resolve_cut
-from yp_video.web.spot_runs import checkpoint_package_options, performance_payload
+from yp_video.web.spot_runs import (
+    SelectOption,
+    TrainPerfData,
+    checkpoint_package_options,
+    performance_payload,
+)
 from yp_video.web.spot_training import start_training_job
-from yp_video.web.train_requests import FusionTrainRequest
+from yp_video.web.train_requests import FusionTrainRequest, RecipeId
 
 router = APIRouter()
 
 
+class FusionRecipe(TypedDict):
+    """One entry of the contract's task-set registry (``RECIPES``)."""
+
+    id: RecipeId
+    name: str
+    tasks: list[SpotTask]
+    description: str
+    #: Request fields the form shows for this recipe, on top of the common ones.
+    fields: list[str]
+    #: Request values the form resets to when this recipe is picked.
+    defaults: dict[str, Any]
+    #: What a package from this recipe can be loaded for on its own.
+    serveable_tasks: list[SpotTask]
+
+
+class RallyAnnotationVideo(TypedDict):
+    video: str
+    view: CutKind
+    #: Named in the saved validation set, by its action label file name.
+    is_val: bool
+
+
+class RallyAnnotationStats(rally_spot.RallyStats):
+    with_video: int
+    missing_videos: int
+    per_video: list[RallyAnnotationVideo]
+
+
+class FusionModelStatus(TypedDict):
+    recipes: list[FusionRecipe]
+    task_labels: dict[SpotTask, str]
+    spot_available: bool
+    #: Per recipe: packages carrying every head it trains (a superset is
+    #: fine — unused heads are skipped on load; a missing one would leave
+    #: that head randomly initialized while looking like a fine-tune).
+    init_checkpoints: dict[RecipeId, list[SelectOption]]
+    action_annotations: training.ActionAnnotationStats
+    rally_annotations: RallyAnnotationStats
+    active_job: JobSummary | None
+
+
 @router.get("/status")
-def status() -> dict:
+def status() -> FusionModelStatus:
     annotation_stats = training.annotation_stats(resolve_cut)
     rally_items, rally_missing = rally_spot.select_training_items(resolve_cut, 0)
     # The saved val set (action-val-set.txt) names label files; mark rally
     # rows by the same membership so "Load saved val set" works for every
     # recipe, keeping one holdout across runs.
-    from pathlib import Path
-
     val_names = {Path(entry).name for entry in training.read_val_set_file()}
     return {
         "recipes": [
@@ -41,16 +94,12 @@ def status() -> dict:
                 "description": recipe.description,
                 "fields": list(recipe.fields),
                 "defaults": dict(recipe.defaults),
-                # What a package from this recipe can be loaded for on its own.
                 "serveable_tasks": [t for t in recipe.tasks if TASKS[t].serveable],
             }
             for recipe in RECIPES.values()
         ],
         "task_labels": {name: spec.label for name, spec in TASKS.items()},
         "spot_available": SPOT_DIR.exists() and SPOT_PYTHON.exists(),
-        # Per recipe: packages carrying every head it trains (a superset is
-        # fine — unused heads are skipped on load; a missing one would leave
-        # that head randomly initialized while looking like a fine-tune).
         "init_checkpoints": {
             recipe.id: checkpoint_package_options(SPOT_CHECKPOINTS_DIR, tasks=recipe.tasks)
             for recipe in RECIPES.values()
@@ -74,7 +123,7 @@ def status() -> dict:
 
 
 @router.get("/performance")
-def performance(run: str | None = None) -> dict:
+def performance(run: str | None = None) -> TrainPerfData:
     return performance_payload(SPOT_CHECKPOINTS_DIR, run)
 
 

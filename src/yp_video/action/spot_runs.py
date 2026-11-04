@@ -17,6 +17,7 @@ import shutil
 from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
+from typing import Any, NotRequired, TypedDict
 
 from yp_video.action.prelabel import package_manifest
 from yp_video.contracts.action import (
@@ -71,11 +72,18 @@ def load_json_file(path: Path) -> dict | list | None:
 
 # ── Init-checkpoint options ───────────────────────────────────────
 
+class SelectOption(TypedDict):
+    """A <select> option: the checkpoint file and its one-line label."""
+
+    value: str
+    label: str
+
+
 def checkpoint_package_options(
     checkpoints_dir: Path,
     *,
     tasks: Sequence[str],
-) -> list[dict]:
+) -> list[SelectOption]:
     """Selectable init-checkpoint options: packaged runs under ``checkpoints_dir``.
 
     Eligible packages carry every spotting head the recipe trains (a
@@ -85,7 +93,7 @@ def checkpoint_package_options(
     plain fine-tune. Only current-contract packages are offered
     (``prelabel.package_manifest``).
     """
-    options: list[dict] = []
+    options: list[SelectOption] = []
     if checkpoints_dir.exists():
         for run_dir in sorted(checkpoints_dir.iterdir(), reverse=True):
             ckpt = run_dir / "checkpoint_best.pt"
@@ -397,10 +405,27 @@ def _freshest_metrics_dir(package_dir: Path) -> Path:
     return package_dir
 
 
+class TrainPerfData(TypedDict):
+    """A run's per-epoch metrics; only ``entries`` / ``runs`` when there is
+    no run at all."""
+
+    run: NotRequired[str]
+    #: The metrics.jsonl ``_meta`` header, verbatim.
+    meta: NotRequired[dict[str, Any] | None]
+    #: checkpoint_best.json, verbatim.
+    best: NotRequired[dict[str, Any] | None]
+    #: Every epoch record, verbatim — yp-spot's task-metrics contract
+    #: (``tasks.<task>.{train,validation}.{loss,metrics,counts,breakdown}``
+    #: plus ``selection``), owned by yp-spot and not redeclared here.
+    entries: list[dict[str, Any]]
+    #: Runs with metrics, newest first.
+    runs: list[str]
+
+
 def performance_payload(
     checkpoints_dir: Path,
     run: str | None = None,
-) -> dict:
+) -> TrainPerfData:
     """Per-epoch task metrics (with each head's breakdown) for a run.
 
     Reads ``metrics.jsonl`` from a checkpoint package (or the live run dir

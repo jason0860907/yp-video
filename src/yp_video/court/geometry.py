@@ -69,7 +69,8 @@ LINES: list[tuple[float, float, float, float]] = [
 
 MIN_POINTS = 4
 
-Matrix = list[list[float]]
+#: A 3×3 homography, row-major.
+Matrix = tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]
 
 
 class Fit(BaseModel):

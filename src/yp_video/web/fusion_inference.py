@@ -69,7 +69,7 @@ def package_tasks(checkpoint: Path) -> list[str]:
     return list(manifest["tasks"])
 
 
-def list_checkpoints(root: Path = SPOT_CHECKPOINTS_DIR) -> list[dict]:
+def list_checkpoints(root: Path = SPOT_CHECKPOINTS_DIR) -> list[prelabel.SpotCheckpoint]:
     """SPOT packages that serve every stage, newest first."""
     return [row for row in prelabel.list_checkpoints(root) if set(REQUIRED_TASKS) <= set(row["tasks"])]
 

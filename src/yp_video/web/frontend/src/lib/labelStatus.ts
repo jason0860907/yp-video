@@ -10,20 +10,14 @@
  */
 
 import type { ActionVideo, AssociationVideo, CutKind, LabelStatus, ReidVideo } from '@/types/api';
+import type { components } from '@/types/openapi';
 
 export type { LabelStatus };
 
 export type LabelMode = 'rally' | 'action' | 'association' | 'reid' | 'court';
 
 /** One row of the annotate-results listing (rally annotation files). */
-export interface RallyResult {
-  name: string;
-  source: string | string[];
-  kind: string;
-  /** The stored "rally labeling is finished" flag (core/label_done.py). */
-  done: boolean;
-  status: LabelStatus;
-}
+export type RallyResult = components['schemas']['RallyResult'];
 
 /** One row of the union video list, keyed by cut filename. Each mode's
  *  listing row is attached where it exists; absence means that mode has

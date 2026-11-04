@@ -24,6 +24,7 @@ import time
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Any, Literal, TypedDict, get_args
 
 from yp_video.config import EXTRACTION_DIR, REID_DATASETS_DIR
 from yp_video.contracts.reid import (
@@ -48,7 +49,8 @@ from yp_video.reid.sessions import SessionGroup
 
 DATASETS_DIR = REID_DATASETS_DIR
 
-SPLIT_MODES = ("auto", "session", "crops", "all_train")
+SplitMode = Literal["auto", "session", "crops", "all_train"]
+SPLIT_MODES: tuple[SplitMode, ...] = get_args(SplitMode)
 
 #: A player split across train and test needs >= 2 train crops and >= 1 of
 #: each test role.
@@ -309,7 +311,18 @@ def export_manifest_jsonl(plan: ExportPlan) -> str:
     return "\n".join(lines) + "\n"
 
 
-def list_datasets() -> list[dict]:
+class ReidDatasetInfo(TypedDict):
+    """One exported dataset on disk, from its manifest."""
+
+    name: str
+    created_at: float
+    #: n_samples / n_players / n_train / n_test / n_query / n_gallery / n_dropped …
+    counts: dict[str, int]
+    #: The manifest's DatasetConfig as written — open, read back verbatim.
+    config: dict[str, Any]
+
+
+def list_datasets() -> list[ReidDatasetInfo]:
     """Exported datasets on disk, newest first."""
     if not DATASETS_DIR.exists():
         return []

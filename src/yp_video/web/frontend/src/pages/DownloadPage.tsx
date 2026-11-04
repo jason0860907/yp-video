@@ -11,11 +11,9 @@ import { StatTile } from '@/components/ui/StatTile';
 import { StatusBadge } from '@/components/job/StatusBadge';
 import { ProgressBar } from '@/components/job/ProgressBar';
 import { toast } from '@/components/feedback/toast';
+import type { components } from '@/types/openapi';
 
-interface PlaylistResponse {
-  title: string;
-  videos: Array<{ id: string; title: string; duration?: number; url: string }>;
-}
+type PlaylistResponse = components['schemas']['PlaylistInfo'];
 interface VideoProgress {
   video_id?: string;
   status?: string;
@@ -25,15 +23,11 @@ interface VideoProgress {
   speed?: number;
   eta?: number;
 }
-interface DownloadVideo {
-  id: string;
-  title: string;
-  duration?: number;
-  url: string;
+type DownloadVideo = PlaylistResponse['videos'][number] & {
   selected: boolean;
   status: string;
   progress: VideoProgress | null;
-}
+};
 
 const QUALITIES = [
   { value: 'best', label: 'Best' },
@@ -94,7 +88,7 @@ export function DownloadPage() {
     }
     setDownloading(true);
     try {
-      const res = await apiFetch<{ session_id: string }>(API.download.start, {
+      const res = await apiFetch<components['schemas']['DownloadResponse']>(API.download.start, {
         method: 'POST',
         body: {
           videos: selected.map((v) => ({ id: v.id, title: v.title, duration: v.duration, url: v.url })),

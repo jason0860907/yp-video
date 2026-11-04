@@ -1,20 +1,13 @@
 import { SIDE_DISPLAY } from '@/lib/courtSide';
 import type { CourtSide } from '@/types/api';
 import { formatActionTime } from '@/lib/actionEditorModel';
+import type { components } from '@/types/openapi';
 
 export type WindowMode = 'full_play' | 'to_next' | 'whole_rally';
 export type Scope = 'rallies' | 'actions' | 'scores';
 export type Tab = 'clips' | 'analysis' | 'review';
 
-export interface AppUser {
-  id: string;
-  provider: string;
-  email: string | null;
-  display_name: string | null;
-  created_at: number;
-  match_count: number;
-  updated_at: number;
-}
+export type AppUser = components['schemas']['AppUser'];
 
 export type JobKind = 'analysis' | 'identify' | 'court';
 
@@ -81,32 +74,13 @@ export interface Library {
   folders: { id: string; name: string; deleted_at: number | null }[];
 }
 
-export interface Player {
-  number: number;
-  name: string;
-  hue: number;
-  player_id?: string | null;
-}
-export interface Touch {
-  kind: string;
-  time: number;
-  event_id: string;
-  player: Player | null;
-  /** The ball was seen at contact. */
-  visible: boolean;
-}
-export interface CourtScore {
-  set: number;
-  points: Record<string, number>;
-  unknown: number;
-}
+export type Player = components['schemas']['Player'];
+export type Touch = components['schemas']['Touch'];
+export type CourtScore = components['schemas']['CourtScore'];
 /** One 組織進攻 of a rally: its own touches' span and the spiker. */
-export interface Attack {
-  key: string;
-  start: number;
-  end: number;
-  player: Player | null;
-}
+export type Attack = components['schemas']['Attack'];
+/** Any clip the feed lists — a rally (`RallyClip`) or an action / score
+ *  clip (`Clip`) — as the feed's shared views read it. */
 export interface Clip {
   key: string;
   kind: string;
@@ -134,70 +108,17 @@ export interface Clip {
 export type CourtTotal = CourtScore;
 
 /** The App's 分析 → 摘要 numbers (app_review/stats.py). */
-export interface Stats {
-  rally_count: number;
-  in_rally_seconds: number;
-  team_sides: { start: string; switches: number[] } | null;
-  team_score: { us: number; them: number } | null;
-  has_teams: boolean;
-  findings: { kind: 'top_loss_reason'; team: 'us' | null; reason: string; count: number; total: number }[];
-  progression: { rally: number; side: string; points: number }[];
-  players: { player: Player; touches: Record<string, number>; deciding: number }[];
-  losses: { side: string; total: number; reasons: { reason: string; count: number; percent: number }[] }[];
-}
-export interface Preview {
-  rallies: Clip[];
-  actions: Clip[];
-  scores: Clip[];
-  roster: Player[];
-  court_totals: CourtTotal[];
-  warnings: string[];
-  stats: Stats;
-}
-export interface Candidate {
-  id: string;
-  scope: string;
-  value: unknown;
-  /** The full original clip for actions / scores, just the span otherwise. */
-  clip: (Partial<Clip> & { start: number; end: number; anchor_time?: number }) | null;
-  /** The original analysis' rally it belongs to; null for match-wide ones. */
-  rally_index: number | null;
-  can_remove_event?: boolean;
-  rally?: unknown;
-  reason?: string | null;
-}
-export interface Decision {
-  decision: string;
-  note: string;
-  actor: string;
-  at: string;
-}
-export interface ReviewSummary {
-  id: string;
-  created_at: string;
-  reviewed: number;
-  total: number;
-}
-export interface MatchDetail {
-  match: LibraryMatch;
-  preview: Preview;
-  candidates: Candidate[];
-  review_id: string | null;
-  reviews: ReviewSummary[];
-}
+export type Stats = components['schemas']['Stats'];
+export type Preview = components['schemas']['Preview'];
+export type Candidate = components['schemas']['Candidate'];
+export type Decision = components['schemas']['Decision'];
+export type ReviewSummary = components['schemas']['ReviewSummary'];
+/** `match` passes through the Worker's admin API, whose contract lives in
+ *  volleyiq-backend — open on this backend. */
+export type MatchDetail = Omit<components['schemas']['MatchDetail'], 'match'> & { match: LibraryMatch };
 /** GET …/video/meta — the source's probe; the frame clock needs its rate. */
-export interface VideoMeta {
-  fps: number;
-  num_frames: number;
-  duration: number;
-}
-export interface Review {
-  id: string;
-  created_at: string;
-  candidates: Candidate[];
-  decisions: Record<string, Decision>;
-  application: unknown | null;
-}
+export type VideoMeta = components['schemas']['VideoMeta'];
+export type Review = components['schemas']['Review'];
 
 export const DECISION_LABEL: Record<string, string> = {
   accepted_feedback: 'Adopted as feedback',
@@ -208,7 +129,10 @@ export const DECISION_LABEL: Record<string, string> = {
 };
 
 const RALLY_LEVEL = new Set(['rally', 'rally_bounds', 'winner']);
-const at = (c: Candidate) => c.clip?.anchor_time ?? c.clip?.start ?? Infinity;
+/** A candidate's full original clip — actions and scores carry one; other
+ *  scopes only a span. */
+export const candidateClip = (c: Candidate) => (c.clip && 'kind' in c.clip ? c.clip : null);
+const at = (c: Candidate) => candidateClip(c)?.anchor_time ?? c.clip?.start ?? Infinity;
 /** Review order: what happened to a rally before what happened inside it,
  *  then time. */
 export const byReviewOrder = (a: Candidate, b: Candidate) =>

@@ -12,18 +12,81 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import NamedTuple
+from typing import Any, Literal, NamedTuple, NotRequired, TypedDict
 
 from fastapi import HTTPException
 
 from yp_video.action import prelabel
 from yp_video.config import ACTION_ANNOTATIONS_DIR, ACTION_PRE_ANNOTATIONS_DIR
-from yp_video.contracts.action import LABEL_FILE_SUFFIX
+from yp_video.contracts.action import LABEL_FILE_SUFFIX, CourtSide
 from yp_video.core.annotation_ids import action_id
 from yp_video.core.cache import StatCache
 from yp_video.core.ffmpeg import parse_optional_float
 from yp_video.core.jsonl import read_jsonl, write_jsonl
 from yp_video.web.annotation_lock import annotation_write_lock
+
+
+class ActionRally(TypedDict):
+    """A rally span the editor draws events against (core/rallies.load_rallies)."""
+
+    rally_id: int
+    start: float
+    end: float
+    label: str
+    #: Court side the rally's winner played on; None where unannotated.
+    winner: CourtSide | None
+
+
+class NormalizedActionEvent(TypedDict):
+    """One event as ``normalize_events`` serves it: the stored facts plus the
+    fields derived from the live rally store on every read."""
+
+    id: str
+    frame: int
+    #: Seconds, from the frame and fps.
+    time: float
+    label: str
+    xy: tuple[float, float]
+    visible: bool
+    #: The rally containing the event; None outside every rally.
+    rally_id: int | None
+    #: Frames since that rally's start; None outside every rally.
+    relative_frame: int | None
+    #: Court side the touching player stood on; absent = not stored.
+    side: NotRequired[CourtSide | None]
+    #: Whether the touching player was off the floor; absent = not stored.
+    jump: NotRequired[bool | None]
+    #: Model confidence — machine pre-annotations only.
+    score: NotRequired[float | None]
+
+
+class ActionAttributeDefaults(TypedDict):
+    """What training assumes for an event with nothing stored (None = unknown)."""
+
+    side: CourtSide | None
+    jump: bool | None
+
+
+class ActionAnnotationData(TypedDict):
+    """One video's action annotation, as the editor loads it."""
+
+    video: str
+    source_video: str
+    #: Which store this payload came from (None = neither exists yet); the
+    #: file's own provenance stays in ``source``.
+    loaded_source: Literal["annotation", "pre-annotation"] | None
+    duration: float
+    fps: float
+    num_frames: int
+    num_events: int
+    rallies: list[ActionRally]
+    events: list[NormalizedActionEvent]
+    #: Per event id; shown beside the editor's own value, never saved.
+    attribute_defaults: dict[str, ActionAttributeDefaults]
+    #: The file's provenance header (``{"type": "manual"}``, or the SPOT
+    #: checkpoint that predicted it) — absent when no file exists. Open: each
+    #: writer stamps its own keys.
+    source: NotRequired[dict[str, Any]]
 
 
 def annotation_path(video_name: str) -> Path:

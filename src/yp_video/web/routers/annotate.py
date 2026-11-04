@@ -35,8 +35,13 @@ from yp_video.web.r2_client import (
     serve_video_or_r2_redirect,
     sync_to_r2,
 )
-from yp_video.web.rally_annotations import Annotation, write_annotations_atomic
-from yp_video.web.schemas import StrictModel
+from yp_video.web.rally_annotations import (
+    Annotation,
+    RallyAnnotationData,
+    RallySaveResult,
+    write_annotations_atomic,
+)
+from yp_video.web.schemas import DoneRequest, StrictModel
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -78,23 +83,19 @@ def _read_jsonl_as_dict(path: Path) -> dict:
 
 
 @router.get("/results")
-def list_results() -> list[dict]:
+def list_results() -> list[worklists.RallyResult]:
     return worklists.rally_results()
 
 
-class DoneRequest(StrictModel):
-    done: bool = True
-
-
 @router.put("/done/{name}")
-def set_done(name: str, req: DoneRequest) -> dict:
+def set_done(name: str, req: DoneRequest) -> label_done.DoneState:
     """Persist the human "rally labeling is finished" verdict for one video."""
     flags = label_done.set_done(Path(unquote(name)).stem, "rally", req.done)
     return {"done": flags["rally"]}
 
 
 @router.get("/results/{name}")
-async def get_result(name: str, source: str) -> dict:
+async def get_result(name: str, source: str) -> RallyAnnotationData:
     """Load one result file from exactly the requested store.
 
     ``source`` is a tag from ``_SOURCES`` — deterministic on purpose, no
@@ -148,7 +149,7 @@ def stream_video(path: str):
 
 
 @router.post("/annotations")
-async def save_annotations(req: SaveAnnotationsRequest) -> dict:
+async def save_annotations(req: SaveAnnotationsRequest) -> RallySaveResult:
     provided = [a.rally_id for a in req.annotations if a.rally_id is not None]
     if len(set(provided)) != len(provided):
         seen: set[int] = set()
@@ -184,8 +185,6 @@ async def save_annotations(req: SaveAnnotationsRequest) -> dict:
         rallies=len(saved),
     )
 
-    # The rows as written, ids assigned — the editor adopts these so a new
-    # rally does not get a fresh id minted on every autosave.
     return {"saved": str(output_path), "count": len(saved), "annotations": saved}
 
 

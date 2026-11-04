@@ -24,7 +24,7 @@ import tempfile
 from collections import deque
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, TypedDict
 
 import numpy as np
 
@@ -215,6 +215,15 @@ def weights_id(name: str) -> str:
     return f"{base} + rf-detr-seg-medium" if name.endswith("-masked") else base
 
 
+class ReidSlider(TypedDict):
+    """A cluster-threshold slider: cosine-distance bounds, default and step."""
+
+    min: float
+    max: float
+    default: float
+    step: float
+
+
 # Cluster-threshold slider calibration per embedder, served to the UI via
 # /reid/options. Cosine-distance scales differ per variant (the tracklet
 # window's mean sits well below a single crop's).
@@ -228,7 +237,7 @@ def weights_id(name: str) -> str:
 #
 # Re-run the page after labeling more videos; these are a two-session fit —
 # and recalibrate after every new fine-tune, distance scales move.
-EMBEDDER_THRESHOLDS = {
+EMBEDDER_THRESHOLDS: dict[str, ReidSlider] = {
     "clip-reident-masked": {"min": 0.019, "max": 0.043, "default": 0.034, "step": 0.001},
     # Tracklet-window mean (extraction/windows.py) over McByte++ tracks:
     # averaging tightens same-player distances, so its scale sits well below
@@ -239,7 +248,7 @@ EMBEDDER_THRESHOLDS = {
 }
 
 
-def threshold_calibration(name: str) -> dict:
+def threshold_calibration(name: str) -> ReidSlider:
     return EMBEDDER_THRESHOLDS[name]
 
 

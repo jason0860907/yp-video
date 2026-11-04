@@ -683,7 +683,8 @@ def test_http_match_review_apply_and_reload(store, monkeypatch):
         monkeypatch.setattr(
             app_review,
             "probe_video_metadata",
-            lambda src: probed.append(src) or {"fps": 29.97, "num_frames": 900},
+            lambda src: probed.append(src)
+            or {"fps": 29.97, "duration": 30.03, "num_frames": 900, "start_time": 0.0},
         )
         meta = client.get(f"{base}/video/meta").json()
         assert meta["fps"] == 29.97 and probed == ["https://v/src.mp4"]

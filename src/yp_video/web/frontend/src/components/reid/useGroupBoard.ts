@@ -13,6 +13,7 @@ import { API, apiFetch, errMsg } from '@/lib/api';
 import { toast } from '@/components/feedback/toast';
 import { confirm } from '@/components/feedback/confirm';
 import type { ReidCluster } from '@/types/api';
+import type { components } from '@/types/openapi';
 
 /** One editable identity group: named = a player, unnamed = an auto cluster.
  *  Locked groups survive re-clustering (threshold/model changes); any group
@@ -281,7 +282,7 @@ export function useGroupBoard({ picked, embedder, threshold, clusters, units, un
       return;
     }
     try {
-      const res = await apiFetch<{ groups: Record<string, string[]>; leftover_clusters: string[][] }>(
+      const res = await apiFetch<components['schemas']['ReidSeedClusters']>(
         API.reid.seedCluster(picked),
         { method: 'POST', body: { seeds: Object.fromEntries(seeds.map((g) => [g.key, g.unitKeys])), threshold, model: embedder } },
       );

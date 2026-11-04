@@ -14,6 +14,7 @@ import logging
 import shutil
 from collections.abc import Callable
 from pathlib import Path
+from typing import Literal, TypedDict
 
 from yp_video.config import (
     ACTION_ANNOTATIONS_DIR,
@@ -21,6 +22,7 @@ from yp_video.config import (
     ACTION_PRE_ANNOTATIONS_DIR,
     ACTION_VAL_SET_FILE,
     SPOT_CHECKPOINTS_DIR,
+    CutKind,
     cut_kind_of,
 )
 from yp_video.contracts.action import LABEL_FILE_GLOB, RALLY_LABEL_FILE_GLOB
@@ -61,16 +63,45 @@ def read_val_set_file() -> list[str]:
     return names
 
 
-def annotation_stats(resolve: CutResolver) -> dict:
+class ViewCounts(TypedDict):
+    videos: int
+    events: int
+    frames: int
+
+
+class ActionAnnotationVideo(TypedDict):
+    video: str
+    events: int
+    frames: int
+    #: The cut's kind; "unknown" when no cut resolves for the label file.
+    view: CutKind | Literal["unknown"]
+    #: Named in the saved validation set (action-val-set.txt).
+    is_val: bool
+
+
+class ActionAnnotationStats(TypedDict):
+    label_dir: str
+    frame_dir: str
+    checkpoint_dir: str
+    videos: int
+    events: int
+    frames: int
+    #: Totals per camera view (cut kind), so the UI can follow the selected view.
+    by_view: dict[CutKind, ViewCounts]
+    per_video: list[ActionAnnotationVideo]
+    exists: bool
+
+
+def annotation_stats(resolve: CutResolver) -> ActionAnnotationStats:
     ACTION_ANNOTATIONS_DIR.mkdir(parents=True, exist_ok=True)
     # Totals plus a per-camera-view breakdown so the UI can reflect the selected
     # view. A video's view is its cut kind (broadcast / sideline).
-    by_view: dict[str, dict[str, int]] = {
+    by_view: dict[CutKind, ViewCounts] = {
         "broadcast": {"videos": 0, "events": 0, "frames": 0},
         "sideline": {"videos": 0, "events": 0, "frames": 0},
     }
     val_names = {Path(entry).name for entry in read_val_set_file()}
-    per_video: list[dict] = []
+    per_video: list[ActionAnnotationVideo] = []
     videos = 0
     events = 0
     frames = 0

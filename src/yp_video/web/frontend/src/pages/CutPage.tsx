@@ -12,6 +12,7 @@ import { VideoCombobox } from '@/components/video/VideoCombobox';
 import { toast } from '@/components/feedback/toast';
 import { confirm } from '@/components/feedback/confirm';
 import type { CutKind } from '@/types/api';
+import type { components } from '@/types/openapi';
 
 interface Segment {
   name: string;
@@ -145,7 +146,7 @@ export function CutPage() {
     if (!video) return toast.warning('No video selected');
     setExporting(true);
     try {
-      const res = await apiFetch<{ success: string[]; failed: string[] }>(API.cut.export, {
+      const res = await apiFetch<components['schemas']['ExportResult']>(API.cut.export, {
         method: 'POST',
         body: { source: video, segments, kind },
       });

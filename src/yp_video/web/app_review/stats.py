@@ -9,6 +9,7 @@ the camera-frame side.
 """
 
 from collections import Counter
+from typing import Literal, TypedDict
 
 from .models import Rally, TeamSides
 
@@ -18,6 +19,78 @@ OPPOSITE = {"left": "right", "right": "left", "near": "far", "far": "near", "us"
 SIDE_ORDER = ["us", "them", "left", "right", "near", "far"]
 TITLE = {"us": "我方", "them": "對手", "left": "左", "right": "右", "near": "近", "far": "遠"}
 MINIMUM_SAMPLE = 4
+
+
+class Player(TypedDict):
+    """A roster entry (``models.Roster``) as clips and stats name it."""
+
+    number: int
+    name: str
+    position: str
+    hue: int
+    player_id: str | None
+
+
+class TeamScore(TypedDict):
+    us: int
+    them: int
+
+
+class Finding(TypedDict):
+    """重點: only 失分最多 reads no court data."""
+
+    kind: Literal["top_loss_reason"]
+    #: "us" once the user said where their team stood, else None.
+    team: Literal["us"] | None
+    reason: str
+    count: int
+    total: int
+
+
+class ProgressionPoint(TypedDict):
+    """得分走勢: one side's running points after a rally (timeline position)."""
+
+    rally: int
+    side: str
+    points: int
+
+
+class PlayerLine(TypedDict):
+    player: Player
+    #: Touch kind (KINDS) -> count.
+    touches: dict[str, int]
+    #: Score clips the player made the deciding play of.
+    deciding: int
+
+
+class LossReasonShare(TypedDict):
+    reason: str
+    count: int
+    #: Rounded half up, as Foundation does.
+    percent: int
+
+
+class Losses(TypedDict):
+    """失分原因 of one side: points with both a loser and a reason."""
+
+    side: str
+    total: int
+    reasons: list[LossReasonShare]
+
+
+class Stats(TypedDict):
+    """The App's 分析 → 摘要 numbers."""
+
+    rally_count: int
+    in_rally_seconds: float
+    team_sides: TeamSides | None
+    team_score: TeamScore | None
+    has_teams: bool
+    findings: list[Finding]
+    progression: list[ProgressionPoint]
+    #: Most touches first.
+    players: list[PlayerLine]
+    losses: list[Losses]
 
 
 def team(sides: TeamSides | None, side: str | None, rally_index: int) -> str | None:
@@ -36,7 +109,7 @@ def half_up(x: float) -> int:
 
 def summary(
     rallies: list[Rally], preview: dict, sides: TeamSides | None, winner
-) -> dict:
+) -> Stats:
     ordered = sorted(rallies, key=lambda r: (r.start, r.index))
 
     def point_side(rally: Rally) -> str | None:

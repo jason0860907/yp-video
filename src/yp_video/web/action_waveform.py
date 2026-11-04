@@ -9,6 +9,7 @@ import math
 import os
 import subprocess
 from pathlib import Path
+from typing import Literal, NotRequired, TypedDict
 
 import numpy as np
 from fastapi import HTTPException
@@ -26,6 +27,31 @@ log = logging.getLogger(__name__)
 AUDIO_WAVEFORM_SAMPLE_RATE = 32000
 AUDIO_WAVEFORM_CHANNELS = 2
 AUDIO_WAVEFORM_CACHE_VERSION = 7
+
+
+class AudioWaveform(TypedDict):
+    """A cut's audio envelope for the Action Label waveform lane."""
+
+    video: str
+    has_audio: bool
+    #: Why there is no audio lane (``has_audio`` false only).
+    reason: NotRequired[Literal["remote_video", "unknown_duration", "no_audio"]]
+    duration: float
+    sample_rate: int
+    channels_measured: int
+    timeline_aligned: bool
+    #: Stream start times and the audio's offset from the video, seconds —
+    #: measured only when there is audio.
+    video_start_time: NotRequired[float]
+    audio_start_time: NotRequired[float | None]
+    audio_offset: NotRequired[float]
+    audio_duration: NotRequired[float | None]
+    #: Bins in ``peaks`` / ``rms`` (0 without audio).
+    points: int
+    peak: float
+    #: Per bin, each in [0, 1].
+    peaks: list[float]
+    rms: list[float]
 
 
 def _media_source(video: Path) -> str:
@@ -94,7 +120,9 @@ def _waveform_cache_path(video: Path, points: int) -> Path:
     return ACTION_WAVEFORMS_DIR / f"{_safe_cache_stem(video.stem)}-v{AUDIO_WAVEFORM_CACHE_VERSION}-{cache_key}-{points}.json"
 
 
-def _empty_waveform(video: Path, meta: dict, *, reason: str) -> dict:
+def _empty_waveform(
+    video: Path, meta: dict, *, reason: Literal["remote_video", "unknown_duration", "no_audio"]
+) -> AudioWaveform:
     return {
         "video": video.name,
         "has_audio": False,
@@ -110,7 +138,7 @@ def _empty_waveform(video: Path, meta: dict, *, reason: str) -> dict:
     }
 
 
-def _write_waveform_cache(path: Path, payload: dict) -> None:
+def _write_waveform_cache(path: Path, payload: AudioWaveform) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_suffix(path.suffix + f".tmp.{os.getpid()}")
     with open(tmp_path, "w", encoding="utf-8") as f:
@@ -118,7 +146,7 @@ def _write_waveform_cache(path: Path, payload: dict) -> None:
     os.replace(tmp_path, path)
 
 
-def audio_waveform(video: Path, points: int) -> dict:
+def audio_waveform(video: Path, points: int) -> AudioWaveform:
     # Building a waveform streams the ENTIRE video through ffmpeg. For a cut
     # whose bytes live only in R2 that is minutes of download holding the
     # request — and one of the browser's six per-origin connections — open,

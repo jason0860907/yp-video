@@ -9,14 +9,15 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import NotRequired, TypedDict
 
 from fastapi import APIRouter, HTTPException
 from pydantic import Field
 
 from yp_video.action import prelabel
 from yp_video.action.spot_pass import RallyOptions, SpotOptions
-from yp_video.config import SPOT_CHECKPOINTS_DIR, SPOT_DIR, cut_kind_of
-from yp_video.extraction.prerequisites import prerequisites
+from yp_video.config import SPOT_CHECKPOINTS_DIR, SPOT_DIR, CutKind, cut_kind_of
+from yp_video.extraction.prerequisites import PipelineState, prerequisites
 from yp_video.tracklets.store import tracks_current, tracks_refined
 from yp_video.web import fusion_inference
 from yp_video.web.action_annotations import pre_annotation_path
@@ -45,8 +46,36 @@ class InferenceRequest(StrictModel):
     overwrite: bool = False
 
 
+class InferenceVideo(TypedDict):
+    """One row of the Inference page: which stage outputs the cut already has."""
+
+    name: str
+    kind: CutKind
+    #: SPOT rally pre-annotation exists (rally-spot/pre-annotations).
+    has_rally_spot: bool
+    #: Machine action pre-annotation exists (action/pre-annotations).
+    has_action_pre: bool
+    #: Tracklets exist AND were cut against the video's current rallies; an
+    #: Inference run keeps tracking only when they are also GTA-refined.
+    tracks_current: bool
+    #: Whether GTA refined those tracks; None when there are none.
+    tracks_refined: bool | None
+    pipeline: PipelineState
+
+
+class SpotInfo(TypedDict):
+    available: bool
+    spot_dir: str
+    #: Why nothing can run: yp-spot missing, or no package serves every stage.
+    error: NotRequired[str]
+    #: Absent when yp-spot itself is missing.
+    checkpoints: NotRequired[list[prelabel.SpotCheckpoint]]
+    #: The newest package; "" when there is none.
+    default_checkpoint: NotRequired[str]
+
+
 @router.get("/videos")
-def list_videos() -> list[dict]:
+def list_videos() -> list[InferenceVideo]:
     """Every cut, with which stage outputs it already has."""
     rows = []
     for path in sorted(all_cut_paths(), key=lambda p: p.name):
@@ -64,9 +93,9 @@ def list_videos() -> list[dict]:
 
 
 @router.get("/spot")
-def spot_info() -> dict:
+def spot_info() -> SpotInfo:
     available = prelabel.spot_available()
-    info: dict = {"available": available, "spot_dir": str(SPOT_DIR)}
+    info: SpotInfo = {"available": available, "spot_dir": str(SPOT_DIR)}
     if not available:
         info["error"] = f"yp-spot not found at {SPOT_DIR}"
         return info

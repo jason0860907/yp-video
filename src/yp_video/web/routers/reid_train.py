@@ -17,6 +17,7 @@ import logging
 import os
 import time
 from pathlib import Path
+from typing import TypedDict
 
 from fastapi import APIRouter, HTTPException, Response
 
@@ -42,8 +43,10 @@ from yp_video.reid import (
     sessions,
     store,
 )
-from yp_video.reid.checkpoints import reid_engine_available
-from yp_video.reid.embedder import build_embedders, threshold_calibration
+from yp_video.reid.checkpoints import ReidRun, reid_engine_available
+from yp_video.reid.dataset import ReidDatasetInfo, SplitMode
+from yp_video.reid.embedder import ReidSlider, build_embedders, threshold_calibration
+from yp_video.reid.evaluate import ReidModelEval
 from yp_video.web.job_helpers import (
     ProgressParser,
     fail_job_from_exc,
@@ -63,7 +66,61 @@ router = APIRouter()
 _eval_cache: StatCache = StatCache()
 
 
-def _session_payload(group: sessions.SessionGroup) -> dict:
+class ReidSession(TypedDict):
+    """One recording session: the videos sharing a player name-space
+    (reid/sessions.py infers this from shared assigned names)."""
+
+    id: str
+    stems: list[str]
+    players: list[str]
+    #: player name -> assigned event count across the whole group
+    counts: dict[str, int]
+    #: Merge evidence: player name -> the stems carrying it.
+    shared: dict[str, list[str]]
+    n_assigned: int
+    #: No name links this video to any other — usually inconsistent labeling.
+    is_isolated: bool
+    #: stem -> embedders with a matrix for it.
+    models: dict[str, list[str]]
+
+
+class ReidModelCoverage(TypedDict):
+    name: str
+    #: Finished videos this embedder has a matrix for.
+    labeled_videos: int
+    threshold: ReidSlider
+
+
+class ReidTrainTotals(TypedDict):
+    ready_videos: int
+    #: Labeled-but-unfinished cuts, excluded from training.
+    pending_videos: int
+    assigned_events: int
+    identities: int
+    sessions: int
+
+
+class ReidTrainStatus(TypedDict):
+    sessions: list[ReidSession]
+    models: list[ReidModelCoverage]
+    totals: ReidTrainTotals
+    datasets: list[ReidDatasetInfo]
+    split_modes: list[SplitMode]
+    reid_engine_available: bool
+    runs: list[ReidRun]
+    active_job: JobSummary | None
+
+
+class ReidRuns(TypedDict):
+    runs: list[ReidRun]
+
+
+class ReidPerfData(TypedDict):
+    models: list[ReidModelEval]
+    evaluated_at: float
+
+
+def _session_payload(group: sessions.SessionGroup) -> ReidSession:
     return {
         "id": group.id,
         "stems": list(group.stems),
@@ -77,7 +134,7 @@ def _session_payload(group: sessions.SessionGroup) -> dict:
 
 
 @router.get("/status")
-def status() -> dict:
+def status() -> ReidTrainStatus:
     """Session grouping, per-model coverage, existing exports, active job.
 
     Everything here is scoped to *finished* videos — the ones the Done button
@@ -115,7 +172,7 @@ def status() -> dict:
 
 
 @router.get("/runs")
-def runs() -> dict:
+def runs() -> ReidRuns:
     """Stable official default followed by unpromoted training candidates."""
     return {"runs": checkpoints.list_checkpoints()}
 
@@ -133,7 +190,7 @@ def _eval_sources(groups) -> list[Path]:
 
 
 @router.get("/performance")
-async def performance(model: str | None = None) -> dict:
+async def performance(model: str | None = None) -> ReidPerfData:
     """Per-model, per-session separability plus threshold suggestions.
 
     Note this takes ``model=`` rather than the other train routers' ``run=``:
@@ -148,7 +205,7 @@ async def performance(model: str | None = None) -> dict:
             raise HTTPException(400, f"Unknown embedder: {model} (have: {', '.join(registry)})")
         registry = [model]
 
-    def compute() -> dict:
+    def compute() -> ReidPerfData:
         return {**evaluate.evaluate_models(groups, registry), "evaluated_at": time.time()}
 
     try:
@@ -186,7 +243,7 @@ def _plan(split_mode: str, test_ratio: float, seed: int, masked: bool):
         raise HTTPException(400, str(exc)) from exc
 
 
-@router.get("/export")
+@router.get("/export", response_class=Response)
 def export_plan(
     split_mode: str = "auto",
     test_ratio: float = 0.25,

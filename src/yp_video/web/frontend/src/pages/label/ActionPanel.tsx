@@ -49,6 +49,7 @@ import { useVideoKeys } from '@/components/labeling/useVideoKeys';
 import { useFrameClock } from '@/components/labeling/useFrameClock';
 import { FrameStats, KeyHints, PlayerTransport } from '@/components/labeling/PlayerTransport';
 import { STATUS_OPTIONS, type LabelSource, type LoadedSource, type ModeDescriptor, type PlaybackClock, type RegisterGuard } from './mode';
+import type { components } from '@/types/openapi';
 
 const ACTION_AUTOSAVE_MS = 2000;
 
@@ -100,7 +101,7 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, registerGu
   edRef.current = ed;
 
   const videosQuery = useQuery({ queryKey: ['action-videos'], queryFn: () => apiFetch<ActionVideo[]>(API.actionAnnotate.videos) });
-  const labelsQuery = useQuery({ queryKey: ['action-labels'], queryFn: () => apiFetch<{ labels?: string[] }>(API.actionAnnotate.labels) });
+  const labelsQuery = useQuery({ queryKey: ['action-labels'], queryFn: () => apiFetch<components['schemas']['ActionLabels']>(API.actionAnnotate.labels) });
   const labels = labelsQuery.data?.labels ?? DEFAULT_ACTION_LABELS;
 
   // ── Frame clock ── (auto-pauses at the selected rally's end)

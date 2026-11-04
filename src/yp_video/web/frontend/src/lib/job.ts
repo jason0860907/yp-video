@@ -40,12 +40,6 @@ export const STATUS_THEME: Record<JobStatus, { pill: string; text: string; dot: 
     dot: 'bg-text-muted',
     bar: 'bg-ink/20',
   },
-  stopped: {
-    pill: 'bg-ink/5 text-text-muted ring-1 ring-ink/10',
-    text: 'text-text-muted',
-    dot: 'bg-text-muted',
-    bar: 'bg-ink/20',
-  },
 };
 
 /** Theme lookup tolerant of unknown/missing statuses (falls back to pending). */

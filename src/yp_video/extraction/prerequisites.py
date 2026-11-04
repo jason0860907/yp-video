@@ -14,6 +14,7 @@ the click instead of after.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal, TypedDict
 
 from yp_video.core.jsonl import read_jsonl_header
 from yp_video.core.rallies import rally_fingerprint, rally_sources
@@ -23,7 +24,19 @@ from yp_video.tracklets.store import tracks_masks_path, tracks_path
 #: Ordered chain. ``blocked_on`` is the first link that is missing.
 #: action and tracks are independent of each other — both need only what is
 #: above them — but they are listed in the order the UI walks them.
-STAGES = ("rallies", "action", "tracks", "records")
+Stage = Literal["rallies", "action", "tracks", "records"]
+
+
+class PipelineState(TypedDict):
+    """``Prerequisites`` on the wire — every listing's pipeline chips."""
+
+    rally_sources: list[str]
+    has_action: bool
+    has_tracks: bool
+    has_masks: bool
+    tracks_stale: bool
+    has_records: bool
+    blocked_on: Stage | None
 
 
 @dataclass(frozen=True)
@@ -36,7 +49,7 @@ class Prerequisites:
     has_records: bool
 
     @property
-    def blocked_on(self) -> str | None:
+    def blocked_on(self) -> Stage | None:
         """The first unmet stage, or None when the chain is complete."""
         for stage, met in (
             ("rallies", bool(self.rally_sources)),
@@ -48,7 +61,7 @@ class Prerequisites:
                 return stage
         return None
 
-    def payload(self) -> dict:
+    def payload(self) -> PipelineState:
         return {
             "rally_sources": self.rally_sources,
             "has_action": self.has_action,

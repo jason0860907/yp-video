@@ -99,6 +99,43 @@ class PreAnnotationScoreTests(unittest.TestCase):
                 set(events[0]), {"id", "frame", "label", "xy", "visible", "score"}
             )
 
+    def test_editor_load_serves_the_declared_shape(self) -> None:
+        """The GET's response model keeps what the editor reads — the score,
+        the file's provenance, the derived fields — for both a stored file and
+        an empty store."""
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        app = FastAPI()
+        app.include_router(action_annotate.router)
+        meta = {"fps": 30.0, "duration": 3.4, "num_frames": 100, "start_time": 0.0}
+        with (
+            scratch_stores(),
+            patch.object(action_annotate, "video_metadata", return_value=meta),
+        ):
+            action_annotations.save_spot_pre_annotation(
+                video=Path("match.mp4"),
+                meta={"fps": 30.0, "num_frames": 100},
+                predictions=[{"video": "match", "events": [
+                    {"frame": 10, "label": "spike", "score": 0.9, "xy": [0.2, 0.3], "visible": True},
+                ]}],
+                checkpoint=Path("ckpt.pt"),
+            )
+            client = TestClient(app)
+            loaded = client.get("/annotations/match.mp4", params={"source": "pre-annotation"})
+            empty = client.get("/annotations/match.mp4", params={"source": "annotation"})
+
+        self.assertEqual(loaded.status_code, 200, loaded.text)
+        data = loaded.json()
+        self.assertEqual(data["loaded_source"], "pre-annotation")
+        self.assertEqual(data["source"]["type"], "spot")
+        (event,) = data["events"]
+        self.assertEqual(event["score"], 0.9)
+        self.assertEqual((event["rally_id"], event["relative_frame"]), (None, None))
+        self.assertEqual(empty.status_code, 200, empty.text)
+        self.assertIsNone(empty.json()["loaded_source"])
+        self.assertNotIn("source", empty.json())
+
 
 if __name__ == "__main__":
     unittest.main()

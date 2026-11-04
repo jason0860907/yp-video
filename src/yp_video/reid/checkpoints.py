@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any, Literal, TypedDict
 
 from yp_video.config import REID_CHECKPOINTS_DIR, REID_PYTHON
 from yp_video.contracts.reid import (
@@ -47,14 +48,36 @@ def read_manifest(package: Path) -> dict:
     return manifest
 
 
-def list_checkpoints() -> list[dict]:
+class ReidRun(TypedDict):
+    """One yp-reid checkpoint package (reid/checkpoints/<run>/), from its manifest."""
+
+    #: The package ref (``reid/checkpoints/<run>``) resolve_checkpoint accepts.
+    path: str
+    run_name: str
+    #: True only for the fixed production default, never inferred from metrics.
+    active: bool
+    source: Literal["trained", "imported"] | None
+    architecture: str | None
+    embedding_dim: int | None
+    best_metric: str | None
+    #: Display-only — never chooses the active package.
+    best_value: float | None
+    #: The manifest's test metrics (m_ap / rank1 / rank5 …) — an open dict in
+    #: the contract (contracts/reid.CheckpointManifest.metrics).
+    metrics: dict[str, Any] | None
+    created_at: str | None
+    note: str | None
+    mtime: float
+
+
+def list_checkpoints() -> list[ReidRun]:
     """Every readable package, stable default first then newest candidates.
 
     ``best_value`` is display-only here. It must not control activation:
     train loss and mAP have opposite directions, and values from different
     datasets or splits do not form a fair cross-run comparison.
     """
-    rows = []
+    rows: list[ReidRun] = []
     if not REID_CHECKPOINTS_DIR.exists():
         return rows
     for manifest_path in REID_CHECKPOINTS_DIR.glob(f"*/{CHECKPOINT_MANIFEST_NAME}"):

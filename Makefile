@@ -1,4 +1,4 @@
-.PHONY: install build-web dev db-up db-down serve attach stop contract contract-check
+.PHONY: install build-web dev db-up db-down serve attach stop contract contract-check api-types
 
 SESSION ?= yp
 
@@ -83,3 +83,14 @@ contract-check:
 	@git diff --exit-code -- contracts/*.schema.json \
 		|| (echo "❌ contracts/*.schema.json out of date — run 'make contract' and commit." && exit 1)
 	@echo "✓ contracts up to date"
+	$(MAKE) api-types
+	@git diff --exit-code -- $(FRONTEND_DIR)/src/types/openapi.ts \
+		|| (echo "❌ web API types out of date — run 'make api-types' and commit." && exit 1)
+	@echo "✓ web API types up to date"
+
+# The frontend's response types, generated from the routes' response models:
+# the OpenAPI document (an ignored intermediate), then the committed
+# TypeScript from it. Run after changing a route.
+api-types: $(FRONTEND_DIR)/node_modules
+	uv run python -m yp_video.web.make_openapi
+	cd $(FRONTEND_DIR) && npm run gen:api

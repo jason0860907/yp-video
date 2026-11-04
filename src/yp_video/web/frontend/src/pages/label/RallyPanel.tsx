@@ -15,6 +15,7 @@ import { useEffect, useState } from 'react';
 import { API, ApiError, apiFetch, apiUrl, errMsg } from '@/lib/api';
 import { Badge } from '@/components/ui/Badge';
 import { AnnotationEditor, type EditorData } from '@/components/editor/AnnotationEditor';
+import type { components } from '@/types/openapi';
 import { toast } from '@/components/feedback/toast';
 import { rallyStatus } from '@/lib/labelStatus';
 import { STATUS_OPTIONS, type LabelSource, type LoadedSource, type ModeDescriptor, type PlaybackClock } from './mode';
@@ -44,8 +45,8 @@ const streamPath = (vp: string) => apiUrl(API.annotate.video(vp));
 /** The shared source choice → this store's tag — exactly one store, no
  *  fallback. Rally's pre-annotation store is the SPOT pass, tagged
  *  'spot-pre-annotation' by the backend. */
-const loadRally = (name: string, source: LabelSource): Promise<EditorData> =>
-  apiFetch(API.annotate.result(name, {
+const loadRally = (name: string, source: LabelSource) =>
+  apiFetch<components['schemas']['RallyAnnotationData']>(API.annotate.result(name, {
     source: source === 'annotation' ? 'annotation' : 'spot-pre-annotation',
   }));
 
@@ -70,7 +71,7 @@ export function RallyPanel({ video, source, onLoaded, clock, clipsOpen, onClipsC
         if (stale) return;
         setData(d);
         onLoaded?.(loadedFromTag(d.source));
-        toast.success(`Loaded ${d.results?.length ?? 0} annotations (${String(d.source || '')})`);
+        toast.success(`Loaded ${d.results.length} annotations (${d.source})`);
       } catch (e) {
         if (stale) return;
         onLoaded?.('none');

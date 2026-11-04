@@ -112,6 +112,7 @@ export function normalizeActionEditor(
         start: Number(rally.start) || 0,
         end: Number(rally.end) || 0,
         label: rally.label || 'rally',
+        winner: rally.winner,
       }];
     })
     .sort(

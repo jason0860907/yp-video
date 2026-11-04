@@ -17,6 +17,7 @@ and one bad point turns every arc it touches into nonsense.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from typing import Literal, NotRequired, TypedDict
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
@@ -73,6 +74,75 @@ class Segments(RootModel[list[Segment]]):
         if any(b <= a for a, b in zip(starts, starts[1:])):
             raise ValueError("each segment starts after the one before")
         return self
+
+
+class CourtSize(TypedDict):
+    length: float
+    width: float
+
+
+class PositionedEvent(TypedDict):
+    """One action placed on the court."""
+
+    id: str
+    frame: int
+    time: float
+    rally_id: int | None
+    label: str | None
+    #: The actor's feet in the frame (normalized); None for a landing or
+    #: when unplaced.
+    foot_image: tuple[float, float] | None
+    #: The annotated ball point in the frame; None when not visible.
+    ball_image: tuple[float, float] | None
+    #: Actor's feet — or, for a landing, where the ball came down — in court
+    #: metres; None when it cannot be placed (``reason`` says why).
+    court_xy: tuple[float, float] | None
+    in_court: bool
+    #: The ball at the touch, metres; None without a camera or ball point.
+    ball_3d: tuple[float, float, float] | None
+    #: Why court_xy is None: occluded, no association, no detection,
+    #: outside rally, no takeoff, off court, ball hidden, or not the server
+    #: (a serve whose actor stands nowhere near its end line).
+    reason: str | None
+
+
+#: One ballistic flight between touches, sampled evenly in time. ``from`` is
+#: a keyword, hence the functional form.
+Arc = TypedDict(
+    "Arc",
+    {
+        "rally_id": int,
+        #: The touch that sent the ball — what the flight is coloured by.
+        "label": str | None,
+        "from": str,
+        #: None when nothing followed the touch within MAX_FLIGHT_S.
+        "to": str | None,
+        #: When the ball was really touched: the spotted time, moved by the
+        #: fit (at most trajectory.TOUCH_SLACK_S).
+        "start": float,
+        "end": float,
+        "points": list[tuple[float, float, float]],
+        #: "ball": fitted to the detected ball; "touches": the gravity path
+        #: joining its two touches, nothing seen in between.
+        "source": Literal["ball", "touches"],
+        #: Ball fits only: frames of the ball seen on the flight, and the fit's
+        #: reprojection error.
+        "frames": NotRequired[int],
+        "rmse": NotRequired[float],
+        #: A flight followed from its touch alone: seen up to this second,
+        #: extrapolated after it.
+        "seen_until": NotRequired[float],
+    },
+)
+
+
+class CourtPlacement(TypedDict):
+    """Where the play happened: every event placed, and the flights between."""
+
+    units: Literal["m"]
+    court: CourtSize
+    events: list[PositionedEvent]
+    arcs: list[Arc]
 
 
 def _in_play_area(court_xy: np.ndarray) -> bool:
@@ -152,7 +222,7 @@ def _runs(events: list[dict]) -> list[list[dict]]:
     return runs
 
 
-def _flights(events: list[dict], cam: camera.Camera | None, aspect: float, track: Mapping | None) -> list[dict]:
+def _flights(events: list[dict], cam: camera.Camera | None, aspect: float, track: Mapping | None) -> list[Arc]:
     """The ball's arc between each pair of consecutive touches of a rally.
 
     `events` (time order) holds every touch, placed or not, and only
@@ -171,7 +241,7 @@ def _flights(events: list[dict], cam: camera.Camera | None, aspect: float, track
     seen after it (`_open_flight`).
     """
     rng = np.random.default_rng(0)
-    arcs = []
+    arcs: list[Arc] = []
     for run in _runs(events):
         anchors = {k: e["ball_3d"] for k, e in enumerate(run) if e["ball_3d"] is not None}
         touches: list[np.ndarray | None] = [e["ball_3d"] for e in run]
@@ -229,7 +299,7 @@ def _flights(events: list[dict], cam: camera.Camera | None, aspect: float, track
 
 def _open_flight(
     cam: camera.Camera, aspect: float, track: Mapping, a: dict, b: dict | None, rng: np.random.Generator,
-) -> dict | None:
+) -> Arc | None:
     """The flight from a placed touch no arc leaves — a shank out past the
     free zone, a ball that left the shot, a touch nothing followed: fitted
     from the touch and the boxes seen after it alone, then followed down to
@@ -299,7 +369,7 @@ def calibration_summary(calibration: Calibration) -> dict:
     }
 
 
-def compute(calibration: Calibration, events: Sequence[Mapping], feet: Feet, track: Mapping | None) -> dict:
+def compute(calibration: Calibration, events: Sequence[Mapping], feet: Feet, track: Mapping | None) -> CourtPlacement:
     """Place every event on the court.
 
     `events`: `{id, frame, time, label, ball, rally_id}` — `ball` the visible
@@ -348,7 +418,7 @@ def compute(calibration: Calibration, events: Sequence[Mapping], feet: Feet, tra
 
     length, width = geometry.COURT_LENGTH, geometry.COURT_WIDTH
 
-    def out(e: dict) -> dict:
+    def out(e: dict) -> PositionedEvent:
         xy = e["court_xy"]
         return {
             "id": e["id"],
@@ -361,9 +431,6 @@ def compute(calibration: Calibration, events: Sequence[Mapping], feet: Feet, tra
             "court_xy": [round(float(v), 2) for v in xy] if xy is not None else None,
             "in_court": xy is not None and bool(0 <= xy[0] <= length and 0 <= xy[1] <= width),
             "ball_3d": [round(float(v), 2) for v in e["ball_3d"]] if e["ball_3d"] is not None else None,
-            # Why court_xy is null: occluded, no association, no detection,
-            # outside rally, no takeoff, off court, ball hidden, or not the
-            # server (a serve whose actor stands nowhere near its end line).
             "reason": e["reason"],
         }
 
@@ -377,7 +444,7 @@ def compute(calibration: Calibration, events: Sequence[Mapping], feet: Feet, tra
     }
 
 
-def compute_segments(segments: Segments, events: Sequence[Mapping], feet: Feet, track: Mapping | None) -> dict:
+def compute_segments(segments: Segments, events: Sequence[Mapping], feet: Feet, track: Mapping | None) -> CourtPlacement:
     """`compute` for a video calibrated once per camera position: each
     segment places the events from its start until the next one's, so no
     arc joins touches seen through two cameras. Raises geometry.FitError

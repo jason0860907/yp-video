@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "format": "prettier --write src",
-    "gen:types": "json2ts -i ../../../../contracts -o src/types/contracts"
+    "gen:types": "json2ts -i ../../../../contracts -o src/types/contracts",
+    "gen:api": "openapi-typescript openapi.json -o src/types/openapi.ts"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.59.0",
@@ -31,6 +32,7 @@
     "eslint-plugin-react-refresh": "^0.5.3",
     "globals": "^17.8.0",
     "json-schema-to-typescript": "^15.0.3",
+    "openapi-typescript": "^7.13.0",
     "postcss": "^8.4.47",
     "prettier": "^3.9.6",
     "tailwindcss": "^3.4.14",

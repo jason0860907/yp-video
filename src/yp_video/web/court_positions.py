@@ -21,7 +21,14 @@ class NotReady(LookupError):
     pass
 
 
-def compute(stem: str) -> dict:
+class CourtPositions(positions.CourtPlacement):
+    """One video's play on the court."""
+
+    #: The video stem.
+    video: str
+
+
+def compute(stem: str) -> CourtPositions:
     calibration = annotations.load(stem)
     if calibration is None:
         raise NotReady("No court calibration for this video")

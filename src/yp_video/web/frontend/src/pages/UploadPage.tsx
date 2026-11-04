@@ -15,22 +15,20 @@ import { JobProgress } from '@/components/job/JobProgress';
 import { toast } from '@/components/feedback/toast';
 import { confirm } from '@/components/feedback/confirm';
 import type { Job } from '@/types/api';
+import type { components } from '@/types/openapi';
 
 // Categories come from GET /upload/categories (config.R2_CATEGORIES) —
 // key, label and order are server-defined; the page only renders them.
-interface Category {
-  key: string;
-  label: string;
-  local_only: boolean;
-}
+type Category = components['schemas']['StorageCategory'];
 
+/** A listed file either way round: `synced` is the local file's
+ *  `uploaded` (upload mode) or the R2 object's `local` (download mode). */
 interface FileRow {
   name: string;
   path: string;
   size: number;
-  group?: string;
-  uploaded?: boolean;
-  local?: boolean;
+  group: string | null;
+  synced: boolean;
   selected: boolean;
 }
 type Mode = 'upload' | 'download';
@@ -62,7 +60,7 @@ export function UploadPage() {
 
   const statusQuery = useQuery({
     queryKey: ['upload-status'],
-    queryFn: () => apiFetch<{ configured: boolean; bucket?: string }>(API.upload.status),
+    queryFn: () => apiFetch<components['schemas']['R2Status']>(API.upload.status),
   });
   const configured = statusQuery.data?.configured ?? false;
 
@@ -83,9 +81,19 @@ export function UploadPage() {
     setLoadingFiles(true);
     setFilesError(null);
     try {
-      const path = isUpload ? API.upload.files(category) : API.upload.r2Files(category);
-      const list = await apiFetch<Omit<FileRow, 'selected'>[]>(path);
-      setFiles(list.map((f) => ({ ...f, selected: false })));
+      const row = (f: { name: string; path: string; size: number; group?: string | null }, synced: boolean): FileRow => ({
+        name: f.name,
+        path: f.path,
+        size: f.size,
+        group: f.group ?? null,
+        synced,
+        selected: false,
+      });
+      setFiles(
+        isUpload
+          ? (await apiFetch<components['schemas']['LocalFile'][]>(API.upload.files(category))).map((f) => row(f, f.uploaded))
+          : (await apiFetch<components['schemas']['R2File'][]>(API.upload.r2Files(category))).map((f) => row(f, f.local)),
+      );
       setExpanded({});
     } catch (e) {
       setFilesError(errMsg(e));
@@ -106,7 +114,7 @@ export function UploadPage() {
 
   const selected = files.filter((f) => f.selected);
   const selectedSize = selected.reduce((s, f) => s + f.size, 0);
-  const syncedCount = files.filter((f) => (isUpload ? f.uploaded : f.local)).length;
+  const syncedCount = files.filter((f) => f.synced).length;
 
   const startTransfer = async (kind: 'upload' | 'download') => {
     const paths = selected.map((f) => f.path);
@@ -132,7 +140,7 @@ export function UploadPage() {
     });
     if (!ok) return;
     try {
-      const res = await apiFetch<{ deleted: number }>(API.upload.deleteR2, { method: 'POST', body: { category, files: selected.map((f) => f.path) } });
+      const res = await apiFetch<components['schemas']['R2DeleteResult']>(API.upload.deleteR2, { method: 'POST', body: { category, files: selected.map((f) => f.path) } });
       toast.success(`Deleted ${res.deleted} files from R2`);
       void loadFiles();
     } catch (e) {
@@ -142,7 +150,7 @@ export function UploadPage() {
 
   const deleteLocal = async () => {
     if (!selected.length) return toast.warning('No files selected');
-    const notUploaded = selected.filter((f) => !f.uploaded);
+    const notUploaded = selected.filter((f) => !f.synced);
     let body: string;
     let variant: 'warning' | 'danger' = 'warning';
     if (notUploaded.length === 0) {
@@ -155,7 +163,7 @@ export function UploadPage() {
     if (!ok) return;
     const force = notUploaded.length > 0;
     try {
-      const res = await apiFetch<{ deleted?: string[]; skipped?: string[] }>(API.upload.deleteLocal, {
+      const res = await apiFetch<components['schemas']['LocalDeleteResult']>(API.upload.deleteLocal, {
         method: 'POST',
         body: { category, files: selected.map((f) => f.path), force },
       });
@@ -238,11 +246,11 @@ export function UploadPage() {
               Select All
             </Button>
             {isUpload && (
-              <Button size="sm" intent="default" onClick={() => setSelection((f) => !!f.uploaded)}>
+              <Button size="sm" intent="default" onClick={() => setSelection((f) => f.synced)}>
                 Uploaded
               </Button>
             )}
-            <Button size="sm" intent="primary" onClick={() => setSelection((f) => (isUpload ? !f.uploaded : !f.local))}>
+            <Button size="sm" intent="primary" onClick={() => setSelection((f) => !f.synced)}>
               Un-synced
             </Button>
           </div>
@@ -409,7 +417,7 @@ function FileTree({ files, expanded, isUpload, onToggleFile, onToggleFolder, onE
     }
     if (d && !expanded[folderKeyOf(f)]) continue;
 
-    const isSynced = isUpload ? f.uploaded : f.local;
+    const isSynced = f.synced;
     rows.push(
       <div key={`r-${i}`} className={cn('group flex w-max min-w-full items-center gap-3 rounded-lg p-2.5 transition-colors hover:bg-surface-50', d && 'pl-9')}>
         <input type="checkbox" checked={f.selected} onChange={(e) => onToggleFile(i, e.target.checked)} className="h-3.5 w-3.5 flex-shrink-0 cursor-pointer accent-primary" />

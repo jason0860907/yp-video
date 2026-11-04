@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import TypedDict
 from urllib.parse import unquote
 
 from fastapi import APIRouter, HTTPException
@@ -32,6 +33,34 @@ from yp_video.web.schemas import StrictModel
 
 log = logging.getLogger(__name__)
 router = APIRouter()
+
+
+class Tracklet(TypedDict):
+    rally_id: int
+    #: Restarts per rally — the (rally_id, track_id) pair is the identity.
+    track_id: int
+    frames: list[int]
+    #: Pixel xyxy, row i <-> frames[i].
+    boxes: list[tuple[int, int, int, int]]
+
+
+class TrackData(TypedDict):
+    tracklets: list[Tracklet]
+
+
+class TrackMasks(TypedDict):
+    #: The packed-mask grid (box-crop space).
+    mask_hw: tuple[int, int]
+    #: "rally:track" -> base64 packed mask rows, row i <-> the tracklet's
+    #: i-th frame in /tracklets/{name}.
+    tracks: dict[str, str]
+
+
+class TrackLink(TypedDict):
+    """The tracklet one event's actor sits on (extraction/links.py)."""
+
+    rally_id: int
+    track_id: int
 
 
 class TrackRequest(StrictModel):
@@ -104,7 +133,7 @@ def _track(path: Path, stride: int, on_progress) -> dict:
 
 
 @router.get("/masks/{name}")
-def masks(name: str, rally: int) -> dict:
+def masks(name: str, rally: int) -> TrackMasks:
     """One rally's instance masks, whole tracklets at once — the overlay
     silhouettes. Each entry is the tracklet's packed mask rows (base64,
     box-crop space, see tracklets/store.save_track_masks), row i ↔ the tracklet's
@@ -129,7 +158,7 @@ def masks(name: str, rally: int) -> dict:
 
 
 @router.get("/links/{name}")
-def event_links(name: str) -> dict:
+def event_links(name: str) -> dict[str, TrackLink]:
     """event → tracklet links (extraction/links.py) for crop badges, the
     overlay's action colours and propagation. Apart from the tracklets
     because they move with every actor fix, and the tracklets do not."""
@@ -138,7 +167,7 @@ def event_links(name: str) -> dict:
 
 
 @router.get("/{name}")
-def tracklets(name: str) -> dict:
+def tracklets(name: str) -> TrackData:
     """Tracklets for the video overlay. Scores stay server-side — the overlay
     only draws boxes, and the payload holds ~286k of them (8.5 MB of JSON,
     but ~1.5 MB over the wire once GZipMiddleware has had it)."""

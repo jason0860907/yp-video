@@ -9,8 +9,12 @@ P1 bugs (all repos) → P2 backend lanes → P3 yp-spot → P4 VolleyIQ → P5 y
       the historical fallback chain.
 
 ## P5 — contracts and structure
-- [ ] Response models on routes; generate frontend types from OpenAPI instead of
+- [x] Response models on routes; generate frontend types from OpenAPI instead of
       the hand-mirrored `types/api.ts` (already drifted: `JobStatus 'stopped'`).
+      Routes return TypedDicts / models; `make api-types` writes
+      `frontend/src/types/openapi.ts`, `contract-check` guards it. Still open
+      on purpose: extraction records (next item), the Worker admin passthrough
+      (`MatchDetail.match`, library), yp-spot's metrics records.
 - [ ] Extraction record as a Pydantic model with association fields nested
       (replaces `_ASSOCIATION_FIELDS` and `.get(...) or default` reads).
 - [ ] One sync + one async subprocess line reader with process-group kill

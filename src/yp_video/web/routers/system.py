@@ -1,6 +1,7 @@
 """System router - identity and presence."""
 
 import time
+from typing import TypedDict
 
 from fastapi import APIRouter
 from pydantic import Field
@@ -11,8 +12,13 @@ from yp_video.web.schemas import StrictModel
 router = APIRouter()
 
 
+class Me(TypedDict):
+    #: The verified Cloudflare Access identity, or "" outside Access.
+    email: str
+
+
 @router.get("/me")
-def me() -> dict:
+def me() -> Me:
     """Who Cloudflare Access says is making this request.
 
     The top bar shows it, so a labeler can see which identity their actions
@@ -36,8 +42,15 @@ class PresenceBeat(StrictModel):
     active: bool = True
 
 
+class Presence(TypedDict):
+    #: Browsers whose last heartbeat is younger than the TTL.
+    online: int
+    #: Those whose latest beat says the user recently interacted.
+    active: int
+
+
 @router.post("/presence")
-def presence(beat: PresenceBeat) -> dict:
+def presence(beat: PresenceBeat) -> Presence:
     """Record one heartbeat and return online/active client counts."""
     now = time.monotonic()
     _presence[beat.client_id] = (now, beat.active)

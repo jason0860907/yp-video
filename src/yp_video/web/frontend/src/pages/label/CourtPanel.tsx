@@ -39,6 +39,7 @@ import { MAX_ZOOM, useZoom } from './court/useZoom';
 import { usePlays } from './court/usePlays';
 import { ballAt, type CourtState, type Point, type Segment } from './court/geometry';
 import type { ModeDescriptor, PlaybackClock } from './mode';
+import type { components } from '@/types/openapi';
 
 export const COURT_MODE: ModeDescriptor = {
   key: 'court',
@@ -191,7 +192,7 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
   const untouched = (s: CourtState) => s.guides.length === 0 && Object.keys(s.points).length === 0;
   const found = useQuery({
     queryKey: ['court-prefill', video],
-    queryFn: () => apiFetch<{ guides: Segment[]; points: CourtState['points'] }>(API.court.prefill(video)),
+    queryFn: () => apiFetch<components['schemas']['CourtPrefill']>(API.court.prefill(video)),
     enabled: state != null && untouched(state),
     staleTime: Infinity,
     retry: false,

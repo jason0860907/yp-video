@@ -1,6 +1,11 @@
-"""Request-model base: unknown fields are typos, not extensions."""
+"""Shared request base and the vocabulary several responses share."""
+
+from typing import Literal, TypedDict
 
 from pydantic import BaseModel, ConfigDict
+
+#: The one label-status vocabulary every mode speaks (web/worklists.py).
+LabelStatus = Literal["unlabeled", "pre-annotate", "in-progress", "done"]
 
 
 class StrictModel(BaseModel):
@@ -12,3 +17,15 @@ class StrictModel(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid")
+
+
+class Ok(TypedDict):
+    """The body of a route that only acknowledges (``{"ok": true}``)."""
+
+    ok: bool
+
+
+class DoneRequest(StrictModel):
+    """A mode's Done button: mark (or with false, un-mark) a video finished."""
+
+    done: bool = True

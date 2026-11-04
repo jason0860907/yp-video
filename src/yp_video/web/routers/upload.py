@@ -6,6 +6,7 @@ import time
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
+from typing import NotRequired, TypedDict
 
 from fastapi import APIRouter, HTTPException
 
@@ -31,7 +32,7 @@ class UploadRequest(StrictModel):
     files: list[str]
 
 
-class DownloadRequest(StrictModel):
+class R2DownloadRequest(StrictModel):
     category: str
     files: list[str]  # R2 keys relative to category prefix
 
@@ -45,6 +46,62 @@ class DeleteLocalRequest(StrictModel):
 class DeleteR2Request(StrictModel):
     category: str
     files: list[str]  # paths relative to the category prefix
+
+
+class R2Status(TypedDict):
+    configured: bool
+    #: None when R2 is not configured.
+    bucket: str | None
+
+
+class StorageCategory(TypedDict):
+    """One Storage page tab (config.R2_CATEGORIES)."""
+
+    key: str
+    label: str
+    #: Never synced to R2 (no R2 prefix).
+    local_only: bool
+
+
+class LocalFile(TypedDict):
+    name: str
+    #: Relative to the category's local dir.
+    path: str
+    #: The checkpoint run dir for nested categories; None otherwise.
+    group: str | None
+    size: int
+    r2_key: str
+    #: The R2 key exists.
+    uploaded: bool
+
+
+class R2File(TypedDict):
+    name: str
+    #: Relative to the category prefix.
+    path: str
+    r2_key: str
+    size: int
+    #: The file exists locally.
+    local: bool
+    #: Present only for nested paths: the checkpoint run dir, or the parent dir.
+    group: NotRequired[str]
+
+
+class LocalDeleteResult(TypedDict):
+    deleted: list[str]
+    #: Not on R2 yet, so kept (unless ``force``).
+    skipped: list[str]
+
+
+class R2DeleteResult(TypedDict):
+    #: Objects deleted.
+    deleted: int
+
+
+class PresignedUrl(TypedDict):
+    url: str
+    #: Lifetime in seconds.
+    expires: int
 
 # terminal.log is intentionally excluded: it's a bulky training-process record,
 # kept locally in the package dir but neither listed nor uploaded to R2.
@@ -76,7 +133,7 @@ def _is_checkpoint_package_file(path: Path, base_dir: Path) -> bool:
 
 
 @router.get("/status")
-def get_status():
+def get_status() -> R2Status:
     """Check R2 configuration status."""
     return {
         "configured": r2_client.configured,
@@ -85,7 +142,7 @@ def get_status():
 
 
 @router.get("/categories")
-def list_categories() -> list[dict]:
+def list_categories() -> list[StorageCategory]:
     """The Storage page's category tabs, rendered from config.R2_CATEGORIES
     verbatim (order included) — adding a category never touches the frontend."""
     return [
@@ -95,7 +152,7 @@ def list_categories() -> list[dict]:
 
 
 @router.get("/files")
-def list_local_files(category: str = "cuts-broadcast") -> list[dict]:
+def list_local_files(category: str = "cuts-broadcast") -> list[LocalFile]:
     """List local files with R2 sync status."""
     base_dir = _get_base_dir(category)
     if not base_dir.exists():
@@ -150,7 +207,7 @@ def list_local_files(category: str = "cuts-broadcast") -> list[dict]:
 
 
 @router.get("/r2-files")
-def list_r2_files(category: str = "cuts-broadcast") -> list[dict]:
+def list_r2_files(category: str = "cuts-broadcast") -> list[R2File]:
     """List files on R2 for a category."""
     if not r2_client.configured:
         raise HTTPException(400, "R2 not configured")
@@ -166,7 +223,7 @@ def list_r2_files(category: str = "cuts-broadcast") -> list[dict]:
         # Strip category prefix to get relative path
         rel = obj["key"][len(category) + 1:]
         local_path = base_dir / rel
-        entry: dict = {
+        entry: R2File = {
             "name": Path(rel).name,
             "path": rel,
             "r2_key": obj["key"],
@@ -352,7 +409,7 @@ async def start_upload(req: UploadRequest):
 
 
 @router.post("/download", response_model=JobSummary)
-async def start_download(req: DownloadRequest):
+async def start_download(req: R2DownloadRequest):
     """Start a single download job for all selected files."""
     if not r2_client.configured:
         raise HTTPException(400, "R2 not configured")
@@ -404,7 +461,7 @@ async def start_download(req: DownloadRequest):
 
 
 @router.post("/delete-local")
-def delete_local_files(req: DeleteLocalRequest):
+def delete_local_files(req: DeleteLocalRequest) -> LocalDeleteResult:
     """Delete local files. By default only deletes files already on R2.
 
     For local-only categories (e.g. videos), always allows deletion.
@@ -454,7 +511,7 @@ def delete_local_files(req: DeleteLocalRequest):
 
 
 @router.post("/delete-r2")
-def delete_r2_files(req: DeleteR2Request):
+def delete_r2_files(req: DeleteR2Request) -> R2DeleteResult:
     """Delete selected objects from R2. Does not touch local files."""
     if not r2_client.configured:
         raise HTTPException(400, "R2 not configured")
@@ -471,7 +528,7 @@ def delete_r2_files(req: DeleteR2Request):
 
 
 @router.get("/presign")
-def get_presigned_url(key: str, expires: int = 3600):
+def get_presigned_url(key: str, expires: int = 3600) -> PresignedUrl:
     """Generate a presigned URL for an R2 object."""
     if not r2_client.configured:
         raise HTTPException(400, "R2 not configured")

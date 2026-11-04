@@ -30,7 +30,7 @@ import { MatchSummary } from './MatchSummary';
 import { Overview } from './Overview';
 import { useAppReviewUrlState } from './useAppReviewUrlState';
 import type { Candidate, Clip, Library, MatchDetail, Tab, Tag, VideoMeta, WindowMode } from './types';
-import { byReviewOrder, liveMatches } from './types';
+import { byReviewOrder, candidateClip, liveMatches } from './types';
 
 export function AppReviewPage() {
   const { user, match, tab, scope, clip, fix, set } = useAppReviewUrlState();
@@ -89,23 +89,24 @@ export function AppReviewPage() {
   }, [candidates]);
   // The open correction's span, played without being one of the feed's clips.
   const fixed = candidates?.find((c) => c.id === fix);
+  const fixedClip = fixed?.clip;
   const fixClip = useMemo<Clip | null>(
     () =>
-      fixed?.clip
+      fixed && fixedClip
         ? {
             key: `fix:${fixed.id}`,
-            kind: fixed.clip.kind ?? (fixed.rally_index != null ? 'rally' : 'other'),
+            kind: candidateClip(fixed)?.kind ?? (fixed.rally_index != null ? 'rally' : 'other'),
             rally_index: fixed.rally_index,
-            touches: fixed.clip.touches ?? [],
-            start: fixed.clip.start,
-            end: fixed.clip.end,
+            touches: candidateClip(fixed)?.touches ?? [],
+            start: fixedClip.start,
+            end: fixedClip.end,
           }
         : null,
-    [fixed],
+    [fixed, fixedClip],
   );
 
   const preview = detail.data?.preview;
-  const feed = preview?.[scope];
+  const feed: Clip[] | undefined = preview?.[scope];
   // Clips opens on the feed's first clip, so a picked match never sits blank.
   const active = tab === 'review' ? fixClip : (feed?.find((c) => c.key === clip) ?? feed?.[0] ?? null);
   const select = (next: Clip, visible: Clip[]) => {

@@ -13,16 +13,108 @@ mirrors ``Match+Actions.swift`` (``TouchIndex``, ``actionClips``,
 
 from collections import Counter
 from dataclasses import dataclass
+from typing import Literal, NotRequired, TypedDict
 
 from yp_video.action import rules
 
-from .models import Bundle, Event, Rally, Window
-from .stats import summary
+from .models import Bundle, Event, Rally, Side, Window
+from .stats import Player, Stats, summary
 
 PAD = 1.0
 # Lead-in before a chain's first touch, short so a play opens on its own
 # receive rather than on the serve or attack 0.5–1.3 s before it.
 CHAIN_LEAD = 0.3
+
+
+class Touch(TypedDict):
+    kind: str
+    time: float
+    event_id: str
+    player: Player | None
+    #: The ball was seen at contact.
+    visible: bool
+
+
+class CourtScore(TypedDict):
+    """Running camera-side points of a set (``CourtScoreTimeline``)."""
+
+    set: int
+    #: Court side -> points.
+    points: dict[str, int]
+    #: Rallies of the set with no known winner.
+    unknown: int
+
+
+class Attack(TypedDict):
+    """One 組織進攻 of a rally: its own touches' span and the spiker."""
+
+    key: str
+    start: float
+    end: float
+    player: Player | None
+
+
+class Clip(TypedDict):
+    """An action or score clip, as the App frames it."""
+
+    key: str
+    kind: str
+    #: Actions: the clip's number among all actions; scores: its rally's index
+    #: (or its number when outside every rally).
+    index: int
+    anchor_time: float
+    #: The touch a user's mark lands on (a score's deciding touch).
+    event_id: str
+    rally_index: int | None
+    set: int
+    start: float
+    end: float
+    #: The window before any user trim.
+    default_window: tuple[float, float]
+    player: Player | None
+    loss_reason: str | None
+    loss_reason_inferred: bool
+    winner: Side | None
+    court_score: CourtScore | None
+    tag_ids: list[str]
+    touches: list[Touch]
+    #: Actions only: the number among clips of the same kind (扣球 #3).
+    kind_index: NotRequired[int]
+
+
+class RallyClip(TypedDict):
+    """A rally of the timeline: its stored fields plus what the App derives."""
+
+    index: int
+    set: int
+    start: float
+    end: float
+    #: The model's highlight score (★).
+    score: int
+    #: Library rows only: the App's rally UUID and its match.
+    id: NotRequired[str]
+    match_id: NotRequired[str]
+    deleted_at: NotRequired[int | None]
+    key: str
+    kind: Literal["rally"]
+    rally_index: int
+    winner: Side | None
+    court_score: CourtScore | None
+    touches: list[Touch]
+    #: Its attacks, in time order.
+    attacks: list[Attack]
+    loss_reason: str | None
+    loss_reason_inferred: bool
+
+
+class Preview(TypedDict):
+    rallies: list[RallyClip]
+    actions: list[Clip]
+    scores: list[Clip]
+    roster: list[Player]
+    court_totals: list[CourtScore]
+    warnings: list[str]
+    stats: Stats
 
 
 def kind(event: Event) -> str:
@@ -244,7 +336,7 @@ class TouchIndex:
         )
 
 
-def court_scores(rallies: list[Rally], winner) -> tuple[dict[int, dict], list[dict]]:
+def court_scores(rallies: list[Rally], winner) -> tuple[dict[int, CourtScore], list[CourtScore]]:
     """``CourtScoreTimeline``: running camera-side points per set."""
     by_rally, totals = {}, []
     for set_number in sorted({r.set for r in rallies}):
@@ -304,7 +396,7 @@ def rally_plays(bundle: Bundle, actions: list[dict], scores: list[dict]) -> dict
 
 def project(
     bundle: Bundle, *, mode: Window = "full_play", corrected: bool = True
-) -> dict:
+) -> Preview:
     correction = bundle.corrections if corrected else None
     source_rallies = bundle.result.rallies
     if corrected and bundle.library_rallies is not None:
@@ -340,7 +432,7 @@ def project(
         number = players.get(e.id)
         return roster.get(number) if number is not None else None
 
-    def touch(e: Event) -> dict:
+    def touch(e: Event) -> Touch:
         return {
             "kind": kind(e),
             "time": e.time,
@@ -357,7 +449,7 @@ def project(
         *,
         inferred: str | None = None,
         score: bool = False,
-    ) -> dict:
+    ) -> Clip:
         ann = annotations.get(context.key)
         trimmed = ann is not None and ann.trim_start is not None
         start, end = (ann.trim_start, ann.trim_end) if trimmed else window

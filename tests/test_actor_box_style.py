@@ -11,11 +11,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
+from pydantic import TypeAdapter
 
 from yp_video.actor import box_check as box_check_module
 from yp_video.actor import box_style
 from yp_video.actor import labels as actor_labels
-from yp_video.actor.box_check import box_check, pending_count
+from yp_video.actor.box_check import BoxCheckEntry, box_check, pending_count
 from yp_video.actor.labels import ActorLabel, ActorVerdict
 from yp_video.core.cache import DiskStatCache, StatCache
 from yp_video.core.jsonl import write_jsonl
@@ -181,7 +182,18 @@ class ConfirmationTests(unittest.TestCase):
         })
 
 
+_BOX_CHECK_RESPONSE = TypeAdapter(list[BoxCheckEntry])
+
+
 class BoxCheckTests(unittest.TestCase):
+    def assert_survives_response_model(self, entries: list) -> None:
+        """The route's declared shape keeps every key and value it emits."""
+        validated = _BOX_CHECK_RESPONSE.validate_python(entries)
+        self.assertEqual(
+            _BOX_CHECK_RESPONSE.dump_python(validated, mode="json"),
+            json.loads(json.dumps(entries)),
+        )
+
     def test_every_event_gets_its_frame_boxes_and_a_label_its_status(self) -> None:
         box = [10, 10, 20, 50]
         with scratch_video({
@@ -202,6 +214,7 @@ class BoxCheckTests(unittest.TestCase):
             self.assertEqual(entries["e20"]["label_box"], (10.0, 10.0, 20.0, 50.0))
             self.assertEqual(pending_count("game"), 3)
             self.assertEqual(router.get_box_check("game.mp4"), box_check("game"))
+            self.assert_survives_response_model(box_check("game"))
 
     def test_unlabeled_and_occluded_events_carry_boxes_but_no_status(self) -> None:
         with scratch_video({
@@ -215,6 +228,7 @@ class BoxCheckTests(unittest.TestCase):
                 {"e10": (None, None, 2), "e20": (None, None, 2),
                  "e30": ("unresolved", None, 1), "e40": (None, None, 0)},
             )
+            self.assert_survives_response_model(box_check("game"))
 
     def test_a_new_label_file_recomputes_the_check(self) -> None:
         with scratch_video({"e30": {"verdict": "manual", "frame": 30, "box": [10, 10, 20, 50]}}):

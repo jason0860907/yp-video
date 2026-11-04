@@ -9,14 +9,14 @@ extraction records they both read.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal, TypedDict
 from urllib.parse import unquote
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from yp_video.actor import labels as actor_labels
-from yp_video.actor.box_check import box_check
+from yp_video.actor.box_check import BoxCheckEntry, box_check
 from yp_video.core import label_done
 from yp_video.core.jsonl import read_jsonl_cached
 from yp_video.extraction import actor_fix
@@ -28,30 +28,32 @@ from yp_video.web.r2_client import (
     resolve_cut,
     sync_to_r2,
 )
-from yp_video.web.schemas import StrictModel
+from yp_video.web.schemas import DoneRequest, StrictModel
 
 router = APIRouter()
 
 
 @router.get("/videos")
-def list_videos() -> list[dict]:
+def list_videos() -> list[worklists.AssociationVideo]:
     return worklists.association_videos()
 
 
 @router.get("/box-check/{name}")
-def get_box_check(name: str) -> list[dict]:
+def get_box_check(name: str) -> list[BoxCheckEntry]:
     """Every labelable event's 2XLarge boxes — what the picker clicks — and
     whether its label box is one of them (actor/box_check.py). Empty without
     a dense pass."""
     return box_check(Path(unquote(name)).stem)
 
 
-class DoneRequest(StrictModel):
-    done: bool = True
+class AssociationDone(TypedDict):
+    done: bool
+    #: Automatic answers the Done sweep-confirmed (0 when un-marking).
+    confirmed: int
 
 
 @router.put("/done/{name:path}")
-def set_done(name: str, req: DoneRequest) -> dict:
+def set_done(name: str, req: DoneRequest) -> AssociationDone:
     """Persist the human "actor review is finished" verdict for one video.
 
     Done also sweep-confirms every current automatic answer (same write as
@@ -73,8 +75,14 @@ class ConfirmRequest(StrictModel):
     event_ids: list[str] = Field(min_length=1)
 
 
+class AssociationConfirmed(TypedDict):
+    #: Event id → the verdict that landed; events already carrying a human
+    #: verdict are absent.
+    confirmed: dict[str, Literal["confirmed", "occluded"]]
+
+
 @router.post("/confirm/{name}")
-def confirm(name: str, req: ConfirmRequest) -> dict:
+def confirm(name: str, req: ConfirmRequest) -> AssociationConfirmed:
     """Endorse what was proposed for these events: "it already got these
     right". An agent proposal lands as its human twin (``agent`` →
     ``confirmed``, ``agent_occluded`` → ``occluded``); an automatic pick
@@ -183,10 +191,20 @@ def _actor_rows(labels) -> list[dict]:
     return [{"id": event_id, **label.payload()} for event_id, label in labels.items()]
 
 
+class ReidActorFixResponse(TypedDict):
+    #: The changed extraction record, joined to its current action event and
+    #: carrying ``actor_review``. Open: it is the stored record verbatim
+    #: (extraction/pipeline.py writes it), the same row /extraction/records
+    #: serves.
+    record: dict[str, Any]
+    #: Non-visible models refreshing after the response.
+    refreshing_models: list[str]
+
+
 @router.post("/fix/{name}")
 def fix(
     name: str, req: ActorFixRequest, background_tasks: BackgroundTasks
-) -> dict:
+) -> ReidActorFixResponse:
     """Re-point one event at the person the user clicked (or nobody / auto).
 
     The verdict lands in the video's actor labels (the durable human record,

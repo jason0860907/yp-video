@@ -2,13 +2,25 @@
 
 import asyncio
 import json
+from typing import TypedDict
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
 from yp_video.web.jobs import JobSummary, job_manager
+from yp_video.web.schemas import Ok
 
 router = APIRouter()
+
+
+class ActiveCount(TypedDict):
+    count: int
+
+
+class JobLogs(TypedDict):
+    #: The retained tail, oldest first (bounded by jobs.MAX_LOG_LINES).
+    lines: list[str]
+    count: int
 
 
 @router.get("", response_model=list[JobSummary])
@@ -18,7 +30,7 @@ def list_jobs():
 
 
 @router.get("/active-count")
-def active_count():
+def active_count() -> ActiveCount:
     """Get count of active jobs."""
     return {"count": job_manager.active_count()}
 
@@ -33,7 +45,7 @@ def get_job(job_id: str):
 
 
 @router.get("/{job_id}/logs")
-def get_job_logs(job_id: str):
+def get_job_logs(job_id: str) -> JobLogs:
     """Return the bounded log tail without bloating list/SSE payloads."""
     lines = job_manager.job_logs(job_id)
     if lines is None:
@@ -69,7 +81,7 @@ async def job_events(job_id: str):
 
 
 @router.post("/{job_id}/cancel")
-async def cancel_job(job_id: str):
+async def cancel_job(job_id: str) -> Ok:
     """Cancel a running job."""
     success = await job_manager.cancel_job(job_id)
     if not success:

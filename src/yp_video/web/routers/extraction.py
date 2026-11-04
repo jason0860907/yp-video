@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Any, TypedDict
 from urllib.parse import unquote
 
 from fastapi import APIRouter, HTTPException
@@ -28,14 +29,14 @@ from fastapi.responses import FileResponse
 from pydantic import Field
 
 from yp_video.actor import labels as actor_labels
-from yp_video.config import cut_kind_of
+from yp_video.config import CutKind, cut_kind_of
 from yp_video.contracts.action import event_id
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import read_jsonl, read_jsonl_cached, read_jsonl_header
 from yp_video.core.rallies import load_rallies
 from yp_video.extraction import pipeline
 from yp_video.extraction import store as extraction_store
-from yp_video.extraction.prerequisites import prerequisites
+from yp_video.extraction.prerequisites import PipelineState, prerequisites
 from yp_video.tracklets import store as tracks_store
 from yp_video.web.job_helpers import init_batch_items, spawn_batch_video_job
 from yp_video.web.jobs import JobSummary, JobType, job_manager
@@ -52,8 +53,43 @@ router = APIRouter()
 _slim_records_cache: StatCache = StatCache()
 
 
+class ExtractionVideo(TypedDict):
+    name: str
+    kind: CutKind
+    event_count: int
+    #: Records from the current detector. Retired detector output is
+    #: deliberately pending: running the default job migrates it without
+    #: requiring Overwrite.
+    has_records: bool
+    #: People found across every action frame — this stage's own outcome.
+    #: What was DECIDED about them is the association listing's to report.
+    #: None without records.
+    detections: int | None
+    #: Detector identifier persisted in the record header.
+    detector: str | None
+    #: Tracklets that still serve (tracklets/store.tracks_current): masks,
+    #: cut against the video's current rallies — not merely a file.
+    tracks_current: bool
+    #: Whether GTA refined those tracks; None when there are none.
+    tracks_refined: bool | None
+    pipeline: PipelineState
+
+
+class ExtractionRecords(TypedDict):
+    """One video's extraction records for the labeling boards.
+
+    Both halves stay open-ended here: ``meta`` is the records header plus the
+    ``fps`` / ``action_events`` / ``rallies`` this route joins in, and each
+    record is the stored extraction row (the frontend's ``ReidRecord``) with
+    its ``actor_review`` verdict.
+    """
+
+    meta: dict[str, Any]
+    records: list[dict[str, Any]]
+
+
 @router.get("/videos")
-def list_videos() -> list[dict]:
+def list_videos() -> list[ExtractionVideo]:
     """Cut videos that have action events — the detection work list (and
     the tracking page's): local and R2-only cuts alike, since either job
     fetches the bytes it needs (``r2_client.materialized_cut``)."""
@@ -71,15 +107,9 @@ def list_videos() -> list[dict]:
             "name": f.name,
             "kind": cut_kind_of(f),
             "event_count": len(events),
-            # Retired detector output is deliberately pending: running the
-            # default job migrates it without requiring Overwrite.
             "has_records": current,
-            # This stage's own outcome. What was DECIDED about the detections
-            # is the association listing's to report.
             "detections": int(header.get("detections") or 0) if header else None,
             "detector": (header.get("source") or {}).get("detector") if header else None,
-            # What the tracking page keys on: tracklets that still serve
-            # (see tracklets/store.tracks_current), not merely a file.
             "tracks_current": tracks_store.tracks_current(f.stem),
             "tracks_refined": tracks_store.tracks_refined(f.stem),
             "pipeline": prerequisites(f.stem).payload(),
@@ -148,7 +178,7 @@ async def detect(req: DetectRequest) -> dict:
 
 
 @router.get("/records/{name}")
-def records(name: str) -> dict:
+def records(name: str) -> ExtractionRecords:
     """One video's extraction records (UI payload)."""
     stem = Path(unquote(name)).stem
     path = extraction_store.records_path(stem)

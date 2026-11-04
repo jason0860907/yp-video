@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import TypedDict
 from urllib.parse import unquote
 
 from fastapi import APIRouter, HTTPException
@@ -24,16 +25,17 @@ from pydantic import Field
 from yp_video.extraction import done, links, pipeline
 from yp_video.extraction import store as extraction_store
 from yp_video.reid import checkpoints, identity, store
-from yp_video.web.r2_client import resolve_cut, sync_to_r2
 from yp_video.reid.embedder import (
     DEFAULT_EMBEDDER,
     EMBEDDER_NAMES,
+    ReidSlider,
     build_embedders,
     threshold_calibration,
 )
 from yp_video.web import audit, worklists
 from yp_video.web.job_helpers import init_batch_items, spawn_batch_video_job
 from yp_video.web.jobs import JobSummary, JobType, job_manager
+from yp_video.web.r2_client import resolve_cut, sync_to_r2
 from yp_video.web.schemas import StrictModel
 
 log = logging.getLogger(__name__)
@@ -41,12 +43,33 @@ router = APIRouter()
 
 
 @router.get("/videos")
-def list_videos() -> list[dict]:
+def list_videos() -> list[worklists.ReidVideo]:
     return worklists.reid_videos()
 
 
+class ReidEmbedderOption(TypedDict):
+    name: str
+    threshold: ReidSlider
+    #: Embeds background-suppressed crops — the viewer should show those.
+    masked: bool
+
+
+class ReidCheckpointOption(TypedDict):
+    ref: str
+    run_name: str
+    active: bool
+
+
+class ReidOptions(TypedDict):
+    default_embedder: str
+    embedders: list[ReidEmbedderOption]
+    #: Official clip-reident default first, then candidates; the embed job
+    #: can explicitly override the active package.
+    checkpoints: list[ReidCheckpointOption]
+
+
 @router.get("/options")
-def options() -> dict:
+def options() -> ReidOptions:
     """Available embedders for the Embed / Label pages. Each ships its
     cluster-threshold slider calibration, so adding a model server-side never
     needs a frontend edit."""
@@ -55,7 +78,6 @@ def options() -> dict:
     return {
         "default_embedder": DEFAULT_EMBEDDER,
         "embedders": [
-            # masked → the crop viewer should show the crops-masked variant.
             {"name": n, "threshold": threshold_calibration(n), "masked": getattr(e, "masked_input", False)}
             for n, e in registry.items()
         ],
@@ -159,12 +181,30 @@ def _grouped(keys: list[str], labels) -> dict[int, list[str]]:
     return out
 
 
+class ReidUnit(TypedDict):
+    event_ids: list[str]
+
+
+class ReidCluster(TypedDict):
+    id: int
+    size: int
+    unit_keys: list[str]
+
+
+class ReidClusters(TypedDict):
+    threshold: float
+    model: str
+    #: Unit key ("t:<rally>:<track>" or "e:<event_id>") → its events.
+    units: dict[str, ReidUnit]
+    clusters: list[ReidCluster]
+
+
 @router.get("/clusters/{name}")
 def clusters(
     name: str,
     threshold: float = identity.DEFAULT_CLUSTER_THRESHOLD,
     model: str = DEFAULT_EMBEDDER,
-) -> dict:
+) -> ReidClusters:
     """Unsupervised grouping of one video's units (see reid/identity.py).
 
     A unit is a tracklet where one exists and a lone event otherwise, so the
@@ -196,12 +236,31 @@ class SavePlayersRequest(StrictModel):
     assignments: dict[str, str] = Field(default_factory=dict)
 
 
+class ReidMatch(TypedDict):
+    player: str
+    #: Cosine similarity to the player's centroid; 1.0 for a named unit.
+    sim: float
+    #: The unit is named by its own events, not matched.
+    assigned: bool
+
+
+class ReidPlayers(TypedDict):
+    #: Event id → player name; tracklet ids do not survive a re-track.
+    assignments: dict[str, str]
+    #: Unit key → the name its named events agree on (an identity switch
+    #: stays unnamed).
+    unit_names: dict[str, str]
+    players: list[str]
+    #: Keyed by UNIT key, not event id.
+    matches: dict[str, ReidMatch]
+
+
 @router.get("/players/{name}")
-def get_players(name: str, model: str = DEFAULT_EMBEDDER) -> dict:
+def get_players(name: str, model: str = DEFAULT_EMBEDDER) -> ReidPlayers:
     """Saved identities + nearest-centroid match for every unit."""
     stem = Path(unquote(name)).stem
     assignments = store.load_players(stem).assignments
-    matches: dict[str, dict] = {}
+    matches: dict[str, ReidMatch] = {}
     names: dict[str, str] = {}
     if assignments:
         records, matrix = _load_or_http(
@@ -220,13 +279,19 @@ def get_players(name: str, model: str = DEFAULT_EMBEDDER) -> dict:
     }
 
 
-class DoneRequest(StrictModel):
+class ReidDoneRequest(StrictModel):
     done: bool = True
     confirm_auto_actors: bool = False
 
 
+class ReidDone(TypedDict):
+    done: bool
+    #: Auto actors the Done endorsed (0 unless confirm_auto_actors).
+    confirmed_auto_actors: int
+
+
 @router.put("/done/{name}")
-def put_done(name: str, req: DoneRequest) -> dict:
+def put_done(name: str, req: ReidDoneRequest) -> ReidDone:
     """Mark (or unmark) a video's labeling as finished — the Label page's
     Done button. A human verdict, stored in the shared label-done sidecar;
     what it implies about auto actors is this endpoint's affair (done.py)."""
@@ -246,8 +311,13 @@ def _naming_rows(players) -> list[dict]:
     return [{"id": k, "name": v} for k, v in players.assignments.items()]
 
 
+class ReidSavedPlayers(TypedDict):
+    assignments: dict[str, str]
+    players: list[str]
+
+
 @router.put("/players/{name}")
-def put_players(name: str, req: SavePlayersRequest) -> dict:
+def put_players(name: str, req: SavePlayersRequest) -> ReidSavedPlayers:
     """Persist the event names. Returns them without matches — a save must
     succeed even when the current model's matrix is missing."""
     stem = Path(unquote(name)).stem
@@ -278,8 +348,15 @@ class SeedClusterRequest(StrictModel):
     model: str = DEFAULT_EMBEDDER
 
 
+class ReidSeedClusters(TypedDict):
+    #: Seed key → the non-seed units that joined it (seeds not repeated).
+    groups: dict[str, list[str]]
+    #: Units far from every seed, clustered at the same threshold.
+    leftover_clusters: list[list[str]]
+
+
 @router.post("/seed-cluster/{name}")
-def seed_cluster(name: str, req: SeedClusterRequest) -> dict:
+def seed_cluster(name: str, req: SeedClusterRequest) -> ReidSeedClusters:
     """Distribute unnamed units to the nearest user-seeded group.
 
     Units farther than ``threshold`` from every seed centroid stay out; they

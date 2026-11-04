@@ -19,6 +19,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 from pathlib import Path
+from typing import TypedDict
 
 from yp_video.config import LABEL_DONE_FILE
 from yp_video.core.cache import StatCache
@@ -26,6 +27,12 @@ from yp_video.core.jsonl import read_jsonl, write_jsonl
 
 #: Modes whose Done flag lives here.
 MODES = ("rally", "action", "association", "reid", "court")
+
+
+class DoneState(TypedDict):
+    """What a Done endpoint answers: the mode's flag as now stored."""
+
+    done: bool
 
 
 class Ledger:

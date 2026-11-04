@@ -17,6 +17,7 @@ import json
 import logging
 import random
 from pathlib import Path
+from typing import TypedDict
 
 from yp_video.action.frames import inspect_action_frame_cache
 from yp_video.action.training import CutResolver
@@ -43,7 +44,16 @@ def annotation_files() -> list[Path]:
     return sorted(RALLY_ANNOTATIONS_DIR.glob(f"*{ANNOTATION_SUFFIX}"))
 
 
-def rally_stats() -> dict:
+class RallyStats(TypedDict):
+    label_dir: str
+    videos: int
+    rallies: int
+    rally_hours: float
+    #: Annotated video time, rallies or not.
+    total_hours: float
+
+
+def rally_stats() -> RallyStats:
     """Library-wide rally annotation totals for the training page."""
     videos = 0
     rallies = 0

@@ -20,7 +20,8 @@ import { formatActionTime } from '@/lib/actionEditorModel';
 import { formatDateTime } from '@/lib/format';
 import type { Candidate, Decision, LibraryMatch, MatchDetail, Review } from './types';
 import { lossReasonLabel } from './appTerms';
-import { byReviewOrder, DECISION_LABEL, preciseTime, sideLabel } from './types';
+import { byReviewOrder, candidateClip, DECISION_LABEL, preciseTime, sideLabel } from './types';
+import type { components } from '@/types/openapi';
 
 type Value = Record<string, unknown>;
 type Operation = 'remove_event' | 'remove_rally' | 'update_rally';
@@ -46,8 +47,9 @@ function title(c: Candidate): string {
   const v = c.value as Value;
   const span = (a: [number, number]) => `${formatActionTime(a[0])}–${formatActionTime(a[1])}`;
   if (c.scope === 'actions' || c.scope === 'scores') {
-    const was = c.clip?.loss_reason
-      ? `${lossReasonLabel(c.clip.loss_reason)}${c.clip.loss_reason_inferred ? ' (inferred)' : ''}`
+    const full = candidateClip(c);
+    const was = full?.loss_reason
+      ? `${lossReasonLabel(full.loss_reason)}${full.loss_reason_inferred ? ' (inferred)' : ''}`
       : 'none';
     const parts = [
       v.removed && 'removed',
@@ -56,8 +58,8 @@ function title(c: Candidate): string {
       v.loss_reason && `loss reason ${was} → ${lossReasonLabel(v.loss_reason as string)}`,
       (v.tag_ids as string[]).length > 0 && 'favorited',
     ].filter(Boolean);
-    const at = c.clip?.anchor_time;
-    const what = `${c.scope === 'scores' ? 'Point' : capitalize(c.clip?.kind ?? 'action')}${at != null ? ` ${preciseTime(at)}` : ''}`;
+    const at = full?.anchor_time;
+    const what = `${c.scope === 'scores' ? 'Point' : capitalize(full?.kind ?? 'action')}${at != null ? ` ${preciseTime(at)}` : ''}`;
     return `${what}: ${parts.join(', ') || 'no change'}`;
   }
   if (c.scope === 'rally') return 'Rally deleted';
@@ -132,7 +134,7 @@ export function FeedbackPanel({
   });
   const videos = useQuery({
     queryKey: ['app-review', 'videos'],
-    queryFn: () => apiFetch<{ name: string }[]>(API.appReview.videos),
+    queryFn: () => apiFetch<components['schemas']['AppReviewVideo'][]>(API.appReview.videos),
   });
   const target = useQuery({
     queryKey: ['app-review', 'target', video],

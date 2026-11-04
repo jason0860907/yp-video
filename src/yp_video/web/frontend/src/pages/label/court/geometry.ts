@@ -1,22 +1,14 @@
 /** Client side of the court calibration: applying the homographies the
  *  server solved (court/geometry.py). Solving stays server-side — one solver,
  *  which the iOS port will mirror — so nothing here inverts or fits. */
+import type { components } from '@/types/openapi';
 
 type Row = [number, number, number];
 export type Matrix = [Row, Row, Row];
-type Row4 = [number, number, number, number];
 export type Point3 = [number, number, number];
 
 /** The solved pinhole camera (court/camera.py). */
-export interface Camera {
-  /** 3×4: court (x, y, z, 1) → normalized image (x, y, 1), up to scale. */
-  projection: [Row4, Row4, Row4];
-  center: Point3;
-  focal: number;
-  /** RMS reprojection error over every mark, in frame heights. */
-  rmse: number;
-  off_floor: number;
-}
+export type Camera = components['schemas']['Camera'];
 
 /** Project a court point in metres into the normalized frame. */
 export function project3([a, b, c]: Camera['projection'], [x, y, z]: Point3): Point | null {
@@ -26,25 +18,7 @@ export function project3([a, b, c]: Camera['projection'], [x, y, z]: Point3): Po
 }
 export type Point = [number, number];
 
-export interface CourtState {
-  points: Record<string, Point>;
-  /** Guide lines drawn along the paint, saved with the marks. */
-  guides: Segment[];
-  net_height_m: number;
-  fit: { image_to_court: Matrix; court_to_image: Matrix; rmse_m: number } | null;
-  fit_error: string | null;
-  camera: Camera | null;
-  camera_error: string | null;
-  landmarks: Record<string, Point>;
-  /** Net-top marks: their floor position; they stand net_height_m above it. */
-  net_landmarks: Record<string, Point>;
-  lines: [number, number, number, number][];
-  court: { length: number; width: number };
-  /** How far past the frame edge a mark may sit (fraction of the frame). */
-  outside_frame: number;
-  /** Longest gap between touches still drawn as one flight, seconds. */
-  max_flight_s: number;
-}
+export type CourtState = components['schemas']['CourtState'];
 
 /** Apply a 3×3 homography; null for a point on or behind the horizon. */
 export function apply([a, b, c]: Matrix, [x, y]: Point): Point | null {
@@ -98,50 +72,9 @@ export const LANDMARK_LABELS: Record<string, string> = {
 export type Segment = [Point, Point];
 
 /** GET /court/positions — each action's actor feet, in court metres. */
-export interface CourtPositions {
-  video: string;
-  events: {
-    id: string;
-    frame: number;
-    time: number;
-    rally_id: number | null;
-    label: string | null;
-    /** The actor's feet in the frame; null for a score or when unplaced. */
-    foot_image: Point | null;
-    /** The annotated ball point in the frame; null when not visible. */
-    ball_image: Point | null;
-    /** Actor's feet — or, for a score, where the ball landed. */
-    /** null when it cannot be placed — `reason` says why. */
-    court_xy: Point | null;
-    in_court: boolean;
-    /** The ball at the touch, metres; null without a camera or ball point. */
-    ball_3d: Point3 | null;
-    /** Why there is no court position: occluded, no association, no
-     *  detection, outside rally, no takeoff, off court, ball hidden or not
-     *  the server. */
-    reason: string | null;
-  }[];
-  /** Ballistic flights between consecutive touches, sampled evenly in time. */
-  arcs: Arc[];
-}
+export type CourtPositions = components['schemas']['CourtPositions'];
 
-export interface Arc {
-  rally_id: number;
-  /** The touch that sent the ball — the flight takes its action colour. */
-  label: string | null;
-  from: string;
-  /** null when nothing followed the touch within the longest flight. */
-  to: string | null;
-  start: number;
-  end: number;
-  points: Point3[];
-  /** "ball": fitted to the detected ball; "touches": the gravity path
-   *  joining its two touches, nothing seen in between. */
-  source: 'ball' | 'touches';
-  /** A flight followed from its touch alone (the ball went out or left the
-   *  shot): seen up to this second, extrapolated after it. */
-  seen_until?: number;
-}
+export type Arc = components['schemas']['Arc'];
 
 /** A flight's stretches, in order: solid where the ball was seen, dashed
  *  where it is implied — by its two touches, or extrapolated past

@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from 'react';
 import { API, ApiError, apiFetch } from '@/lib/api';
 import { clamp } from '@/lib/actionEditorModel';
 import type { WaveformData } from '@/types/api';
+import type { components } from '@/types/openapi';
 
 const POINTS_PER_SECOND = 120;
 const MIN_POINTS = 2400;
@@ -47,12 +48,7 @@ export function useActionWaveform() {
     setWaveform({ ...EMPTY_WAVEFORM, video, loading: true });
     try {
       const points = pointCount(duration);
-      const data = await apiFetch<{
-        has_audio?: boolean;
-        duration?: number;
-        peaks?: number[];
-        rms?: number[];
-      }>(`${API.actionAnnotate.waveform(video)}?points=${points}`, {
+      const data = await apiFetch<components['schemas']['AudioWaveform']>(`${API.actionAnnotate.waveform(video)}?points=${points}`, {
         signal: controller.signal,
       });
       if (revision !== requestRevision.current) return;

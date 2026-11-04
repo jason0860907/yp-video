@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TypedDict
 from urllib.parse import unquote
 
 from fastapi import APIRouter, HTTPException, Query
@@ -27,6 +27,7 @@ from yp_video.core.jsonl import read_jsonl
 from yp_video.core.rallies import load_rallies
 from yp_video.web import audit, worklists
 from yp_video.web.action_annotations import (
+    ActionAnnotationData,
     annotation_path,
     load_annotation,
     normalize_events,
@@ -34,13 +35,13 @@ from yp_video.web.action_annotations import (
     pre_annotation_path,
     write_annotation_atomic,
 )
-from yp_video.web.action_waveform import audio_waveform, video_metadata
+from yp_video.web.action_waveform import AudioWaveform, audio_waveform, video_metadata
 from yp_video.web.r2_client import (
     resolve_cut,
     serve_video_or_r2_redirect,
     sync_to_r2,
 )
-from yp_video.web.schemas import StrictModel
+from yp_video.web.schemas import DoneRequest, StrictModel
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -83,6 +84,17 @@ class SaveActionAnnotationsRequest(StrictModel):
     events: list[ActionEvent]
 
 
+class ActionLabels(TypedDict):
+    #: Every action label, in the editor's display order.
+    labels: list[str]
+
+
+class ActionSaveResult(TypedDict):
+    #: The file written.
+    saved: str
+    count: int
+
+
 def _load_rallies(video: Path) -> list[dict]:
     """This video's rally spans (see core/rallies.py for the source priority)."""
     return load_rallies(video.stem)
@@ -101,21 +113,17 @@ def _prior_events(output_path: Path) -> list[dict]:
 
 
 @router.get("/labels")
-def labels() -> dict:
+def labels() -> ActionLabels:
     return {"labels": list(ACTION_LABELS)}
 
 
 @router.get("/videos")
-def list_videos() -> list[dict]:
+def list_videos() -> list[worklists.ActionVideo]:
     return worklists.action_videos()
 
 
-class DoneRequest(StrictModel):
-    done: bool = True
-
-
 @router.put("/done/{name:path}")
-def set_done(name: str, req: DoneRequest) -> dict:
+def set_done(name: str, req: DoneRequest) -> label_done.DoneState:
     """Persist the human "action labeling is finished" verdict for one video.
 
     Deliberately not tied to saving: Save writes the human store while this
@@ -132,7 +140,7 @@ def set_done(name: str, req: DoneRequest) -> dict:
 async def get_annotations(
     name: str,
     source: Literal["annotation", "pre-annotation"],
-) -> dict:
+) -> ActionAnnotationData:
     """One video's action annotation from exactly the requested store.
 
     Deterministic on purpose — the Source select means what it says, no
@@ -194,7 +202,9 @@ async def get_annotations(
 
 
 @router.get("/waveform/{name:path}")
-async def get_waveform(name: str, points: int = Query(default=9600, ge=200, le=96000)) -> dict:
+async def get_waveform(
+    name: str, points: int = Query(default=9600, ge=200, le=96000)
+) -> AudioWaveform:
     decoded = unquote(name)
     video = resolve_cut(Path(decoded).name)
     if video is None:
@@ -203,7 +213,7 @@ async def get_waveform(name: str, points: int = Query(default=9600, ge=200, le=9
 
 
 @router.post("/annotations")
-async def save_annotations(req: SaveActionAnnotationsRequest) -> dict:
+async def save_annotations(req: SaveActionAnnotationsRequest) -> ActionSaveResult:
     video = resolve_cut(Path(req.video).name)
     if video is None:
         raise HTTPException(404, "Video not found")

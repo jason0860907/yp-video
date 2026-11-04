@@ -1,6 +1,7 @@
 """Video cutter router."""
 
 import asyncio
+from typing import TypedDict
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -40,6 +41,12 @@ class ExportResult(BaseModel):
     failed: list[str]
 
 
+class DeletedVideo(TypedDict):
+    ok: bool
+    #: The raw video's file name.
+    deleted: str
+
+
 @router.get("/videos")
 def list_videos() -> list[str]:
     if not RAW_VIDEOS_DIR.exists():
@@ -56,7 +63,7 @@ def stream_video(name: str):
 
 
 @router.delete("/video/{name}")
-def delete_video(name: str) -> dict:
+def delete_video(name: str) -> DeletedVideo:
     """Delete a raw source video from RAW_VIDEOS_DIR. Local-only, does not touch R2."""
     path = RAW_VIDEOS_DIR / name
     if not path.exists():

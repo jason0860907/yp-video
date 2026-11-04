@@ -14,6 +14,7 @@ import threading
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from pathlib import Path
+from typing import TypedDict
 
 from yp_video.config import (
     ACTION_FRAMES_DIR,
@@ -115,6 +116,13 @@ def _cache_lock(output_dir: Path) -> threading.Lock:
             lock = threading.Lock()
             _CACHE_LOCKS[key] = lock
         return lock
+
+
+class FrameCacheState(TypedDict):
+    ready: bool
+    path: str
+    frame_count: int
+    expected_frames: int | None
 
 
 def inspect_action_frame_cache(

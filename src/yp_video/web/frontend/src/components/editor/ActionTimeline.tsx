@@ -39,7 +39,7 @@ interface ActionTimelineProps {
   fps: number;
   numFrames: number;
   frame: number;
-  rallies: ActionRally[];
+  rallies: Pick<ActionRally, 'rally_id' | 'start' | 'end'>[];
   events: TimelineEvent[];
   selectedRallyId: number | 'all';
   selectedId: string | null;

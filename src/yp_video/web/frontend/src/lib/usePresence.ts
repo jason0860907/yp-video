@@ -1,12 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { API, apiFetch } from '@/lib/api';
+import type { components } from '@/types/openapi';
 
 /** Server reply: browsers with the page in the foreground within the last
  *  minute; `active` = those whose user gave any input within IDLE_AFTER_MS. */
-export interface Presence {
-  online: number;
-  active: number;
-}
+export type Presence = components['schemas']['Presence'];
 
 const CLIENT_ID_KEY = 'vq:client-id';
 const HEARTBEAT_MS = 30_000;

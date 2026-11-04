@@ -6,6 +6,7 @@ import json
 import math
 from collections.abc import Sequence
 from pathlib import Path
+from typing import TypedDict
 
 from yp_video.config import (
     SPOT_CHECKPOINTS_DIR,
@@ -18,6 +19,7 @@ from yp_video.contracts.action import (
     ACTION_CONTRACT_VERSION,
     ACTION_LABELS,
     SPOT_PACKAGE_TYPE,
+    SpotTask,
 )
 from yp_video.core.checkpoints import checkpoint_ref, is_under, resolve_ref
 
@@ -32,11 +34,33 @@ def spot_available() -> bool:
     )
 
 
+class SpotCheckpoint(TypedDict):
+    """One SPOT checkpoint package, as a picker lists it."""
+
+    #: Checkpoint ref (core/checkpoints.py) — what a request names.
+    path: str
+    name: str
+    #: The package (run) directory's name.
+    experiment: str
+    epoch: int
+    is_best: bool
+    best_metric: str | None
+    best_value: float | None
+    mtime: float
+    size_mb: float
+    #: Name of the checkpoints root the package lives under.
+    source: str
+    #: Heads the package carries (manifest.tasks).
+    tasks: list[SpotTask]
+    #: The recipe id that trained it (manifest.recipe).
+    recipe: str | None
+
+
 def list_checkpoints(
     root: Path = SPOT_CHECKPOINTS_DIR,
     *,
     task: str | None = None,
-) -> list[dict]:
+) -> list[SpotCheckpoint]:
     """SPOT checkpoint packages under ``root``, one row per package.
 
     ``task`` keeps only packages whose manifest serves it, and points the row

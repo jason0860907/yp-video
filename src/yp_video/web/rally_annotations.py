@@ -8,13 +8,57 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Literal
+from typing import Literal, NotRequired, TypedDict
 
 from pydantic import Field
 
 from yp_video.core.jsonl import read_jsonl, read_jsonl_header, write_jsonl
 from yp_video.web.annotation_lock import annotation_write_lock
 from yp_video.web.schemas import StrictModel
+
+#: Court side the rally's winner played on (camera-frame): left/right for
+#: broadcast footage, near/far for sideline.
+WinnerSide = Literal["left", "right", "near", "far"]
+
+#: The rally stores' tags (core/rallies.RALLY_SOURCES), as the editor's
+#: Source select and loaded-source badge speak them.
+RallySourceTag = Literal["annotation", "spot-pre-annotation"]
+
+
+class RallyRow(TypedDict):
+    """One stored rally, as written (editor save) or predicted (SPOT pass)."""
+
+    rally_id: int
+    start: float
+    end: float
+    label: str
+    #: Absent (or None) = not annotated yet.
+    winner: NotRequired[WinnerSide | None]
+    #: SPOT pre-annotations only: the segment's mean rally score, and the
+    #: winner head's confidence.
+    score: NotRequired[float]
+    winner_score: NotRequired[float]
+
+
+class RallyAnnotationData(TypedDict):
+    """One rally result file: its header, its rows, and the store it came from."""
+
+    video: str
+    duration: float
+    #: The id high-water mark (see _prior_max_rally_id).
+    max_rally_id: NotRequired[int]
+    source: RallySourceTag
+    #: Presentation order (start, end, label); ids come from the file.
+    results: list[RallyRow]
+
+
+class RallySaveResult(TypedDict):
+    #: The file written.
+    saved: str
+    count: int
+    #: The rows as written, ids assigned — the editor adopts these so a new
+    #: rally does not get a fresh id minted on every autosave.
+    annotations: list[RallyRow]
 
 
 class Annotation(StrictModel):
@@ -26,9 +70,8 @@ class Annotation(StrictModel):
     start: float
     end: float
     label: str
-    #: Court side the rally's winner played on (camera-frame): left/right for
-    #: broadcast footage, near/far for sideline. None = not annotated yet.
-    winner: Literal["left", "right", "near", "far"] | None = None
+    #: None = not annotated yet.
+    winner: WinnerSide | None = None
 
 
 def _prior_max_rally_id(output_path: Path) -> int:
@@ -61,7 +104,7 @@ def _prior_rows(output_path: Path) -> list[dict]:
 
 def write_annotations_atomic(
     output_path: Path, video: str, duration: float, annotations: list[Annotation]
-) -> tuple[list[dict], list[dict]]:
+) -> tuple[list[RallyRow], list[dict]]:
     """Write JSONL via tmp file + atomic rename.
 
     Returns the rows as written and the rows that were there before, so the
@@ -80,7 +123,7 @@ def write_annotations_atomic(
             0,
         )
         ordered = sorted(annotations, key=lambda ann: (ann.start, ann.end, ann.label))
-        rows: list[dict] = []
+        rows: list[RallyRow] = []
         for a in ordered:
             assigned = a.rally_id
             if assigned is None:

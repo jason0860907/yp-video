@@ -3,6 +3,7 @@
 
 import { rallyAt } from '@/lib/actionEditorModel';
 import type { ReidRecord } from '@/types/api';
+import type { components } from '@/types/openapi';
 
 /** The verdict on one event's actor (actor/labels.py). "unreviewed" is the
  *  absence of one — never inferred from the record's shape. `agent` and
@@ -52,20 +53,15 @@ export type ActorFix =
   | { mode: 'auto' };
 
 /** ByteTrack tracklets. */
-export interface TrackData {
-  tracklets: { rally_id: number; track_id: number; frames: number[]; boxes: [number, number, number, number][] }[];
-}
+export type TrackData = components['schemas']['TrackData'];
 
 /** Which tracklet each event's actor sits on (extraction/links.py). */
-export type TrackLinks = Record<string, { rally_id: number; track_id: number }>;
+export type TrackLinks = Record<string, components['schemas']['TrackLink']>;
 
 /** GET /tracklets/masks — one rally's masks, whole tracklets at once.
  *  Values are base64 packed bits (box-crop space, ``mask_hw`` grid), row i
  *  aligned with the tracklet's i-th frame from /tracklets/{name}. */
-export interface TrackMasks {
-  mask_hw: [number, number];
-  tracks: Record<string, string>;
-}
+export type TrackMasks = components['schemas']['TrackMasks'];
 
 /** Whether a human could endorse what was proposed here: an agent's
  *  proposal (lands as `confirmed` / `occluded`), or an automatic pick nobody

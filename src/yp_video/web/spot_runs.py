@@ -22,6 +22,8 @@ from fastapi import HTTPException
 
 from yp_video.action import spot_runs as _runs
 from yp_video.action.spot_runs import (  # noqa: F401 — re-exported for routers
+    SelectOption,
+    TrainPerfData,
     checkpoint_package_options,
     dedupe_run_name,
     export_checkpoint_package,
@@ -304,7 +306,7 @@ def validate_checkpoint_dir(path: Path, *, root: Path) -> Path:
         raise HTTPException(400, str(exc)) from exc
 
 
-def performance_payload(checkpoints_dir: Path, run: str | None = None) -> dict:
+def performance_payload(checkpoints_dir: Path, run: str | None = None) -> TrainPerfData:
     try:
         return _runs.performance_payload(checkpoints_dir, run)
     except LookupError as exc:

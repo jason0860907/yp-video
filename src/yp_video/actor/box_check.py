@@ -16,6 +16,7 @@ pixels only for the one video a page asks for.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal, TypedDict
 
 from yp_video.actor import labels as actor_labels
 from yp_video.actor.box_style import (
@@ -26,6 +27,7 @@ from yp_video.actor.box_style import (
     resolve_target,
     settle,
 )
+from yp_video.actor.labels import Box
 from yp_video.config import ASSOCIATION_DIR
 from yp_video.core.cache import DiskStatCache, StatCache
 from yp_video.extraction.store import action_source_paths, labelable_actions
@@ -37,7 +39,36 @@ _cache = StatCache()
 _pending = DiskStatCache(ASSOCIATION_DIR / "box-check-pending.json")
 
 
-def box_check(stem: str) -> list[dict]:
+#: Why a label box is (not) one of the 2XLarge dense boxes on its event frame
+#: (box_style's SNAPPED or why not). ``unresolved`` = an action edit moved the
+#: event and the box could not be followed there.
+BoxCheckStatus = Literal["snapped", "contested", "unmatched", "not_covered", "unresolved"]
+
+
+class BoxCheckBox(TypedDict):
+    """One dense 2XLarge box on the event frame, pixels."""
+
+    box: Box
+    score: float
+
+
+class BoxCheckEntry(TypedDict):
+    """One labelable event's 2XLarge boxes and its label's box check."""
+
+    id: str
+    frame: int
+    label: str | None
+    #: None when the event has no label box (unreviewed or occluded).
+    status: BoxCheckStatus | None
+    #: The label's box on the event frame, pixels; None without one or when
+    #: UNRESOLVED.
+    label_box: Box | None
+    #: The event frame's dense boxes at or above DENSE_SCORE_FLOOR — the
+    #: picker's choices. Empty when the dense pass did not cover the frame.
+    boxes: list[BoxCheckBox]
+
+
+def box_check(stem: str) -> list[BoxCheckEntry]:
     """One entry per labelable event, in frame order; empty when the video
     lacks an action annotation or a dense pass.
 

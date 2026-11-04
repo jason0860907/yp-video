@@ -3,7 +3,7 @@
 import asyncio
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
-from typing import Literal
+from typing import Any, TypedDict
 
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, HTTPException
@@ -13,12 +13,85 @@ from pydantic import Field
 from yp_video.core.ffmpeg import FFmpegError, probe_video_metadata
 from yp_video.web.access import current_actor
 from yp_video.web.app_review import feedback, sources
+from yp_video.web.app_review.feedback import (
+    Candidate,
+    DecisionKind,
+    ReviewRecord,
+    ReviewSummary,
+)
 from yp_video.web.app_review.models import Bundle, Window
-from yp_video.web.app_review.projection import project
+from yp_video.web.app_review.projection import Preview, project
 from yp_video.web.r2_client import all_cut_paths, sync_to_r2
 from yp_video.web.schemas import StrictModel
 
 router = APIRouter()
+
+
+class AppUser(TypedDict):
+    """A VolleyIQ App user as the Worker's admin API lists them."""
+
+    id: str
+    provider: str
+    email: str | None
+    display_name: str | None
+    created_at: int
+    #: Live (not deleted) matches.
+    match_count: int
+    updated_at: int
+
+
+class MatchEditCounts(TypedDict):
+    #: Candidate kind (``edit_kind``) -> count.
+    edits: dict[str, int]
+    #: When the user last edited (corrections.updated_at); None without any.
+    edited_at: str | None
+    warnings: list[str]
+
+
+class MatchReadError(TypedDict):
+    #: Why the match could not be read.
+    error: str
+
+
+class MatchDetail(TypedDict):
+    #: The library row as the Worker's admin API serves it (owned there).
+    match: dict[str, Any]
+    preview: Preview
+    candidates: list[Candidate]
+    #: The review of exactly this snapshot, if one exists.
+    review_id: str | None
+    #: Every review of this match, newest first.
+    reviews: list[ReviewSummary]
+
+
+class VideoMeta(TypedDict):
+    """The source's probe (core/ffmpeg.probe_video_metadata)."""
+
+    fps: float
+    duration: float
+    num_frames: int
+    start_time: float
+
+
+class Review(ReviewRecord):
+    """A review with its candidates and the preview it judges."""
+
+    candidates: list[Candidate]
+    preview: Preview
+
+
+class AppReviewVideo(TypedDict):
+    #: A pipeline cut's basename.
+    name: str
+
+
+class TargetRevisions(TypedDict):
+    """Per label-edit operation: the target label file's fingerprint, or
+    None when the file does not exist."""
+
+    remove_event: str | None
+    remove_rally: str | None
+    update_rally: str | None
 
 
 def checked(fn, *args, **kwargs):
@@ -36,7 +109,7 @@ def checked(fn, *args, **kwargs):
         raise HTTPException(409, str(exc)) from exc
 
 
-def detail(data: dict, mode: Window = "full_play", corrected: bool = True) -> dict:
+def detail(data: ReviewRecord, mode: Window = "full_play", corrected: bool = True) -> Review:
     bundle = Bundle.model_validate(data["bundle"])
     return {
         **data,
@@ -46,23 +119,26 @@ def detail(data: dict, mode: Window = "full_play", corrected: bool = True) -> di
 
 
 @router.get("/users")
-def users():
+def users() -> list[AppUser]:
     return checked(sources.users)
 
 
 @router.get("/users/{user}/library")
-def library(user: str):
+def library(user: str) -> dict[str, Any]:
+    """The user's library as the Worker's admin API serves it — the App's
+    /sync plus R2 keys and latest jobs. Its shape is owned there
+    (upload-service src/admin), so it passes through undeclared."""
     return checked(sources.library, user)
 
 
 @router.get("/users/{user}/overview")
-def overview(user: str):
+def overview(user: str) -> dict[str, MatchEditCounts | MatchReadError]:
     """Per analysed match: the user's corrections counted by kind and when
     they last edited, or why that match could not be read."""
     lib = checked(sources.library, user)
     rows = [m for m in lib["matches"] if m["deleted_at"] is None and m["r2_keys"]["result"]]
 
-    def summarize(row: dict) -> tuple[str, dict]:
+    def summarize(row: dict) -> tuple[str, MatchEditCounts | MatchReadError]:
         try:
             bundle, notes = sources.match_bundle(lib, row)
         except (BotoCoreError, ClientError, ValueError) as exc:
@@ -86,7 +162,9 @@ def edit_kind(candidate: dict) -> str:
 
 
 @router.get("/users/{user}/matches/{match}")
-def match(user: str, match: str, mode: Window = "full_play", corrected: bool = True):
+def match(
+    user: str, match: str, mode: Window = "full_play", corrected: bool = True
+) -> MatchDetail:
     lib, row = checked(sources.library_match, user, match)
     bundle, notes = checked(sources.match_bundle, lib, row)
     preview = project(bundle, mode=mode, corrected=corrected)
@@ -106,7 +184,7 @@ def match_video(user: str, match: str):
 
 
 @router.get("/users/{user}/matches/{match}/video/meta")
-def match_video_meta(user: str, match: str):
+def match_video_meta(user: str, match: str) -> VideoMeta:
     """``{fps, duration, num_frames, start_time}`` of the source: the App's
     result is in seconds, the player's frame clock needs the real rate."""
     _, row = checked(sources.library_match, user, match)
@@ -117,42 +195,40 @@ def match_video_meta(user: str, match: str):
 
 
 @router.post("/users/{user}/matches/{match}/review")
-def start_review(user: str, match: str):
+def start_review(user: str, match: str) -> Review:
     lib, row = checked(sources.library_match, user, match)
     bundle, _ = checked(sources.match_bundle, lib, row)
     return detail(checked(feedback.create, bundle, current_actor()))
 
 
 @router.get("/reviews/{review_id}")
-def review(review_id: str, mode: Window = "full_play", corrected: bool = True):
+def review(review_id: str, mode: Window = "full_play", corrected: bool = True) -> Review:
     return detail(checked(feedback.load, review_id), mode=mode, corrected=corrected)
 
 
 @router.get("/videos")
-def videos():
+def videos() -> list[AppReviewVideo]:
     return [{"name": p.name} for p in sorted(all_cut_paths())]
 
 
 @router.get("/target")
-def target(video: str):
+def target(video: str) -> TargetRevisions:
     return {
         op: checked(feedback.target_revision, video, op)
         for op in ("remove_event", "remove_rally", "update_rally")
     }
 
 
-class Decision(StrictModel):
+class DecisionRequest(StrictModel):
     candidate_id: str
-    decision: Literal[
-        "accepted_feedback", "rejected", "remove_event", "remove_rally", "update_rally"
-    ]
+    decision: DecisionKind
     note: str = Field(default="", max_length=4000)
     video: str = ""
     revision: str = ""
     same_source: bool = False
 
 
-def after_apply(data: dict, path):
+def after_apply(data: ReviewRecord, path) -> Review:
     if path:
         category = (
             "action/annotations"
@@ -164,7 +240,7 @@ def after_apply(data: dict, path):
 
 
 @router.post("/reviews/{review_id}/decisions")
-async def decide(review_id: str, req: Decision):
+async def decide(review_id: str, req: DecisionRequest) -> Review:
     data, path = await asyncio.to_thread(
         checked,
         feedback.decide,
@@ -181,6 +257,6 @@ async def decide(review_id: str, req: Decision):
 
 
 @router.post("/reviews/{review_id}/recover")
-async def recover(review_id: str):
+async def recover(review_id: str) -> Review:
     data, path = await asyncio.to_thread(checked, feedback.recover, review_id)
     return after_apply(data, path)

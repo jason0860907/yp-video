@@ -25,9 +25,11 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
+from typing import NotRequired, TypedDict
 
 import numpy as np
 
+from yp_video.reid.embedder import ReidSlider
 from yp_video.reid.identity import (
     cluster_sweep,
     load_assignments,
@@ -48,15 +50,24 @@ SWEEP_STEPS = 48
 
 
 @dataclass(frozen=True)
-class Scores:
+class ReidScores:
     m_ap: float
     rank1: float
     rank5: float
     n_query: int
 
 
+class ReidCurvePoint(TypedDict):
+    """One stop of the threshold sweep."""
+
+    t: float
+    ari: float
+    #: Groups produced at ``t``.
+    n: int
+
+
 @dataclass(frozen=True)
-class ThresholdSuggestion:
+class ReidThresholdSuggestion:
     """A calibrated clustering cutoff, in cosine distance.
 
     Tuned against what the user actually experiences — the quality of the
@@ -74,8 +85,8 @@ class ThresholdSuggestion:
     #: a group holding two players has to be noticed before it can be split.
     n_clusters: int
     n_ids: int
-    #: The whole sweep — [{t, ari, n}] — so the page can show the plateau.
-    curve: list
+    #: The whole sweep, so the page can show the plateau.
+    curve: list[ReidCurvePoint]
     #: Pairwise separability, independent of any cutoff. Chance = 0.5.
     auc: float
     same_p50: float
@@ -85,19 +96,20 @@ class ThresholdSuggestion:
     n_pos: int
     n_neg: int
     #: paste-ready EMBEDDER_THRESHOLDS entry
-    slider: dict
+    slider: ReidSlider
 
 
-#: What every degenerate path returns — no pairs, no signal, AUC at chance.
-EMPTY_THRESHOLD = ThresholdSuggestion(
+#: What every degenerate path returns — no pairs, no signal, AUC at chance,
+#: and a zero-width slider at the zero cutoff.
+EMPTY_THRESHOLD = ReidThresholdSuggestion(
     suggested=0.0, ari=0.0, n_clusters=0, n_ids=0, curve=[], auc=0.5,
     same_p50=0.0, same_p95=0.0, diff_p05=0.0, diff_p50=0.0,
-    n_pos=0, n_neg=0, slider={},
+    n_pos=0, n_neg=0, slider={"min": 0.0, "max": 0.0, "default": 0.0, "step": 0.001},
 )
 
 
 @dataclass(frozen=True)
-class VideoEval:
+class ReidVideoEval:
     """One video, scored on its own labels.
 
     The video is the unit because that is how labeling happens — you open one
@@ -114,8 +126,51 @@ class VideoEval:
     coverage: float
     dropped_singletons: int
     dropped_unembedded: int
-    scores: Scores
-    threshold: ThresholdSuggestion
+    scores: ReidScores
+    threshold: ReidThresholdSuggestion
+
+
+class ReidCrossEval(TypedDict):
+    """Does an identity survive into another recording of the same session?
+    Only players named on both sides can be scored; ``n_skipped`` are the
+    ones simply not on court for the other clip."""
+
+    session_id: str
+    query_stem: str
+    gallery_stems: list[str]
+    n_ids_shared: int
+    n_scored: int
+    n_skipped: int
+    scores: ReidScores
+
+
+class ReidEvalTotals(TypedDict):
+    n_videos: int
+    n_ids: int
+    n_crops: int
+    coverage: float
+
+
+class ReidModelEval(TypedDict):
+    """One embedder's evaluation. The aggregate keys are absent when no
+    video could be scored under it."""
+
+    model: str
+    crop_weighted: NotRequired[ReidScores]
+    macro: NotRequired[ReidScores]
+    totals: NotRequired[ReidEvalTotals]
+    #: Pooled over every scored video.
+    threshold: NotRequired[ReidThresholdSuggestion]
+    #: The slider the Label page uses now (EMBEDDER_THRESHOLDS).
+    current_threshold: ReidSlider
+    #: Videos this model has no embeddings for (or too few crops to score).
+    skipped: list[str]
+    videos: list[ReidVideoEval]
+    cross_video: list[ReidCrossEval]
+
+
+class ReidModelEvals(TypedDict):
+    models: list[ReidModelEval]
 
 
 # ── retrieval ────────────────────────────────────────────────────────────
@@ -126,10 +181,10 @@ def _distmat(q: np.ndarray, g: np.ndarray) -> np.ndarray:
     return (2.0 - 2.0 * (q @ g.T)).astype(np.float32)
 
 
-def _scores(distmat, query_ids, gallery_ids, query_cams, gallery_cams, n_query: int) -> Scores:
+def _scores(distmat, query_ids, gallery_ids, query_cams, gallery_cams, n_query: int) -> ReidScores:
     topk = max(1, min(100, len(gallery_ids)))
     curve = cmc(distmat, query_ids, gallery_ids, query_cams, gallery_cams, topk=topk)
-    return Scores(
+    return ReidScores(
         m_ap=float(mean_ap(distmat, query_ids, gallery_ids, query_cams, gallery_cams)),
         rank1=float(curve[0]),
         rank5=float(curve[min(4, topk - 1)]),
@@ -137,16 +192,16 @@ def _scores(distmat, query_ids, gallery_ids, query_cams, gallery_cams, n_query: 
     )
 
 
-def loo_scores(matrix: np.ndarray, pids: np.ndarray) -> Scores:
+def loo_scores(matrix: np.ndarray, pids: np.ndarray) -> ReidScores:
     """Leave-one-out: every crop queries every other crop of the group."""
     n = len(matrix)
     if n < 2:
-        return Scores(0.0, 0.0, 0.0, 0)
+        return ReidScores(0.0, 0.0, 0.0, 0)
     cams = np.arange(n)  # unique per row -> the validity filter drops only self
     return _scores(_distmat(matrix, matrix), pids, pids, cams, cams, n)
 
 
-def split_scores(q: np.ndarray, qpid: np.ndarray, g: np.ndarray, gpid: np.ndarray) -> Scores | None:
+def split_scores(q: np.ndarray, qpid: np.ndarray, g: np.ndarray, gpid: np.ndarray) -> ReidScores | None:
     """Disjoint query/gallery (used for the cross-video check).
 
     cams 0 vs 1 excludes nothing, so the whole gallery is scored. Returns None
@@ -232,7 +287,7 @@ def build_suggestion(
     ari: np.ndarray,
     sizes: np.ndarray,
     n_ids: int,
-) -> ThresholdSuggestion:
+) -> ReidThresholdSuggestion:
     """Pick the cutoff, and hand back the curve that justified it."""
     n_pos, n_neg = int(same.sum()), int((~same).sum())
     if not n_pos or not n_neg or not len(thresholds):
@@ -247,7 +302,7 @@ def build_suggestion(
     useful = np.where(ari >= ari[k] * 0.25)[0]
     lo = _round2(float(thresholds[useful[0]])) if len(useful) else suggested
     hi = _round2(float(thresholds[useful[-1]])) if len(useful) else suggested
-    return ThresholdSuggestion(
+    return ReidThresholdSuggestion(
         suggested=suggested,
         ari=float(ari[k]),
         n_clusters=int(sizes[k]),
@@ -267,7 +322,7 @@ def build_suggestion(
     )
 
 
-def suggest_threshold(matrix: np.ndarray, pids: np.ndarray) -> ThresholdSuggestion:
+def suggest_threshold(matrix: np.ndarray, pids: np.ndarray) -> ReidThresholdSuggestion:
     """Calibrate the clustering cutoff for one group's labeled crops."""
     if len(matrix) < 2:
         return EMPTY_THRESHOLD
@@ -359,7 +414,7 @@ def gather(stems: Sequence[str], model: str):
 
 def evaluate_video(
     stem: str, model: str
-) -> tuple[VideoEval, np.ndarray, np.ndarray] | None:
+) -> tuple[ReidVideoEval, np.ndarray, np.ndarray] | None:
     """One video's evaluation, plus its (matrix, pids) so a caller pooling
     across videos doesn't have to gather them a second time."""
     matrix, pids, _names, _stem_idx, drops = gather([stem], model)
@@ -371,7 +426,7 @@ def evaluate_video(
             "subsample or raise the cap before evaluating"
         )
     n_assigned = drops["n_assigned"]
-    ev = VideoEval(
+    ev = ReidVideoEval(
         stem=stem,
         model=model,
         n_ids=int(len(set(pids.tolist()))),
@@ -388,7 +443,7 @@ def evaluate_video(
 
 def cross_video_eval(
     group: SessionGroup, model: str
-) -> dict | None:
+) -> ReidCrossEval | None:
     """Does an identity survive into another recording of the same session?
 
     Query is the session's first video, gallery the rest. Only players named
@@ -415,11 +470,11 @@ def cross_video_eval(
         "n_ids_shared": int(len(set(qpid.tolist()) & set(gpid.tolist()))),
         "n_scored": scored,
         "n_skipped": int(len(qpid) - scored),
-        "scores": asdict(Scores(scores.m_ap, scores.rank1, scores.rank5, scored)),
+        "scores": asdict(ReidScores(scores.m_ap, scores.rank1, scores.rank5, scored)),
     }
 
 
-def _pooled_threshold(collected: list[tuple[np.ndarray, np.ndarray]]) -> ThresholdSuggestion:
+def _pooled_threshold(collected: list[tuple[np.ndarray, np.ndarray]]) -> ReidThresholdSuggestion:
     """One cutoff for the model, from every video's curve at once.
 
     Pooling matters: a single video's ARI curve is jagged (agglomerative
@@ -446,7 +501,7 @@ def _pooled_threshold(collected: list[tuple[np.ndarray, np.ndarray]]) -> Thresho
 def evaluate_models(
     groups: Sequence[SessionGroup],
     models: Sequence[str],
-) -> dict:
+) -> ReidModelEvals:
     """The /performance payload: per-VIDEO scores plus a cross-video section.
 
     The video is the unit because that is the labeling unit. Sessions still
@@ -458,9 +513,9 @@ def evaluate_models(
     from yp_video.reid.store import embedded_models
 
     stems = [stem for g in groups for stem in g.stems]
-    out = []
+    out: list[ReidModelEval] = []
     for model in models:
-        evals: list[VideoEval] = []
+        evals: list[ReidVideoEval] = []
         skipped: list[str] = []
         collected: list[tuple[np.ndarray, np.ndarray]] = []
         for stem in stems:
@@ -483,13 +538,13 @@ def evaluate_models(
             continue
 
         total_q = sum(e.scores.n_query for e in evals) or 1
-        weighted = Scores(
+        weighted = ReidScores(
             m_ap=sum(e.scores.m_ap * e.scores.n_query for e in evals) / total_q,
             rank1=sum(e.scores.rank1 * e.scores.n_query for e in evals) / total_q,
             rank5=sum(e.scores.rank5 * e.scores.n_query for e in evals) / total_q,
             n_query=total_q,
         )
-        macro = Scores(
+        macro = ReidScores(
             m_ap=float(np.mean([e.scores.m_ap for e in evals])),
             rank1=float(np.mean([e.scores.rank1 for e in evals])),
             rank5=float(np.mean([e.scores.rank5 for e in evals])),

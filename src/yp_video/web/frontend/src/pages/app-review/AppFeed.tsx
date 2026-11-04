@@ -59,7 +59,7 @@ export function AppFeed({
   const [open, setOpen] = useState(false);
 
   const kinds = KINDS.filter((k) => preview.actions.some((c) => c.kind === k));
-  const clips = useMemo(() => {
+  const clips = useMemo<Clip[]>(() => {
     const { player, kind } = filter;
     if (scope === 'rallies') {
       const list = preview.rallies.filter(

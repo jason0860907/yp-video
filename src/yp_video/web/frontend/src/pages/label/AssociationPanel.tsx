@@ -23,7 +23,7 @@ import { Card } from '@/components/ui/Card';
 import { STAGE_HINT } from '@/components/video/PipelineChips';
 import { toast } from '@/components/feedback/toast';
 import { EventVideoPlayer, type PlayerHandle } from '@/components/labeling/EventVideoPlayer';
-import { canConfirm, type ActorFix, type ActorVerdict } from '@/components/labeling/shared';
+import { canConfirm, type ActorFix } from '@/components/labeling/shared';
 import { useVideoLabelingData } from '@/components/labeling/useVideoLabelingData';
 import type {
   AssociationVideo,
@@ -33,6 +33,7 @@ import type {
 } from '@/types/api';
 import { assocStatus } from '@/lib/labelStatus';
 import { STATUS_OPTIONS, type ModeDescriptor, type PlaybackClock } from './mode';
+import type { components } from '@/types/openapi';
 
 export const ASSOCIATION_MODE: ModeDescriptor = {
   key: 'association',
@@ -172,7 +173,7 @@ export function AssociationPanel({ video, clock }: { video: string; clock?: Play
       // The response says which VERDICT each event got — endorsing a pick
       // lands as `confirmed`, endorsing an agent's "nobody is visible" lands
       // as `occluded`. Assuming the first showed the wrong badge for the second.
-      const { confirmed } = await apiFetch<{ confirmed: Record<string, ActorVerdict> }>(
+      const { confirmed } = await apiFetch<components['schemas']['AssociationConfirmed']>(
         API.association.confirm(video),
         { method: 'POST', body: { event_ids: ids } },
       );

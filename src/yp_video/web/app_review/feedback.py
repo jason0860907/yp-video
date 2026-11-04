@@ -10,6 +10,7 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import RLock
+from typing import Any, Literal, NotRequired, TypedDict
 
 from yp_video.config import RALLY_ANNOTATIONS_DIR, VIDEOS_DIR
 from yp_video.core import label_done
@@ -18,11 +19,100 @@ from yp_video.core.rallies import annotation_name
 from yp_video.web.action_annotations import annotation_path
 from yp_video.web.annotation_lock import annotation_write_lock
 
-from .models import Bundle
-from .projection import clip_key, player_numbers, project
+from .models import Bundle, Event, Rally
+from .projection import Clip, clip_key, player_numbers, project
 
 REVIEW_DIR = VIDEOS_DIR / "app-feedback"
 _lock = RLock()
+
+#: A reviewer's verdict on one candidate. The last three edit a human label
+#: file; the first two only record the feedback.
+DecisionKind = Literal[
+    "accepted_feedback", "rejected", "remove_event", "remove_rally", "update_rally"
+]
+
+CandidateScope = Literal[
+    "actions", "scores", "rally", "rally_bounds", "winner", "player",
+    "identification", "roster",
+]
+
+
+class ClipSpan(TypedDict):
+    start: float
+    end: float
+
+
+class Candidate(TypedDict):
+    """One App correction offered for review."""
+
+    #: ``<scope>:<key>``, unique within the review.
+    id: str
+    scope: CandidateScope
+    #: The correction itself, shaped by its scope.
+    value: Any
+    #: The full original clip for actions / scores, just the span otherwise;
+    #: None when it cannot be placed (``reason`` says why) or has no span.
+    clip: Clip | ClipSpan | None
+    #: The original analysis' rally it belongs to; None for match-wide ones.
+    rally_index: int | None
+    reason: str | None
+    #: Actions / scores: the one analysis event the correction joins, if unique.
+    event: NotRequired[Event | None]
+    #: Actions: a hidden touch that can be reviewed as a false label event.
+    can_remove_event: NotRequired[bool]
+    #: Rally-level scopes: the original analysis rally.
+    rally: NotRequired[Rally | None]
+    #: rally_bounds: the App's trimmed (start, end).
+    bounds: NotRequired[tuple[float, float]]
+
+
+class Decision(TypedDict):
+    decision: DecisionKind
+    note: str
+    actor: str
+    #: ISO-8601, UTC.
+    at: str
+    #: Label edits only: the pipeline video, and the label file's hashes
+    #: before and after the edit.
+    video: NotRequired[str]
+    before_sha256: NotRequired[str]
+    after_sha256: NotRequired[str]
+
+
+class Application(TypedDict):
+    """The write-ahead intent of a label edit in flight."""
+
+    candidate_id: str
+    record: Decision
+    #: The exact label file bytes to publish.
+    payload: str
+    after_sha256: str
+
+
+class ReviewRecord(TypedDict):
+    """A review as stored: the App snapshot it judges and the verdicts."""
+
+    #: The snapshot's fingerprint (``snapshot_id``).
+    id: str
+    #: ISO-8601, UTC.
+    created_at: str
+    created_by: str
+    #: The judged snapshot, ``Bundle.model_dump(mode="json")`` — kept as the
+    #: stored JSON, not re-validated per response.
+    bundle: dict[str, Any]
+    #: Candidate id -> verdict.
+    decisions: dict[str, Decision]
+    #: Non-null only while an interrupted label edit awaits ``recover``.
+    application: Application | None
+
+
+class ReviewSummary(TypedDict):
+    id: str
+    match_id: str
+    job_id: str
+    created_at: str
+    reviewed: int
+    total: int
 
 
 def fingerprint(data: bytes) -> str:
@@ -46,7 +136,7 @@ def path_for(review_id: str) -> Path:
     return REVIEW_DIR / f"{review_id}.json"
 
 
-def load(review_id: str) -> dict:
+def load(review_id: str) -> ReviewRecord:
     path = path_for(review_id)
     if not path.exists():
         raise ValueError("Review not found")
@@ -63,7 +153,7 @@ def existing(bundle: Bundle) -> str | None:
     return review_id if path_for(review_id).exists() else None
 
 
-def create(bundle: Bundle, actor: str) -> dict:
+def create(bundle: Bundle, actor: str) -> ReviewRecord:
     if not bundle.corrections and bundle.library_rallies is None:
         raise ValueError("A feedback review requires corrections or a library snapshot")
     if bundle.result.partial:
@@ -86,7 +176,7 @@ def create(bundle: Bundle, actor: str) -> dict:
         return data
 
 
-def list_reviews(match: str) -> list[dict]:
+def list_reviews(match: str) -> list[ReviewSummary]:
     rows = []
     for path in REVIEW_DIR.glob("*.json"):
         data = json.loads(path.read_text())
@@ -106,7 +196,7 @@ def list_reviews(match: str) -> list[dict]:
     return sorted(rows, key=lambda r: r["created_at"], reverse=True)
 
 
-def candidates(bundle: Bundle) -> list[dict]:
+def candidates(bundle: Bundle) -> list[Candidate]:
     c = bundle.corrections
     base = project(bundle, corrected=False)
     rows = []
@@ -362,7 +452,7 @@ def decide(
     video: str = "",
     revision: str = "",
     same_source: bool = False,
-) -> tuple[dict, Path | None]:
+) -> tuple[ReviewRecord, Path | None]:
     with _lock, annotation_write_lock:
         data = load(review_id)
         bundle = Bundle.model_validate(data["bundle"])
@@ -419,7 +509,7 @@ def decide(
         return data, None
 
 
-def recover(review_id: str) -> tuple[dict, Path | None]:
+def recover(review_id: str) -> tuple[ReviewRecord, Path | None]:
     with _lock, annotation_write_lock:
         data = load(review_id)
         intent = data.get("application")

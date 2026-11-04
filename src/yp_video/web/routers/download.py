@@ -5,7 +5,7 @@ import json
 import logging
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, TypedDict
 from urllib.parse import parse_qs, urlparse
 
 import yt_dlp
@@ -33,7 +33,7 @@ _DOWNLOAD_SEMAPHORE = asyncio.Semaphore(2)
 class VideoInfo(BaseModel):
     id: str
     title: str
-    duration: int | None
+    duration: float | None
     url: str
 
 
@@ -49,6 +49,10 @@ class DownloadRequest(StrictModel):
 
 class DownloadResponse(BaseModel):
     session_id: str
+
+
+class DownloadCancelled(TypedDict):
+    status: Literal["cancelled"]
 
 
 def get_format_string(quality: str) -> str:
@@ -309,7 +313,7 @@ async def get_progress(session_id: str):
 
 
 @router.post("/{session_id}/cancel")
-async def cancel_download(session_id: str):
+async def cancel_download(session_id: str) -> DownloadCancelled:
     session = download_sessions.get(session_id)
     if not session:
         raise HTTPException(404, "Session not found")

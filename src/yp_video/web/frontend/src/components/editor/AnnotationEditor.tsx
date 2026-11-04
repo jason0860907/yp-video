@@ -10,7 +10,8 @@ import { SectionLabel } from '@/components/ui/SectionLabel';
 import { toast } from '@/components/feedback/toast';
 import { firstRallyStart, hasRealTime, seekWhenSeekable, usePlayheadHandover } from '@/lib/playheadHandover';
 import { useVideoRecovery } from '@/lib/useVideoRecovery';
-import { COURT_SIDES, SIDE_DISPLAY } from '@/lib/courtSide';
+import { SIDE_DISPLAY } from '@/lib/courtSide';
+import type { components } from '@/types/openapi';
 import type { CourtSide } from '@/types/api';
 import { DownloadClipsModal } from './DownloadClipsModal';
 import { RallyTimeline } from './RallyTimeline';
@@ -92,14 +93,19 @@ const withKey = (a: EditorAnnotation): EditorAnnotation => ({ ...a, key: nextRow
 //: the same way to line the two lists up when adopting the result.
 const byStart = (a: EditorAnnotation, b: EditorAnnotation) =>
   a.start - b.start || a.end - b.end || a.label.localeCompare(b.label);
-export interface EditorData {
-  video?: string;
-  /** Which store the file was loaded from (e.g. rally-spot-pre-annotations). */
-  source?: string;
-  source_video?: string;
-  metadata?: { video?: string };
-  results?: Array<Record<string, unknown>>;
-}
+/** What the editor reads of a served rally file — or of an empty one, when
+ *  the store has none yet. */
+export type EditorData = Pick<components['schemas']['RallyAnnotationData'], 'video' | 'results'>;
+
+/** A served rally row in the editor's shape. */
+const fromRow = (r: components['schemas']['RallyRow']): EditorAnnotation => ({
+  rally_id: r.rally_id,
+  start: r.start,
+  end: r.end,
+  label: 'rally',
+  winner: r.winner ?? null,
+  score: r.score ?? null,
+});
 
 interface AnnotationEditorProps {
   data: EditorData | null;
@@ -124,16 +130,6 @@ interface AnnotationEditorProps {
   onClipsClose: () => void;
 }
 
-const normalizeRallyId = (v: unknown): number | null => {
-  const n = Number(v);
-  return Number.isInteger(n) && n > 0 ? n : null;
-};
-const normalizeCourtSide = (v: unknown): CourtSide | null =>
-  COURT_SIDES.includes(v as CourtSide) ? (v as CourtSide) : null;
-const num = (...vals: unknown[]): number => {
-  for (const v of vals) if (typeof v === 'number' && Number.isFinite(v)) return v;
-  return 0;
-};
 
 // No localStorage drafts, on purpose: a restored draft paints stale (or
 // merely unsaved) state over what the server holds and makes the screen lie
@@ -181,17 +177,10 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewB
     // New data replaces the rows on screen: unsaved edits of the previous
     // video (or store) are written first, not dropped.
     flushUnsaved();
-    const path = data.video || data.source_video || data.metadata?.video || '';
+    const path = data.video;
     setVideoName(path);
-    const fromServer: EditorAnnotation[] = (data.results ?? [])
-      .map((r) => ({
-        rally_id: normalizeRallyId(r.rally_id),
-        start: num(r.start, r.start_time, (r.segment as number[] | undefined)?.[0]),
-        end: num(r.end, r.end_time, (r.segment as number[] | undefined)?.[1]),
-        label: 'rally',
-        winner: normalizeCourtSide(r.winner),
-        score: (r.confidence ?? r.score ?? null) as number | null,
-      }))
+    const fromServer: EditorAnnotation[] = data.results
+      .map(fromRow)
       .sort(byStart)
       .map(withKey);
     setAnnotations(fromServer);
@@ -389,7 +378,7 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewB
           duration,
           annotations: sent.map(({ rally_id, start, end, label, winner }) => ({ rally_id, start, end, label, winner })),
         };
-        const saved = await apiFetch<{ saved: string; count: number; annotations: EditorAnnotation[] }>(
+        const saved = await apiFetch<components['schemas']['RallySaveResult']>(
           saveEndpoint,
           { method: 'POST', body },
         );
@@ -398,8 +387,8 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewB
         // Only if nothing changed while the request was in flight; otherwise
         // the newer edit stays and the next save reconciles.
         if (latestAnnotations.current === sent) {
-          // Server rows omit `winner` when null — normalize back to the editor
-          // shape. Row keys are ours and never leave the browser, so carry
+          // Server rows omit `winner` when null and carry model scores the
+          // editor does not keep — map back to the editor shape. Row keys are ours and never leave the browser, so carry
           // them across by the order the server writes in (byStart, the same
           // comparator): without this the selection would jump to whichever
           // rally landed at the old one's position, and the next nudge would
@@ -407,8 +396,7 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewB
           const mine = [...sent].sort(byStart);
           setAnnotations(
             saved.annotations.map((r, i) => ({
-              ...r,
-              winner: normalizeCourtSide(r.winner),
+              ...fromRow(r),
               key: mine[i]?.key ?? nextRowKey++,
             })),
           );

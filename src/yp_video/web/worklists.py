@@ -18,20 +18,22 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import TypedDict
 
-from yp_video.action.frames import inspect_action_frame_cache
+from yp_video.action.frames import FrameCacheState, inspect_action_frame_cache
 from yp_video.actor import review as actor_review
 from yp_video.actor.box_check import pending_count as box_check_pending
-from yp_video.config import cut_kind_of
+from yp_video.config import CutKind, cut_kind_of
 from yp_video.core import label_done
 from yp_video.core.jsonl import read_jsonl_header
 from yp_video.core.rallies import RALLY_SOURCES, rally_sources
 from yp_video.extraction import pipeline as extraction_pipeline
 from yp_video.extraction import store as extraction_store
-from yp_video.extraction.prerequisites import prerequisites
+from yp_video.extraction.prerequisites import PipelineState, prerequisites
 from yp_video.reid import store as reid_store
 from yp_video.web.action_annotations import annotation_state
 from yp_video.web.r2_client import all_cut_paths, r2_client, resolve_cut
+from yp_video.web.schemas import LabelStatus
 
 log = logging.getLogger(__name__)
 
@@ -40,12 +42,92 @@ MODES = ("rally", "action", "association", "reid", "court")
 STATUSES = ("unlabeled", "pre-annotate", "in-progress", "done")
 
 
+class RallyResult(TypedDict):
+    name: str
+    #: Every store holding the file (RALLY_SOURCES tags).
+    source: list[str]
+    kind: CutKind
+    done: bool
+    status: LabelStatus
+
+
+class ActionVideo(TypedDict):
+    name: str
+    kind: CutKind
+    rally_sources: list[str]
+    #: Something is loadable — the human file, or the machine one.
+    has_action_annotation: bool
+    #: Only machine output exists; provenance is by store, not a field.
+    has_action_pre_annotation: bool
+    #: A human-saved annotation exists.
+    has_action_final_annotation: bool
+    done: bool
+    status: LabelStatus
+    #: -1 marks a file that exists but fails to parse.
+    event_count: int
+    frame_cache: FrameCacheState
+
+
+class AutoCounts(TypedDict):
+    ok: int
+    multi: int
+    miss: int
+
+
+class AssociationVideo(TypedDict):
+    name: str
+    kind: CutKind
+    event_count: int
+    reviewed: int
+    unreviewed: int
+    proposed: int
+    #: verdict -> count; a verdict nobody gave is absent.
+    verdicts: dict[str, int]
+    box_check: int
+    done: bool
+    status: LabelStatus
+    auto_counts: AutoCounts
+    pipeline: PipelineState
+
+
+class ReidVideo(TypedDict):
+    name: str
+    kind: CutKind
+    event_count: int
+    embedded_models: list[str]
+    stale_embedding_models: list[str]
+    player_count: int
+    done: bool
+    status: LabelStatus
+    pipeline: PipelineState
+
+
+class CourtVideo(TypedDict):
+    name: str
+    status: LabelStatus
+
+
+StatusCounts = TypedDict(
+    "StatusCounts", {"unlabeled": int, "pre-annotate": int, "in-progress": int, "done": int}
+)
+
+
+class LabelStats(TypedDict):
+    """Per-mode tally, keys in pipeline order (``MODES``)."""
+
+    rally: StatusCounts
+    action: StatusCounts
+    association: StatusCounts
+    reid: StatusCounts
+    court: StatusCounts
+
+
 def _rally_stem(result_name: str) -> str:
     # Strip the conventional "_annotations.jsonl" suffix to get the cut stem.
     return result_name.removesuffix(".jsonl").removesuffix("_annotations")
 
 
-def _rally_status_of(tags: set[str] | list[str], done: bool) -> str:
+def _rally_status_of(tags: set[str] | list[str], done: bool) -> LabelStatus:
     # A manual annotation file means a human started; done is the stored
     # verdict; any machine store alone is pre-annotate.
     if done:
@@ -55,14 +137,14 @@ def _rally_status_of(tags: set[str] | list[str], done: bool) -> str:
     return "pre-annotate" if tags else "unlabeled"
 
 
-def rally_status(stem: str) -> str:
+def rally_status(stem: str) -> LabelStatus:
     """Rally status for one cut from its local stores — the same ladder
     ``rally_results`` climbs, for listings keyed by cut instead of by file
     (the rally predict pages)."""
     return _rally_status_of(rally_sources(stem), label_done.is_done(stem, "rally"))
 
 
-def rally_results() -> list[dict]:
+def rally_results() -> list[RallyResult]:
     """Rally annotation files across every source store, local and R2."""
     files: dict[str, set[str]] = {}  # name -> set of source tags
     for source in RALLY_SOURCES:
@@ -78,11 +160,11 @@ def rally_results() -> list[dict]:
         except Exception:  # noqa: BLE001 — R2 down must not take the page down
             log.warning("R2 listing failed; remote annotations will look absent")
 
-    def _kind(stem: str) -> str:
+    def _kind(stem: str) -> CutKind:
         cut = resolve_cut(f"{stem}.mp4")
         return cut_kind_of(cut) if cut else "broadcast"
 
-    def _row(name: str, tags: set[str]) -> dict:
+    def _row(name: str, tags: set[str]) -> RallyResult:
         stem = _rally_stem(name)
         done = label_done.is_done(stem, "rally")
         status = _rally_status_of(tags, done)
@@ -100,7 +182,7 @@ def rally_results() -> list[dict]:
     )
 
 
-def action_videos() -> list[dict]:
+def action_videos() -> list[ActionVideo]:
     """Every cut, local and R2-only, and where its action labeling stands."""
     results = []
     for video in sorted(all_cut_paths(), key=lambda p: p.name):
@@ -130,7 +212,7 @@ def action_videos() -> list[dict]:
     return results
 
 
-def association_videos() -> list[dict]:
+def association_videos() -> list[AssociationVideo]:
     """Extracted videos and how much of their actor review is left.
 
     Action annotations own event membership and labels. Extraction records
@@ -184,17 +266,18 @@ def association_videos() -> list[dict]:
                 # of the remainder is likely to just need confirming. These
                 # are detector-run diagnostics; unlike progress above they
                 # deliberately describe that immutable run.
-                "auto_counts": {
-                    key: int(header.get(key) or 0)
-                    for key in ("ok", "multi", "miss")
-                },
+                "auto_counts": AutoCounts(
+                    ok=int(header.get("ok") or 0),
+                    multi=int(header.get("multi") or 0),
+                    miss=int(header.get("miss") or 0),
+                ),
                 "pipeline": pipeline.payload(),
             }
         )
     return results
 
 
-def reid_videos() -> list[dict]:
+def reid_videos() -> list[ReidVideo]:
     """Extracted videos and how far their player naming has got."""
     results = []
     for f in sorted(all_cut_paths(), key=lambda p: p.name):
@@ -224,7 +307,7 @@ def reid_videos() -> list[dict]:
     return results
 
 
-def court_videos() -> list[dict]:
+def court_videos() -> list[CourtVideo]:
     """Every cut: calibration needs only the frames, so any video can open."""
     from yp_video.court import annotations as court_annotations
 
@@ -239,7 +322,7 @@ def court_videos() -> list[dict]:
     return rows
 
 
-def label_stats() -> dict[str, dict[str, int]]:
+def label_stats() -> LabelStats:
     """Per-mode status tally of the union video list — videos, not events.
 
     The union mirrors the frontend's (lib/useUnionVideos.ts): action lists

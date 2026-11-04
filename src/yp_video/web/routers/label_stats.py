@@ -15,5 +15,5 @@ router = APIRouter()
 
 
 @router.get("/stats")
-def stats() -> dict[str, dict[str, int]]:
+def stats() -> worklists.LabelStats:
     return worklists.label_stats()
