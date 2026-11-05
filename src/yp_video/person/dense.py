@@ -69,7 +69,7 @@ class DensePass:
             counts = data["counts"]
             self._boxes, self._scores = data["boxes"].astype(np.float32), data["scores"]
         self.fps = float(self.meta["fps"])
-        self.stride = int(self.meta.get("stride") or 1)
+        self.stride = int(self.meta["stride"])
         self._ends = np.cumsum(counts)
         self._starts = self._ends - counts
 
