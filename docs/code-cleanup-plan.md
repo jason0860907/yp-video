@@ -12,7 +12,9 @@ P1 bugs (all repos) → P2 backend lanes → P3 yp-spot → P4 VolleyIQ → P5 y
 - [x] Response models on routes; generate frontend types from OpenAPI instead of
       the hand-mirrored `types/api.ts` (already drifted: `JobStatus 'stopped'`).
       Routes return TypedDicts / models; `make api-types` writes
-      `frontend/src/types/openapi.ts`, `contract-check` guards it. Still open
+      `frontend/src/types/openapi.ts`, `contract-check` guards it — the
+      pre-commit hook runs it on any package module, since response TypedDicts
+      live throughout `src/yp_video/`, not only in `contracts/`. Still open
       on purpose: extraction records (next item), the Worker admin passthrough
       (`MatchDetail.match`, library), yp-spot's metrics records.
 - [ ] Extraction record as a Pydantic model with association fields nested

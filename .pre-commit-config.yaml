@@ -1,7 +1,8 @@
-# Run `pre-commit install` once to enable. Guards the schema-first contract:
-# if a contracts/*.py Pydantic model changes without regenerating the JSON
-# schemas, the commit fails. Keeps detector.schema.json / action_label.schema.json
-# (the source of truth the iOS app + yp-spot consume) from drifting.
+# Run `pre-commit install` once to enable. Guards the schema-first contracts:
+# if a Pydantic model or a route's response type changes without regenerating
+# contracts/*.schema.json (consumed by the iOS app + yp-spot) or the frontend's
+# openapi.ts, the commit fails. Response TypedDicts live all over the package,
+# so any package module triggers it, as do the generated files themselves.
 repos:
   - repo: local
     hooks:
@@ -10,7 +11,7 @@ repos:
         entry: make contract-check
         language: system
         pass_filenames: false
-        files: ^src/yp_video/contracts/.*\.py$
+        files: ^(src/yp_video/.*\.py|contracts/.*\.json|src/yp_video/web/frontend/(src/types/openapi\.ts|package(-lock)?\.json))$
       - id: ruff
         name: ruff check
         entry: .venv/bin/ruff check --fix

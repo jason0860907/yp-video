@@ -65,7 +65,7 @@ package）；哪組權重產生了哪個矩陣，看 extraction 時 `embedder.we
 
 ## 升級注意事項
 
-- `supervision` 0.28 起 `ByteTrack` 標為 deprecated、**0.30 移除**（遷去獨立的 `trackers` 套件）—— 升級前先遷移 `tracklets/tracking.py` 與 `tracklets/fusion.py`
+- `supervision` 0.28 起 `ByteTrack` 標為 deprecated、**0.30 移除**（遷去獨立的 `trackers` 套件）—— 升級前先遷移 `tracklets/tracking.py`
 - `rfdetr` 的 `optimize_for_inference()` 會把 batch 維度烙死在 traced graph 裡；`>1.8.3` 另有分數尺度正規化，升級要重新校準 `person/detector.py` 的 `PERSON_SCORE_THRESHOLD`（0.1）與 `person/dense.py` 的 `DENSE_SCORE_FLOOR`（0.1）、`PERSON_LABEL_MIN_SCORE`（0.4）
 - 任何外部模型升級後，拿已標注影片重跑一次對應的驗證（embedder 看 labeled-pair 距離分佈、tracking 看 tracklet 數量與同軌一致性）再信任結果
 - yp-reid 的 contract 變更要同步 bump `yp_video/contracts/reid.py` 與 `yp_reid/contract.py` 的版本（握手會擋不一致，見兩檔案的 docstring）
