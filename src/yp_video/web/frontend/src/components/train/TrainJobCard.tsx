@@ -8,8 +8,6 @@ import type { Job, TrainProgress } from '@/types/api';
 
 interface TrainJobCardProps {
   job: Job | null;
-  /** The job-params key this trainer streams its progress under. */
-  progressKey: string;
   epochsFallback: number;
   onCancel?: () => void;
   mapLabel?: string;
@@ -18,7 +16,7 @@ interface TrainJobCardProps {
 /** The "Training job" card every train page renders: live progress, the
  *  per-epoch detail strip, and a Cancel button while the job is running.
  *  Renders nothing until a job exists. */
-export function TrainJobCard({ job, progressKey, epochsFallback, onCancel, mapLabel }: TrainJobCardProps) {
+export function TrainJobCard({ job, epochsFallback, onCancel, mapLabel }: TrainJobCardProps) {
   if (!job) return null;
   return (
     <Card>
@@ -32,7 +30,7 @@ export function TrainJobCard({ job, progressKey, epochsFallback, onCancel, mapLa
       </div>
       <JobProgress job={job} showLogs truncateMsg={false} />
       <TrainDetail
-        progress={job.params?.[progressKey] as TrainProgress | undefined}
+        progress={job.params.spot_train_progress as TrainProgress | undefined}
         epochsFallback={epochsFallback}
         mapLabel={mapLabel}
       />

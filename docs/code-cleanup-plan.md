@@ -16,7 +16,13 @@ P1 bugs (all repos) → P2 backend lanes → P3 yp-spot → P4 VolleyIQ → P5 y
       pre-commit hook runs it on any package module, since response TypedDicts
       live throughout `src/yp_video/`, not only in `contracts/`. Still open
       on purpose: extraction records (next item), the Worker admin passthrough
-      (`MatchDetail.match`, library), yp-spot's metrics records.
+      (`MatchDetail.match`, library), yp-spot's metrics records and yp-reid's
+      progress lines (`job.params.last_eval` / `best`), and the SSE payloads
+      OpenAPI cannot describe (`DownloadPage`'s per-video `VideoProgress`).
+      `JobSummary.params` types the keys pages read (batch items and
+      tallies, SPOT train progress, transfer counters); each job's own
+      bookkeeping passes through untyped — a per-kind union would need jobs to
+      keep typed state instead of a merged dict.
 - [ ] Extraction record as a Pydantic model with association fields nested
       (replaces `_ASSOCIATION_FIELDS` and `.get(...) or default` reads).
 - [ ] One sync + one async subprocess line reader with process-group kill

@@ -2376,6 +2376,29 @@ export interface components {
             miss: number;
         };
         /**
+         * BatchItem
+         * @description One video of a batch job (``job_helpers.mark_batch_item``).
+         */
+        BatchItem: {
+            /** Video */
+            video: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "running" | "completed" | "failed" | "cancelled";
+            /** Progress */
+            progress: number;
+            /** Message */
+            message: string;
+            /** Error */
+            error?: string;
+            /** Started At */
+            started_at?: number;
+            /** Finished At */
+            finished_at?: number;
+        };
+        /**
          * BoxCheckBox
          * @description One dense 2XLarge box on the event frame, pixels.
          */
@@ -3536,6 +3559,39 @@ export interface components {
             count: number;
         };
         /**
+         * JobParams
+         * @description What a job publishes in ``params`` for the pages to read.
+         *
+         *     A job also keeps its own bookkeeping there (the request it ran, its
+         *     command, label summaries), which no page reads and which differs per job
+         *     type — those keys pass through untyped.
+         */
+        JobParams: {
+            /** Items */
+            items?: components["schemas"]["BatchItem"][];
+            /** Total */
+            total?: number;
+            /** Completed */
+            completed?: number;
+            /** Failed */
+            failed?: number;
+            /** Cancelled */
+            cancelled?: number;
+            spot_train_progress?: components["schemas"]["SpotTrainProgress"];
+            /** Current File */
+            current_file?: string;
+            /** Bytes Done */
+            bytes_done?: number;
+            /** Bytes Total */
+            bytes_total?: number;
+            /** Speed */
+            speed?: number;
+            /** Eta */
+            eta?: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * JobStatus
          * @enum {string}
          */
@@ -3559,10 +3615,7 @@ export interface components {
             progress: number;
             /** Message */
             message: string;
-            /** Params */
-            params: {
-                [key: string]: unknown;
-            };
+            params: components["schemas"]["JobParams"];
             /** Error */
             error: string | null;
             /** Log Count */
@@ -4745,6 +4798,50 @@ export interface components {
             checkpoint: string;
             /** Prediction Video */
             prediction_video: string | null;
+        };
+        /**
+         * SpotTrainProgress
+         * @description A SPOT training job's live snapshot (``spot_runs.make_train_parsers``).
+         */
+        SpotTrainProgress: {
+            /** Epoch */
+            epoch: number;
+            /** Epoch Display */
+            epoch_display: number;
+            /** Epochs */
+            epochs: number;
+            /** Completed Epoch */
+            completed_epoch: number;
+            /** Latest Train Loss */
+            latest_train_loss: number | null;
+            /** Latest Val Loss */
+            latest_val_loss: number | null;
+            /** Latest Val Map */
+            latest_val_map: number | null;
+            /** Latest Task Metrics */
+            latest_task_metrics: {
+                [key: string]: unknown;
+            } | null;
+            /** Best Epoch */
+            best_epoch: number | null;
+            /** Best Value */
+            best_value: number | null;
+            /** Best Task Metrics */
+            best_task_metrics: {
+                [key: string]: unknown;
+            } | null;
+            /** Phase */
+            phase?: string;
+            /** Phase Label */
+            phase_label?: string;
+            /** Step */
+            step?: number;
+            /** Total */
+            total?: number;
+            /** Phase Progress */
+            phase_progress?: number;
+            /** Current Loss */
+            current_loss?: number | null;
         };
         /**
          * Stats

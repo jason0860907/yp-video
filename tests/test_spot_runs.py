@@ -3,12 +3,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from pydantic import TypeAdapter
+
 from yp_video.action.spot_runs import (
     best_epochs_per_task,
     checkpoint_package_options,
     export_checkpoint_package,
     performance_payload,
 )
+from yp_video.web.jobs import JobParams
 from yp_video.web.spot_runs import (
     TrainProgress,
     make_train_parsers,
@@ -84,6 +87,28 @@ class SpotTaskMetricsProgressTest(unittest.TestCase):
 
         _feed(parsers, "Val loss  0.10  0.20  0.90  0.00  1.20")
         self.assertEqual(ctx.latest_val_loss, 1.2)
+
+    def test_every_snapshot_is_the_served_job_params_shape(self):
+        ctx = TrainProgress(epochs=4)
+        parsers, _ = make_train_parsers(
+            ctx,
+            params_key="spot_train_progress",
+            criterion="map",
+            headline_pattern=r"Val mAP:\s*([0-9.]+)%",
+        )
+        params = TypeAdapter(JobParams)
+        lines = (
+            " 50%|#####     | 5/10 [00:01<00:01, 4.0it/s, sum=0.52]",
+            "Epoch: 0",
+            "Train loss  0.10  1.30",
+            "Val mAP: 80.0%",
+            "New best epoch!",
+        )
+        for line in lines:
+            for update in _feed(parsers, line):
+                if "params" in update:
+                    served = params.validate_python(update["params"])
+                    self.assertEqual(served, update["params"])
 
 
 def _write_run(root: Path, epochs: list[dict], definitions: dict) -> Path:

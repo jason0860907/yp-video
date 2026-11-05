@@ -50,8 +50,8 @@ export function TrainDetail({
         ))}
       </div>
       <TaskMetricsTable
-        latest={p.latest_task_metrics}
-        best={p.best_task_metrics}
+        latest={p.latest_task_metrics ?? undefined}
+        best={p.best_task_metrics ?? undefined}
       />
       <TaskBreakdownPanel
         best={p.best_task_metrics && p.best_epoch != null ? { epoch: p.best_epoch, tasks: p.best_task_metrics } : undefined}

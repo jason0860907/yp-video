@@ -420,7 +420,6 @@ export function FusionTrainPage() {
 
       <TrainJobCard
         job={trainJob}
-        progressKey="spot_train_progress"
         epochsFallback={values.num_epochs}
         onCancel={() => void cancelTrain()}
         mapLabel={isRally ? 'Seg mAP' : 'Last mAP'}

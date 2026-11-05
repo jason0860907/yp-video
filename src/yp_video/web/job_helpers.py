@@ -122,7 +122,6 @@ def mark_batch_item(
     progress: float | None = None,
     message: str | None = None,
     error: str | None = None,
-    extra: dict | None = None,
 ) -> bool:
     """Mutate one batch item in place; the sync half of ``update_batch_item``.
 
@@ -148,8 +147,6 @@ def mark_batch_item(
         item["message"] = message
     if error is not None:
         item["error"] = error
-    if extra:
-        item.update(extra)
     items[index] = item
     return True
 
@@ -170,12 +167,11 @@ async def update_batch_item(
     error: str | None = None,
     overall_progress: float | None = None,
     overall_message: str | None = None,
-    extra: dict | None = None,
 ) -> None:
     """Update one batch item and republish the job's ``params["items"]``."""
     if not mark_batch_item(
         items, index,
-        status=status, progress=progress, message=message, error=error, extra=extra,
+        status=status, progress=progress, message=message, error=error,
     ):
         return
 

@@ -14,21 +14,8 @@ export type LabelStatus = S['ActionVideo']['status'];
 export type LabelStats = S['LabelStats'];
 export type JobStatus = S['JobStatus'];
 
-export interface JobItem {
-  status?: string;
-  video?: string;
-  progress?: number;
-  message?: string;
-  error?: string;
-  /** Unix seconds — stamped when the item starts / settles. */
-  started_at?: number;
-  finished_at?: number;
-}
-/** `params` is job-type-specific on the backend (`dict`); the batch
- *  sub-progress under `items` is the one part every job page reads. */
-export type Job = Omit<S['JobSummary'], 'params'> & {
-  params: { items?: JobItem[]; [k: string]: unknown };
-};
+export type JobItem = S['BatchItem'];
+export type Job = S['JobSummary'];
 export type AuditEvent = S['AuditEvent'];
 export type AuditPage = S['AuditPage'];
 export type WorklogSession = S['WorklogSession'];
@@ -123,25 +110,12 @@ export type TrainPerfData = Omit<S['TrainPerfData'], 'entries' | 'best'> & {
   best?: { epoch?: number; value?: number } | null;
 };
 
-/** Live training progress — job.params.{action,rally,association}_train_progress. */
-export interface TrainProgress {
-  epoch?: number;
-  epoch_display?: number;
-  epochs?: number;
-  phase?: string;
-  phase_label?: string;
-  phase_progress?: number;
-  step?: number;
-  total?: number;
-  current_loss?: number;
-  latest_train_loss?: number;
-  latest_val_loss?: number;
-  latest_val_map?: number;
-  latest_task_metrics?: TaskMetrics;
-  best_value?: number;
-  best_epoch?: number;
-  best_task_metrics?: TaskMetrics;
-}
+/** Live training progress — job.params.spot_train_progress; its task
+ *  metrics are yp-spot's records (open on this backend). */
+export type TrainProgress = Omit<S['SpotTrainProgress'], 'latest_task_metrics' | 'best_task_metrics'> & {
+  latest_task_metrics: TaskMetrics | null;
+  best_task_metrics: TaskMetrics | null;
+};
 export type InferenceVideo = S['InferenceVideo'];
 export type CutKind = S['ActionVideo']['kind'];
 export type SelectOption = S['SelectOption'];

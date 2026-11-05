@@ -8,8 +8,9 @@ from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any, Literal, NotRequired, TypedDict
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from yp_video.web import access, audit
 
@@ -48,6 +49,77 @@ class JobType(str, Enum):
     R2_DOWNLOAD = "r2_download"
 
 
+BatchItemStatus = Literal["pending", "running", "completed", "failed", "cancelled"]
+
+
+class BatchItem(TypedDict):
+    """One video of a batch job (``job_helpers.mark_batch_item``)."""
+
+    # Its own, or it inherits JobParams' extra="allow".
+    __pydantic_config__ = ConfigDict(extra="forbid")
+
+    video: str
+    status: BatchItemStatus
+    progress: float
+    message: str
+    error: NotRequired[str]
+    #: Unix seconds — stamped when the item starts / settles.
+    started_at: NotRequired[float]
+    finished_at: NotRequired[float]
+
+
+class SpotTrainProgress(TypedDict):
+    """A SPOT training job's live snapshot (``spot_runs.make_train_parsers``)."""
+
+    __pydantic_config__ = ConfigDict(extra="forbid")
+
+    epoch: int
+    epoch_display: int
+    epochs: int
+    completed_epoch: int
+    latest_train_loss: float | None
+    latest_val_loss: float | None
+    latest_val_map: float | None
+    #: yp-spot's per-task metrics record — its contract, open here.
+    latest_task_metrics: dict[str, Any] | None
+    best_epoch: int | None
+    best_value: float | None
+    best_task_metrics: dict[str, Any] | None
+    phase: NotRequired[str]
+    phase_label: NotRequired[str]
+    step: NotRequired[int]
+    total: NotRequired[int]
+    phase_progress: NotRequired[float]
+    current_loss: NotRequired[float | None]
+
+
+class JobParams(TypedDict, total=False):
+    """What a job publishes in ``params`` for the pages to read.
+
+    A job also keeps its own bookkeeping there (the request it ran, its
+    command, label summaries), which no page reads and which differs per job
+    type — those keys pass through untyped.
+    """
+
+    __pydantic_config__ = ConfigDict(extra="allow")
+
+    #: Batch jobs: one entry per video, plus the tallies over them.
+    items: list[BatchItem]
+    total: int
+    completed: int
+    failed: int
+    cancelled: int
+    spot_train_progress: SpotTrainProgress
+    #: R2 transfers: the file in flight and the byte counters.
+    current_file: str
+    bytes_done: int
+    bytes_total: int
+    #: Bytes per second.
+    speed: float
+    #: Seconds.
+    eta: int
+
+
 class JobSummary(BaseModel):
     """The wire shape of ``Job.to_dict()``.
 
@@ -62,7 +134,7 @@ class JobSummary(BaseModel):
     status: JobStatus
     progress: float
     message: str
-    params: dict
+    params: JobParams
     error: str | None
     log_count: int
     created_at: float
