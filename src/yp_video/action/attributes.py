@@ -19,22 +19,16 @@ from __future__ import annotations
 
 import argparse
 import json
-import statistics
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
-from yp_video.action.rules import touch_sides
+from yp_video.action.rules import AXIS_OF, SIDE_AXES, serve_split, touch_sides
 from yp_video.config import ACTION_ANNOTATIONS_DIR
 from yp_video.contracts.action import LABEL_FILE_GLOB, LABEL_FILE_SUFFIX
 from yp_video.core.jsonl import read_jsonl
 from yp_video.core.rallies import load_rallies
 
 JUMP_DEFAULTS = {"spike": True, "block": True, "receive": False}
-#: The two camera axes; per axis the side whose serves sit at the larger
-#: image coordinate on that axis is learned per video (a near server's toss
-#: can be struck higher in the frame than a far one's).
-AXES = {"lr": ("left", "right", 0), "nf": ("far", "near", 1)}
-AXIS_OF = {side: axis for axis, (a, b, _) in AXES.items() for side in (a, b)}
 #: Share of a video's anchored serves that must sit on their anchor's half
 #: for the video to supervise side at all (median video: 0.98).
 MIN_SERVE_AGREEMENT = 0.8
@@ -49,10 +43,10 @@ def derive_sides(
     if not axes:
         return sides, {"status": "no winner labels"}
     axis = max(set(axes), key=axes.count)
-    low, high, coord = AXES[axis]
+    low, high, _ = SIDE_AXES[axis]
 
     order = sorted(range(len(events)), key=lambda i: events[i]["frame"])
-    anchored = []  # (anchor side, serve coordinate, event positions, sides)
+    anchored = []  # (anchor side, serve xy, event positions, sides)
     for previous, rally in zip([None, *rallies[:-1]], rallies):
         positions = [
             i for i in order
@@ -64,27 +58,19 @@ def derive_sides(
         rally_sides = touch_sides([events[i] for i in positions], anchor)
         if rally_sides[0] is None:
             continue
-        anchored.append(
-            (anchor, float(events[positions[0]]["xy"][coord]), positions, rally_sides)
-        )
+        anchored.append((anchor, events[positions[0]]["xy"], positions, rally_sides))
 
-    by_side = {
-        side: [c for anchor, c, _, _ in anchored if anchor == side] for side in (low, high)
-    }
-    if not by_side[low] or not by_side[high]:
+    split = serve_split([(anchor, xy) for anchor, xy, _, _ in anchored])
+    if split is None:
         return sides, {"status": "serves from one side only", "rallies": len(anchored)}
-    low_median, high_median = (statistics.median(by_side[s]) for s in (low, high))
-    middle = (low_median + high_median) / 2
-    high_is_larger = high_median > low_median
-    agrees = [((c > middle) == high_is_larger) == (anchor == high) for anchor, c, _, _ in anchored]
-    agreement = sum(agrees) / len(agrees)
+    agrees = [split.side(xy) == anchor for anchor, xy, _, _ in anchored]
     report = {
         "axis": axis,
         "rallies": len(rallies),
         "anchored_rallies": len(anchored),
-        "serve_agreement": round(agreement, 3),
+        "serve_agreement": round(split.agreement, 3),
     }
-    if agreement < MIN_SERVE_AGREEMENT:
+    if split.agreement < MIN_SERVE_AGREEMENT:
         return sides, {**report, "status": "serve positions disagree with winners"}
     for (_, _, positions, rally_sides), agree in zip(anchored, agrees):
         if agree:

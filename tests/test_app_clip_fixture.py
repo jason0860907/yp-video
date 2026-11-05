@@ -46,6 +46,7 @@ def fixture_bundle(f: dict) -> Bundle:
                         "deciding_event_indices": [
                             position[t] for t in f["deciding"].get(str(i), [])
                         ],
+                        "serving_side": None,
                     }
                     for i in indices
                 ],

@@ -49,6 +49,7 @@ class RallyOutcome(Artifact):
     serve_point: bool | None
     score_event_index: int | None
     deciding_event_indices: list[int]
+    serving_side: Literal["left", "right", "near", "far"] | None
 
 
 class Result(Artifact):

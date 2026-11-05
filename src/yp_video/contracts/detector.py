@@ -6,6 +6,7 @@ them directly.
 """
 
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -138,6 +139,13 @@ class RallyOutcome(BaseModel):
             "Positions in `action_events` of the play that decided the point: "
             "the last attack before the whistle, else the last touch. Empty "
             "when the rally holds none."
+        ),
+    )
+    serving_side: Literal["left", "right", "near", "far"] | None = Field(
+        description=(
+            "Camera-frame court side the rally was served from, read off where "
+            "its serve was struck. Null when the rally does not open on a "
+            "spotted serve, or the match's serves do not split by side."
         ),
     )
 

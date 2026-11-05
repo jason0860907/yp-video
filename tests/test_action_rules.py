@@ -1,4 +1,4 @@
-from yp_video.action.rules import attacks, rally_outcomes, touch_sides
+from yp_video.action.rules import attacks, rally_outcomes, serving_sides, touch_sides
 
 
 def _events(*touches: tuple[str, float]) -> list[dict]:
@@ -147,7 +147,8 @@ def test_an_antenna_hit_ends_the_rally() -> None:
 
     assert touch_sides([{"label": e["label"]} for e in events], "near") == ["near", "far", "far", None]
     assert rally_outcomes(RALLY, events) == [
-        {"rally_index": 1, "serve_point": False, "score_event_index": 3, "deciding_event_indices": [1, 2]},
+        {"rally_index": 1, "serve_point": False, "score_event_index": 3, "deciding_event_indices": [1, 2],
+         "serving_side": None},
     ]
 
 
@@ -160,5 +161,58 @@ def test_a_net_contact_is_no_touch_and_ground_ends_the_rally() -> None:
         "near", None, "far", "far", None,
     ]
     assert rally_outcomes(RALLY, events) == [
-        {"rally_index": 1, "serve_point": False, "score_event_index": 4, "deciding_event_indices": [2, 3]},
+        {"rally_index": 1, "serve_point": False, "score_event_index": 4, "deciding_event_indices": [2, 3],
+         "serving_side": None},
     ]
+
+
+def _served_match(winners, serve_ys, sets=None):
+    """Sideline rallies 10 s apart, each opening on a serve struck at the
+    given frame height (None: no serve spotted), with the given winners."""
+    rallies, events = [], []
+    for i, (winner, y) in enumerate(zip(winners, serve_ys)):
+        start = i * 10.0
+        rallies.append({"index": i + 1, "set": (sets or [1] * len(winners))[i],
+                        "start": start, "end": start + 8.0, "winner": winner})
+        if y is not None:
+            events.append({"id": f"s{i}", "label": "serve", "time": start + 1.0, "xy": [0.5, y]})
+        events.append({"id": f"r{i}", "label": "receive", "time": start + 2.0, "xy": [0.5, 0.5]})
+    return rallies, events
+
+
+def test_each_rally_is_served_from_where_its_serve_was_struck() -> None:
+    """The previous winners anchor which half each side serves from; a rally
+    whose previous winner is wrong still reads its own serve."""
+    near, far = 0.8, 0.3
+    winners = ["near", "near", "far", "far", "near", "far", "near", "far"]
+    ys = [near, near, near, far, far, near, far, near]  # rally 7's anchor (far) is wrong
+    rallies, events = _served_match(winners, ys)
+
+    assert serving_sides(rallies, events) == {
+        1: "near", 2: "near", 3: "near", 4: "far", 5: "far", 6: "near", 7: "far", 8: "near",
+    }
+    assert [o["serving_side"] for o in rally_outcomes(rallies, events)] == [
+        "near", "near", "near", "far", "far", "near", "far", "near",
+    ]
+
+
+def test_a_rally_not_opening_on_a_serve_names_no_server() -> None:
+    rallies, events = _served_match(["near", "far", "near", "far", "near"], [0.8, None, 0.3, 0.8, 0.3])
+
+    assert serving_sides(rallies, events) == {1: "near", 2: None, 3: "far", 4: "near", 5: "far"}
+
+
+def test_serves_that_do_not_split_name_no_server() -> None:
+    # No winners to anchor on; and anchors from one side only.
+    assert set(serving_sides(*_served_match([None] * 3, [0.8, 0.3, 0.8])).values()) == {None}
+    assert set(serving_sides(*_served_match(["near"] * 4, [0.8, 0.8, 0.8, 0.8])).values()) == {None}
+
+
+def test_a_new_set_does_not_anchor_on_the_last_set() -> None:
+    """The first serve of a set is not the previous winner's: counted, rally
+    3's anchor (near, on the far half) would sink the split under the gate."""
+    rallies, events = _served_match(
+        ["far", "near", "near", "far"], [0.8, 0.3, 0.3, 0.8], sets=[1, 1, 2, 2]
+    )
+
+    assert serving_sides(rallies, events) == {1: "near", 2: "far", 3: "far", 4: "near"}

@@ -15,8 +15,9 @@ Touches outside every rally belong to no attack and no outcome.
 
 from __future__ import annotations
 
+import statistics
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, NamedTuple
 
 from yp_video.contracts.action import ACTION_LABELS, ACTOR_LABELS, END_LABELS
 
@@ -32,6 +33,15 @@ Event = Mapping[str, Any]
 OPPOSITE_SIDE = {"left": "right", "right": "left", "near": "far", "far": "near"}
 #: Touches one team makes in a row before the ball must cross.
 TEAM_TOUCHES = 3
+#: The two camera axes: their sides and the ``xy`` component running along each.
+SIDE_AXES = {"lr": ("left", "right", 0), "nf": ("far", "near", 1)}
+AXIS_OF = {side: axis for axis, (a, b, _) in SIDE_AXES.items() for side in (a, b)}
+#: Share of a video's anchoring serves that must sit on their anchor's half
+#: for its serve positions to name the serving side. The anchors are the
+#: predicted winners, so this measures their errors too: on 473 labelled
+#: videos with 10% of winners flipped, 0.7 names 93% of serves at 96.5%
+#: (0.8: 80% at 97.5%).
+SERVING_MIN_AGREEMENT = 0.7
 
 
 def kind(event: Event) -> str:
@@ -108,6 +118,86 @@ def attacks(
     ]
 
 
+class ServeSplit(NamedTuple):
+    """Where one video's serves divide its two sides along the camera axis."""
+
+    coord: int
+    middle: float
+    larger: str
+    smaller: str
+    #: Share of the anchoring serves on their anchor's half.
+    agreement: float
+
+    def side(self, xy: Sequence[float]) -> str:
+        return self.larger if float(xy[self.coord]) > self.middle else self.smaller
+
+
+def serve_split(anchored: Sequence[tuple[str, Sequence[float]]]) -> ServeSplit | None:
+    """The line between the two sides' serve positions, learned from serves
+    whose side is known otherwise — ``(side, serve xy)``, all on one axis.
+
+    Which side's serves sit at the larger image coordinate is learned rather
+    than assumed: a near server's toss can be struck higher in the frame than
+    a far one's. None unless both sides served."""
+    if not anchored:
+        return None
+    low, high, coord = SIDE_AXES[AXIS_OF[anchored[0][0]]]
+    by_side = {side: [float(xy[coord]) for s, xy in anchored if s == side] for side in (low, high)}
+    if not by_side[low] or not by_side[high]:
+        return None
+    low_median, high_median = (statistics.median(by_side[s]) for s in (low, high))
+    middle = (low_median + high_median) / 2
+    larger, smaller = (high, low) if high_median > low_median else (low, high)
+    agrees = [
+        (float(xy[coord]) > middle) == (side == larger) for side, xy in anchored
+    ]
+    return ServeSplit(coord, middle, larger, smaller, sum(agrees) / len(agrees))
+
+
+def _opening_serve(events: Sequence[Event], touches: Sequence[int]) -> int | None:
+    """The rally's first player touch when it is a serve, else None."""
+    plays = [i for i in touches if kind(events[i]) in ACTOR_LABELS]
+    return plays[0] if plays and kind(events[plays[0]]) == "serve" else None
+
+
+def serving_sides(
+    rallies: Sequence[Mapping[str, Any]], events: Sequence[Event]
+) -> dict[int, str | None]:
+    """The camera-frame side each rally was served from, by rally index.
+
+    Read off where the serve was struck: the team that won a rally serves the
+    next one in the set, so the predicted winners anchor which half of the
+    frame each side serves from (``serve_split``), and each rally's own
+    serve then names its side — one wrong winner moves no rally but its own
+    anchor. An off-screen serve counts by its entry point, which comes in
+    over the server's half. None where the rally opens on no serve, and for
+    the whole video when its serves do not split cleanly (no winners, one
+    side's serves only, or under SERVING_MIN_AGREEMENT on their anchors).
+    """
+    groups = _by_rally(rallies, events)
+    serves = {index: _opening_serve(events, touches) for index, touches in groups}
+    ordered = sorted(rallies, key=lambda r: float(r["start"]))
+    winners = [r.get("winner") for r in ordered if r.get("winner") in AXIS_OF]
+    split = None
+    if winners:
+        axes = [AXIS_OF[w] for w in winners]
+        axis = max(sorted(set(axes)), key=axes.count)
+        anchored = [
+            (previous["winner"], events[serve]["xy"])
+            for previous, rally in zip(ordered, ordered[1:])
+            if previous["set"] == rally["set"]
+            and AXIS_OF.get(previous.get("winner")) == axis
+            and (serve := serves[int(rally["index"])]) is not None
+        ]
+        split = serve_split(anchored)
+    if split is None or split.agreement < SERVING_MIN_AGREEMENT:
+        return {index: None for index, _ in groups}
+    return {
+        index: None if serve is None else split.side(events[serve]["xy"])
+        for index, serve in serves.items()
+    }
+
+
 def rally_outcomes(
     rallies: Sequence[Mapping[str, Any]], events: Sequence[Event]
 ) -> list[dict]:
@@ -120,7 +210,9 @@ def rally_outcomes(
       beat apart collapse to the last one. Null when none was spotted.
     - ``deciding_event_indices``: the play that decided the point — the last
       attack, or with no spike the last non-whistle touch.
+    - ``serving_side``: the camera-frame side that served (``serving_sides``).
     """
+    served_from = serving_sides(rallies, events)
     out = []
     for index, touches in _by_rally(rallies, events):
         kinds = {kind(events[i]) for i in touches}
@@ -139,6 +231,7 @@ def rally_outcomes(
                 "serve_point": (not (kinds & RALLY_PLAY)) if touches else None,
                 "score_event_index": whistles[-1] if whistles else None,
                 "deciding_event_indices": rally_attacks[-1] if rally_attacks else plays[-1:],
+                "serving_side": served_from[index],
             }
         )
     return out
