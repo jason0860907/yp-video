@@ -15,6 +15,7 @@ import os
 import re
 import subprocess
 from pathlib import Path
+from typing import NamedTuple
 
 from fastapi import HTTPException
 
@@ -72,6 +73,38 @@ HEADLINE_PATTERNS = {
     "rally": r"Segment mAP \(mean over tIoU\):\s*([0-9.]+)%",
     "action": r"Harmonic mean \(temporal and spatial mAPs\):\s*([0-9.]+)%",
 }
+
+class TaskOption(NamedTuple):
+    """One recipe-tuning request field and the yp-spot flag it becomes."""
+
+    field: str
+    flag: str
+    #: ``key=value`` prefix of the flag's argument; None passes the bare value.
+    key: str | None
+    #: The value that means "trainer default": the flag is left out.
+    omit: object = None
+
+
+#: Every recipe-specific request field that reaches the trainer, in command
+#: order. Emitted only when the field is in the recipe's ``fields``.
+TASK_OPTIONS: tuple[TaskOption, ...] = (
+    TaskOption("action_sample_fps", "--task_sample_fps", "action"),
+    TaskOption("rally_sample_fps", "--task_sample_fps", "rally"),
+    TaskOption("winner_sample_fps", "--task_sample_fps", "winner"),
+    TaskOption("rally_clip_len", "--task_clip_len", "rally"),
+    TaskOption("winner_clip_len", "--task_clip_len", "winner"),
+    TaskOption("action_learning_rate", "--task_learning_rate", "action"),
+    TaskOption("rally_learning_rate", "--task_learning_rate", "rally"),
+    TaskOption("winner_learning_rate", "--task_learning_rate", "winner"),
+    TaskOption("audio_learning_rate", "--audio_learning_rate", None),
+    TaskOption("action_stream_weight", "--task_stream_weight", "action", omit=1),
+    TaskOption("rally_stream_weight", "--task_stream_weight", "rally", omit=1),
+    TaskOption("winner_stream_weight", "--task_stream_weight", "winner", omit=1),
+    TaskOption("actor_stream_weight", "--task_stream_weight", "actor", omit=1),
+    TaskOption("action_fg_upsample", "--task_fg_upsample", "action"),
+    TaskOption("action_dilate_len", "--task_dilate_len", "action", omit=0),
+    TaskOption("action_block_upsample", "--action_class_upsample", "block"),
+)
 
 _RUN_NAME_RE = re.compile(r"[A-Za-z0-9_.-]+")
 
@@ -181,52 +214,18 @@ def build_command(
         str(save_dir),
         *prepared.extra_args,
     ]
-    # Every run is a set of task streams; each label stream names its own
-    # sampling rate and audio backend. Tuning fields outside the recipe's
-    # ``fields`` are ignored (the form sends every field).
-    def applies(field: str) -> bool:
-        return field in recipe.fields
-
-    for task, fps in (
-        ("action", req.action_sample_fps),
-        ("rally", req.rally_sample_fps),
-        ("winner", req.winner_sample_fps),
-    ):
+    # Every label stream the recipe trains names its own audio backend.
+    for task in ("action", "rally", "winner"):
         if task in recipe.tasks:
-            cmd.extend(["--task_sample_fps", f"{task}={fps}"])
-    for task, frames in (("rally", req.rally_clip_len), ("winner", req.winner_clip_len)):
-        if applies(f"{task}_clip_len") and frames is not None:
-            cmd.extend(["--task_clip_len", f"{task}={frames}"])
-    for task, backend in (
-        ("action", _audio_backend(req, recipe)), ("rally", "none"), ("winner", "none")
-    ):
-        if task in recipe.tasks:
+            backend = _audio_backend(req, recipe) if task == "action" else "none"
             cmd.extend(["--task_audio_backend", f"{task}={backend}"])
-    for task, learning_rate in (
-        ("action", req.action_learning_rate),
-        ("rally", req.rally_learning_rate),
-        ("winner", req.winner_learning_rate),
-    ):
-        if applies(f"{task}_learning_rate") and learning_rate is not None:
-            cmd.extend(["--task_learning_rate", f"{task}={learning_rate}"])
-    if applies("audio_learning_rate") and req.audio_learning_rate is not None:
-        cmd.extend(["--audio_learning_rate", str(req.audio_learning_rate)])
-    for task, weight in (
-        ("action", req.action_stream_weight),
-        ("rally", req.rally_stream_weight),
-        ("winner", req.winner_stream_weight),
-        ("actor", req.actor_stream_weight),
-    ):
-        if applies(f"{task}_stream_weight") and weight != 1:
-            cmd.extend(["--task_stream_weight", f"{task}={weight}"])
-    if applies("action_fg_upsample") and req.action_fg_upsample is not None:
-        cmd.extend(
-            ["--task_fg_upsample", f"action={req.action_fg_upsample}"]
-        )
-    if applies("action_dilate_len") and req.action_dilate_len:
-        cmd.extend(["--task_dilate_len", f"action={req.action_dilate_len}"])
-    if applies("action_block_upsample") and req.action_block_upsample is not None:
-        cmd.extend(["--action_class_upsample", f"block={req.action_block_upsample}"])
+    # The request rejects a field the recipe does not show, so a field outside
+    # recipe.fields holds its default and is never sent.
+    for option in TASK_OPTIONS:
+        value = getattr(req, option.field)
+        if option.field in recipe.fields and value is not None and value != option.omit:
+            arg = f"{option.key}={value}" if option.key else str(value)
+            cmd.extend([option.flag, arg])
     if audio_dir is not None:
         cmd.extend(["--audio_dir", str(audio_dir)])
     if req.camera_view != "all":

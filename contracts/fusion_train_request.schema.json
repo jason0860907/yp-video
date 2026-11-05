@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$comment": "Generated from yp_video/web/train_requests.py via make_train_schemas.py \u2014 do not edit by hand.",
   "additionalProperties": false,
-  "description": "One SPOT training run: a recipe (which heads) plus how to train it.\n\nFields outside the chosen recipe's ``fields`` (contract ``RECIPES``) are\naccepted and ignored \u2014 the form sends every field with its default \u2014 so\na rally run carries ``audio_backend`` harmlessly and an action run\n``video_limit``.",
+  "description": "One SPOT training run: a recipe (which heads) plus how to train it.\n\nA recipe-specific field (contract ``RECIPE_FIELDS``) outside the chosen\nrecipe's ``fields`` is rejected: a rally run cannot carry\n``audio_backend``, an action run ``video_limit``.",
   "properties": {
     "recipe": {
       "default": "action_rally_winner",

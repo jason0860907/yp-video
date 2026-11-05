@@ -23,8 +23,10 @@ P1 bugs (all repos) → P2 backend lanes → P3 yp-spot → P4 VolleyIQ → P5 y
       (`action/predict.py`, `reid/embedder.py`, `web/job_helpers.py`).
 - [ ] Shared frame-prefetch iterator for `detect_video` and `tracking.py`;
       split `detect_video` into small helpers.
-- [ ] Per-task training params as `tasks: dict[TaskName, TaskTrainParams]`;
-      `build_command` loops it (no `mixed` branch); split `start_training_job`.
+- [x] Per-task training params: `build_command` loops one `TASK_OPTIONS`
+      table (no `mixed` branch) and the request rejects a field its recipe
+      does not show.
+- [ ] Split `start_training_job`.
 - [ ] `masked_input` on the `Embedder` Protocol; drop `getattr` and `-masked` name checks.
 - [ ] Remove compat fallbacks: `reid/store.py` mtime fallback, pre-GTA track special case.
 - [ ] Shared `useFlushOnLeave` hook for AnnotationEditor / ActionPanel.

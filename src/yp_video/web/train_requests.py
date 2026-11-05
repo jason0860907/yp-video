@@ -15,6 +15,7 @@ from typing import Literal
 
 from pydantic import Field, model_validator
 
+from yp_video.contracts.action import RECIPE_FIELDS, RECIPES
 from yp_video.web.schemas import StrictModel
 
 #: Every backbone the yp-spot registry offers, times its temporal-shift
@@ -58,10 +59,9 @@ Validation = Literal["ratio", "manual", "none"]
 class FusionTrainRequest(StrictModel):
     """One SPOT training run: a recipe (which heads) plus how to train it.
 
-    Fields outside the chosen recipe's ``fields`` (contract ``RECIPES``) are
-    accepted and ignored — the form sends every field with its default — so
-    a rally run carries ``audio_backend`` harmlessly and an action run
-    ``video_limit``.
+    A recipe-specific field (contract ``RECIPE_FIELDS``) outside the chosen
+    recipe's ``fields`` is rejected: a rally run cannot carry
+    ``audio_backend``, an action run ``video_limit``.
     """
 
     recipe: RecipeId = Field(
@@ -291,6 +291,11 @@ class FusionTrainRequest(StrictModel):
 
     @model_validator(mode="after")
     def _consistent(self) -> "FusionTrainRequest":
+        stray = (self.model_fields_set & RECIPE_FIELDS) - set(RECIPES[self.recipe].fields)
+        if stray:
+            raise ValueError(
+                f"not used by the {self.recipe} recipe: {', '.join(sorted(stray))}"
+            )
         if self.validation == "manual" and not self.validation_videos:
             raise ValueError("manual validation needs at least one validation video")
         if self.include_predictions and self.validation != "manual":

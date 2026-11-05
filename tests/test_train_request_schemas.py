@@ -3,7 +3,8 @@
 The web UI builds each config form from contracts/*_request.schema.json:
 `buildDefaults` in lib/schemaForm.ts turns a schema into the initial form
 values (default ?? const ?? [] for arrays ?? null when nullable; anything
-else must come from a page seed), and submit posts that object verbatim.
+else must come from a page seed), and submit posts that object — the Fusion
+Train page minus the recipe-specific fields its recipe does not show.
 These tests mirror that construction in Python and require the result to
 validate against the model — if a field ever needs a value the schema can't
 supply, this fails before the UI does.
@@ -18,7 +19,7 @@ import unittest
 from pydantic import BaseModel, ValidationError
 
 from yp_video.config import SPOT_DIR
-from yp_video.contracts.action import RECIPES
+from yp_video.contracts.action import RECIPE_FIELDS, RECIPES
 from yp_video.web.make_train_schemas import _SCHEMAS
 from yp_video.web.train_requests import (
     FeatureArch,
@@ -64,16 +65,25 @@ def build_defaults(model: type[BaseModel], seed: dict[str, object] | None = None
     return values
 
 
+def fusion_submission(values: dict) -> dict:
+    """Python mirror of FusionTrainPage's submit: the fields another recipe
+    shows are left out."""
+    shown = set(RECIPES[values["recipe"]].fields)
+    return {k: v for k, v in values.items() if k not in RECIPE_FIELDS or k in shown}
+
+
 class DefaultsAreValidRequests(unittest.TestCase):
     def test_every_emitted_schema_round_trips_its_defaults(self) -> None:
         for filename, model in _SCHEMAS.items():
             with self.subTest(schema=filename):
                 seed = SEEDS.get(model)
                 payload = build_defaults(model, seed)
+                if model is FusionTrainRequest:
+                    payload = fusion_submission(payload)
                 model.model_validate(payload)
 
     def test_manual_validation_submission_shape(self) -> None:
-        payload = build_defaults(FusionTrainRequest, {"validation": "manual"})
+        payload = fusion_submission(build_defaults(FusionTrainRequest, {"validation": "manual"}))
         payload["validation_videos"] = ["match"]
         req = FusionTrainRequest.model_validate(payload)
         self.assertEqual(req.recipe, "action_rally_winner")
@@ -88,7 +98,7 @@ class DefaultsAreValidRequests(unittest.TestCase):
                     "recipe": recipe.id,
                     **recipe.defaults,
                 }
-                FusionTrainRequest.model_validate(payload)
+                FusionTrainRequest.model_validate(fusion_submission(payload))
 
     def test_recipe_literal_mirrors_the_registry(self) -> None:
         self.assertEqual(set(typing.get_args(RecipeId)), set(RECIPES))

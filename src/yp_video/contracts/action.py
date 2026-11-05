@@ -223,8 +223,7 @@ _RALLY_WINNER_FIELDS = ("rally_sample_fps", "winner_sample_fps", "acc_grad_iter"
 # the 24 GB card).
 _RALLY_DEFAULTS = {
     "batch_size": 64, "acc_grad_iter": 32, "num_epochs": 30,
-    "warm_up_epochs": 2, "learning_rate": 3e-5, "audio_backend": "none",
-    "rally_sample_fps": 5.0, "winner_sample_fps": 5.0,
+    "warm_up_epochs": 2, "learning_rate": 3e-5, "rally_sample_fps": 5.0,
 }
 _ACTION_FIELDS = (
     "action_sample_fps",
@@ -296,7 +295,7 @@ RECIPES: dict[str, Recipe] = {
         Recipe(
             "rally_winner", "Rally + Winner", ("rally", "winner"),
             "Rally segments plus which court side won each rally.",
-            _RALLY_WINNER_FIELDS, _RALLY_DEFAULTS,
+            _RALLY_WINNER_FIELDS, {**_RALLY_DEFAULTS, "winner_sample_fps": 5.0},
         ),
         Recipe(
             "action", "Action", ("action", "location", "side", "jump"),
@@ -333,6 +332,13 @@ RECIPES: dict[str, Recipe] = {
 for _recipe in RECIPES.values():
     validate_tasks(_recipe.tasks)
 del _recipe
+
+#: The request fields some recipe shows and another does not. A request
+#: setting one its recipe does not show is rejected; every other field is
+#: common to all recipes.
+RECIPE_FIELDS: frozenset[str] = frozenset(
+    field for recipe in RECIPES.values() for field in recipe.fields
+)
 
 # Derived so there is one truth for the file layout.
 LABEL_FILE_GLOB = TASKS["action"].label_glob

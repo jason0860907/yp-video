@@ -141,9 +141,7 @@
         "num_epochs": 30,
         "warm_up_epochs": 2,
         "learning_rate": 3e-05,
-        "audio_backend": "none",
-        "rally_sample_fps": 5.0,
-        "winner_sample_fps": 5.0
+        "rally_sample_fps": 5.0
       }
     },
     "rally_winner": {
@@ -166,7 +164,6 @@
         "num_epochs": 30,
         "warm_up_epochs": 2,
         "learning_rate": 3e-05,
-        "audio_backend": "none",
         "rally_sample_fps": 5.0,
         "winner_sample_fps": 5.0
       }

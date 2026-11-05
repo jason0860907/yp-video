@@ -157,10 +157,15 @@ export function FusionTrainPage() {
       return;
     }
     try {
-      const body: FusionForm = {
-        ...values,
-        validation_videos: isManual ? selectedValidation.map((video) => video.name) : [],
-      };
+      // The server rejects a field some other recipe shows; this one's and the
+      // common fields go.
+      const recipeFields = new Set(status?.recipes.flatMap((item) => item.fields) ?? []);
+      const body: FusionTrainRequest = Object.fromEntries(
+        Object.entries({
+          ...values,
+          validation_videos: isManual ? selectedValidation.map((video) => video.name) : [],
+        }).filter(([key]) => !recipeFields.has(key) || visible.has(key)),
+      );
       const job = await apiFetch<Job>(API.fusionModel.train, { method: 'POST', body });
       setPerfRun(undefined);
       setTrainJob(job);

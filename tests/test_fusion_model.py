@@ -81,27 +81,68 @@ class BuildCommandTests(unittest.TestCase):
         )
 
     def test_rally_winner_command(self) -> None:
-        # A hidden mixed-recipe knob the form still sends must not reach the run.
         req = FusionTrainRequest(recipe="rally_winner", validation="ratio", rally_sample_fps=5,
-                                 winner_sample_fps=4, audio_backend="logmel", acc_grad_iter=4,
-                                 batch_size=8, rally_learning_rate=1e-3)
+                                 winner_sample_fps=4, acc_grad_iter=4, batch_size=8)
         cmd = spot_training.build_command(
             req, RECIPES["rally_winner"], self._prepared("yp_rally"),
             save_dir=Path("/run"), init_checkpoint=None, audio_dir=None,
         )
-        joined = " ".join(cmd)
-        self.assertIn(" yp_rally /frames ", joined)
-        self.assertIn("--tasks rally,winner", joined)
-        # One stream per label family, each with its own rate.
-        self.assertIn("--task_sample_fps rally=5.0 --task_sample_fps winner=4.0", joined)
-        # Rally is visual-only whatever the form sent; accumulation passes through.
-        self.assertIn("--task_audio_backend rally=none --task_audio_backend winner=none", joined)
-        self.assertIn("--acc_grad_iter 4", joined)
-        self.assertIn("--task_label_dir rally=/run/labels/x --val_ratio 0.1 --split_seed 42", joined)
-        self.assertNotIn("--task_learning_rate", joined)
-        self.assertNotIn("--predict", joined)
-        self.assertNotIn("--sample_fps ", joined)
-        self.assertNotIn("--audio_backend ", joined)
+        self.assertEqual(cmd[3:], [
+            "yp_rally", "/frames", "-m", "rny008_tv_gsm", "-t", "gru",
+            "--tasks", "rally,winner", "--clip_len", "64", "--batch_size", "8",
+            "--acc_grad_iter", "4", "--num_epochs", "50", "--warm_up_epochs", "3",
+            "--learning_rate", "3e-05", "--num_workers", "8", "--criterion", "map",
+            "--start_val_epoch", "0", "-s", "/run",
+            # Rally is visual-only; each label stream takes its own rate.
+            "--task_audio_backend", "rally=none", "--task_audio_backend", "winner=none",
+            "--task_sample_fps", "rally=5.0", "--task_sample_fps", "winner=4.0",
+            "--task_label_dir", "rally=/run/labels/x", "--val_ratio", "0.1", "--split_seed", "42",
+        ])
+
+    def test_a_field_the_recipe_does_not_show_is_rejected(self) -> None:
+        # A hidden mixed-recipe knob must not silently ride along.
+        for stray in ({"audio_backend": "logmel"}, {"rally_learning_rate": 1e-3},
+                      {"action_sample_fps": 30.0}):
+            with self.assertRaisesRegex(ValueError, "not used by the rally_winner recipe"):
+                FusionTrainRequest(recipe="rally_winner", validation="ratio", **stray)
+        # Common fields apply to every recipe.
+        FusionTrainRequest(recipe="rally", validation="ratio", clip_len=32, freeze_backbone=True)
+
+    def test_every_recipe_default_is_a_field_it_accepts(self) -> None:
+        for recipe in RECIPES.values():
+            FusionTrainRequest(recipe=recipe.id, validation="ratio", **recipe.defaults)
+
+    def test_tuning_fields_become_their_task_flags(self) -> None:
+        recipe = RECIPES["action_rally_winner_actor"]
+        req = FusionTrainRequest(
+            recipe=recipe.id, validation="ratio", rally_clip_len=128, winner_clip_len=96,
+            action_learning_rate=1e-4, rally_learning_rate=2e-5, winner_learning_rate=3e-6,
+            audio_learning_rate=1e-3, action_stream_weight=2, rally_stream_weight=3,
+            actor_stream_weight=4, action_fg_upsample=0.5, action_dilate_len=2,
+            action_block_upsample=0.2, audio_backend="atst_logmel",
+        )
+        prepared = PreparedLabels(
+            label_dirs={"action": Path("/a"), "rally": Path("/r")},
+            label_subdirs=(), frame_dir=Path("/frames"), dataset="yp_action_rally",
+        )
+        cmd = spot_training.build_command(
+            req, recipe, prepared, save_dir=Path("/run"), init_checkpoint=None, audio_dir=None,
+        )
+        start = cmd.index("--task_audio_backend")
+        self.assertEqual(cmd[start:cmd.index("--task_label_dir")], [
+            "--task_audio_backend", "action=atst_logmel",
+            "--task_audio_backend", "rally=none", "--task_audio_backend", "winner=none",
+            "--task_sample_fps", "action=30.0", "--task_sample_fps", "rally=5.0",
+            "--task_sample_fps", "winner=5.0",
+            "--task_clip_len", "rally=128", "--task_clip_len", "winner=96",
+            "--task_learning_rate", "action=0.0001", "--task_learning_rate", "rally=2e-05",
+            "--task_learning_rate", "winner=3e-06", "--audio_learning_rate", "0.001",
+            # A weight of 1 is the trainer's even split and is left out.
+            "--task_stream_weight", "action=2", "--task_stream_weight", "rally=3",
+            "--task_stream_weight", "actor=4",
+            "--task_fg_upsample", "action=0.5", "--task_dilate_len", "action=2",
+            "--action_class_upsample", "block=0.2",
+        ])
 
     def test_multi_fps_command_has_independent_streams(self) -> None:
         req = FusionTrainRequest(

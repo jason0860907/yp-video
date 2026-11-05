@@ -3077,10 +3077,9 @@ export interface components {
          * FusionTrainRequest
          * @description One SPOT training run: a recipe (which heads) plus how to train it.
          *
-         *     Fields outside the chosen recipe's ``fields`` (contract ``RECIPES``) are
-         *     accepted and ignored — the form sends every field with its default — so
-         *     a rally run carries ``audio_backend`` harmlessly and an action run
-         *     ``video_limit``.
+         *     A recipe-specific field (contract ``RECIPE_FIELDS``) outside the chosen
+         *     recipe's ``fields`` is rejected: a rally run cannot carry
+         *     ``audio_backend``, an action run ``video_limit``.
          */
         FusionTrainRequest: {
             /**
