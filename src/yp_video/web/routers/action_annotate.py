@@ -5,7 +5,6 @@ import json
 import logging
 from pathlib import Path
 from typing import Literal, TypedDict
-from urllib.parse import unquote
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
@@ -129,7 +128,7 @@ def set_done(name: str, req: DoneRequest) -> label_done.DoneState:
     Deliberately not tied to saving: Save writes the human store while this
     flag is the separate "I'm finished" claim.
     """
-    video = resolve_cut(Path(unquote(name)).name)
+    video = resolve_cut(Path(name).name)
     if video is None:
         raise HTTPException(404, "Video not found")
     flags = label_done.set_done(video.stem, "action", req.done)
@@ -148,8 +147,7 @@ async def get_annotations(
     (``loaded_source: null``), not an error: labeling can start from
     scratch on either view.
     """
-    decoded = unquote(name)
-    video = resolve_cut(Path(decoded).name)
+    video = resolve_cut(Path(name).name)
     if video is None:
         raise HTTPException(404, "Video not found")
 
@@ -205,8 +203,7 @@ async def get_annotations(
 async def get_waveform(
     name: str, points: int = Query(default=9600, ge=200, le=96000)
 ) -> AudioWaveform:
-    decoded = unquote(name)
-    video = resolve_cut(Path(decoded).name)
+    video = resolve_cut(Path(name).name)
     if video is None:
         raise HTTPException(404, "Video not found")
     return await asyncio.to_thread(audio_waveform, video, points)
@@ -299,8 +296,7 @@ def export_dataset() -> Response:
 
 @router.get("/video/{path:path}")
 def stream_video(path: str):
-    decoded_path = unquote(path)
-    video_path = resolve_cut(Path(decoded_path).name)
+    video_path = resolve_cut(Path(path).name)
     if video_path is None:
         raise HTTPException(404, "Video not found")
     response = serve_video_or_r2_redirect(video_path, CUT_R2_CATEGORIES)

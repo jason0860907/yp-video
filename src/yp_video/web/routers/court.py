@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 from typing import TypedDict
-from urllib.parse import unquote
 
 from fastapi import APIRouter, HTTPException
 
@@ -24,7 +23,7 @@ router = APIRouter()
 
 
 def _video(name: str) -> Path:
-    video = resolve_cut(Path(unquote(name)).name)
+    video = resolve_cut(Path(name).name)
     if video is None:
         raise HTTPException(404, "Video not found")
     return video

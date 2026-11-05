@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Annotated, Any, Literal, TypedDict
-from urllib.parse import unquote
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
@@ -43,7 +42,7 @@ def get_box_check(name: str) -> list[BoxCheckEntry]:
     """Every labelable event's 2XLarge boxes — what the picker clicks — and
     whether its label box is one of them (actor/box_check.py). Empty without
     a dense pass."""
-    return box_check(Path(unquote(name)).stem)
+    return box_check(Path(name).stem)
 
 
 class AssociationDone(TypedDict):
@@ -61,7 +60,7 @@ def set_done(name: str, req: DoneRequest) -> AssociationDone:
     flag afterwards — a predict re-run confirms the answers it invents
     instead of un-reviewing a finished video (extraction/done.py).
     """
-    video = resolve_cut(Path(unquote(name)).name)
+    video = resolve_cut(Path(name).name)
     if video is None:
         raise HTTPException(404, "Video not found")
     flags = label_done.set_done(video.stem, "association", req.done)
@@ -97,7 +96,7 @@ def confirm(name: str, req: ConfirmRequest) -> AssociationConfirmed:
     correction outranks a bulk confirmation), so the count reports what
     actually landed.
     """
-    stem = Path(unquote(name)).stem
+    stem = Path(name).stem
     path = extraction_store.records_path(stem)
     if not path.exists():
         raise HTTPException(404, f"No extraction records for {stem}")
@@ -214,7 +213,7 @@ def fix(
     """
     # Cuts live in R2; the crop needs one frame, so an R2-only cut is read
     # over a presigned URL rather than downloaded.
-    video_path = resolve_cut(Path(unquote(name)).name)
+    video_path = resolve_cut(Path(name).name)
     if video_path is None:
         raise HTTPException(404, f"Video not found: {name}")
     stem = video_path.stem

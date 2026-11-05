@@ -17,7 +17,6 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 from typing import TypedDict
-from urllib.parse import unquote
 
 from fastapi import APIRouter, HTTPException
 from pydantic import Field
@@ -211,7 +210,7 @@ def clusters(
     board can render crops without a second round trip: ``units`` carries the
     membership every cluster entry refers to.
     """
-    stem = Path(unquote(name)).stem
+    stem = Path(name).stem
     unit_links = links.track_keys(stem)
     units, labels = _load_or_http(
         lambda: identity.cluster_video(
@@ -258,7 +257,7 @@ class ReidPlayers(TypedDict):
 @router.get("/players/{name}")
 def get_players(name: str, model: str = DEFAULT_EMBEDDER) -> ReidPlayers:
     """Saved identities + nearest-centroid match for every unit."""
-    stem = Path(unquote(name)).stem
+    stem = Path(name).stem
     assignments = store.load_players(stem).assignments
     matches: dict[str, ReidMatch] = {}
     names: dict[str, str] = {}
@@ -295,7 +294,7 @@ def put_done(name: str, req: ReidDoneRequest) -> ReidDone:
     """Mark (or unmark) a video's labeling as finished — the Label page's
     Done button. A human verdict, stored in the shared label-done sidecar;
     what it implies about auto actors is this endpoint's affair (done.py)."""
-    stem = Path(unquote(name)).stem
+    stem = Path(name).stem
     if not extraction_store.records_path(stem).exists():
         raise HTTPException(404, f"No extraction records for {stem}")
     confirmed = done.mark_done(
@@ -320,7 +319,7 @@ class ReidSavedPlayers(TypedDict):
 def put_players(name: str, req: SavePlayersRequest) -> ReidSavedPlayers:
     """Persist the event names. Returns them without matches — a save must
     succeed even when the current model's matrix is missing."""
-    stem = Path(unquote(name)).stem
+    stem = Path(name).stem
     if not extraction_store.records_path(stem).exists():
         raise HTTPException(404, f"No extraction records for {stem}")
     before = _naming_rows(store.load_players(stem))
@@ -363,7 +362,7 @@ def seed_cluster(name: str, req: SeedClusterRequest) -> ReidSeedClusters:
     come back agglomeratively clustered (same threshold) so the UI can show
     them as leftover pools for further seeding.
     """
-    stem = Path(unquote(name)).stem
+    stem = Path(name).stem
     records, matrix = _load_or_http(
         lambda: identity.load_embeddings(
             stem, model=_validated_fresh_model(stem, req.model)

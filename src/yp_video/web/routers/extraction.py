@@ -22,7 +22,6 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 from typing import Any, TypedDict
-from urllib.parse import unquote
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
@@ -180,7 +179,7 @@ async def detect(req: DetectRequest) -> dict:
 @router.get("/records/{name}")
 def records(name: str) -> ExtractionRecords:
     """One video's extraction records (UI payload)."""
-    stem = Path(unquote(name)).stem
+    stem = Path(name).stem
     path = extraction_store.records_path(stem)
     if not path.exists():
         raise HTTPException(404, f"No extraction records for {stem}")
@@ -246,8 +245,8 @@ def crop(name: str, crop_file: str, masked: bool = False) -> FileResponse:
     """One crop jpg. ``masked=True`` serves the background-suppressed variant
     the masked embedders saw. No silent fallback to the original: a viewer
     judging masked-embedder output must never be shown unmasked pixels."""
-    stem = Path(unquote(name)).stem
-    fname = Path(unquote(crop_file)).name
+    stem = Path(name).stem
+    fname = Path(crop_file).name
     path = extraction_store.masked_crop_dir(stem) / fname if masked else extraction_store.crop_dir(stem) / fname
     if not path.exists():
         detail = (

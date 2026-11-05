@@ -16,7 +16,6 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 from typing import TypedDict
-from urllib.parse import unquote
 
 from fastapi import APIRouter, HTTPException
 from pydantic import Field
@@ -142,7 +141,7 @@ def masks(name: str, rally: int) -> TrackMasks:
 
     import numpy as np
 
-    stem = Path(unquote(name)).stem
+    stem = Path(name).stem
     masks_path = tracks_store.tracks_masks_path(stem)
     if not masks_path.exists():
         raise HTTPException(404, f"No track masks for {stem} — re-run tracking")
@@ -162,7 +161,7 @@ def event_links(name: str) -> dict[str, TrackLink]:
     """event → tracklet links (extraction/links.py) for crop badges, the
     overlay's action colours and propagation. Apart from the tracklets
     because they move with every actor fix, and the tracklets do not."""
-    stem = Path(unquote(name)).stem
+    stem = Path(name).stem
     return links.link_payload(stem)
 
 
@@ -171,7 +170,7 @@ def tracklets(name: str) -> TrackData:
     """Tracklets for the video overlay. Scores stay server-side — the overlay
     only draws boxes, and the payload holds ~286k of them (8.5 MB of JSON,
     but ~1.5 MB over the wire once GZipMiddleware has had it)."""
-    stem = Path(unquote(name)).stem
+    stem = Path(name).stem
     if not tracks_store.tracks_path(stem).exists():
         raise HTTPException(404, f"No tracking for {stem} — run Rally Tracking first")
 

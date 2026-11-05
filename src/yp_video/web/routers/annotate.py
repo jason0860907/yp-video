@@ -90,7 +90,7 @@ def list_results() -> list[worklists.RallyResult]:
 @router.put("/done/{name}")
 def set_done(name: str, req: DoneRequest) -> label_done.DoneState:
     """Persist the human "rally labeling is finished" verdict for one video."""
-    flags = label_done.set_done(Path(unquote(name)).stem, "rally", req.done)
+    flags = label_done.set_done(Path(name).stem, "rally", req.done)
     return {"done": flags["rally"]}
 
 
