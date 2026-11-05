@@ -247,8 +247,24 @@
               "type": "null"
             }
           ],
-          "description": "Camera-frame court side the rally was served from, read off where its serve was struck. Null when the rally does not open on a spotted serve, or the match's serves do not split by side.",
+          "description": "Camera-frame court side the rally was served from (see `serving_side_from`). Null when nothing names it.",
           "title": "Serving Side"
+        },
+        "serving_side_from": {
+          "anyOf": [
+            {
+              "enum": [
+                "serve",
+                "previous_winner"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What named `serving_side`: `serve` \u2014 where the rally's opening serve was struck; `previous_winner` \u2014 the match's serves do not split by side, so the side that won the set's previous rally serves. Null exactly when `serving_side` is null.",
+          "title": "Serving Side From"
         }
       },
       "required": [
@@ -256,7 +272,8 @@
         "serve_point",
         "score_event_index",
         "deciding_event_indices",
-        "serving_side"
+        "serving_side",
+        "serving_side_from"
       ],
       "title": "RallyOutcome",
       "type": "object"

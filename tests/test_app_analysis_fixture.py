@@ -57,6 +57,7 @@ def fixture_bundle(f: dict) -> Bundle:
                             position[t] for t in f["deciding"].get(str(r["index"]), [])
                         ],
                         "serving_side": None,
+                        "serving_side_from": None,
                     }
                     for r in f["rallies"]
                 ],

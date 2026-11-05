@@ -148,7 +148,7 @@ def test_an_antenna_hit_ends_the_rally() -> None:
     assert touch_sides([{"label": e["label"]} for e in events], "near") == ["near", "far", "far", None]
     assert rally_outcomes(RALLY, events) == [
         {"rally_index": 1, "serve_point": False, "score_event_index": 3, "deciding_event_indices": [1, 2],
-         "serving_side": None},
+         "serving_side": None, "serving_side_from": None},
     ]
 
 
@@ -162,7 +162,7 @@ def test_a_net_contact_is_no_touch_and_ground_ends_the_rally() -> None:
     ]
     assert rally_outcomes(RALLY, events) == [
         {"rally_index": 1, "serve_point": False, "score_event_index": 4, "deciding_event_indices": [2, 3],
-         "serving_side": None},
+         "serving_side": None, "serving_side_from": None},
     ]
 
 
@@ -180,6 +180,10 @@ def _served_match(winners, serve_ys, sets=None):
     return rallies, events
 
 
+def _sides(rallies, events) -> dict:
+    return {index: side for index, (side, _) in serving_sides(rallies, events).items()}
+
+
 def test_each_rally_is_served_from_where_its_serve_was_struck() -> None:
     """The previous winners anchor which half each side serves from; a rally
     whose previous winner is wrong still reads its own serve."""
@@ -188,24 +192,41 @@ def test_each_rally_is_served_from_where_its_serve_was_struck() -> None:
     ys = [near, near, near, far, far, near, far, near]  # rally 7's anchor (far) is wrong
     rallies, events = _served_match(winners, ys)
 
-    assert serving_sides(rallies, events) == {
-        1: "near", 2: "near", 3: "near", 4: "far", 5: "far", 6: "near", 7: "far", 8: "near",
-    }
-    assert [o["serving_side"] for o in rally_outcomes(rallies, events)] == [
-        "near", "near", "near", "far", "far", "near", "far", "near",
-    ]
+    expected = ["near", "near", "near", "far", "far", "near", "far", "near"]
+    assert serving_sides(rallies, events) == {i + 1: (side, "serve") for i, side in enumerate(expected)}
+    outcomes = rally_outcomes(rallies, events)
+    assert [o["serving_side"] for o in outcomes] == expected
+    assert {o["serving_side_from"] for o in outcomes} == {"serve"}
 
 
 def test_a_rally_not_opening_on_a_serve_names_no_server() -> None:
     rallies, events = _served_match(["near", "far", "near", "far", "near"], [0.8, None, 0.3, 0.8, 0.3])
 
-    assert serving_sides(rallies, events) == {1: "near", 2: None, 3: "far", 4: "near", 5: "far"}
+    assert serving_sides(rallies, events)[2] == (None, None)
+    assert _sides(rallies, events) == {1: "near", 2: None, 3: "far", 4: "near", 5: "far"}
 
 
-def test_serves_that_do_not_split_name_no_server() -> None:
-    # No winners to anchor on; and anchors from one side only.
-    assert set(serving_sides(*_served_match([None] * 3, [0.8, 0.3, 0.8])).values()) == {None}
-    assert set(serving_sides(*_served_match(["near"] * 4, [0.8, 0.8, 0.8, 0.8])).values()) == {None}
+def test_without_winners_nothing_names_a_server() -> None:
+    assert set(serving_sides(*_served_match([None] * 3, [0.8, 0.3, 0.8])).values()) == {(None, None)}
+
+
+def test_serves_that_do_not_split_fall_back_to_the_previous_winner() -> None:
+    """An end-line camera sees only the far server: every serve sits on one
+    half, so the previous rally's winner serves — a rally opening on no
+    serve too — and the set's first rally names none."""
+    rallies, events = _served_match(
+        ["near", "far", "far", "near", "far"], [0.3, 0.3, None, 0.3, 0.3], sets=[1, 1, 1, 2, 2]
+    )
+
+    assert serving_sides(rallies, events) == {
+        1: (None, None),
+        2: ("near", "previous_winner"),
+        3: ("far", "previous_winner"),
+        4: (None, None),
+        5: ("near", "previous_winner"),
+    }
+    outcome = rally_outcomes(rallies, events)[1]
+    assert (outcome["serving_side"], outcome["serving_side_from"]) == ("near", "previous_winner")
 
 
 def test_a_new_set_does_not_anchor_on_the_last_set() -> None:
@@ -215,4 +236,4 @@ def test_a_new_set_does_not_anchor_on_the_last_set() -> None:
         ["far", "near", "near", "far"], [0.8, 0.3, 0.3, 0.8], sets=[1, 1, 2, 2]
     )
 
-    assert serving_sides(rallies, events) == {1: "near", 2: "far", 3: "far", 4: "near"}
+    assert _sides(rallies, events) == {1: "near", 2: "far", 3: "far", 4: "near"}

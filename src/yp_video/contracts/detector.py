@@ -8,7 +8,7 @@ them directly.
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class CameraAngle(str, Enum):
@@ -143,11 +143,24 @@ class RallyOutcome(BaseModel):
     )
     serving_side: Literal["left", "right", "near", "far"] | None = Field(
         description=(
-            "Camera-frame court side the rally was served from, read off where "
-            "its serve was struck. Null when the rally does not open on a "
-            "spotted serve, or the match's serves do not split by side."
+            "Camera-frame court side the rally was served from (see "
+            "`serving_side_from`). Null when nothing names it."
         ),
     )
+    serving_side_from: Literal["serve", "previous_winner"] | None = Field(
+        description=(
+            "What named `serving_side`: `serve` — where the rally's opening "
+            "serve was struck; `previous_winner` — the match's serves do not "
+            "split by side, so the side that won the set's previous rally "
+            "serves. Null exactly when `serving_side` is null."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def side_and_source_agree(self):
+        if (self.serving_side is None) != (self.serving_side_from is None):
+            raise ValueError("serving_side and serving_side_from are null together")
+        return self
 
 
 class DetectorInput(BaseModel):

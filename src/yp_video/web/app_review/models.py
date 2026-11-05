@@ -50,6 +50,7 @@ class RallyOutcome(Artifact):
     score_event_index: int | None
     deciding_event_indices: list[int]
     serving_side: Literal["left", "right", "near", "far"] | None
+    serving_side_from: Literal["serve", "previous_winner"] | None
 
 
 class Result(Artifact):
