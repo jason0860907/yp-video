@@ -555,7 +555,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/annotate/video/{path}": {
+    "/api/annotate/video/{name}": {
         parameters: {
             query?: never;
             header?: never;
@@ -563,7 +563,7 @@ export interface paths {
             cookie?: never;
         };
         /** Stream Video */
-        get: operations["stream_video_api_annotate_video__path__get"];
+        get: operations["stream_video_api_annotate_video__name__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -6043,12 +6043,12 @@ export interface operations {
             };
         };
     };
-    stream_video_api_annotate_video__path__get: {
+    stream_video_api_annotate_video__name__get: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                path: string;
+                name: string;
             };
             cookie?: never;
         };

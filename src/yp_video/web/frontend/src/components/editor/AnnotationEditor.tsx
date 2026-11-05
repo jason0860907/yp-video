@@ -109,7 +109,8 @@ const fromRow = (r: components['schemas']['RallyRow']): EditorAnnotation => ({
 
 interface AnnotationEditorProps {
   data: EditorData | null;
-  videoStreamPath: (videoPath: string) => string;
+  /** The stream URL of a cut, by its filename (the file header's `video`). */
+  videoStreamPath: (videoName: string) => string;
   previewBackoff?: number;
   /** Runs after an EXPLICIT save only. Autosave fires every couple of
    *  seconds while editing, and this hook is where the page pushes the whole
@@ -176,8 +177,8 @@ export function AnnotationEditor({ data, videoStreamPath, previewBackoff = 3, on
     // New data replaces the rows on screen: unsaved edits of the previous
     // video (or store) are written first, not dropped.
     flushUnsaved();
-    const path = data.video;
-    setVideoName(path);
+    const name = data.video;
+    setVideoName(name);
     const fromServer: EditorAnnotation[] = data.results
       .map(fromRow)
       .sort(byStart)
@@ -189,11 +190,11 @@ export function AnnotationEditor({ data, videoStreamPath, previewBackoff = 3, on
     setSelectedKey(null);
     setMarkStart(null);
     const el = videoRef.current;
-    if (path && el) {
+    if (name && el) {
       el.pause();
       el.removeAttribute('src');
       el.load();
-      el.src = videoStreamPath(path);
+      el.src = videoStreamPath(name);
       el.load();
     }
   }, [data, videoStreamPath]);

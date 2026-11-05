@@ -82,7 +82,7 @@ export function DownloadClipsModal({ video, segments, onClose }: Props) {
           <div className="min-w-0">
             <h3 className="font-heading text-base font-semibold text-text-primary">Download rally clips</h3>
             <p className="mt-1 truncate text-xs text-text-muted">
-              Cut from <span className="text-text-secondary">{video.split('/').pop()}</span>
+              Cut from <span className="text-text-secondary">{video}</span>
             </p>
           </div>
           <button type="button" onClick={onClose} className="flex-shrink-0 text-text-muted hover:text-text-primary" aria-label="Close">

@@ -40,7 +40,7 @@ export const RALLY_MODE: ModeDescriptor = {
 };
 
 // Stable reference so the editor's load effect doesn't re-run each render.
-const streamPath = (vp: string) => apiUrl(API.annotate.video(vp));
+const streamPath = (name: string) => apiUrl(API.annotate.video(name));
 
 /** The shared source choice → this store's tag — exactly one store, no
  *  fallback. Rally's pre-annotation store is the SPOT pass, tagged

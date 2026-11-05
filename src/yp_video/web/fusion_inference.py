@@ -121,7 +121,7 @@ def save_rally_pre_annotation(
     write_jsonl(
         path,
         {
-            "video": str(video),
+            "video": video.name,
             "duration": duration_s,
             "max_rally_id": max_rally_id,
             "source": {

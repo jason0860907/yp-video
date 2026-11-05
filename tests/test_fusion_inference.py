@@ -295,6 +295,20 @@ class SpotStageTests(unittest.TestCase):
         self.assertIsNone(kwargs["rallies"])
         self.assertEqual(out["rallies"], 1)
 
+    def test_the_rally_pre_annotation_names_its_cut_by_filename(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                patch.object(fi, "RALLY_SPOT_PRE_ANNOTATIONS_DIR", Path(tmp)),
+                patch.object(fi.prelabel, "checkpoint_ref", return_value="c.pt"),
+            ):
+                path, count = fi.save_rally_pre_annotation(
+                    video=Path("/videos/cuts-sideline/match.mp4"), duration_s=10.0,
+                    segments=[{"start": 0.0, "end": 3.0}], checkpoint=Path("c.pt"),
+                    options=RallyOptions(0.5, 2, 4),
+                )
+            header = json.loads(path.read_text(encoding="utf-8").splitlines()[0])
+        self.assertEqual((header["video"], count), ("match.mp4", 1))
+
 
 class SummaryTests(unittest.TestCase):
     def test_counts_and_skip_reasons_read_as_one_line(self):

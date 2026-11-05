@@ -43,6 +43,7 @@ class RallyRow(TypedDict):
 class RallyAnnotationData(TypedDict):
     """One rally result file: its header, its rows, and the store it came from."""
 
+    #: The cut's filename (``<stem>.mp4``), as resolve_cut takes it.
     video: str
     duration: float
     #: The id high-water mark (see _prior_max_rally_id).

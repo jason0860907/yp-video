@@ -150,7 +150,7 @@ export const API = {
   },
   annotate: {
     annotations: '/annotate/annotations',
-    video: (path: string) => `/annotate/video/${encodeURIComponent(path)}`,
+    video: (name: string) => `/annotate/video/${encodeURIComponent(name)}`,
   },
   actionAnnotate: {
     annotations: '/action-annotate/annotations',

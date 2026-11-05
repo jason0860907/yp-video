@@ -8,10 +8,11 @@ import shutil
 import tempfile
 import zipfile
 from pathlib import Path
-from urllib.parse import unquote
+from typing import Annotated
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, Response
+from pydantic import AfterValidator
 from starlette.background import BackgroundTask
 
 from yp_video.config import (
@@ -54,8 +55,19 @@ _SOURCES = RALLY_SOURCES
 _SOURCE_BY_TAG = SOURCE_BY_TAG
 
 
+def _cut_name(value: str) -> str:
+    if Path(value).name != value or not value.endswith(".mp4"):
+        raise ValueError("expected a cut filename ending in .mp4, not a path")
+    return value
+
+
+#: A cut's filename — what a rally file's header ``video`` holds and what
+#: resolve_cut takes.
+CutName = Annotated[str, AfterValidator(_cut_name)]
+
+
 class SaveAnnotationsRequest(StrictModel):
-    video: str
+    video: CutName
     duration: float
     annotations: list[Annotation]
 
@@ -136,10 +148,9 @@ async def get_result(name: str, source: str) -> RallyAnnotationData:
     raise HTTPException(404, "Results file not found")
 
 
-@router.get("/video/{path:path}")
-def stream_video(path: str):
-    # Only the basename names a cut; the rest of the path is never trusted.
-    video_path = resolve_cut(Path(unquote(path)).name)
+@router.get("/video/{name}")
+def stream_video(name: str):
+    video_path = resolve_cut(name)
     if video_path is None:
         raise HTTPException(404, "Video not found")
     response = serve_video_or_r2_redirect(video_path, CUT_R2_CATEGORIES)
@@ -158,9 +169,8 @@ async def save_annotations(req: SaveAnnotationsRequest) -> RallySaveResult:
 
     RALLY_ANNOTATIONS_DIR.mkdir(parents=True, exist_ok=True)
 
-    video_path = Path(req.video)
-    output_name = annotation_name(video_path.stem)
-    output_path = RALLY_ANNOTATIONS_DIR / output_name
+    stem = Path(req.video).stem
+    output_path = RALLY_ANNOTATIONS_DIR / annotation_name(stem)
 
     # Run file I/O in a thread so we don't block the event loop
     # (fsync can be slow under concurrent load).
@@ -178,7 +188,7 @@ async def save_annotations(req: SaveAnnotationsRequest) -> RallySaveResult:
     # An unchanged rewrite — the autosave timer, or the tab-close flush —
     # leaves no row at all.
     audit.record_diff(
-        target=video_path.stem,
+        target=stem,
         before=before,
         after=saved,
         key=lambda r: r["rally_id"],
@@ -205,27 +215,21 @@ class ClipSegment(StrictModel):
 
 
 class ClipRequest(StrictModel):
-    video: str
+    video: CutName
     segment: ClipSegment
 
 
 class ClipZipRequest(StrictModel):
-    video: str
+    video: CutName
     segments: list[ClipSegment]
 
 
 def _resolve_clip_source(video: str) -> tuple[str, str]:
-    """An annotation's stored video path → ``(stem, ffmpeg source)``.
-
-    Annotation files store the source video as the path it was cut from.
-    Accept either an absolute path or a bare filename resolved against the
-    cut dirs. A cut that lives only in R2 is read over a presigned URL:
-    FFmpeg input-seeks to the segment, so only its bytes are fetched.
+    """A cut filename → ``(stem, ffmpeg source)``. A cut that lives only in
+    R2 is read over a presigned URL: FFmpeg input-seeks to the segment, so
+    only its bytes are fetched.
     """
-    p = Path(video)
-    if p.is_absolute() and p.is_file():
-        return p.stem, str(p)
-    cut = resolve_cut(p.name)
+    cut = resolve_cut(video)
     source = cut_media_source(cut) if cut is not None else None
     if source is None:
         raise HTTPException(404, f"Source video not found locally or in R2: {video}")
