@@ -24,7 +24,7 @@ import time
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Literal, TypedDict, get_args
+from typing import Literal, TypedDict, get_args
 
 from yp_video.config import EXTRACTION_DIR, REID_DATASETS_DIR
 from yp_video.contracts.reid import (
@@ -35,6 +35,7 @@ from yp_video.contracts.reid import (
     ROLE_QUERY,
     SPLIT_TEST,
     SPLIT_TRAIN,
+    DatasetConfig,
     DatasetManifest,
 )
 from yp_video.core.jsonl import read_jsonl_cached
@@ -318,8 +319,8 @@ class ReidDatasetInfo(TypedDict):
     created_at: float
     #: n_samples / n_players / n_train / n_test / n_query / n_gallery / n_dropped …
     counts: dict[str, int]
-    #: The manifest's DatasetConfig as written — open, read back verbatim.
-    config: dict[str, Any]
+    #: The export parameters, as the manifest recorded them.
+    config: DatasetConfig
 
 
 def list_datasets() -> list[ReidDatasetInfo]:
@@ -337,8 +338,8 @@ def list_datasets() -> list[ReidDatasetInfo]:
             continue
         out.append({
             "name": d.name,
-            "created_at": manifest.get("created_at", 0),
-            "counts": manifest.get("counts", {}),
-            "config": manifest.get("config", {}),
+            "created_at": manifest["created_at"],
+            "counts": manifest["counts"],
+            "config": manifest["config"],
         })
     return sorted(out, key=lambda d: -d["created_at"])

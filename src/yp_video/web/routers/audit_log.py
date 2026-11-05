@@ -32,7 +32,7 @@ class AuditEvent(TypedDict):
     actor: str
     action: str
     target: str | None
-    summary: dict[str, Any]
+    summary: dict[str, audit.SummaryValue]
     outcome: Literal["ok", "error"]
     status: int | None
     duration_ms: int | None

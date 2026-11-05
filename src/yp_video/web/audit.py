@@ -108,13 +108,17 @@ UPDATE audit_events
 """
 
 
+#: What a route records in its row summary: target-side counts and flags.
+SummaryValue = str | int | float | bool | None
+
+
 @dataclass(slots=True)
 class AuditEvent:
     actor: str
     action: str
     at: datetime = field(default_factory=lambda: datetime.now(UTC))
     target: str | None = None
-    summary: dict[str, Any] = field(default_factory=dict)
+    summary: dict[str, SummaryValue] = field(default_factory=dict)
     outcome: str = "ok"
     status: int | None = None
     duration_ms: int | None = None
@@ -145,7 +149,7 @@ def changed(items: list[dict[str, Any]]) -> None:
         d["changes"] = items
 
 
-def detail(*, target: str | None = None, **summary: Any) -> None:
+def detail(*, target: str | None = None, **summary: SummaryValue) -> None:
     """Add what only this endpoint knows to its audit row.
 
     The middleware already records the actor, route, outcome and timing; this
@@ -203,7 +207,7 @@ def record_diff(
     before: Iterable[Mapping[str, Any]],
     after: Iterable[Mapping[str, Any]],
     key: Callable[[Mapping[str, Any]], Any],
-    **summary: Any,
+    **summary: SummaryValue,
 ) -> Delta:
     """Diff two revisions and file the result — the whole path in one call.
 
@@ -374,7 +378,7 @@ def job_transition(job, status: str) -> None:
     `job.params` is never dumped wholesale — it carries per-file item lists
     that would dwarf the row.
     """
-    summary: dict[str, Any] = {"job": job.id, "type": job.type}
+    summary: dict[str, SummaryValue] = {"job": job.id, "type": job.type}
     if job.error:
         summary["error"] = job.error[:200]
     record(AuditEvent(

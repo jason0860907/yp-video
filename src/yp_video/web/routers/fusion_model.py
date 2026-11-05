@@ -8,7 +8,7 @@ recipe can warm-start from, and launches ``spot_training.start_training_job``.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import TypedDict
 
 from fastapi import APIRouter
 
@@ -31,7 +31,11 @@ from yp_video.web.spot_runs import (
     performance_payload,
 )
 from yp_video.web.spot_training import start_training_job
-from yp_video.web.train_requests import FusionTrainRequest, RecipeId
+from yp_video.web.train_requests import (
+    FusionTrainDefaults,
+    FusionTrainRequest,
+    RecipeId,
+)
 
 router = APIRouter()
 
@@ -46,7 +50,7 @@ class FusionRecipe(TypedDict):
     #: Request fields the form shows for this recipe, on top of the common ones.
     fields: list[str]
     #: Request values the form resets to when this recipe is picked.
-    defaults: dict[str, Any]
+    defaults: FusionTrainDefaults
     #: What a package from this recipe can be loaded for on its own.
     serveable_tasks: list[SpotTask]
 

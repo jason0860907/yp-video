@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from fastapi import HTTPException
+from pydantic import TypeAdapter, ValidationError
 
 from yp_video.action import training_labels
 from yp_video.config import CUT_KINDS
@@ -16,7 +17,7 @@ from yp_video.core.jsonl import write_jsonl
 from yp_video.web import spot_training
 from yp_video.web.label_sources import PreparedLabels, check_task_supervision, in_view
 from yp_video.web.routers import fusion_model
-from yp_video.web.train_requests import FusionTrainRequest
+from yp_video.web.train_requests import FusionTrainDefaults, FusionTrainRequest
 
 
 class FusionModelStatusTests(unittest.TestCase):
@@ -111,6 +112,13 @@ class BuildCommandTests(unittest.TestCase):
     def test_every_recipe_default_is_a_field_it_accepts(self) -> None:
         for recipe in RECIPES.values():
             FusionTrainRequest(recipe=recipe.id, validation="ratio", **recipe.defaults)
+
+    def test_recipe_defaults_are_served_as_typed_request_fields(self) -> None:
+        defaults = TypeAdapter(FusionTrainDefaults)
+        for recipe in RECIPES.values():
+            defaults.validate_python(dict(recipe.defaults))
+        with self.assertRaises(ValidationError):
+            defaults.validate_python({"sample_fps": 5.0})
 
     def test_tuning_fields_become_their_task_flags(self) -> None:
         recipe = RECIPES["action_rally_winner_actor"]

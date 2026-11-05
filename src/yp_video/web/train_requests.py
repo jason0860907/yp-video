@@ -11,9 +11,9 @@ stay HTTP-thin.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, TypedDict
 
-from pydantic import Field, model_validator
+from pydantic import ConfigDict, Field, model_validator
 
 from yp_video.contracts.action import RECIPE_FIELDS, RECIPES
 from yp_video.web.schemas import StrictModel
@@ -309,6 +309,16 @@ class FusionTrainRequest(StrictModel):
                 f"acc_grad_iter ({self.acc_grad_iter})"
             )
         return self
+
+
+#: A recipe's form defaults (contract ``Recipe.defaults``): any subset of the
+#: request's fields, typed as the request types them.
+FusionTrainDefaults = TypedDict(
+    "FusionTrainDefaults",
+    {name: field.annotation for name, field in FusionTrainRequest.model_fields.items()},
+    total=False,
+)
+FusionTrainDefaults.__pydantic_config__ = ConfigDict(extra="forbid")
 
 
 class ReidExportRequest(StrictModel):

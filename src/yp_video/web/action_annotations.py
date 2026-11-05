@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Literal, NamedTuple, NotRequired, TypedDict
+from typing import Literal, NamedTuple, NotRequired, TypedDict
 
 from fastapi import HTTPException
 
@@ -67,6 +67,18 @@ class ActionAttributeDefaults(TypedDict):
     jump: bool | None
 
 
+class ManualSource(TypedDict):
+    type: Literal["manual"]
+
+
+class SpotSource(TypedDict):
+    """A pre-annotation's provenance (``action.prelabel``)."""
+
+    type: Literal["spot"]
+    checkpoint: str
+    prediction_video: str | None
+
+
 class ActionAnnotationData(TypedDict):
     """One video's action annotation, as the editor loads it."""
 
@@ -83,10 +95,9 @@ class ActionAnnotationData(TypedDict):
     events: list[NormalizedActionEvent]
     #: Per event id; shown beside the editor's own value, never saved.
     attribute_defaults: dict[str, ActionAttributeDefaults]
-    #: The file's provenance header (``{"type": "manual"}``, or the SPOT
-    #: checkpoint that predicted it) — absent when no file exists. Open: each
-    #: writer stamps its own keys.
-    source: NotRequired[dict[str, Any]]
+    #: The file's provenance header: saved by hand, or predicted by a SPOT
+    #: checkpoint — absent when no file exists.
+    source: NotRequired[ManualSource | SpotSource]
 
 
 def annotation_path(video_name: str) -> Path:

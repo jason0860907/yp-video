@@ -1939,9 +1939,7 @@ export interface components {
                 [key: string]: components["schemas"]["ActionAttributeDefaults"];
             };
             /** Source */
-            source?: {
-                [key: string]: unknown;
-            };
+            source?: components["schemas"]["ManualSource"] | components["schemas"]["SpotSource"];
         };
         /** ActionAnnotationStats */
         ActionAnnotationStats: {
@@ -2316,7 +2314,7 @@ export interface components {
             target: string | null;
             /** Summary */
             summary: {
-                [key: string]: unknown;
+                [key: string]: string | number | boolean | null;
             };
             /**
              * Outcome
@@ -2737,6 +2735,36 @@ export interface components {
              */
             status: "unlabeled" | "pre-annotate" | "in-progress" | "done";
         };
+        /**
+         * DatasetConfig
+         * @description The export parameters that produced a dataset.
+         */
+        DatasetConfig: {
+            /**
+             * Split Mode
+             * @description Resolved mode: session | crops | all_train
+             */
+            split_mode: string;
+            /**
+             * Requested Mode
+             * @description Mode as requested, e.g. 'auto'
+             */
+            requested_mode: string;
+            /** Test Ratio */
+            test_ratio: number;
+            /** Seed */
+            seed: number;
+            /**
+             * Masked
+             * @description Whether samples reference background-suppressed crops (crops-masked/)
+             */
+            masked: boolean;
+            /**
+             * Test Groups
+             * @description Groups held out entirely (session mode)
+             */
+            test_groups?: string[];
+        };
         /** Decision */
         Decision: {
             /**
@@ -3066,12 +3094,117 @@ export interface components {
             description: string;
             /** Fields */
             fields: string[];
-            /** Defaults */
-            defaults: {
-                [key: string]: unknown;
-            };
+            defaults: components["schemas"]["FusionTrainDefaults"];
             /** Serveable Tasks */
             serveable_tasks: ("rally" | "winner" | "action" | "location" | "side" | "jump" | "actor")[];
+        };
+        /** FusionTrainDefaults */
+        FusionTrainDefaults: {
+            /**
+             * Recipe
+             * @enum {string}
+             */
+            recipe?: "rally" | "rally_winner" | "action" | "action_rally_winner" | "action_rally_winner_actor";
+            /** Run Name */
+            run_name?: string | null;
+            /** Init Checkpoint */
+            init_checkpoint?: string | null;
+            /**
+             * Camera View
+             * @enum {string}
+             */
+            camera_view?: "all" | "broadcast" | "sideline";
+            /**
+             * Validation
+             * @enum {string}
+             */
+            validation?: "ratio" | "manual" | "none";
+            /** Validation Videos */
+            validation_videos?: string[];
+            /** Val Ratio */
+            val_ratio?: number;
+            /** Split Seed */
+            split_seed?: number;
+            /** Include Predictions */
+            include_predictions?: boolean;
+            /** Video Limit */
+            video_limit?: number;
+            /** Action Sample Fps */
+            action_sample_fps?: number;
+            /** Rally Sample Fps */
+            rally_sample_fps?: number;
+            /** Winner Sample Fps */
+            winner_sample_fps?: number;
+            /** Rally Clip Len */
+            rally_clip_len?: number | null;
+            /** Winner Clip Len */
+            winner_clip_len?: number | null;
+            /** Acc Grad Iter */
+            acc_grad_iter?: number;
+            /**
+             * Audio Backend
+             * @enum {string}
+             */
+            audio_backend?: "logmel" | "atst_logmel" | "none";
+            /**
+             * Feature Arch
+             * @enum {string}
+             */
+            feature_arch?: "rny008_tv_gsm" | "rny008_tv_tsm" | "rny008_tv" | "rny008_gsm" | "rny008_tsm" | "rny008" | "rny002_gsm" | "rny002_tsm" | "rny002" | "convnextt_dv3_gsm" | "convnextt_dv3_tsm" | "convnextt_dv3" | "convnextt2_gsm" | "convnextt2_tsm" | "convnextt2" | "convnextt_gsm" | "convnextt_tsm" | "convnextt" | "rn50_gsm" | "rn50_tsm" | "rn50" | "rn18_gsm" | "rn18_tsm" | "rn18";
+            /**
+             * Temporal Arch
+             * @enum {string}
+             */
+            temporal_arch?: "gru" | "deeper_gru" | "mingru" | "mstcn" | "asformer";
+            /** Clip Len */
+            clip_len?: number;
+            /** Activation Checkpointing */
+            activation_checkpointing?: boolean;
+            /** Freeze Backbone */
+            freeze_backbone?: boolean;
+            /** Batch Size */
+            batch_size?: number;
+            /** Num Epochs */
+            num_epochs?: number;
+            /** Warm Up Epochs */
+            warm_up_epochs?: number;
+            /** Learning Rate */
+            learning_rate?: number;
+            /** Action Learning Rate */
+            action_learning_rate?: number | null;
+            /** Rally Learning Rate */
+            rally_learning_rate?: number | null;
+            /** Winner Learning Rate */
+            winner_learning_rate?: number | null;
+            /** Audio Learning Rate */
+            audio_learning_rate?: number | null;
+            /** Action Stream Weight */
+            action_stream_weight?: number;
+            /** Rally Stream Weight */
+            rally_stream_weight?: number;
+            /** Winner Stream Weight */
+            winner_stream_weight?: number;
+            /** Actor Stream Weight */
+            actor_stream_weight?: number;
+            /** Action Fg Upsample */
+            action_fg_upsample?: number | null;
+            /** Action Block Upsample */
+            action_block_upsample?: number | null;
+            /** Action Dilate Len */
+            action_dilate_len?: number;
+            /** Num Workers */
+            num_workers?: number;
+            /**
+             * Criterion
+             * @enum {string}
+             */
+            criterion?: "map" | "loss";
+            /** Start Val Epoch */
+            start_val_epoch?: number;
+            /** Epoch Num Frames */
+            epoch_num_frames?: number | null;
+            /** Gpu */
+            gpu?: number;
         };
         /**
          * FusionTrainRequest
@@ -3506,6 +3639,14 @@ export interface components {
             total: number;
             /** Reasons */
             reasons: components["schemas"]["LossReasonShare"][];
+        };
+        /** ManualSource */
+        ManualSource: {
+            /**
+             * Type
+             * @constant
+             */
+            type: "manual";
         };
         /** MatchDetail */
         MatchDetail: {
@@ -4034,10 +4175,7 @@ export interface components {
             counts: {
                 [key: string]: number;
             };
-            /** Config */
-            config: {
-                [key: string]: unknown;
-            };
+            config: components["schemas"]["DatasetConfig"];
         };
         /** ReidDone */
         ReidDone: {
@@ -4592,6 +4730,21 @@ export interface components {
             checkpoints?: components["schemas"]["SpotCheckpoint"][];
             /** Default Checkpoint */
             default_checkpoint?: string;
+        };
+        /**
+         * SpotSource
+         * @description A pre-annotation's provenance (``action.prelabel``).
+         */
+        SpotSource: {
+            /**
+             * Type
+             * @constant
+             */
+            type: "spot";
+            /** Checkpoint */
+            checkpoint: string;
+            /** Prediction Video */
+            prediction_video: string | null;
         };
         /**
          * Stats
