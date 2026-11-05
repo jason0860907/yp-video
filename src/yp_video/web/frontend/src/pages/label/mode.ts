@@ -39,10 +39,11 @@ export interface ModeDescriptor {
   /** Mode-specific chips rendered after the name in the combobox row, in
    *  addition to the shared status chip. */
   rowExtras?: (row: UnionVideo) => ReactNode;
-  /** PUT endpoint toggling the stored Done flag, for the page-level Done
-   *  button. Absent when the panel owns the button instead (ReID, whose
-   *  Done also confirms auto actors and saves first). */
-  doneApi?: (video: string) => string;
+  /** Toggles the stored Done flag, for the page-level Done button; resolves
+   *  to the stored flag and how many auto picks it confirmed (Association
+   *  only). Absent when the panel owns the button instead (ReID, whose Done
+   *  also confirms auto actors and saves first). */
+  setDone?: (video: string, done: boolean) => Promise<{ done: boolean; confirmed?: number }>;
   /** react-query key of this mode's listing, refetched after Done toggles. */
   listKey: string;
   /** True when the mode keeps more than one store and the page should show

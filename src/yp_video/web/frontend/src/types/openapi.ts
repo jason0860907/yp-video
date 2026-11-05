@@ -2009,7 +2009,7 @@ export interface components {
              * Visible
              * @default true
              */
-            visible: boolean;
+            visible?: boolean;
             side?: components["schemas"]["CourtSide"] | null;
             /** Jump */
             jump?: boolean | null;
@@ -2447,7 +2447,7 @@ export interface components {
              * Net Height M
              * @default 2.43
              */
-            net_height_m: number;
+            net_height_m?: number;
             /** Frame Size */
             frame_size: [
                 number,
@@ -2596,7 +2596,7 @@ export interface components {
              * Label
              * @default rally
              */
-            label: string;
+            label?: string;
         };
         /** ClipSpan */
         ClipSpan: {
@@ -2825,22 +2825,22 @@ export interface components {
              * Note
              * @default
              */
-            note: string;
+            note?: string;
             /**
              * Video
              * @default
              */
-            video: string;
+            video?: string;
             /**
              * Revision
              * @default
              */
-            revision: string;
+            revision?: string;
             /**
              * Same Source
              * @default false
              */
-            same_source: boolean;
+            same_source?: boolean;
         };
         /** DeleteLocalRequest */
         DeleteLocalRequest: {
@@ -2852,7 +2852,7 @@ export interface components {
              * Force
              * @default false
              */
-            force: boolean;
+            force?: boolean;
         };
         /** DeleteR2Request */
         DeleteR2Request: {
@@ -2876,7 +2876,7 @@ export interface components {
              * Overwrite
              * @default false
              */
-            overwrite: boolean;
+            overwrite?: boolean;
         };
         /**
          * DoneRequest
@@ -2887,7 +2887,7 @@ export interface components {
              * Done
              * @default true
              */
-            done: boolean;
+            done?: boolean;
         };
         /**
          * DoneState
@@ -2913,7 +2913,7 @@ export interface components {
              * Quality
              * @default best
              */
-            quality: string;
+            quality?: string;
         };
         /** DownloadResponse */
         DownloadResponse: {
@@ -2930,7 +2930,7 @@ export interface components {
              * Overwrite
              * @default false
              */
-            overwrite: boolean;
+            overwrite?: boolean;
             /** Checkpoint */
             checkpoint?: string | null;
         };
@@ -2959,7 +2959,7 @@ export interface components {
              * Kind
              * @default broadcast
              */
-            kind: string;
+            kind?: string;
         };
         /** ExportResult */
         ExportResult: {
@@ -3248,7 +3248,7 @@ export interface components {
              * @default action_rally_winner
              * @enum {string}
              */
-            recipe: "rally" | "rally_winner" | "action" | "action_rally_winner" | "action_rally_winner_actor";
+            recipe?: "rally" | "rally_winner" | "action" | "action_rally_winner" | "action_rally_winner_actor";
             /**
              * Run Name
              * @description Run name; empty picks {date}_{view}_{recipe}_{model}.
@@ -3265,14 +3265,14 @@ export interface components {
              * @default all
              * @enum {string}
              */
-            camera_view: "all" | "broadcast" | "sideline";
+            camera_view?: "all" | "broadcast" | "sideline";
             /**
              * Validation
              * @description manual validates on validation_videos, the curated hold-out set; ratio holds out a seeded val_ratio of the videos; none validates on the training set (a final fit, no model selection).
              * @default manual
              * @enum {string}
              */
-            validation: "ratio" | "manual" | "none";
+            validation?: "ratio" | "manual" | "none";
             /**
              * Validation Videos
              * @description manual: the videos (stems) held out as the validation set.
@@ -3283,43 +3283,43 @@ export interface components {
              * @description ratio: fraction of videos held out as the validation split.
              * @default 0.1
              */
-            val_ratio: number;
+            val_ratio?: number;
             /**
              * Split Seed
              * @description Seed for the train/val video shuffle — keep it fixed to compare runs.
              * @default 42
              */
-            split_seed: number;
+            split_seed?: number;
             /**
              * Include Predictions
              * @description Action recipes: also train on videos that only have SPOT pre-annotations (no human labels). Needs manual validation so pseudo-labeled videos never validate, and partial_labels scope.
              * @default false
              */
-            include_predictions: boolean;
+            include_predictions?: boolean;
             /**
              * Video Limit
              * @description Rally recipes: 0 = every annotated video. A positive limit takes a seeded-shuffle subset (stable across runs) so a quick experiment doesn't extract hundreds of hours of frames first.
              * @default 100
              */
-            video_limit: number;
+            video_limit?: number;
             /**
              * Action Sample Fps
              * @description Action stream sampling rate (per-video frame stride).
              * @default 30
              */
-            action_sample_fps: number;
+            action_sample_fps?: number;
             /**
              * Rally Sample Fps
              * @description Rally stream sampling rate (per-video frame stride).
              * @default 5
              */
-            rally_sample_fps: number;
+            rally_sample_fps?: number;
             /**
              * Winner Sample Fps
              * @description Winner stream sampling rate (per-video frame stride).
              * @default 5
              */
-            winner_sample_fps: number;
+            winner_sample_fps?: number;
             /**
              * Rally Clip Len
              * @description Mixed recipe: frames per rally clip; empty = Clip len. At 5 fps, 128 frames span 25.6 s of play.
@@ -3335,67 +3335,67 @@ export interface components {
              * @description Split each optimizer step into N micro-batches (batch_size must divide evenly).
              * @default 1
              */
-            acc_grad_iter: number;
+            acc_grad_iter?: number;
             /**
              * Audio Backend
              * @description Action recipes: logmel adds late-fusion audio (precomputed before training); atst_logmel adds the pretrained ATST-Frame encoder's 40 ms embedding to it (GPU precompute, ~3 GB per 60 videos); none trains a pure-visual model. Must match at inference. Rally recipes are always visual-only.
              * @default logmel
              * @enum {string}
              */
-            audio_backend: "logmel" | "atst_logmel" | "none";
+            audio_backend?: "logmel" | "atst_logmel" | "none";
             /**
              * Feature Arch
              * @description Visual backbone.
              * @default rny008_tv_gsm
              * @enum {string}
              */
-            feature_arch: "rny008_tv_gsm" | "rny008_tv_tsm" | "rny008_tv" | "rny008_gsm" | "rny008_tsm" | "rny008" | "rny002_gsm" | "rny002_tsm" | "rny002" | "convnextt_dv3_gsm" | "convnextt_dv3_tsm" | "convnextt_dv3" | "convnextt2_gsm" | "convnextt2_tsm" | "convnextt2" | "convnextt_gsm" | "convnextt_tsm" | "convnextt" | "rn50_gsm" | "rn50_tsm" | "rn50" | "rn18_gsm" | "rn18_tsm" | "rn18";
+            feature_arch?: "rny008_tv_gsm" | "rny008_tv_tsm" | "rny008_tv" | "rny008_gsm" | "rny008_tsm" | "rny008" | "rny002_gsm" | "rny002_tsm" | "rny002" | "convnextt_dv3_gsm" | "convnextt_dv3_tsm" | "convnextt_dv3" | "convnextt2_gsm" | "convnextt2_tsm" | "convnextt2" | "convnextt_gsm" | "convnextt_tsm" | "convnextt" | "rn50_gsm" | "rn50_tsm" | "rn50" | "rn18_gsm" | "rn18_tsm" | "rn18";
             /**
              * Temporal Arch
              * @description Temporal head over the frame features.
              * @default gru
              * @enum {string}
              */
-            temporal_arch: "gru" | "deeper_gru" | "mingru" | "mstcn" | "asformer";
+            temporal_arch?: "gru" | "deeper_gru" | "mingru" | "mstcn" | "asformer";
             /**
              * Clip Len
              * @description Frames per training clip.
              * @default 64
              */
-            clip_len: number;
+            clip_len?: number;
             /**
              * Activation Checkpointing
              * @description Recompute the backbone's activations in the backward pass instead of keeping them: slower steps, far less GPU memory (128-frame clips at 448 need it on a 24 GB card).
              * @default false
              */
-            activation_checkpointing: boolean;
+            activation_checkpointing?: boolean;
             /**
              * Freeze Backbone
              * @description Train the heads, temporal models and audio encoder only; the backbone keeps the init checkpoint's weights. Needs an init checkpoint; no activation checkpointing.
              * @default false
              */
-            freeze_backbone: boolean;
+            freeze_backbone?: boolean;
             /**
              * Batch Size
              * @default 8
              */
-            batch_size: number;
+            batch_size?: number;
             /**
              * Num Epochs
              * @default 50
              */
-            num_epochs: number;
+            num_epochs?: number;
             /**
              * Warm Up Epochs
              * @description Linear LR warm-up epochs.
              * @default 3
              */
-            warm_up_epochs: number;
+            warm_up_epochs?: number;
             /**
              * Learning Rate
              * @default 0.00003
              */
-            learning_rate: number;
+            learning_rate?: number;
             /**
              * Action Learning Rate
              * @description Optional Action head learning rate override for mixed training. The shared backbone and other heads keep learning_rate.
@@ -3420,22 +3420,22 @@ export interface components {
              * Action Stream Weight
              * @default 1
              */
-            action_stream_weight: number;
+            action_stream_weight?: number;
             /**
              * Rally Stream Weight
              * @default 1
              */
-            rally_stream_weight: number;
+            rally_stream_weight?: number;
             /**
              * Winner Stream Weight
              * @default 1
              */
-            winner_stream_weight: number;
+            winner_stream_weight?: number;
             /**
              * Actor Stream Weight
              * @default 1
              */
-            actor_stream_weight: number;
+            actor_stream_weight?: number;
             /**
              * Action Fg Upsample
              * @description Optional Action foreground sampling threshold for mixed training. At 0.5, half of Action clips are anchored on an annotated event.
@@ -3451,26 +3451,26 @@ export interface components {
              * @description Action recipes: mark the N sampled frames on either side of each annotated touch as positive too. 0 = only the annotated frame.
              * @default 0
              */
-            action_dilate_len: number;
+            action_dilate_len?: number;
             /**
              * Num Workers
              * @description Actual training DataLoader worker processes; validation uses at most 4.
              * @default 8
              */
-            num_workers: number;
+            num_workers?: number;
             /**
              * Criterion
              * @description Which epoch counts as best: top validation mAP or lowest loss.
              * @default map
              * @enum {string}
              */
-            criterion: "map" | "loss";
+            criterion?: "map" | "loss";
             /**
              * Start Val Epoch
              * @description Skip full metric evaluation before this zero-based epoch; validation loss is still computed every epoch.
              * @default 0
              */
-            start_val_epoch: number;
+            start_val_epoch?: number;
             /**
              * Epoch Num Frames
              * @description Frames sampled per epoch; empty uses the trainer's default budget.
@@ -3481,7 +3481,7 @@ export interface components {
              * @description CUDA device index.
              * @default 0
              */
-            gpu: number;
+            gpu?: number;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -3496,42 +3496,42 @@ export interface components {
              * Checkpoint
              * @default
              */
-            checkpoint: string;
+            checkpoint?: string;
             /**
              * Rally Min Score
              * @default 0.5
              */
-            rally_min_score: number;
+            rally_min_score?: number;
             /**
              * Max Gap S
              * @default 2
              */
-            max_gap_s: number;
+            max_gap_s?: number;
             /**
              * Min Duration S
              * @default 4
              */
-            min_duration_s: number;
+            min_duration_s?: number;
             /**
              * Batch Size
              * @default 1
              */
-            batch_size: number;
+            batch_size?: number;
             /**
              * Num Workers
              * @default 0
              */
-            num_workers: number;
+            num_workers?: number;
             /**
              * Use Amp
              * @default true
              */
-            use_amp: boolean;
+            use_amp?: boolean;
             /**
              * Overwrite
              * @default false
              */
-            overwrite: boolean;
+            overwrite?: boolean;
         };
         /**
          * InferenceVideo
@@ -3915,7 +3915,7 @@ export interface components {
              * Active
              * @default true
              */
-            active: boolean;
+            active?: boolean;
         };
         /** PresignedUrl */
         PresignedUrl: {
@@ -4000,7 +4000,7 @@ export interface components {
              * Score
              * @default 0
              */
-            score: number;
+            score?: number;
             /** Winner */
             winner?: ("left" | "right" | "near" | "far") | null;
         } & {
@@ -4247,12 +4247,12 @@ export interface components {
              * Done
              * @default true
              */
-            done: boolean;
+            done?: boolean;
             /**
              * Confirm Auto Actors
              * @default false
              */
-            confirm_auto_actors: boolean;
+            confirm_auto_actors?: boolean;
         };
         /** ReidEmbedderOption */
         ReidEmbedderOption: {
@@ -4286,31 +4286,31 @@ export interface components {
              * @default auto
              * @enum {string}
              */
-            split_mode: "auto" | "session" | "crops" | "all_train";
+            split_mode?: "auto" | "session" | "crops" | "all_train";
             /**
              * Test Ratio
              * @description Fraction of identities/crops held out as the test split.
              * @default 0.25
              */
-            test_ratio: number;
+            test_ratio?: number;
             /**
              * Seed
              * @description Seed for the split shuffle.
              * @default 42
              */
-            seed: number;
+            seed?: number;
             /**
              * Masked
              * @description Reference the background-suppressed crops the masked embedders saw.
              * @default false
              */
-            masked: boolean;
+            masked?: boolean;
             /**
              * Overwrite
              * @description Replace an existing dataset of the same name.
              * @default false
              */
-            overwrite: boolean;
+            overwrite?: boolean;
         };
         /** ReidMatch */
         ReidMatch: {
@@ -4535,17 +4535,17 @@ export interface components {
              * Epochs
              * @default 4
              */
-            epochs: number;
+            epochs?: number;
             /**
              * Batch Size
              * @default 16
              */
-            batch_size: number;
+            batch_size?: number;
             /**
              * Lr
              * @default 0.00004
              */
-            lr: number;
+            lr?: number;
             /**
              * Init Checkpoint
              * @description Checkpoint package ref to fine-tune from (reid/checkpoints/<run>).
@@ -4556,7 +4556,7 @@ export interface components {
              * @description Replace an existing run of the same name.
              * @default false
              */
-            overwrite: boolean;
+            overwrite?: boolean;
         };
         /** ReidTrainStatus */
         ReidTrainStatus: {
@@ -4719,12 +4719,12 @@ export interface components {
              * Threshold
              * @default 0.15
              */
-            threshold: number;
+            threshold?: number;
             /**
              * Model
              * @default clip-reident-masked
              */
-            model: string;
+            model?: string;
         };
         /** Segment */
         Segment: {
@@ -4975,12 +4975,12 @@ export interface components {
              * Overwrite
              * @default false
              */
-            overwrite: boolean;
+            overwrite?: boolean;
             /**
              * Stride
              * @default 1
              */
-            stride: number;
+            stride?: number;
         };
         /** Tracklet */
         Tracklet: {

@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { API, ApiError, apiFetch } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import type { Rally, SidebarAction, TrackData, TrackLinks } from '@/components/labeling/shared';
 import type { ReidRecord } from '@/types/api';
 
@@ -27,7 +27,11 @@ export function useVideoLabelingData(picked: string) {
   const resultsQuery = useQuery({
     queryKey: ['extraction-records', picked],
     queryFn: () =>
-      apiFetch<{ meta: Record<string, unknown>; records: ReidRecord[] }>(API.extraction.records(picked)),
+      // The records themselves are still open on the backend.
+      api.get('/api/extraction/records/{name}', { params: { path: { name: picked } } }) as unknown as Promise<{
+        meta: Record<string, unknown>;
+        records: ReidRecord[];
+      }>,
     enabled: Boolean(picked),
   });
   const records = useMemo(() => resultsQuery.data?.records ?? [], [resultsQuery.data]);
@@ -37,7 +41,7 @@ export function useVideoLabelingData(picked: string) {
     queryKey: ['tracklets', picked],
     queryFn: async (): Promise<TrackData | null> => {
       try {
-        return await apiFetch<TrackData>(API.tracklets.get(picked));
+        return await api.get('/api/tracklets/{name}', { params: { path: { name: picked } } });
       } catch (e) {
         if (e instanceof ApiError && e.status === 404) return null;
         throw e;
@@ -48,7 +52,7 @@ export function useVideoLabelingData(picked: string) {
   });
   const linksQuery = useQuery({
     queryKey: ['tracklet-links', picked],
-    queryFn: () => apiFetch<TrackLinks>(API.tracklets.links(picked)),
+    queryFn: () => api.get('/api/tracklets/links/{name}', { params: { path: { name: picked } } }),
     enabled: Boolean(picked),
   });
   const trackLinks = linksQuery.data ?? EMPTY_LINKS;

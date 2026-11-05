@@ -13,7 +13,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { API, apiFetch, errMsg } from '@/lib/api';
+import { api, errMsg } from '@/lib/api';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -25,7 +25,6 @@ import { VideoMultiSelectList } from '@/components/video/VideoMultiSelectList';
 import { LiveJob } from '@/components/job/LiveJob';
 import { toast } from '@/components/feedback/toast';
 import { useTypedJobs } from '@/lib/useTypedJobs';
-import type { ExtractionVideo, Job } from '@/types/api';
 
 
 const DETECT_JOB_TYPE = 'player_detection';
@@ -38,7 +37,7 @@ export function PlayerDetectionPage() {
 
   const videosQuery = useQuery({
     queryKey: ['extraction-videos'],
-    queryFn: () => apiFetch<ExtractionVideo[]>(API.extraction.videos),
+    queryFn: () => api.get('/api/extraction/videos'),
   });
   const videos = videosQuery.data ?? [];
   const detected = videos.filter((v) => v.has_records);
@@ -62,8 +61,7 @@ export function PlayerDetectionPage() {
       return;
     }
     try {
-      const job = await apiFetch<Job>(API.extraction.detect, {
-        method: 'POST',
+      const job = await api.post('/api/extraction/detect', {
         body: { videos: names, overwrite },
       });
       upsertJob(job);

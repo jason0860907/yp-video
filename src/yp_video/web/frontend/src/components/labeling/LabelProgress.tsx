@@ -12,9 +12,8 @@
 
 import { Fragment } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { API, apiFetch } from '@/lib/api';
+import { api } from '@/lib/api';
 import type { LabelMode } from '@/lib/labelStatus';
-import type { LabelStats } from '@/types/api';
 
 const ROWS: Array<[label: string, mode: LabelMode]> = [
   ['Rally', 'rally'],
@@ -27,7 +26,7 @@ const ROWS: Array<[label: string, mode: LabelMode]> = [
 export function LabelProgress() {
   const { data } = useQuery({
     queryKey: ['label-stats'],
-    queryFn: () => apiFetch<LabelStats>(API.label.stats),
+    queryFn: () => api.get('/api/label/stats'),
     refetchInterval: 30_000,
   });
 

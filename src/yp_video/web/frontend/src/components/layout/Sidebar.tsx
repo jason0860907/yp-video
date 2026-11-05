@@ -1,11 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
 import { NavLink, useLocation } from 'react-router-dom';
-import { API, apiFetch } from '@/lib/api';
+import { api } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { usePresence } from '@/lib/usePresence';
 import { LabelProgress } from '@/components/labeling/LabelProgress';
 import { Icon } from '@/components/ui/Icon';
-import type { ActiveCount } from '@/types/api';
 import { NAV, PATH_SECTION, type NavItem, type NavSection } from './nav';
 import { useNavSections } from './useNavSections';
 
@@ -75,7 +74,7 @@ function NavRow({ item, badge }: { item: NavItem; badge?: number }) {
 export function Sidebar() {
   const jobs = useQuery({
     queryKey: ['jobs-active-count'],
-    queryFn: () => apiFetch<ActiveCount>(API.jobs.activeCount),
+    queryFn: () => api.get('/api/jobs/active-count'),
     refetchInterval: 30_000,
   });
   const presence = usePresence();

@@ -9,7 +9,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { API, apiFetch, errMsg } from '@/lib/api';
+import { api, errMsg } from '@/lib/api';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -23,7 +23,7 @@ import { VideoMultiSelectList } from '@/components/video/VideoMultiSelectList';
 import { LiveJob } from '@/components/job/LiveJob';
 import { toast } from '@/components/feedback/toast';
 import { useTypedJobs } from '@/lib/useTypedJobs';
-import type { ExtractionVideo, Job } from '@/types/api';
+import type { ExtractionVideo } from '@/types/api';
 
 
 const TRACKING_JOB_TYPE = 'player_tracking';
@@ -40,7 +40,7 @@ export function TrackingPage() {
   // pipeline state; tracking only reads the rally half of it.
   const videosQuery = useQuery({
     queryKey: ['extraction-videos'],
-    queryFn: () => apiFetch<ExtractionVideo[]>(API.extraction.videos),
+    queryFn: () => api.get('/api/extraction/videos'),
   });
   const videos = videosQuery.data ?? [];
   // Tracks only count once GTA has refined them.
@@ -61,8 +61,7 @@ export function TrackingPage() {
       return;
     }
     try {
-      const job = await apiFetch<Job>(API.tracklets.run, {
-        method: 'POST',
+      const job = await api.post('/api/tracklets/run', {
         body: { videos: names, overwrite, stride },
       });
       upsertJob(job);

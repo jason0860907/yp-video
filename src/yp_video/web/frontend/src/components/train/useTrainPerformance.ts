@@ -1,19 +1,20 @@
 import { useState } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { apiFetch } from '@/lib/api';
+import { api } from '@/lib/api';
 import type { TrainPerfData } from '@/types/api';
 
-/** The per-epoch performance card's data: keyed by run, refreshed while a
+/** The Fusion Train performance card's data: keyed by run, refreshed while a
  *  job runs, and kept mounted while a newly selected run loads — otherwise
  *  the page collapses and the browser jumps back to the top. */
-export function useTrainPerformance(queryKey: string, endpoint: string, running: boolean) {
+export function useTrainPerformance(running: boolean) {
   const [perfRun, setPerfRun] = useState<string>();
   const perfQuery = useQuery({
-    queryKey: [queryKey, perfRun],
+    queryKey: ['fusion-model-performance', perfRun],
     queryFn: () =>
-      apiFetch<TrainPerfData>(
-        perfRun ? `${endpoint}?run=${encodeURIComponent(perfRun)}` : endpoint,
-      ),
+      // The epoch records are yp-spot's, open on this backend.
+      api.get('/api/fusion-model/performance', {
+        params: { query: { run: perfRun } },
+      }) as unknown as Promise<TrainPerfData>,
     refetchInterval: running ? 30_000 : false,
     placeholderData: keepPreviousData,
   });

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { API, apiFetch, errMsg } from '@/lib/api';
+import { api, errMsg } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { formatBytes } from '@/lib/format';
 import { useSingleJob } from '@/lib/useSingleJob';
@@ -15,11 +15,6 @@ import { JobProgress } from '@/components/job/JobProgress';
 import { toast } from '@/components/feedback/toast';
 import { confirm } from '@/components/feedback/confirm';
 import type { Job } from '@/types/api';
-import type { components } from '@/types/openapi';
-
-// Categories come from GET /upload/categories (config.R2_CATEGORIES) —
-// key, label and order are server-defined; the page only renders them.
-type Category = components['schemas']['StorageCategory'];
 
 /** A listed file either way round: `synced` is the local file's
  *  `uploaded` (upload mode) or the R2 object's `local` (download mode). */
@@ -60,13 +55,15 @@ export function UploadPage() {
 
   const statusQuery = useQuery({
     queryKey: ['upload-status'],
-    queryFn: () => apiFetch<components['schemas']['R2Status']>(API.upload.status),
+    queryFn: () => api.get('/api/upload/status'),
   });
   const configured = statusQuery.data?.configured ?? false;
 
+  // Categories come from config.R2_CATEGORIES — key, label and order are
+  // server-defined; the page only renders them.
   const categoriesQuery = useQuery({
     queryKey: ['upload-categories'],
-    queryFn: () => apiFetch<Category[]>(API.upload.categories),
+    queryFn: () => api.get('/api/upload/categories'),
   });
   // Local-only categories (raw videos) never sync — pointless on this page.
   const categories = useMemo(
@@ -91,8 +88,8 @@ export function UploadPage() {
       });
       setFiles(
         isUpload
-          ? (await apiFetch<components['schemas']['LocalFile'][]>(API.upload.files(category))).map((f) => row(f, f.uploaded))
-          : (await apiFetch<components['schemas']['R2File'][]>(API.upload.r2Files(category))).map((f) => row(f, f.local)),
+          ? (await api.get('/api/upload/files', { params: { query: { category } } })).map((f) => row(f, f.uploaded))
+          : (await api.get('/api/upload/r2-files', { params: { query: { category } } })).map((f) => row(f, f.local)),
       );
       setExpanded({});
     } catch (e) {
@@ -121,8 +118,10 @@ export function UploadPage() {
     if (!paths.length) return toast.warning('No files selected');
     setBusy(true);
     try {
-      const endpoint = kind === 'upload' ? API.upload.start : API.upload.download;
-      const started = await apiFetch<Job>(endpoint, { method: 'POST', body: { category, files: paths } });
+      const body = { category, files: paths };
+      const started = await (kind === 'upload'
+        ? api.post('/api/upload/start', { body })
+        : api.post('/api/upload/download', { body }));
       setJob(started);
     } catch (e) {
       setBusy(false);
@@ -140,7 +139,7 @@ export function UploadPage() {
     });
     if (!ok) return;
     try {
-      const res = await apiFetch<components['schemas']['R2DeleteResult']>(API.upload.deleteR2, { method: 'POST', body: { category, files: selected.map((f) => f.path) } });
+      const res = await api.post('/api/upload/delete-r2', { body: { category, files: selected.map((f) => f.path) } });
       toast.success(`Deleted ${res.deleted} files from R2`);
       void loadFiles();
     } catch (e) {
@@ -163,8 +162,7 @@ export function UploadPage() {
     if (!ok) return;
     const force = notUploaded.length > 0;
     try {
-      const res = await apiFetch<components['schemas']['LocalDeleteResult']>(API.upload.deleteLocal, {
-        method: 'POST',
+      const res = await api.post('/api/upload/delete-local', {
         body: { category, files: selected.map((f) => f.path), force },
       });
       const count = res.deleted?.length || 0;

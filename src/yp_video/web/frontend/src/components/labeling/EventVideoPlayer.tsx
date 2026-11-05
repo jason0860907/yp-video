@@ -12,7 +12,7 @@
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { API, apiFetch } from '@/lib/api';
+import { api } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { actionColor } from '@/lib/actionColors';
 import { firstRallyStart, hasRealTime, seekWhenSeekable, usePlayheadHandover } from '@/lib/playheadHandover';
@@ -27,7 +27,7 @@ import { useFrameClock } from './useFrameClock';
 import { KeyHints } from './PlayerTransport';
 import type { BoxCheckEntry, ReidPlayers, ReidRecord } from '@/types/api';
 import { OUTSIDE, RallySidebar } from './RallySidebar';
-import { canConfirm, fmtTime, needsReview, rallyOf, trackColor, trackKeyOf, verdictOf, VERDICT, type ActorFix, type ActorVerdict, type Rally, type SidebarAction, type TrackData, type TrackLinks, type TrackMasks } from './shared';
+import { canConfirm, fmtTime, needsReview, rallyOf, trackColor, trackKeyOf, verdictOf, VERDICT, type ActorFix, type ActorVerdict, type Rally, type SidebarAction, type TrackData, type TrackLinks } from './shared';
 import { buildFrameRows, buildFrameSilhouettes, buildTrackBoxes, nearestFrame, SilhouetteRenderer, decodeMaskData } from './masks';
 
 // The pickable 2XLarge boxes: the actor label cut (person/dense.py
@@ -231,7 +231,8 @@ export const EventVideoPlayer = forwardRef<PlayerHandle, EventVideoPlayerProps>(
 
   const masksQuery = useQuery({
     queryKey: ['tracklet-masks', videoName, currentRallyId],
-    queryFn: () => apiFetch<TrackMasks>(API.tracklets.masks(videoName, currentRallyId!)),
+    queryFn: () =>
+      api.get('/api/tracklets/masks/{name}', { params: { path: { name: videoName }, query: { rally: currentRallyId! } } }),
     enabled: currentRallyId != null && trackBoxes.size > 0,
     staleTime: Infinity, // immutable per tracking run; jobs invalidate the key
     // A rally's masks are ~4 MB of base64. Never re-fetched while mounted

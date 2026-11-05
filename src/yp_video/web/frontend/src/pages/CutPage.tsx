@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { API, apiFetch, apiUrl, errMsg } from '@/lib/api';
+import { API, api, apiUrl, errMsg } from '@/lib/api';
 import { formatTimePrecise } from '@/lib/format';
 import { Button } from '@/components/ui/Button';
 import { Segmented } from '@/components/ui/Segmented';
@@ -12,7 +12,6 @@ import { VideoCombobox } from '@/components/video/VideoCombobox';
 import { toast } from '@/components/feedback/toast';
 import { confirm } from '@/components/feedback/confirm';
 import type { CutKind } from '@/types/api';
-import type { components } from '@/types/openapi';
 
 interface Segment {
   name: string;
@@ -41,7 +40,7 @@ export function CutPage() {
     else el.pause();
   };
 
-  const videosQuery = useQuery({ queryKey: ['cut-videos'], queryFn: () => apiFetch<string[]>(API.cut.videos) });
+  const videosQuery = useQuery({ queryKey: ['cut-videos'], queryFn: () => api.get('/api/cut/videos') });
   const videos = videosQuery.data ?? [];
   const videoItems = useMemo(() => videos.map((name) => ({ name })), [videos]);
 
@@ -124,7 +123,7 @@ export function CutPage() {
     });
     if (!ok) return false;
     try {
-      await apiFetch(API.cut.video(video), { method: 'DELETE' });
+      await api.delete('/api/cut/video/{name}', { params: { path: { name: video } } });
       toast.success(`Deleted ${video}`);
       const el = videoRef.current;
       el?.pause();
@@ -146,8 +145,7 @@ export function CutPage() {
     if (!video) return toast.warning('No video selected');
     setExporting(true);
     try {
-      const res = await apiFetch<components['schemas']['ExportResult']>(API.cut.export, {
-        method: 'POST',
+      const res = await api.post('/api/cut/export', {
         body: { source: video, segments, kind },
       });
       const failed = res.failed?.length ?? 0;

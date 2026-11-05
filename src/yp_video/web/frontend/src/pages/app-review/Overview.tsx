@@ -2,7 +2,7 @@
  *  on it and what the user has changed, newest first. A row opens the match. */
 
 import { useQuery } from '@tanstack/react-query';
-import { API, apiFetch, errMsg } from '@/lib/api';
+import { api, errMsg } from '@/lib/api';
 import { formatDateTime } from '@/lib/format';
 import { Badge } from '@/components/ui/Badge';
 import { ErrorState } from '@/components/ui/ErrorState';
@@ -36,7 +36,7 @@ export function Overview({
 }) {
   const overview = useQuery({
     queryKey: ['app-review', 'overview', user],
-    queryFn: () => apiFetch<Record<string, MatchEdits>>(API.appReview.overview(user)),
+    queryFn: () => api.get('/api/app-review/users/{user}/overview', { params: { path: { user } } }),
   });
   if (overview.error) return <ErrorState message={errMsg(overview.error)} onRetry={() => void overview.refetch()} />;
 

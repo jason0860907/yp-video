@@ -9,10 +9,9 @@
 
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { API, apiFetch } from '@/lib/api';
-import type { RallyResult, UnionVideo } from '@/lib/labelStatus';
+import { api } from '@/lib/api';
+import type { UnionVideo } from '@/lib/labelStatus';
 import type { ListQuery } from '@/components/video/VideoCombobox';
-import type { ActionVideo, AssociationVideo, ReidVideo } from '@/types/api';
 
 const stem = (name: string) => name.replace(/\.[^.]+$/, '');
 const rallyStem = (resultName: string) => resultName.replace(/_annotations\.jsonl$/, '');
@@ -20,24 +19,24 @@ const rallyStem = (resultName: string) => resultName.replace(/_annotations\.json
 export function useUnionVideos() {
   const rallyQuery = useQuery({
     queryKey: ['annotate-results'],
-    queryFn: () => apiFetch<RallyResult[]>(API.annotate.results),
+    queryFn: () => api.get('/api/annotate/results'),
   });
   const actionQuery = useQuery({
     queryKey: ['action-videos'],
-    queryFn: () => apiFetch<ActionVideo[]>(API.actionAnnotate.videos),
+    queryFn: () => api.get('/api/action-annotate/videos'),
   });
   const assocQuery = useQuery({
     queryKey: ['association-videos'],
-    queryFn: () => apiFetch<AssociationVideo[]>(API.association.videos),
+    queryFn: () => api.get('/api/actor-association/videos'),
   });
   const reidQuery = useQuery({
     queryKey: ['reid-videos'],
-    queryFn: () => apiFetch<ReidVideo[]>(API.reid.videos),
+    queryFn: () => api.get('/api/reid/videos'),
   });
 
   const courtQuery = useQuery({
     queryKey: ['court-videos'],
-    queryFn: () => apiFetch<NonNullable<UnionVideo['court']>[]>(API.court.videos),
+    queryFn: () => api.get('/api/court/videos'),
   });
 
   const videos = useMemo<UnionVideo[]>(() => {

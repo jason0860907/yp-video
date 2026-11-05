@@ -12,10 +12,9 @@
  */
 
 import { useEffect, useState } from 'react';
-import { API, ApiError, apiFetch, apiUrl, errMsg } from '@/lib/api';
+import { API, api, ApiError, apiUrl, errMsg } from '@/lib/api';
 import { Badge } from '@/components/ui/Badge';
 import { AnnotationEditor, type EditorData } from '@/components/editor/AnnotationEditor';
-import type { components } from '@/types/openapi';
 import { toast } from '@/components/feedback/toast';
 import { rallyStatus } from '@/lib/labelStatus';
 import { STATUS_OPTIONS, type LabelSource, type LoadedSource, type ModeDescriptor, type PlaybackClock } from './mode';
@@ -34,7 +33,8 @@ export const RALLY_MODE: ModeDescriptor = {
   // The annotation lives in R2 with no local cut listed — worth flagging
   // here because only this tab can open such a row.
   rowExtras: (row) => (row.rallyOnly ? <Badge tone="warning">rally only</Badge> : null),
-  doneApi: (video) => API.annotate.done(video),
+  setDone: (video, done) =>
+    api.put('/api/annotate/done/{name}', { params: { path: { name: video } }, body: { done } }),
   listKey: 'annotate-results',
   hasSources: true,
 };
@@ -46,9 +46,9 @@ const streamPath = (vp: string) => apiUrl(API.annotate.video(vp));
  *  fallback. Rally's pre-annotation store is the SPOT pass, tagged
  *  'spot-pre-annotation' by the backend. */
 const loadRally = (name: string, source: LabelSource) =>
-  apiFetch<components['schemas']['RallyAnnotationData']>(API.annotate.result(name, {
-    source: source === 'annotation' ? 'annotation' : 'spot-pre-annotation',
-  }));
+  api.get('/api/annotate/results/{name}', {
+    params: { path: { name }, query: { source: source === 'annotation' ? 'annotation' : 'spot-pre-annotation' } },
+  });
 
 /** Backend store tag → the shared LoadedSource vocabulary. */
 const loadedFromTag = (tag: unknown): LoadedSource =>
@@ -98,7 +98,6 @@ export function RallyPanel({ video, source, onLoaded, clock, clipsOpen, onClipsC
     <div className="space-y-5">
       <AnnotationEditor
         data={data}
-        saveEndpoint={API.annotate.annotations}
         videoStreamPath={streamPath}
         previewBackoff={3}
         onSaved={afterSave}

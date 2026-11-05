@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import fusionTrainSchema from '@contracts/fusion_train_request.schema.json';
-import { API, apiFetch, errMsg } from '@/lib/api';
+import { api, errMsg } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { useSchemaForm } from '@/lib/schemaForm';
 import { useSingleJob } from '@/lib/useSingleJob';
@@ -26,7 +26,7 @@ import { SectionLabel } from '@/components/ui/SectionLabel';
 import { TrainJobCard } from '@/components/train/TrainJobCard';
 import { TrainPerfCard } from '@/components/train/TrainPerfCard';
 import { toast } from '@/components/feedback/toast';
-import type { CutKind, FusionModelStatus, FusionRecipeId, Job } from '@/types/api';
+import type { CutKind, FusionModelStatus, FusionRecipeId } from '@/types/api';
 import type { FusionTrainRequest } from '@/types/contracts/fusion_train_request.schema';
 
 type FusionForm = Required<FusionTrainRequest>;
@@ -48,7 +48,7 @@ export function FusionTrainPage() {
 
   const statusQuery = useQuery({
     queryKey: ['fusion-model-status'],
-    queryFn: () => apiFetch<FusionModelStatus>(API.fusionModel.status),
+    queryFn: () => api.get('/api/fusion-model/status'),
   });
   const status = statusQuery.data;
 
@@ -62,11 +62,7 @@ export function FusionTrainPage() {
     label: 'Fusion training',
   });
 
-  const { perf, setPerfRun } = useTrainPerformance(
-    'fusion-model-performance',
-    API.fusionModel.performance,
-    trainingRunning,
-  );
+  const { perf, setPerfRun } = useTrainPerformance(trainingRunning);
 
   const recipe = status?.recipes.find((item) => item.id === values.recipe);
   const tasks = recipe?.tasks ?? [];
@@ -166,7 +162,7 @@ export function FusionTrainPage() {
           validation_videos: isManual ? selectedValidation.map((video) => video.name) : [],
         }).filter(([key]) => !recipeFields.has(key) || visible.has(key)),
       );
-      const job = await apiFetch<Job>(API.fusionModel.train, { method: 'POST', body });
+      const job = await api.post('/api/fusion-model/train', { body });
       setPerfRun(undefined);
       setTrainJob(job);
       toast.success(`${recipe?.name ?? 'Fusion'} training started`);

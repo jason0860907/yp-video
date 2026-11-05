@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { API, apiFetch, apiPostBlob, apiUrl, errMsg } from '@/lib/api';
+import { API, api, apiUrl, errMsg } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { formatTime, formatTimePrecise, parseTime } from '@/lib/format';
 import { copyText, downloadBlob } from '@/lib/download';
@@ -109,7 +109,6 @@ const fromRow = (r: components['schemas']['RallyRow']): EditorAnnotation => ({
 
 interface AnnotationEditorProps {
   data: EditorData | null;
-  saveEndpoint: string;
   videoStreamPath: (videoPath: string) => string;
   previewBackoff?: number;
   /** Runs after an EXPLICIT save only. Autosave fires every couple of
@@ -138,7 +137,7 @@ interface AnnotationEditorProps {
 // below keep the window between screen and disk negligible.
 const AUTOSAVE_MS = 2000;
 
-export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewBackoff = 3, onSaved, initialTime, onTimeChange, clipsOpen, onClipsClose }: AnnotationEditorProps) {
+export function AnnotationEditor({ data, videoStreamPath, previewBackoff = 3, onSaved, initialTime, onTimeChange, clipsOpen, onClipsClose }: AnnotationEditorProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   // Taken during the first render for this video, before the element exists
   // and can report 0 into the shared clock.
@@ -197,7 +196,7 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewB
       el.src = videoStreamPath(path);
       el.load();
     }
-  }, [data, videoStreamPath, saveEndpoint]);
+  }, [data, videoStreamPath]);
 
   const addAnnotation = useCallback(() => {
     const el = videoRef.current;
@@ -378,10 +377,7 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewB
           duration,
           annotations: sent.map(({ rally_id, start, end, label, winner }) => ({ rally_id, start, end, label, winner })),
         };
-        const saved = await apiFetch<components['schemas']['RallySaveResult']>(
-          saveEndpoint,
-          { method: 'POST', body },
-        );
+        const saved = await api.post('/api/annotate/annotations', { body });
         // Adopt the rows as written — the server assigns ids to new rallies,
         // and without adopting them every autosave would mint fresh ones.
         // Only if nothing changed while the request was in flight; otherwise
@@ -413,7 +409,7 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewB
         setSaving(false);
       }
     },
-    [videoName, duration, annotations, saveEndpoint, onSaved],
+    [videoName, duration, annotations, onSaved],
   );
 
   // ── Flush unsaved work when the page goes away ──
@@ -422,13 +418,13 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewB
   // request outlive the tab. Same pattern as the Action panel.
   // The same flush runs when the editor unmounts (a tab switch) and before
   // new data replaces the rows — leaving never waits out the autosave.
-  const flushRef = useRef({ dirty, videoName, duration, saveEndpoint });
-  flushRef.current = { dirty, videoName, duration, saveEndpoint };
+  const flushRef = useRef({ dirty, videoName, duration });
+  flushRef.current = { dirty, videoName, duration };
   function flushUnsaved() {
     const cur = flushRef.current;
     if (!cur.dirty || !cur.videoName) return;
     flushRef.current = { ...cur, dirty: false };
-    void fetch(apiUrl(cur.saveEndpoint), {
+    void fetch(apiUrl(API.annotate.annotations), {
       method: 'POST',
       keepalive: true,
       headers: { 'Content-Type': 'application/json' },
@@ -487,7 +483,9 @@ export function AnnotationEditor({ data, saveEndpoint, videoStreamPath, previewB
   const downloadClip = async (a: EditorAnnotation) => {
     if (!videoName) return toast.warning('No video loaded');
     try {
-      const blob = await apiPostBlob(API.annotate.clip, { video: videoName, segment: { start: a.start, end: a.end, label: 'rally' } });
+      const blob = await api.postBlob('/api/annotate/clip', {
+        body: { video: videoName, segment: { start: a.start, end: a.end, label: 'rally' } },
+      });
       downloadBlob(blob, `rally_${Math.round(a.start)}-${Math.round(a.end)}.mp4`);
       toast.success('Clip downloaded');
     } catch (e) {

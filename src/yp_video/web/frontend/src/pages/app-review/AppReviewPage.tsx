@@ -12,7 +12,7 @@
 
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { API, apiFetch, apiUrl, errMsg } from '@/lib/api';
+import { API, api, apiUrl, errMsg } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -29,7 +29,7 @@ import { LibraryPicker } from './LibraryPicker';
 import { MatchSummary } from './MatchSummary';
 import { Overview } from './Overview';
 import { useAppReviewUrlState } from './useAppReviewUrlState';
-import type { Candidate, Clip, Library, PlayableClip, MatchDetail, Tab, Tag, VideoMeta, WindowMode } from './types';
+import type { Candidate, Clip, Library, PlayableClip, MatchDetail, Tab, Tag, WindowMode } from './types';
 import { byReviewOrder, candidateClip, liveMatches } from './types';
 
 export function AppReviewPage() {
@@ -44,7 +44,10 @@ export function AppReviewPage() {
   const library = useQuery({
     queryKey: ['app-review', 'library', user],
     enabled: !!user,
-    queryFn: () => apiFetch<Library>(API.appReview.library(user)),
+    queryFn: () =>
+      api.get('/api/app-review/users/{user}/library', {
+        params: { path: { user } },
+      }) as unknown as Promise<Library>,
   });
   const picked = library.data?.matches.find((m) => m.id === match);
   // Until its analysis has a result there is nothing to project: the match
@@ -55,13 +58,19 @@ export function AppReviewPage() {
     enabled: !!user && !!match && analysed,
     // Reframing (mode / corrections) keeps the old clips on screen meanwhile.
     placeholderData: (prev, query) => (query?.queryKey[3] === match ? prev : undefined),
-    queryFn: () => apiFetch<MatchDetail>(API.appReview.match(user, match, mode, applied)),
+    queryFn: () =>
+      api.get('/api/app-review/users/{user}/matches/{match}', {
+        params: { path: { user, match }, query: { mode, corrected: applied } },
+      }) as unknown as Promise<MatchDetail>,
   });
   const meta = useQuery({
     queryKey: ['app-review', 'video-meta', user, match],
     enabled: !!user && !!match && analysed,
     staleTime: Infinity,
-    queryFn: () => apiFetch<VideoMeta>(API.appReview.videoMeta(user, match)),
+    queryFn: () =>
+      api.get('/api/app-review/users/{user}/matches/{match}/video/meta', {
+        params: { path: { user, match } },
+      }),
   });
 
   const tagsOf = useMemo(() => {

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { API, apiFetch, errMsg } from '@/lib/api';
+import { api, errMsg } from '@/lib/api';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -19,7 +19,7 @@ import { useSpotStatus } from '@/components/spot/useSpotStatus';
 import { toast } from '@/components/feedback/toast';
 import { confirm } from '@/components/feedback/confirm';
 import { useTypedJobs } from '@/lib/useTypedJobs';
-import type { InferenceVideo, Job } from '@/types/api';
+import type { InferenceVideo } from '@/types/api';
 
 interface PredSettings {
   checkpoint: string;
@@ -61,12 +61,9 @@ export function InferencePage() {
 
   const videosQuery = useQuery({
     queryKey: ['inference-videos'],
-    queryFn: () => apiFetch<InferenceVideo[]>(API.inference.videos),
+    queryFn: () => api.get('/api/inference/videos'),
   });
-  const { spot, checkpoints, ready: spotReady, problem: spotProblem } = useSpotStatus(
-    ['inference-spot'],
-    API.inference.spot,
-  );
+  const { spot, checkpoints, ready: spotReady, problem: spotProblem } = useSpotStatus(['inference-spot']);
 
   const ready = spotReady;
   // Tracks only count as done once GTA has refined them.
@@ -97,8 +94,7 @@ export function InferencePage() {
       if (!ok) return;
     }
     try {
-      const job = await apiFetch<Job>(API.inference.start, {
-        method: 'POST',
+      const job = await api.post('/api/inference/start', {
         body: {
           videos: names,
           checkpoint: settings.checkpoint,

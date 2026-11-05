@@ -1,6 +1,6 @@
 import { Fragment, useMemo, useState } from 'react';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
-import { API, apiFetch, errMsg } from '@/lib/api';
+import { api, errMsg } from '@/lib/api';
 import { actionLabel, isJobAction, summaryText } from '@/lib/auditLabels';
 import { cn } from '@/lib/cn';
 import { Badge } from '@/components/ui/Badge';
@@ -11,15 +11,7 @@ import { ErrorState } from '@/components/ui/ErrorState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { StatTile } from '@/components/ui/StatTile';
 import { fieldCls } from '@/components/form/Field';
-import type {
-  AuditEvent,
-  AuditFilters,
-  AuditPage as AuditPageData,
-  AuditChange,
-  AuditSaves,
-  Worklog,
-  WorklogSession,
-} from '@/types/api';
+import type { AuditChange, AuditEvent, WorklogSession } from '@/types/api';
 
 const PAGE_SIZE = 100;
 
@@ -111,7 +103,8 @@ function ChangeLine({ change }: { change: AuditChange }) {
 function SavesDetail({ event }: { event: AuditEvent }) {
   const saves = useQuery({
     queryKey: ['audit-saves', event.id],
-    queryFn: () => apiFetch<AuditSaves>(API.audit.saves(event.id)),
+    queryFn: () =>
+      api.get('/api/audit/events/{event_id}/saves', { params: { path: { event_id: event.id } } }),
     staleTime: Infinity,
   });
 
@@ -213,9 +206,9 @@ function WorklogCard() {
   const log = useQuery({
     queryKey: ['audit-worklog', weeksAgo],
     queryFn: () =>
-      apiFetch<Worklog>(
-        API.audit.worklog({ since: since.toISOString(), until: until.toISOString() }),
-      ),
+      api.get('/api/audit/worklog', {
+        params: { query: { since: since.toISOString(), until: until.toISOString() } },
+      }),
   });
 
   const toggle = (actor: string) =>
@@ -368,24 +361,26 @@ export function AuditPage() {
 
   const filters = useQuery({
     queryKey: ['audit-filters'],
-    queryFn: () => apiFetch<AuditFilters>(API.audit.filters),
+    queryFn: () => api.get('/api/audit/filters'),
   });
 
   const events = useInfiniteQuery({
     queryKey: ['audit-events', applied],
     initialPageParam: undefined as number | undefined,
     queryFn: ({ pageParam }) =>
-      apiFetch<AuditPageData>(
-        API.audit.events({
-          actor: applied.actor || undefined,
-          action: applied.action || undefined,
-          target: applied.target || undefined,
-          since: asInstant(applied.since),
-          until: asInstant(applied.until),
-          before: pageParam,
-          limit: PAGE_SIZE,
-        }),
-      ),
+      api.get('/api/audit/events', {
+        params: {
+          query: {
+            actor: applied.actor || undefined,
+            action: applied.action || undefined,
+            target: applied.target || undefined,
+            since: asInstant(applied.since),
+            until: asInstant(applied.until),
+            before: pageParam,
+            limit: PAGE_SIZE,
+          },
+        },
+      }),
     getNextPageParam: (last) => last.next_before ?? undefined,
   });
 

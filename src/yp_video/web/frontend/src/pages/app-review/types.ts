@@ -93,7 +93,6 @@ export interface PlayableClip {
   touches: Touch[];
   attacks?: Attack[];
 }
-export type CourtTotal = CourtScore;
 
 /** The App's 分析 → 摘要 numbers (app_review/stats.py). */
 export type Stats = components['schemas']['Stats'];

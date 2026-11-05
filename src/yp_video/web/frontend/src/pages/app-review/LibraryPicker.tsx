@@ -2,11 +2,11 @@
  *  App syncs it (owned and shared matches), newest first. */
 
 import { useQuery } from '@tanstack/react-query';
-import { API, apiFetch, errMsg } from '@/lib/api';
+import { api, errMsg } from '@/lib/api';
 import { formatDateTime } from '@/lib/format';
 import { SearchSelect } from '@/components/form/SearchSelect';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
-import type { AppUser, Library } from './types';
+import type { Library } from './types';
 import { liveMatches } from './types';
 
 const STATUS_TONE: Record<string, BadgeTone> = {
@@ -30,7 +30,7 @@ export function LibraryPicker({
 }) {
   const users = useQuery({
     queryKey: ['app-review', 'users'],
-    queryFn: () => apiFetch<AppUser[]>(API.appReview.users),
+    queryFn: () => api.get('/api/app-review/users'),
   });
   const matches = liveMatches(library);
 

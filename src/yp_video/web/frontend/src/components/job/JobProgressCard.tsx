@@ -1,4 +1,4 @@
-import { API, apiFetch, errMsg } from '@/lib/api';
+import { api, errMsg } from '@/lib/api';
 import { toast } from '@/components/feedback/toast';
 import type { Job } from '@/types/api';
 import { JobProgress } from './JobProgress';
@@ -11,7 +11,7 @@ import { JobItems } from './JobItems';
 export function JobProgressCard({ job, showLogs = false }: { job: Job; showLogs?: boolean }) {
   const cancel = async () => {
     try {
-      await apiFetch(API.jobs.cancel(job.id), { method: 'POST' });
+      await api.post('/api/jobs/{job_id}/cancel', { params: { path: { job_id: job.id } } });
       toast.warning('Job cancelled');
     } catch (e) {
       toast.error(`Cancel failed: ${errMsg(e)}`);

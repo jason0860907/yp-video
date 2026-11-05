@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { API, apiFetch } from '@/lib/api';
+import { api } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { formatClock } from '@/lib/format';
 import { isPartialSuccess, statusLabel, statusTheme } from '@/lib/job';
-import type { Job, JobLogs } from '@/types/api';
+import type { Job } from '@/types/api';
 import { ProgressBar } from './ProgressBar';
 
 interface JobProgressProps {
@@ -51,7 +51,7 @@ function JobLogDisclosure({ job }: { job: Job }) {
   const [open, setOpen] = useState(false);
   const logs = useQuery({
     queryKey: ['job-logs', job.id],
-    queryFn: () => apiFetch<JobLogs>(API.jobs.logs(job.id)),
+    queryFn: () => api.get('/api/jobs/{job_id}/logs', { params: { path: { job_id: job.id } } }),
     enabled: open,
     staleTime: 5_000,
   });

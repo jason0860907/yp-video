@@ -13,7 +13,7 @@ import { useMemo, useState } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import reidExportSchema from '@contracts/reid_export_request.schema.json';
 import reidTrainSchema from '@contracts/reid_train_request.schema.json';
-import { API, apiFetch, apiUrl, errMsg } from '@/lib/api';
+import { API, api, apiUrl, errMsg } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { useSchemaForm } from '@/lib/schemaForm';
 import { Badge } from '@/components/ui/Badge';
@@ -35,7 +35,7 @@ import { FieldShell } from '@/components/form/FieldLabel';
 import { JobProgress } from '@/components/job/JobProgress';
 import { toast } from '@/components/feedback/toast';
 import { useSingleJob } from '@/lib/useSingleJob';
-import type { Job, ReidModelEval, ReidPerfData, ReidRun, ReidTrainStatus, ReidVideoEval } from '@/types/api';
+import type { Job, ReidModelEval, ReidRun, ReidVideoEval } from '@/types/api';
 import type { ReidExportRequest } from '@/types/contracts/reid_export_request.schema';
 import type { ReidTrainRequest } from '@/types/contracts/reid_train_request.schema';
 
@@ -52,7 +52,7 @@ export function ReidTrainPage() {
 
   const statusQuery = useQuery({
     queryKey: ['reid-train-status'],
-    queryFn: () => apiFetch<ReidTrainStatus>(API.reidTrain.status),
+    queryFn: () => api.get('/api/reid-train/status'),
   });
   const status = statusQuery.data;
 
@@ -63,7 +63,7 @@ export function ReidTrainPage() {
 
   const perfQuery = useQuery({
     queryKey: ['reid-train-performance'],
-    queryFn: () => apiFetch<ReidPerfData>(API.reidTrain.performance()),
+    queryFn: () => api.get('/api/reid-train/performance'),
     enabled: Boolean(status?.totals.ready_videos),
     placeholderData: keepPreviousData,
     staleTime: 60_000,
@@ -71,8 +71,7 @@ export function ReidTrainPage() {
 
   const startExport = async () => {
     try {
-      const started = await apiFetch<Job>(API.reidTrain.export, {
-        method: 'POST',
+      const started = await api.post('/api/reid-train/export', {
         body: exportForm.values,
       });
       setJob(started);
@@ -102,8 +101,7 @@ export function ReidTrainPage() {
     const dataset = trainForm.values.dataset || status?.datasets[0]?.name;
     if (!dataset) return;
     try {
-      const started = await apiFetch<Job>(API.reidTrain.train, {
-        method: 'POST',
+      const started = await api.post('/api/reid-train/train', {
         body: { ...trainForm.values, dataset },
       });
       setJob(started);

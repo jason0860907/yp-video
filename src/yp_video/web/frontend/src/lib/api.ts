@@ -1,9 +1,12 @@
 /**
- * API endpoint map + fetch helper. Single source of truth so backend route
- * renames don't require grepping. Every backend route is mounted under /api;
- * `apiUrl()` is the one place that prefix lives, so it works for fetch, SSE,
- * and media `src` alike.
+ * The typed API client (`api`, paths and types from the generated OpenAPI)
+ * plus the URL map for what is not a JSON call — media `src`, SSE streams and
+ * downloads, which `apiUrl()` prefixes with /api.
  */
+
+import createClient, { type MaybeOptionalInit } from 'openapi-fetch';
+import type { PathsWithMethod, RequiredKeysOf } from 'openapi-typescript-helpers';
+import type { paths } from '@/types/openapi';
 
 export const API_BASE = '/api';
 
@@ -15,17 +18,18 @@ export function apiUrl(path: string): string {
 
 type QueryParams = Record<string, string | number | boolean | null | undefined>;
 
-const q = (params: QueryParams): string => {
-  const entries = Object.entries(params).filter(([, v]) => v != null && v !== '');
-  return entries.length
-    ? '?' + entries.map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`).join('&')
-    : '';
-};
+/** `?a=1&b=x` without the null / empty entries — the backend reads a missing
+ *  parameter as its default, an empty one as a value. */
+const queryString = (params: Record<string, unknown>): string =>
+  Object.entries(params)
+    .filter(([, v]) => v != null && v !== '')
+    .map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`)
+    .join('&');
 
-export interface ApiOptions extends Omit<RequestInit, 'body'> {
-  /** Plain object — JSON-encoded automatically. */
-  body?: unknown;
-}
+const q = (params: QueryParams): string => {
+  const query = queryString(params);
+  return query ? `?${query}` : '';
+};
 
 export class ApiError extends Error {
   constructor(
@@ -42,7 +46,8 @@ export class ApiError extends Error {
 export const errMsg = (e: unknown): string =>
   e instanceof ApiError ? e.body : e instanceof Error ? e.message : String(e);
 
-/** Fetch, reloading the page if the Cloudflare Access session has lapsed.
+/** Fetch, reloading the page if the Cloudflare Access session has lapsed, and
+ *  throwing {@link ApiError} on any non-2xx.
  *
  *  Access sessions expire while a labeling tab sits open all afternoon. When
  *  that happens the edge answers an XHR with a redirect to the login page on
@@ -57,10 +62,10 @@ export const errMsg = (e: unknown): string =>
  *  must not reload the page: the 30 s polls (presence, jobs, progress) would
  *  otherwise turn every transient failure into a lost editor.
  */
-async function fetchOrReauth(path: string, init: RequestInit): Promise<Response> {
+async function fetchOrReauth(request: Request): Promise<Response> {
   let res: Response;
   try {
-    res = await fetch(apiUrl(path), { credentials: 'same-origin', redirect: 'manual', ...init });
+    res = await fetch(request);
   } catch (e) {
     if (e instanceof DOMException && e.name === 'AbortError') throw e;
     throw new ApiError(0, `Network error: ${e instanceof Error ? e.message : String(e)}`);
@@ -69,193 +74,95 @@ async function fetchOrReauth(path: string, init: RequestInit): Promise<Response>
     window.location.reload();
     throw new ApiError(403, 'Session expired — reloading');
   }
+  if (!res.ok) throw new ApiError(res.status, await res.text());
   return res;
 }
 
-/** Fetch a JSON endpoint relative to /api. Throws {@link ApiError} on non-2xx. */
-export async function apiFetch<T = unknown>(path: string, options: ApiOptions = {}): Promise<T> {
-  const { body, headers, ...rest } = options;
-  const res = await fetchOrReauth(path, {
-    headers: { 'Content-Type': 'application/json', ...headers },
-    ...rest,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
-  if (!res.ok) {
-    throw new ApiError(res.status, await res.text());
-  }
-  return res.json() as Promise<T>;
+const client = createClient<paths>({
+  credentials: 'same-origin',
+  redirect: 'manual',
+  fetch: fetchOrReauth,
+  querySerializer: queryString,
+});
+
+type ApiMethod = 'get' | 'post' | 'put' | 'delete';
+/** A route's 200 JSON body as generated. openapi-fetch's own `data` type
+ *  runs it through `Readable`, which flattens tuples (`[x, y]` → `number[]`);
+ *  this schema has no read/write-only markers for that to strip. */
+type Body<Op> = Op extends { responses: { 200: { content: { 'application/json': infer R } } } }
+  ? R
+  : never;
+type Args<I> = RequiredKeysOf<I> extends never ? [init?: I] : [init: I];
+
+function call<M extends ApiMethod>(method: M) {
+  return async <P extends PathsWithMethod<paths, M>>(
+    path: P,
+    ...init: Args<MaybeOptionalInit<paths[P], M>>
+  ): Promise<Body<paths[P][M]>> => {
+    // Non-2xx never returns: fetchOrReauth threw ApiError.
+    const { data } = await (
+      client.request as (m: M, p: P, i?: unknown) => Promise<{ data?: unknown }>
+    )(method, path, init[0]);
+    return data as Body<paths[P][M]>;
+  };
 }
 
-/** POST JSON and return the response body as a Blob (mp4 / zip clip endpoints). */
-export async function apiPostBlob(path: string, body: unknown): Promise<Blob> {
-  const res = await fetchOrReauth(path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw new ApiError(res.status, await res.text());
-  return res.blob();
-}
+/** The typed client: every call names an OpenAPI path (`/api/...`); its
+ *  params, body and response are the generated types of that route. */
+export const api = {
+  get: call('get'),
+  post: call('post'),
+  put: call('put'),
+  delete: call('delete'),
+  /** POST answering a file (the mp4 / zip clip endpoints). */
+  postBlob: async <P extends PathsWithMethod<paths, 'post'>>(
+    path: P,
+    init: MaybeOptionalInit<paths[P], 'post'>,
+  ): Promise<Blob> =>
+    (
+      await (client.POST as (p: P, i: unknown) => Promise<{ data?: unknown }>)(path, {
+        ...init,
+        parseAs: 'blob',
+      })
+    ).data as Blob,
+};
 
-// ── Endpoint map ──
-// Leaves are literal paths or functions returning paths (relative to /api).
-// SSE URLs are passed through apiUrl() by callers via the SSEClient.
+// ── URL map ──
+// What is not a JSON call — media `src`, SSE streams, downloads and the
+// keepalive flush on page leave — as paths relative to /api, passed through
+// apiUrl() by callers. JSON calls go through `api` by their OpenAPI path.
 export const API = {
-  court: {
-    videos: '/court/videos',
-    video: (name: string) => `/court/video/${encodeURIComponent(name)}`,
-    done: (name: string) => `/court/done/${encodeURIComponent(name)}`,
-    positions: (name: string) => `/court/positions/${encodeURIComponent(name)}`,
-    prefill: (name: string) => `/court/prefill/${encodeURIComponent(name)}`,
-  },
   appReview: {
-    users: '/app-review/users',
-    library: (user: string) => `/app-review/users/${encodeURIComponent(user)}/library`,
-    overview: (user: string) => `/app-review/users/${encodeURIComponent(user)}/overview`,
-    match: (user: string, match: string, mode: string, corrected: boolean) =>
-      `/app-review/users/${encodeURIComponent(user)}/matches/${encodeURIComponent(match)}${q({ mode, corrected })}`,
     video: (user: string, match: string) =>
       `/app-review/users/${encodeURIComponent(user)}/matches/${encodeURIComponent(match)}/video`,
-    videoMeta: (user: string, match: string) =>
-      `/app-review/users/${encodeURIComponent(user)}/matches/${encodeURIComponent(match)}/video/meta`,
-    startReview: (user: string, match: string) =>
-      `/app-review/users/${encodeURIComponent(user)}/matches/${encodeURIComponent(match)}/review`,
-    review: (id: string) => `/app-review/reviews/${id}`,
-    decisions: (id: string) => `/app-review/reviews/${id}/decisions`,
-    recover: (id: string) => `/app-review/reviews/${id}/recover`,
-    videos: '/app-review/videos',
-    target: (video: string) => `/app-review/target${q({ video })}`,
   },
   jobs: {
-    list: '/jobs',
-    activeCount: '/jobs/active-count',
-    get: (id: string) => `/jobs/${id}`,
-    logs: (id: string) => `/jobs/${id}/logs`,
-    cancel: (id: string) => `/jobs/${id}/cancel`,
     eventsSSE: (id: string) => `/jobs/${id}/events`,
   },
-  system: {
-    me: '/system/me',
-    presence: '/system/presence',
-  },
-  upload: {
-    start: '/upload/start',
-    status: '/upload/status',
-    categories: '/upload/categories',
-    download: '/upload/download',
-    deleteLocal: '/upload/delete-local',
-    deleteR2: '/upload/delete-r2',
-    files: (category: string) => `/upload/files?category=${encodeURIComponent(category)}`,
-    r2Files: (category: string) => `/upload/r2-files?category=${encodeURIComponent(category)}`,
-  },
   download: {
-    start: '/download/start',
-    playlist: (url: string) => `/download/playlist?url=${encodeURIComponent(url)}`,
-    cancel: (sessionId: string) => `/download/${sessionId}/cancel`,
     progressSSE: (sessionId: string) => `/download/${sessionId}/progress`,
   },
   cut: {
-    videos: '/cut/videos',
-    export: '/cut/export',
     video: (name: string) => `/cut/video/${encodeURIComponent(name)}`,
   },
-  label: {
-    stats: '/label/stats',
+  court: {
+    positions: (name: string) => `/court/positions/${encodeURIComponent(name)}`,
   },
   annotate: {
-    results: '/annotate/results',
     annotations: '/annotate/annotations',
-    result: (name: string, params: QueryParams = {}) =>
-      `/annotate/results/${encodeURIComponent(name)}${q(params)}`,
     video: (path: string) => `/annotate/video/${encodeURIComponent(path)}`,
-    clip: '/annotate/clip',
-    clipZip: '/annotate/clip-zip',
-    done: (name: string) => `/annotate/done/${encodeURIComponent(name)}`,
   },
   actionAnnotate: {
-    labels: '/action-annotate/labels',
-    videos: '/action-annotate/videos',
     annotations: '/action-annotate/annotations',
-    annotation: (name: string, params: QueryParams = {}) =>
-      `/action-annotate/annotations/${encodeURIComponent(name)}${q(params)}`,
-    waveform: (name: string) => `/action-annotate/waveform/${encodeURIComponent(name)}`,
-    export: '/action-annotate/export',
     video: (name: string) => `/action-annotate/video/${encodeURIComponent(name)}`,
-    done: (name: string) => `/action-annotate/done/${encodeURIComponent(name)}`,
   },
-  fusionModel: {
-    status: '/fusion-model/status',
-    train: '/fusion-model/train',
-    performance: '/fusion-model/performance',
-  },
-  // One fusion checkpoint, every stage: rally + winner, action, association.
-  inference: {
-    videos: '/inference/videos',
-    spot: '/inference/spot',
-    start: '/inference/start',
-  },
-  tracklets: {
-    run: '/tracklets/run',
-    get: (name: string) => `/tracklets/${encodeURIComponent(name)}`,
-    links: (name: string) => `/tracklets/links/${encodeURIComponent(name)}`,
-    masks: (name: string, rally: number) =>
-      `/tracklets/masks/${encodeURIComponent(name)}?rally=${rally}`,
-  },
-  // Player detection — the sparse perception stage. `extraction` is where its
-  // records and crops live, shared with association, which writes the pick
-  // into the same record.
   extraction: {
-    videos: '/extraction/videos',
-    detect: '/extraction/detect',
-    records: (name: string) => `/extraction/records/${encodeURIComponent(name)}`,
     crop: (name: string, cropFile: string, masked = false) =>
       `/extraction/crop/${encodeURIComponent(name)}/${encodeURIComponent(cropFile)}${masked ? '?masked=1' : ''}`,
   },
-  // ReID is grouping the same person, and nothing else — finding people and
-  // choosing who acted is `extraction`, who is on court is `tracklets`.
-  reid: {
-    videos: '/reid/videos',
-    options: '/reid/options',
-    embed: '/reid/embed',
-    clusters: (name: string, threshold: number, model: string) =>
-      `/reid/clusters/${encodeURIComponent(name)}?threshold=${threshold}&model=${encodeURIComponent(model)}`,
-    players: (name: string, model: string) =>
-      `/reid/players/${encodeURIComponent(name)}?model=${encodeURIComponent(model)}`,
-    seedCluster: (name: string) => `/reid/seed-cluster/${encodeURIComponent(name)}`,
-    done: (name: string) => `/reid/done/${encodeURIComponent(name)}`,
-  },
   reidTrain: {
-    status: '/reid-train/status',
-    // POST starts the dataset-export job; GET /export (exportPlan) only plans.
-    export: '/reid-train/export',
-    train: '/reid-train/train',
-    runs: '/reid-train/runs',
-    performance: (model?: string) =>
-      `/reid-train/performance${model ? `?model=${encodeURIComponent(model)}` : ''}`,
+    // GET plans the export as a download; POST (api.post) starts the job.
     exportPlan: (p: { split_mode: string; test_ratio: number; seed: number; masked: boolean }) =>
-      `/reid-train/export?split_mode=${p.split_mode}&test_ratio=${p.test_ratio}&seed=${p.seed}&masked=${p.masked}`,
-  },
-  // Who did what, when. Written by the backend for every state-changing call
-  // and every job transition; this is the read side.
-  audit: {
-    filters: '/audit/filters',
-    worklog: (p: { since: string; until: string }) => `/audit/worklog${q(p)}`,
-    saves: (id: number) => `/audit/events/${id}/saves`,
-    events: (p: {
-      actor?: string;
-      action?: string;
-      target?: string;
-      since?: string;
-      until?: string;
-      before?: number;
-      limit?: number;
-    }) => `/audit/events${q(p)}`,
-  },
-  association: {
-    videos: '/actor-association/videos',
-    fix: (name: string) => `/actor-association/fix/${encodeURIComponent(name)}`,
-    confirm: (name: string) => `/actor-association/confirm/${encodeURIComponent(name)}`,
-    done: (name: string) => `/actor-association/done/${encodeURIComponent(name)}`,
-    boxCheck: (name: string) => `/actor-association/box-check/${encodeURIComponent(name)}`,
+      `/reid-train/export${q(p)}`,
   },
 } as const;

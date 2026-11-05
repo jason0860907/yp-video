@@ -7,7 +7,7 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { API, apiFetch, apiUrl, errMsg } from '@/lib/api';
+import { API, api, apiUrl, errMsg } from '@/lib/api';
 import { ACTION_COLORS } from '@/lib/actionColors';
 import { useActionWaveform } from '@/lib/useActionWaveform';
 import { firstRallyStart, seekWhenSeekable } from '@/lib/playheadHandover';
@@ -20,14 +20,7 @@ import { useFrameClock } from '@/components/labeling/useFrameClock';
 import { useVideoKeys } from '@/components/labeling/useVideoKeys';
 import { FrameStats, KeyHints, PlayerTransport } from '@/components/labeling/PlayerTransport';
 import { useVideoLabelingData } from '@/components/labeling/useVideoLabelingData';
-import {
-  apply,
-  ballAt,
-  cameraView,
-  footOf,
-  type Arc,
-  type CourtState,
-} from '@/pages/label/court/geometry';
+import { apply, ballAt, cameraView, footOf, type Arc } from '@/pages/label/court/geometry';
 import type { Layers } from '@/pages/label/court/layers';
 import { usePlays } from '@/pages/label/court/usePlays';
 import { LayerToggles, MIN_POINT_SCALE, VideoOverlay } from '@/pages/label/court/VideoOverlay';
@@ -42,7 +35,7 @@ type Tab = 'positions' | 'flights';
 export function AnalysisPanel({ video }: { video: string }) {
   const query = useQuery({
     queryKey: ['court', video],
-    queryFn: () => apiFetch<CourtState>(API.court.video(video)),
+    queryFn: () => api.get('/api/court/video/{name}', { params: { path: { name: video } } }),
   });
   const state = query.data;
   const fit = state?.fit ?? null;

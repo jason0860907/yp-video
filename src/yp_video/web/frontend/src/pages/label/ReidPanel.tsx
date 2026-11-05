@@ -17,7 +17,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { API, ApiError, apiFetch, apiUrl, errMsg } from '@/lib/api';
+import { API, api, ApiError, apiUrl, errMsg } from '@/lib/api';
 import { Badge } from '@/components/ui/Badge';
 import { Segmented } from '@/components/ui/Segmented';
 import { Button } from '@/components/ui/Button';
@@ -32,7 +32,7 @@ import { EventVideoPlayer, type PlayerHandle } from '@/components/labeling/Event
 import { useGroupBoard } from '@/components/reid/useGroupBoard';
 import { useVideoLabelingData } from '@/components/labeling/useVideoLabelingData';
 import { LiveJob } from '@/components/job/LiveJob';
-import type { Job, ReidClusters, ReidOptions, ReidPlayers, ReidRecord, ReidVideo } from '@/types/api';
+import type { Job, ReidRecord } from '@/types/api';
 import { reidStatus } from '@/lib/labelStatus';
 import { BALL_LABELS } from '@/lib/actionEditorModel';
 import { STATUS_OPTIONS, type ModeDescriptor, type PlaybackClock, type RegisterGuard } from './mode';
@@ -77,7 +77,7 @@ export const REID_MODE: ModeDescriptor = {
       </>
     );
   },
-  // No doneApi: the panel's own Done button saves the board first and can
+  // No setDone: the panel's own Done button saves the board first and can
   // record auto actors as confirmed — semantics the page button can't offer.
   listKey: 'reid-videos',
 };
@@ -108,13 +108,13 @@ export function ReidPanel({ video, registerGuard, clock }: { video: string; regi
 
   const videosQuery = useQuery({
     queryKey: ['reid-videos'],
-    queryFn: () => apiFetch<ReidVideo[]>(API.reid.videos),
+    queryFn: () => api.get('/api/reid/videos'),
   });
   // Embedder choices AND their threshold calibration come from the server
   // registry — a model only shows up when its weights actually exist there.
   const optionsQuery = useQuery({
     queryKey: ['reid-options'],
-    queryFn: () => apiFetch<ReidOptions>(API.reid.options),
+    queryFn: () => api.get('/api/reid/options'),
     staleTime: Infinity, // static per server run
   });
   const embedderOptions = useMemo(() => optionsQuery.data?.embedders ?? [], [optionsQuery.data]);
@@ -138,7 +138,10 @@ export function ReidPanel({ video, registerGuard, clock }: { video: string; regi
 
   const clustersQuery = useQuery({
     queryKey: ['reid-clusters', video, threshold, embedder],
-    queryFn: () => apiFetch<ReidClusters>(API.reid.clusters(video, threshold, embedder)),
+    queryFn: () =>
+      api.get('/api/reid/clusters/{name}', {
+        params: { path: { name: video }, query: { threshold, model: embedder } },
+      }),
     enabled: Boolean(video),
     retry: retryEmbeddingRefresh,
     retryDelay: embeddingRetryDelay,
@@ -148,7 +151,10 @@ export function ReidPanel({ video, registerGuard, clock }: { video: string; regi
 
   const playersQuery = useQuery({
     queryKey: ['reid-players', video, embedder],
-    queryFn: () => apiFetch<ReidPlayers>(API.reid.players(video, embedder)),
+    queryFn: () =>
+      api.get('/api/reid/players/{name}', {
+        params: { path: { name: video }, query: { model: embedder } },
+      }),
     enabled: Boolean(video),
     retry: retryEmbeddingRefresh,
     retryDelay: embeddingRetryDelay,
@@ -169,8 +175,7 @@ export function ReidPanel({ video, registerGuard, clock }: { video: string; regi
   useEffect(() => setBackfillJob(null), [video, embedder]);
   const startBackfill = async () => {
     try {
-      const job = await apiFetch<Job>(API.reid.embed, {
-        method: 'POST',
+      const job = await api.post('/api/reid/embed', {
         body: { videos: [video], models: [embedder] },
       });
       setBackfillJob(job);
@@ -258,8 +263,8 @@ export function ReidPanel({ video, registerGuard, clock }: { video: string; regi
     }
     if (board.dirty && !(await board.save())) return;
     try {
-      await apiFetch(API.reid.done(video), {
-        method: 'PUT',
+      await api.put('/api/reid/done/{name}', {
+        params: { path: { name: video } },
         body: {
           done: !isDone,
           confirm_auto_actors: !isDone,

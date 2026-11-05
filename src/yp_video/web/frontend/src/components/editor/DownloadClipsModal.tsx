@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { API, apiPostBlob, errMsg } from '@/lib/api';
+import { api, errMsg } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { formatTime } from '@/lib/format';
 import { downloadBlob } from '@/lib/download';
@@ -42,7 +42,7 @@ export function DownloadClipsModal({ video, segments, onClose }: Props) {
     setStatusText('Cutting clip…');
     try {
       const s = segments[i]!;
-      const blob = await apiPostBlob(API.annotate.clip, { video, segment: s });
+      const blob = await api.postBlob('/api/annotate/clip', { body: { video, segment: s } });
       downloadBlob(blob, `${s.label}_${Math.round(s.start)}-${Math.round(s.end)}.mp4`);
     } catch (e) {
       toast.error(`Clip export failed: ${errMsg(e)}`);
@@ -58,7 +58,9 @@ export function DownloadClipsModal({ video, segments, onClose }: Props) {
     setBusy(true);
     setStatusText(`Cutting ${chosen.length} clip(s)…`);
     try {
-      const blob = await apiPostBlob(API.annotate.clipZip, { video, segments: chosen });
+      const blob = await api.postBlob('/api/annotate/clip-zip', {
+        body: { video, segments: chosen },
+      });
       downloadBlob(blob, 'rally-clips.zip');
       toast.success(`Downloaded ${chosen.length} clip(s)`);
     } catch (e) {

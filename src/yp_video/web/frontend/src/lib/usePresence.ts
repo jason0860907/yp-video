@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { API, apiFetch } from '@/lib/api';
+import { api } from '@/lib/api';
 import type { components } from '@/types/openapi';
 
 /** Server reply: browsers with the page in the foreground within the last
@@ -38,8 +38,7 @@ export function usePresence(): Presence | null {
     let stopped = false;
     const beat = async () => {
       try {
-        const res = await apiFetch<Presence>(API.system.presence, {
-          method: 'POST',
+        const res = await api.post('/api/system/presence', {
           body: {
             client_id: clientId(),
             active: Date.now() - lastInputRef.current < IDLE_AFTER_MS,

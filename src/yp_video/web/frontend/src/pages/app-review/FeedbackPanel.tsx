@@ -6,7 +6,7 @@
 import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { API, apiFetch, errMsg } from '@/lib/api';
+import { api, errMsg } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { fieldCls } from '@/components/form/Field';
 import { Badge } from '@/components/ui/Badge';
@@ -21,7 +21,6 @@ import { formatDateTime } from '@/lib/format';
 import type { Candidate, Decision, LibraryMatch, MatchDetail, Review } from './types';
 import { lossReasonLabel } from './appTerms';
 import { byReviewOrder, candidateClip, DECISION_LABEL, preciseTime, sideLabel } from './types';
-import type { components } from '@/types/openapi';
 
 type Value = Record<string, unknown>;
 type Operation = 'remove_event' | 'remove_rally' | 'update_rally';
@@ -130,16 +129,19 @@ export function FeedbackPanel({
   const review = useQuery({
     queryKey: ['app-review', 'review', reviewId],
     enabled: !!reviewId,
-    queryFn: () => apiFetch<Review>(API.appReview.review(reviewId!)),
+    queryFn: () =>
+      api.get('/api/app-review/reviews/{review_id}', {
+        params: { path: { review_id: reviewId! } },
+      }),
   });
   const videos = useQuery({
     queryKey: ['app-review', 'videos'],
-    queryFn: () => apiFetch<components['schemas']['AppReviewVideo'][]>(API.appReview.videos),
+    queryFn: () => api.get('/api/app-review/videos'),
   });
   const target = useQuery({
     queryKey: ['app-review', 'target', video],
     enabled: !!video,
-    queryFn: () => apiFetch<Record<string, string | null>>(API.appReview.target(video)),
+    queryFn: () => api.get('/api/app-review/target', { params: { query: { video } } }),
   });
 
   const candidates = review.data?.candidates ?? detail.candidates;
@@ -177,21 +179,24 @@ export function FeedbackPanel({
       setBusy(false);
     }
   };
-  const decide = async (decision: string, note: string, sameSource: boolean) => {
+  const decide = async (decision: Decision['decision'], note: string, sameSource: boolean) => {
     const at = ordered.findIndex((c) => c.id === candidate!.id);
     const next = await run(async () => {
       // The first verdict pins the snapshot it judges.
       const id =
         reviewId ??
-        (await apiFetch<Review>(API.appReview.startReview(user, detail.match.id), { method: 'POST' })).id;
-      return apiFetch<Review>(API.appReview.decisions(id), {
-        method: 'POST',
+        (await api.post('/api/app-review/users/{user}/matches/{match}/review', { params: { path: { user, match: detail.match.id } } })).id;
+      return api.post('/api/app-review/reviews/{review_id}/decisions', {
+        params: { path: { review_id: id } },
         body: {
           candidate_id: candidate!.id,
           decision,
           note,
           video,
-          revision: target.data?.[decision] || '',
+          revision:
+            (decision === 'accepted_feedback' || decision === 'rejected'
+              ? null
+              : target.data?.[decision]) || '',
           same_source: sameSource,
         },
       });
@@ -236,7 +241,10 @@ export function FeedbackPanel({
           disabled={busy}
           onClick={() =>
             void run(
-              () => apiFetch<Review>(API.appReview.recover(reviewId!), { method: 'POST' }),
+              () =>
+                api.post('/api/app-review/reviews/{review_id}/recover', {
+                  params: { path: { review_id: reviewId! } },
+                }),
               'Interrupted label import recovered',
             )
           }
@@ -318,7 +326,7 @@ function Verdict({
   onVideo: (video: string) => void;
   videos: UseQueryResult<{ name: string }[]>;
   target: UseQueryResult<Record<string, string | null>>;
-  onDecide: (decision: string, note: string, sameSource: boolean) => void;
+  onDecide: (decision: Decision['decision'], note: string, sameSource: boolean) => void;
 }) {
   const [note, setNote] = useState('');
   const [sameSource, setSameSource] = useState(false);

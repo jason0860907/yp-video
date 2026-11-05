@@ -1,10 +1,9 @@
 import { useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { API, apiFetch } from '@/lib/api';
+import { api } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { PALETTES, setPalette, toggleTheme, useTheme } from '@/lib/theme';
 import { PAGE_TITLES, PATH_SECTION } from './nav';
-import type { Me } from '@/types/api';
 
 interface TopbarProps {
   onToggleSidebar: () => void;
@@ -20,7 +19,7 @@ export function Topbar({ onToggleSidebar }: TopbarProps) {
   // which identity the Audit page is about to record their work under.
   const me = useQuery({
     queryKey: ['me'],
-    queryFn: () => apiFetch<Me>(API.system.me),
+    queryFn: () => api.get('/api/system/me'),
     staleTime: Infinity,
   });
   const title = PAGE_TITLES[pathname];

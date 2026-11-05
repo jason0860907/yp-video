@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { API, apiFetch } from '@/lib/api';
+import { api } from '@/lib/api';
 import type { Job } from '@/types/api';
 
 /** Jobs of the given types, newest first: the server list keeps them across
@@ -9,7 +9,7 @@ export function useTypedJobs(types: readonly string[]) {
   const [overrides, setOverrides] = useState<Record<string, Job>>({});
   const jobsQuery = useQuery({
     queryKey: ['jobs-list'],
-    queryFn: () => apiFetch<Job[]>(API.jobs.list),
+    queryFn: () => api.get('/api/jobs'),
   });
 
   const upsertJob = (job: Job) =>

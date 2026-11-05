@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { API, apiFetch, errMsg } from '@/lib/api';
+import { api, errMsg } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -23,7 +23,7 @@ export function JobsPage() {
 
   const jobs = useQuery({
     queryKey: ['jobs-list'],
-    queryFn: () => apiFetch<Job[]>(API.jobs.list),
+    queryFn: () => api.get('/api/jobs'),
     refetchInterval: POLL_MS,
   });
 
@@ -31,7 +31,7 @@ export function JobsPage() {
 
   const cancelJob = async (id: string) => {
     try {
-      await apiFetch(API.jobs.cancel(id), { method: 'POST' });
+      await api.post('/api/jobs/{job_id}/cancel', { params: { path: { job_id: id } } });
       toast.warning('Job cancelled');
       refetchJobs();
     } catch (e) {

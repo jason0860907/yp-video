@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { API, apiFetch, errMsg } from '@/lib/api';
+import { API, api, errMsg } from '@/lib/api';
 import { fieldCls } from '@/components/form/Field';
 import { cn } from '@/lib/cn';
 import { formatBytes, formatDuration, formatSpeed } from '@/lib/format';
@@ -68,7 +68,7 @@ export function DownloadPage() {
     setFetching(true);
     setFetchError(null);
     try {
-      const data = await apiFetch<PlaylistResponse>(API.download.playlist(trimmed));
+      const data = await api.get('/api/download/playlist', { params: { query: { url: trimmed } } });
       setTitle(data.title);
       setVideos(data.videos.map((v) => ({ ...v, selected: true, status: 'pending', progress: null })));
     } catch (e) {
@@ -88,8 +88,7 @@ export function DownloadPage() {
     }
     setDownloading(true);
     try {
-      const res = await apiFetch<components['schemas']['DownloadResponse']>(API.download.start, {
-        method: 'POST',
+      const res = await api.post('/api/download/start', {
         body: {
           videos: selected.map((v) => ({ id: v.id, title: v.title, duration: v.duration, url: v.url })),
           quality,
@@ -105,7 +104,9 @@ export function DownloadPage() {
   const cancelDownload = async () => {
     if (!sessionId) return;
     try {
-      await apiFetch(API.download.cancel(sessionId), { method: 'POST' });
+      await api.post('/api/download/{session_id}/cancel', {
+        params: { path: { session_id: sessionId } },
+      });
       setDownloading(false);
       toast.warning('Download cancelled');
     } catch (e) {

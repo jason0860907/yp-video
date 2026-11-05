@@ -15,7 +15,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { fieldCls } from '@/components/form/Field';
-import { apiFetch, errMsg } from '@/lib/api';
+import { errMsg } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import type { LabelMode } from '@/lib/labelStatus';
 import { useUnionVideos } from '@/lib/useUnionVideos';
@@ -125,13 +125,13 @@ export function LabelPage() {
   const unavailable = cutsKnown && pickedRow && !active.available(pickedRow);
 
   // Page-level Done toggle for modes whose flag is a plain stored bit.
-  // ReID has no doneApi — its panel button saves the board first and can
+  // ReID has no setDone — its panel button saves the board first and can
   // confirm auto actors, so the page defers to it.
   const qc = useQueryClient();
   const [doneBusy, setDoneBusy] = useState(false);
   const isDone = pickedRow ? active.status(pickedRow) === 'done' : false;
   const toggleDone = async () => {
-    if (!video || !active.doneApi) return;
+    if (!video || !active.setDone) return;
     // Association's Done confirms every auto pick of the video, rallies not
     // yet looked at included — say so before it happens.
     if (
@@ -148,10 +148,7 @@ export function LabelPage() {
     try {
       // Association's Done also sweep-confirms current auto picks; the
       // response says how many landed (0 for the other modes).
-      const res = await apiFetch<{ done: boolean; confirmed?: number }>(active.doneApi(video), {
-        method: 'PUT',
-        body: { done: !isDone },
-      });
+      const res = await active.setDone(video, !isDone);
       toast.success(
         isDone
           ? 'Done mark removed'
@@ -278,7 +275,7 @@ export function LabelPage() {
             >
               Clips
             </Button>
-            {active.doneApi && (
+            {active.setDone && (
               <Button
                 size="sm"
                 className="h-9 py-0"

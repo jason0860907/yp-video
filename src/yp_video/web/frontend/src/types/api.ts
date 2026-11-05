@@ -29,7 +29,6 @@ export type Me = S['Me'];
 export type JobLogs = S['JobLogs'];
 export type ActionAnnotationStats = S['ActionAnnotationStats'];
 export type FusionRecipeId = S['FusionRecipe']['id'];
-export type SpotTask = S['FusionRecipe']['tasks'][number];
 export type FusionRecipe = S['FusionRecipe'];
 export type FusionModelStatus = S['FusionModelStatus'];
 
@@ -195,7 +194,6 @@ export type ReidCrossEval = S['ReidCrossEval'];
 export type ReidModelEval = S['ReidModelEval'];
 export type ReidPerfData = S['ReidPerfData'];
 export type AssociationVideo = S['AssociationVideo'];
-export type BoxCheckStatus = NonNullable<S['BoxCheckEntry']['status']>;
 export type BoxCheckEntry = S['BoxCheckEntry'];
 export type ReidDatasetInfo = S['ReidDatasetInfo'];
 /** `metrics` is the checkpoint manifest's open dict; these are the keys the

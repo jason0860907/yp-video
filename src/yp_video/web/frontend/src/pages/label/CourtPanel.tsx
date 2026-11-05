@@ -15,7 +15,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { API, apiFetch, apiUrl, errMsg } from '@/lib/api';
+import { API, api, apiUrl, errMsg } from '@/lib/api';
 import { firstRallyStart, hasRealTime, seekWhenSeekable, usePlayheadHandover } from '@/lib/playheadHandover';
 import { ActionTimeline } from '@/components/editor/ActionTimeline';
 import { ACTION_COLORS } from '@/lib/actionColors';
@@ -39,7 +39,6 @@ import { MAX_ZOOM, useZoom } from './court/useZoom';
 import { usePlays } from './court/usePlays';
 import { ballAt, type CourtState, type Point, type Segment } from './court/geometry';
 import type { ModeDescriptor, PlaybackClock } from './mode';
-import type { components } from '@/types/openapi';
 
 export const COURT_MODE: ModeDescriptor = {
   key: 'court',
@@ -55,7 +54,8 @@ export const COURT_MODE: ModeDescriptor = {
   matches: (row, status) => status === 'all' || (row.court?.status ?? 'unlabeled') === status,
   available: (row) => Boolean(row.action),
   hint: () => 'Needs a cut video',
-  doneApi: (video) => API.court.done(video),
+  setDone: (video, done) =>
+    api.put('/api/court/done/{name}', { params: { path: { name: video } }, body: { done } }),
 };
 
 const round4 = (v: number) => Math.round(v * 1e4) / 1e4;
@@ -88,7 +88,7 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
   const qc = useQueryClient();
   const query = useQuery({
     queryKey: ['court', video],
-    queryFn: () => apiFetch<CourtState>(API.court.video(video)),
+    queryFn: () => api.get('/api/court/video/{name}', { params: { path: { name: video } } }),
   });
   const state = query.data;
   const { meta } = useVideoLabelingData(video);
@@ -166,8 +166,8 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
     // Optimistic: the mark moves now; the fit follows the response.
     qc.setQueryData<CourtState>(['court', video], { ...state, points, net_height_m, guides });
     try {
-      const next = await apiFetch<CourtState>(API.court.video(video), {
-        method: 'PUT',
+      const next = await api.put('/api/court/video/{name}', {
+        params: { path: { name: video } },
         body: { points, net_height_m, frame_size: frameSize, guides },
       });
       qc.setQueryData(['court', video], next);
@@ -192,7 +192,7 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
   const untouched = (s: CourtState) => s.guides.length === 0 && Object.keys(s.points).length === 0;
   const found = useQuery({
     queryKey: ['court-prefill', video],
-    queryFn: () => apiFetch<components['schemas']['CourtPrefill']>(API.court.prefill(video)),
+    queryFn: () => api.get('/api/court/prefill/{name}', { params: { path: { name: video } } }),
     enabled: state != null && untouched(state),
     staleTime: Infinity,
     retry: false,

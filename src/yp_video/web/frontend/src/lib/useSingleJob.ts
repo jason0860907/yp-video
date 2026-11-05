@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { API, apiFetch, errMsg } from '@/lib/api';
+import { API, api, errMsg } from '@/lib/api';
 import { invalidateJobQueries, isTerminal } from '@/lib/job';
 import { useSSE } from '@/lib/useSSE';
 import { toast } from '@/components/feedback/toast';
@@ -44,7 +44,7 @@ export function useSingleJob({ activeJob, label, onSettled }: UseSingleJobOption
   const cancel = async () => {
     if (!job) return;
     try {
-      await apiFetch(API.jobs.cancel(job.id), { method: 'POST' });
+      await api.post('/api/jobs/{job_id}/cancel', { params: { path: { job_id: job.id } } });
       toast.warning('Job cancelled');
     } catch (e) {
       toast.error(`Cancel failed: ${errMsg(e)}`);

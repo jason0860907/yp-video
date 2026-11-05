@@ -12,7 +12,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { API, apiFetch, errMsg } from '@/lib/api';
+import { api, errMsg } from '@/lib/api';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -28,7 +28,6 @@ import { LiveJob } from '@/components/job/LiveJob';
 import { toast } from '@/components/feedback/toast';
 import { STATUS_FILTER_OPTIONS } from '@/lib/labelStatus';
 import { useTypedJobs } from '@/lib/useTypedJobs';
-import type { Job, ReidOptions, ReidVideo } from '@/types/api';
 
 
 // The one job this page runs — rehydrated from the server list so navigating
@@ -45,11 +44,11 @@ export function ReidPredictPage() {
 
   const videosQuery = useQuery({
     queryKey: ['reid-videos'],
-    queryFn: () => apiFetch<ReidVideo[]>(API.reid.videos),
+    queryFn: () => api.get('/api/reid/videos'),
   });
   const optionsQuery = useQuery({
     queryKey: ['reid-options'],
-    queryFn: () => apiFetch<ReidOptions>(API.reid.options),
+    queryFn: () => api.get('/api/reid/options'),
     staleTime: Infinity, // static per server run
   });
   const registeredEmbedders = (optionsQuery.data?.embedders ?? []).map((e) => e.name);
@@ -70,8 +69,7 @@ export function ReidPredictPage() {
       return;
     }
     try {
-      const job = await apiFetch<Job>(API.reid.embed, {
-        method: 'POST',
+      const job = await api.post('/api/reid/embed', {
         body: { videos: names, overwrite, checkpoint: checkpoint || null },
       });
       upsertJob(job);

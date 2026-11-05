@@ -9,11 +9,10 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { API, apiFetch, errMsg } from '@/lib/api';
+import { api, errMsg } from '@/lib/api';
 import { toast } from '@/components/feedback/toast';
 import { confirm } from '@/components/feedback/confirm';
 import type { ReidCluster } from '@/types/api';
-import type { components } from '@/types/openapi';
 
 /** One editable identity group: named = a player, unnamed = an auto cluster.
  *  Locked groups survive re-clustering (threshold/model changes); any group
@@ -228,8 +227,8 @@ export function useGroupBoard({ picked, embedder, threshold, clusters, units, un
           for (const id of eventsOf(key)) nextAssignments[id] = name;
         }
       }
-      await apiFetch(API.reid.players(picked, embedder), {
-        method: 'PUT',
+      await api.put('/api/reid/players/{name}', {
+        params: { path: { name: picked } },
         body: { assignments: nextAssignments },
       });
       // Patch the minted placeholders into whatever the board looks like NOW —
@@ -282,10 +281,10 @@ export function useGroupBoard({ picked, embedder, threshold, clusters, units, un
       return;
     }
     try {
-      const res = await apiFetch<components['schemas']['ReidSeedClusters']>(
-        API.reid.seedCluster(picked),
-        { method: 'POST', body: { seeds: Object.fromEntries(seeds.map((g) => [g.key, g.unitKeys])), threshold, model: embedder } },
-      );
+      const res = await api.post('/api/reid/seed-cluster/{name}', {
+        params: { path: { name: picked } },
+        body: { seeds: Object.fromEntries(seeds.map((g) => [g.key, g.unitKeys])), threshold, model: embedder },
+      });
       const assigned = Object.values(res.groups).reduce((s, a) => s + a.length, 0);
       setGroups(() => {
         // Anchors absorb their assignments (locked so nothing re-clusters

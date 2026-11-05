@@ -1,14 +1,13 @@
 import { useQuery } from '@tanstack/react-query';
-import { apiFetch, errMsg } from '@/lib/api';
-import type { SpotInfo } from '@/types/api';
+import { api, errMsg } from '@/lib/api';
 
-/** Availability of a yp-spot inference surface (action or rally flavor).
+/** Availability of yp-spot inference (the Inference page's fusion packages).
  *  `problem` is null while the status request is still pending — rendering
  *  the pending state as "not ready" flashes a false alarm on load. */
-export function useSpotStatus(queryKey: string[], endpoint: string) {
+export function useSpotStatus(queryKey: string[]) {
   const spotQuery = useQuery({
     queryKey,
-    queryFn: () => apiFetch<SpotInfo>(endpoint),
+    queryFn: () => api.get('/api/inference/spot'),
   });
   const spot = spotQuery.data;
   const checkpoints = spot?.checkpoints ?? [];

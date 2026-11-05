@@ -9,7 +9,7 @@
 
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type SyntheticEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { API, apiFetch, apiUrl, errMsg } from '@/lib/api';
+import { API, api, apiUrl, errMsg } from '@/lib/api';
 import { fieldCls } from '@/components/form/Field';
 import { cn } from '@/lib/cn';
 import { firstRallyStart, hasRealTime, usePlayheadHandover } from '@/lib/playheadHandover';
@@ -43,13 +43,12 @@ import {
 import { useActionWaveform } from '@/lib/useActionWaveform';
 import { scrollActionIntoView, scrollRallyTop } from '@/lib/sidebarScroll';
 import { ACTION_COLORS, actionColor } from '@/lib/actionColors';
-import type { ActionAnnotationData, ActionEvent, ActionVideo } from '@/types/api';
+import type { ActionEvent } from '@/types/api';
 import { actionStatus } from '@/lib/labelStatus';
 import { useVideoKeys } from '@/components/labeling/useVideoKeys';
 import { useFrameClock } from '@/components/labeling/useFrameClock';
 import { FrameStats, KeyHints, PlayerTransport } from '@/components/labeling/PlayerTransport';
 import { STATUS_OPTIONS, type LabelSource, type LoadedSource, type ModeDescriptor, type PlaybackClock, type RegisterGuard } from './mode';
-import type { components } from '@/types/openapi';
 
 const ACTION_AUTOSAVE_MS = 2000;
 
@@ -66,7 +65,11 @@ export const ACTION_MODE: ModeDescriptor = {
     if (!v || !hasActiveActionAnnotation(v)) return null;
     return <span className="shrink-0 font-mono text-[10px] tabular-nums text-text-muted">{v.event_count || 0}ev</span>;
   },
-  doneApi: (video) => API.actionAnnotate.done(video),
+  setDone: (video, done) =>
+    api.put('/api/action-annotate/done/{name}', {
+      params: { path: { name: video } },
+      body: { done },
+    }),
   listKey: 'action-videos',
   hasSources: true,
 };
@@ -100,8 +103,8 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, registerGu
   const fromPreAnnotation = useRef(false);
   edRef.current = ed;
 
-  const videosQuery = useQuery({ queryKey: ['action-videos'], queryFn: () => apiFetch<ActionVideo[]>(API.actionAnnotate.videos) });
-  const labelsQuery = useQuery({ queryKey: ['action-labels'], queryFn: () => apiFetch<components['schemas']['ActionLabels']>(API.actionAnnotate.labels) });
+  const videosQuery = useQuery({ queryKey: ['action-videos'], queryFn: () => api.get('/api/action-annotate/videos') });
+  const labelsQuery = useQuery({ queryKey: ['action-labels'], queryFn: () => api.get('/api/action-annotate/labels') });
   const labels = labelsQuery.data?.labels ?? DEFAULT_ACTION_LABELS;
 
   // ── Frame clock ── (auto-pauses at the selected rally's end)
@@ -248,9 +251,9 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, registerGu
   const load = async (name: string) => {
     if (!name) return;
     try {
-      const data = await apiFetch<ActionAnnotationData>(
-        API.actionAnnotate.annotation(name, { source }),
-      );
+      const data = await api.get('/api/action-annotate/annotations/{name}', {
+        params: { path: { name }, query: { source } },
+      });
       onLoaded?.(data.loaded_source ?? 'none');
       fromPreAnnotation.current = data.loaded_source === 'pre-annotation';
       const next = normalizeActionEditor(data, labels);
@@ -353,8 +356,7 @@ export function ActionPanel({ video, source = 'annotation', onLoaded, registerGu
         fromPreAnnotation.current = false;
       }
       const video = snapshot.video;
-      await apiFetch(API.actionAnnotate.annotations, {
-        method: 'POST',
+      await api.post('/api/action-annotate/annotations', {
         body: {
           video,
           fps: snapshot.fps,

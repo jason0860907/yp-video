@@ -6,7 +6,7 @@
 
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { API, apiFetch } from '@/lib/api';
+import { api } from '@/lib/api';
 import type { TimelineEvent } from '@/components/editor/ActionTimeline';
 import { rallyArcs, type CourtPositions, type CourtState } from './geometry';
 
@@ -21,7 +21,7 @@ export function usePlays(
   const fit = state?.fit ?? null;
   const query = useQuery({
     queryKey: ['court-positions', video, fit?.image_to_court],
-    queryFn: () => apiFetch<CourtPositions>(API.court.positions(video)),
+    queryFn: () => api.get('/api/court/positions/{name}', { params: { path: { name: video } } }),
     enabled: Boolean(fit),
     retry: false,
   });
