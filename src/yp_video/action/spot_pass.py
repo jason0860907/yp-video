@@ -30,18 +30,27 @@ SPOT_TASKS = ("rally", "action")
 
 @dataclass(frozen=True)
 class RallyOptions:
-    """How per-frame rally scores merge into spans (``events_to_rally_segments``)."""
+    """How per-frame rally scores merge into spans (``events_to_rally_segments``).
 
-    min_score: float
-    max_gap_s: float
-    min_duration_s: float
+    The defaults are the production model's: the worker runs them as-is and
+    the Inference page starts from them.
+    """
+
+    #: Per-frame score floor before merging; argmax already implies ~0.5 for
+    #: the binary rally/background model, so this mainly trims low-confidence
+    #: edges.
+    min_score: float = 0.5
+    #: Frames closer than this join one rally; also bridges the sampling stride.
+    max_gap_s: float = 2.0
+    min_duration_s: float = 4.0
 
 
 @dataclass(frozen=True)
 class SpotOptions:
-    batch_size: int
-    #: ffmpeg decode threads; 0 lets ffmpeg pick.
+    #: ffmpeg decode threads; 0 lets ffmpeg pick. The host's call, so no default.
     num_workers: int
+    #: The production model's inference batch.
+    batch_size: int = 1
     use_amp: bool = True
 
 

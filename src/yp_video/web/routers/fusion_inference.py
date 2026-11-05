@@ -30,17 +30,21 @@ log = logging.getLogger(__name__)
 router = APIRouter()
 
 
+_RALLY = RallyOptions()
+_SPOT = SpotOptions(num_workers=0)
+
+
 class InferenceRequest(StrictModel):
     videos: list[str] = Field(min_length=1)
     #: Fusion package for rally + action + actor; empty = newest.
     checkpoint: str = ""
-    rally_min_score: float = Field(default=0.5, ge=0.0, le=1.0)
-    max_gap_s: float = Field(default=2.0, ge=0.0, le=30.0)
-    min_duration_s: float = Field(default=4.0, ge=0.0, le=60.0)
-    batch_size: int = Field(default=1, ge=1, le=128)
+    rally_min_score: float = Field(default=_RALLY.min_score, ge=0.0, le=1.0)
+    max_gap_s: float = Field(default=_RALLY.max_gap_s, ge=0.0, le=30.0)
+    min_duration_s: float = Field(default=_RALLY.min_duration_s, ge=0.0, le=60.0)
+    batch_size: int = Field(default=_SPOT.batch_size, ge=1, le=128)
     #: ffmpeg decode threads; 0 lets ffmpeg pick.
-    num_workers: int = Field(default=0, ge=0, le=32)
-    use_amp: bool = True
+    num_workers: int = Field(default=_SPOT.num_workers, ge=0, le=32)
+    use_amp: bool = _SPOT.use_amp
     #: Redo stages whose machine output already exists. Human labels are
     #: never touched either way.
     overwrite: bool = False
