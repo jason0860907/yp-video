@@ -16,7 +16,7 @@ import { formatActionTime } from '@/lib/actionEditorModel';
 import { useVideoRecovery } from '@/lib/useVideoRecovery';
 import { AttackBands } from './AttackBands';
 import { TouchScrubber } from './TouchScrubber';
-import type { Clip, VideoMeta } from './types';
+import type { PlayableClip, VideoMeta } from './types';
 
 export interface ClipPlayerHandle {
   seek: (time: number) => void;
@@ -34,7 +34,7 @@ export const ClipPlayer = forwardRef<
   {
     src: string;
     meta: VideoMeta;
-    clip: Clip | null;
+    clip: PlayableClip | null;
     nav?: FeedPosition;
     /** A clip finished while auto-next is on. */
     onEnded: () => void;

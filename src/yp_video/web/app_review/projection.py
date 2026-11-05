@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import Literal, NotRequired, TypedDict
 
 from yp_video.action import rules
+from yp_video.contracts.action import ActionLabel
 
 from .models import Bundle, Event, Rally, Side, Window
 from .stats import Player, Stats, summary
@@ -58,7 +59,7 @@ class Clip(TypedDict):
     """An action or score clip, as the App frames it."""
 
     key: str
-    kind: str
+    kind: ActionLabel
     #: Actions: the clip's number among all actions; scores: its rally's index
     #: (or its number when outside every rally).
     index: int

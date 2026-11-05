@@ -29,7 +29,7 @@ import { LibraryPicker } from './LibraryPicker';
 import { MatchSummary } from './MatchSummary';
 import { Overview } from './Overview';
 import { useAppReviewUrlState } from './useAppReviewUrlState';
-import type { Candidate, Clip, Library, MatchDetail, Tab, Tag, VideoMeta, WindowMode } from './types';
+import type { Candidate, Clip, Library, PlayableClip, MatchDetail, Tab, Tag, VideoMeta, WindowMode } from './types';
 import { byReviewOrder, candidateClip, liveMatches } from './types';
 
 export function AppReviewPage() {
@@ -74,7 +74,7 @@ export function AppReviewPage() {
     }
     // A rally's favourites are library rows; a clip's ride its correction.
     return (c: Clip) =>
-      ((c.id ? byRally.get(c.id.toLowerCase()) : c.tag_ids) ?? [])
+      ((c.kind === 'rally' ? c.id && byRally.get(c.id.toLowerCase()) : c.tag_ids) || [])
         .map((t) => byId.get(t.toLowerCase()))
         .filter((t): t is Tag => !!t && t.deleted_at === null);
   }, [library.data, match]);
@@ -90,7 +90,7 @@ export function AppReviewPage() {
   // The open correction's span, played without being one of the feed's clips.
   const fixed = candidates?.find((c) => c.id === fix);
   const fixedClip = fixed?.clip;
-  const fixClip = useMemo<Clip | null>(
+  const fixClip = useMemo<PlayableClip | null>(
     () =>
       fixed && fixedClip
         ? {
@@ -108,7 +108,8 @@ export function AppReviewPage() {
   const preview = detail.data?.preview;
   const feed: Clip[] | undefined = preview?.[scope];
   // Clips opens on the feed's first clip, so a picked match never sits blank.
-  const active = tab === 'review' ? fixClip : (feed?.find((c) => c.key === clip) ?? feed?.[0] ?? null);
+  const feedClip = feed?.find((c) => c.key === clip) ?? feed?.[0] ?? null;
+  const active: PlayableClip | null = tab === 'review' ? fixClip : feedClip;
   const select = (next: Clip, visible: Clip[]) => {
     setQueue(visible);
     set({ clip: next.key });
@@ -226,8 +227,14 @@ export function AppReviewPage() {
             nav={at >= 0 ? { at, count: walk.length, go } : undefined}
             onEnded={playNext}
           >
-            {tab === 'clips' && active ? (
-              <ClipMarks clip={active} scope={scope} mode={mode} number={active.kind_index ?? active.index ?? 0} tags={tagsOf(active)} />
+            {tab === 'clips' && feedClip ? (
+              <ClipMarks
+                clip={feedClip}
+                scope={scope}
+                mode={mode}
+                number={feedClip.kind === 'rally' ? feedClip.index : (feedClip.kind_index ?? feedClip.index)}
+                tags={tagsOf(feedClip)}
+              />
             ) : (
               active && <p className="px-1 font-mono text-xs text-text-secondary">{caption(active)}</p>
             )}
@@ -242,7 +249,7 @@ export function AppReviewPage() {
                   edits={edits}
                   scope={scope}
                   mode={mode}
-                  selected={active}
+                  selected={feedClip}
                   onScope={(s) => {
                     setQueue([]);
                     set({ scope: s, clip: '' });
@@ -269,7 +276,7 @@ export function AppReviewPage() {
 }
 
 /** What the player's header calls the clip, the App's way. */
-function caption(c: Clip): string {
+function caption(c: PlayableClip): string {
   const span = `${rallyTime(c.start)}–${rallyTime(c.end)}`;
   if (c.kind === 'rally') return `Rally #${c.rally_index} · ${span}`;
   const where = c.rally_index != null ? `Rally #${c.rally_index} · ` : '';

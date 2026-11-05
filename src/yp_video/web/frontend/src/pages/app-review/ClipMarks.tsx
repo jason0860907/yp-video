@@ -5,14 +5,14 @@
 
 import { CourtScoreText, PlayerChip, ScoreBadge, TintTag } from './AppRows';
 import { APP, FRAMING, kindOf, lossReasonLabel, rallyTime, tagColor, WINNER } from './appTerms';
-import type { Clip, Scope, Tag, WindowMode } from './types';
+import type { Clip, PlayableClip, Scope, Tag, WindowMode } from './types';
 
-const span = (c: Clip) => `${rallyTime(c.start)}–${rallyTime(c.end)}`;
+const span = (c: PlayableClip) => `${rallyTime(c.start)}–${rallyTime(c.end)}`;
 
 export function ClipMarks({ clip, scope, mode, number, tags }: { clip: Clip; scope: Scope; mode: WindowMode; number: number; tags: Tag[] }) {
   return (
     <div className="space-y-2.5 px-1 text-xs">
-      {scope === 'rallies' ? (
+      {clip.kind === 'rally' ? (
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-base font-semibold text-text-primary">Rally #{clip.rally_index}</span>
           {clip.score != null && <ScoreBadge score={clip.score} />}
@@ -46,7 +46,7 @@ export function ClipMarks({ clip, scope, mode, number, tags }: { clip: Clip; sco
         </div>
       )}
       <div className="flex flex-wrap items-center gap-2">
-        {scope === 'actions' ? (
+        {clip.kind !== 'rally' && scope === 'actions' ? (
           <Mark label="球員">{clip.player ? <PlayerChip player={clip.player} /> : <span className="text-text-muted">未指定</span>}</Mark>
         ) : (
           <>
@@ -65,7 +65,7 @@ export function ClipMarks({ clip, scope, mode, number, tags }: { clip: Clip; sco
                 <span className="text-text-muted">未標記</span>
               )}
             </Mark>
-            {scope === 'scores' && (
+            {clip.kind !== 'rally' && scope === 'scores' && (
               <Mark label="決定分">
                 {clip.player ? <PlayerChip player={clip.player} /> : <span className="text-text-muted">未配對</span>}
               </Mark>

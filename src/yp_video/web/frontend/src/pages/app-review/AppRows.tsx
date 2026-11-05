@@ -16,7 +16,7 @@ import {
   tagColor,
   WINNER,
 } from './appTerms';
-import type { Clip, CourtScore, Player, Tag } from './types';
+import type { ActionClip, CourtScore, Player, RallyClip, Tag } from './types';
 
 /** ScoreBadge: ★ score, accent from 85, primary from 70. */
 export function ScoreBadge({ score }: { score: number }) {
@@ -107,13 +107,13 @@ export function RallyCard({
   onClick,
   extra,
 }: {
-  rally: Clip;
+  rally: RallyClip;
   tags: Tag[];
   selected: boolean;
   onClick: () => void;
   extra?: ReactNode;
 }) {
-  const attacks = rally.attacks?.length ?? 0;
+  const attacks = rally.attacks.length;
   const tint = rally.loss_reason_inferred ? APP.accent : APP.primary;
   return (
     <Row selected={selected} onClick={onClick}>
@@ -122,7 +122,7 @@ export function RallyCard({
         <span className="truncate font-mono text-[10px] text-text-secondary">{span(rally)}</span>
         <span className="flex-1" />
         {rally.court_score && <CourtScoreText score={rally.court_score} scorer={rally.winner} />}
-        {rally.score != null && <ScoreBadge score={rally.score} />}
+        <ScoreBadge score={rally.score} />
       </div>
       {(attacks > 0 || rally.loss_reason || tags.length > 0 || extra) && (
         <div className="flex flex-wrap items-center gap-1.5">
@@ -154,7 +154,7 @@ export function ActionCard({
   onClick,
   extra,
 }: {
-  clip: Clip;
+  clip: ActionClip;
   /** Per kind under a kind filter, across all kinds otherwise. */
   number: number;
   selected: boolean;
@@ -188,7 +188,7 @@ export function ScoreCard({
   onClick,
   extra,
 }: {
-  clip: Clip;
+  clip: ActionClip;
   selected: boolean;
   onClick: () => void;
   extra?: ReactNode;

@@ -232,7 +232,7 @@ export function AppFeed({
         )}
         {clips.map((c) => {
           const props = { selected: c.key === selected?.key, onClick: () => onSelect(c, clips) };
-          if (scope === 'rallies') return <RallyCard key={c.key} rally={c} tags={tagsOf(c)} extra={edited(c.rally_index)} {...props} />;
+          if (c.kind === 'rally') return <RallyCard key={c.key} rally={c} tags={tagsOf(c)} extra={edited(c.rally_index)} {...props} />;
           if (scope === 'actions')
             return <ActionCard key={c.key} clip={c} number={(filter.kind ? c.kind_index : c.index) ?? 0} {...props} />;
           return <ScoreCard key={c.key} clip={c} extra={edited(c.rally_index)} {...props} />;

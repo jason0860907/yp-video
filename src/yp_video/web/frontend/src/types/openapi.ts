@@ -2014,6 +2014,11 @@ export interface components {
             /** Jump */
             jump?: boolean | null;
         };
+        /**
+         * ActionLabel
+         * @enum {string}
+         */
+        ActionLabel: "serve" | "receive" | "set" | "spike" | "block" | "score" | "net" | "ground" | "antenna";
         /** ActionLabels */
         ActionLabels: {
             /** Labels */
@@ -2540,8 +2545,7 @@ export interface components {
         Clip: {
             /** Key */
             key: string;
-            /** Kind */
-            kind: string;
+            kind: components["schemas"]["ActionLabel"];
             /** Index */
             index: number;
             /** Anchor Time */

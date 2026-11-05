@@ -25,9 +25,7 @@ export interface MatchJob {
 }
 
 /** GET …/overview, per analysed match: the user's corrections by kind. */
-export type MatchEdits =
-  | { edits: Record<string, number>; edited_at: string | null; warnings: string[] }
-  | { error: string };
+export type MatchEdits = components['schemas']['MatchEditCounts'] | components['schemas']['MatchReadError'];
 
 /** A match row as the App's /sync serves it, plus the R2 keys behind its URLs
  *  and its newest job of each kind. */
@@ -79,30 +77,20 @@ export type Touch = components['schemas']['Touch'];
 export type CourtScore = components['schemas']['CourtScore'];
 /** One 組織進攻 of a rally: its own touches' span and the spiker. */
 export type Attack = components['schemas']['Attack'];
-/** Any clip the feed lists — a rally (`RallyClip`) or an action / score
- *  clip (`Clip`) — as the feed's shared views read it. */
-export interface Clip {
+export type RallyClip = components['schemas']['RallyClip'];
+/** An action or score clip. */
+export type ActionClip = components['schemas']['Clip'];
+/** Any clip the feed lists; `kind === 'rally'` tells them apart. */
+export type Clip = RallyClip | ActionClip;
+/** What the player plays: a feed clip, or a correction's span played
+ *  outside the feed (client-side, `kind` 'other' when it has no clip). */
+export interface PlayableClip {
   key: string;
-  kind: string;
-  index?: number;
-  /** Actions: the number among clips of the same kind (扣球 #3). */
-  kind_index?: number;
-  /** Rallies: the model's highlight score (★). */
-  score?: number;
-  /** Library rally UUID — rallies only. */
-  id?: string;
+  kind: Clip['kind'] | 'other';
+  rally_index: number | null;
   start: number;
   end: number;
-  set?: number;
-  rally_index: number | null;
-  player?: Player | null;
   touches: Touch[];
-  loss_reason?: string | null;
-  loss_reason_inferred?: boolean;
-  winner?: string | null;
-  court_score?: CourtScore | null;
-  tag_ids?: string[];
-  /** Rallies: its attacks, in time order. */
   attacks?: Attack[];
 }
 export type CourtTotal = CourtScore;
