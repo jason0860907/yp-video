@@ -17,10 +17,9 @@ from typing import Protocol
 from yp_video.action import rally as rally_spot
 from yp_video.action import training
 from yp_video.action.frames import ensure_action_frame_caches
-from yp_video.actor.training_labels import write_actor_labels
 from yp_video.action.training_labels import prepare_action_training_labels
+from yp_video.actor.training_labels import write_actor_labels
 from yp_video.config import ACTION_FRAMES_DIR, cut_kind_of
-from yp_video.core.rallies import ANNOTATION_SUFFIX
 from yp_video.contracts.action import (
     LABEL_FILE_SUFFIX,
     RALLY_LABEL_FILE_SUFFIX,
@@ -30,6 +29,7 @@ from yp_video.contracts.action import (
     spotting_task,
     spotting_tasks,
 )
+from yp_video.core.rallies import ANNOTATION_SUFFIX
 from yp_video.web.r2_client import materialized_cut, resolve_cut
 from yp_video.web.train_requests import FusionTrainRequest
 

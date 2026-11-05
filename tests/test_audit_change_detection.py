@@ -13,8 +13,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from yp_video.web import audit
-from yp_video.web import rally_annotations
+from yp_video.web import audit, rally_annotations
 
 
 class DiffTests(unittest.TestCase):

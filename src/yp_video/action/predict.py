@@ -29,7 +29,6 @@ from yp_video.contracts.action import (
     SPOT_PROGRESS_PREFIX,
 )
 
-
 _STOP_TIMEOUT_SECONDS = 10
 
 

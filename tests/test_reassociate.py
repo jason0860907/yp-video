@@ -286,11 +286,11 @@ class ReassociationTests(unittest.TestCase):
         )
 
         self.assertTrue(calls)
-        for done, total, message in calls:
-            self.assertIsInstance(done, int)
+        for finished, total, message in calls:
+            self.assertIsInstance(finished, int)
             self.assertIsInstance(total, int)
             self.assertIsInstance(message, str)
-            self.assertLessEqual(done, total)
+            self.assertLessEqual(finished, total)
 
 
 if __name__ == "__main__":

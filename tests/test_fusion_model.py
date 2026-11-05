@@ -10,10 +10,10 @@ from unittest.mock import patch
 from fastapi import HTTPException
 
 from yp_video.action import training_labels
+from yp_video.config import CUT_KINDS
 from yp_video.contracts.action import RECIPES
 from yp_video.core.jsonl import write_jsonl
 from yp_video.web import spot_training
-from yp_video.config import CUT_KINDS
 from yp_video.web.label_sources import PreparedLabels, check_task_supervision, in_view
 from yp_video.web.routers import fusion_model
 from yp_video.web.train_requests import FusionTrainRequest
@@ -223,7 +223,8 @@ class BuildCommandTests(unittest.TestCase):
     def test_audio_of_an_r2_only_cut_is_precomputed_one_cut_at_a_time(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             labels, audio = Path(tmp) / "labels", Path(tmp) / "audio"
-            labels.mkdir(); audio.mkdir()
+            labels.mkdir()
+            audio.mkdir()
             for stem in ("cached", "remote"):
                 (labels / f"{stem}_actions.jsonl").write_text("{}\n")
             (audio / "cached.npy").write_bytes(b"")

@@ -238,7 +238,10 @@ async def worklog(since: datetime, until: datetime) -> Worklog:
     people: dict[str, list[WorklogSession]] = defaultdict(list)
     for actor, _island, start, end, saves in rows:
         people[actor].append({"start": start, "end": end, "saves": saves})
-    worked = lambda sessions: sum((s["end"] - s["start"]).total_seconds() for s in sessions)
+
+    def worked(sessions: list[WorklogSession]) -> float:
+        return sum((s["end"] - s["start"]).total_seconds() for s in sessions)
+
     return {
         "since": since,
         "until": until,

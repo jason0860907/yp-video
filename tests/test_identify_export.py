@@ -99,6 +99,7 @@ def test_client_side_slider_cut_matches_scipy():
 def test_no_action_events_returns_completed_empty_identification():
     from pathlib import Path
     from unittest.mock import patch
+
     from yp_video.extraction.identify import identify_players
     with patch('yp_video.extraction.pipeline.load_events',return_value=[]), \
          patch('yp_video.action.spot_pass.run_spot_pass') as inference, \
