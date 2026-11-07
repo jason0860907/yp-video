@@ -12,8 +12,8 @@ const WIDTH = 9;
 const NET = 9;
 const LENGTH = 18;
 const ROW = 3;
-/** Where a setter wants the pass: a metre off the net, at its middle. */
-const PASS_TARGET = { lateral: 4.5, along: -1 };
+const MEN_NET = 2.43;
+const WOMEN_NET = 2.24;
 const PERFECT_PASS = 1.5;
 const PLAYABLE_PASS = 3;
 /** Attack direction, degrees off straight across the net. */
@@ -113,8 +113,21 @@ export function zoneOf(lateral: number, depth: number): number | null {
   return ROWS[Math.min(Math.floor(depth / ROW), 2)]![column]!;
 }
 
-const grade = (to: SidePoint, crossed: boolean): PassGrade => {
-  const off = Math.hypot(to.lateral - PASS_TARGET.lateral, to.along - PASS_TARGET.along);
+/** Where a setter wants the pass, a metre off the net: under a men's net a
+ *  third of the way in from the right sideline, as the passer faces it;
+ *  under a women's or mixed one, at its middle. */
+export function passTarget(netHeight: number): SidePoint {
+  const men = netHeight >= (MEN_NET + WOMEN_NET) / 2;
+  return { lateral: men ? 6 : 4.5, along: -1 };
+}
+
+/** A point seen from `half`'s side, back in court metres (x, y). */
+export function onCourt({ lateral, along }: SidePoint, half: Half): [number, number] {
+  return half === 'left' ? [NET + along, WIDTH - lateral] : [NET - along, lateral];
+}
+
+const grade = (to: SidePoint, crossed: boolean, target: SidePoint): PassGrade => {
+  const off = Math.hypot(to.lateral - target.lateral, to.along - target.along);
   return crossed || off > PLAYABLE_PASS ? 'poor' : off > PERFECT_PASS ? 'playable' : 'perfect';
 };
 
@@ -127,6 +140,7 @@ const halfOf = (e: Event): Half | null => {
 const inCourt = ([x, y]: [number, number]) => x >= 0 && x <= LENGTH && y >= 0 && y <= WIDTH;
 
 export function touchFlights(positions: CourtPositions, netHeight: number): TouchFlight[] {
+  const target = passTarget(netHeight);
   const events = new Map(positions.events.map((e) => [e.id, e]));
   const servesMet = new Set<string>();
   const ends = positions.arcs.flatMap((arc) => {
@@ -151,7 +165,7 @@ export function touchFlights(positions: CourtPositions, netHeight: number): Touc
     const crossed = to.along > 0;
     const blocked = arc.label === 'spike' && next === 'block';
 
-    const pass = arc.label === 'receive' && servesMet.has(arc.from) ? grade(to, crossed) : null;
+    const pass = arc.label === 'receive' && servesMet.has(arc.from) ? grade(to, crossed, target) : null;
     const route = arc.label === 'serve' ? crossed : arc.label === 'spike';
     // The receiver faces the sender: their left is the sender's right.
     const landing = route && crossed && !blocked ? zoneOf(WIDTH - to.lateral, to.along) : null;
@@ -174,7 +188,7 @@ export function touchFlights(positions: CourtPositions, netHeight: number): Touc
   for (const f of flights) {
     if (f.arc.label !== 'receive' || !f.arc.to || events.get(f.arc.to)?.label !== 'set') continue;
     const setter = byEvent.get(f.arc.to);
-    if (setter) setter.passed = f.pass ?? grade(f.to, f.crossed);
+    if (setter) setter.passed = f.pass ?? grade(f.to, f.crossed, target);
   }
   const setInto = new Map(positions.arcs.filter((a) => a.label === 'set').map((a) => [a.to, a]));
   const rallies = new Map<number, Event[]>();
@@ -187,14 +201,20 @@ export function touchFlights(positions: CourtPositions, netHeight: number): Touc
     const rally = f.event.rally_id != null ? (rallies.get(f.event.rally_id) ?? []) : [];
     const at = rally.findIndex((e) => e.id === f.event.id);
     const set = setInto.get(f.event.id) ?? null;
-    f.attack = attackOf(f, at >= 0 ? rally.slice(at + 1) : [], set, byEvent);
+    f.attack = attackOf(f, at >= 0 ? rally.slice(at + 1) : [], set, byEvent, target);
     const setter = set && byEvent.get(set.from);
     if (setter) setter.setFor = f.attack;
   }
   return flights.sort((a, b) => a.event.time - b.event.time);
 }
 
-function attackOf(f: TouchFlight, after: Event[], set: Arc | null, byEvent: Map<string, TouchFlight>): Attack {
+function attackOf(
+  f: TouchFlight,
+  after: Event[],
+  set: Arc | null,
+  byEvent: Map<string, TouchFlight>,
+  target: SidePoint,
+): Attack {
   const depth = -f.from.along;
   const zone = zoneOf(f.from.lateral, Math.max(depth, 0));
   const column = Math.min(Math.max(Math.floor(f.from.lateral / ROW), 0), 2);
@@ -212,7 +232,7 @@ function attackOf(f: TouchFlight, after: Event[], set: Arc | null, byEvent: Map<
   const direction: Direction = angle < LINE_ANGLE ? 'line' : angle < SHARP_ANGLE ? 'cross' : 'sharp';
   const style: Style = f.stats.speed < TIP_SPEED ? 'tip' : f.stats.speed < SOFT_SPEED ? 'soft' : 'hard';
 
-  const [result, error] = resultOf(f, after, byEvent);
+  const [result, error] = resultOf(f, after, byEvent, target);
   return { zone, spot, setTime, tempo, angle, direction, style, result, error };
 }
 
@@ -221,6 +241,7 @@ function resultOf(
   f: TouchFlight,
   after: Event[],
   byEvent: Map<string, TouchFlight>,
+  target: SidePoint,
 ): [AttackResult | null, AttackError | null] {
   const [next, then] = after;
   if (!next) return [null, null];
@@ -248,5 +269,5 @@ function resultOf(
   if (then && END_LABELS.has(then.label)) return ['kill', null];
   const dig = byEvent.get(next.id);
   if (!dig) return [null, null];
-  return [grade(dig.to, dig.crossed) === 'poor' ? 'tough' : 'dug', null];
+  return [grade(dig.to, dig.crossed, target) === 'poor' ? 'tough' : 'dug', null];
 }

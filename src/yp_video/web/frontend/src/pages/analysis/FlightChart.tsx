@@ -7,7 +7,7 @@
 import type { ReactNode } from 'react';
 import { COURT } from '@/lib/actionColors';
 import { cn } from '@/lib/cn';
-import { zoneOf, type Half, type TouchFlight } from './flights';
+import { onCourt, zoneOf, type Half, type SidePoint, type TouchFlight } from './flights';
 import type { CameraView } from '@/pages/label/court/geometry';
 
 const W = 9;
@@ -15,9 +15,7 @@ const NET = 9;
 /** Free zone drawn past the end lines and the sidelines, metres. */
 const END = 11;
 const SIDE = 1.5;
-/** Where a setter wants the pass (flights.ts: a metre off the net, at its
- *  middle), in court metres per half, and its grade rings. */
-const TARGETS: Record<Half, [number, number]> = { left: [8, 4.5], right: [10, 4.5] };
+/** A pass target's grade rings, metres. */
 const RINGS = [1.5, 3];
 
 /** Court metres to the drawing: the width across, the length down, the
@@ -171,15 +169,16 @@ export function FlightChart({
   /** Each team's name, drawn at its end. */
   names: Record<Half, string>;
   zones?: Zones;
-  /** Draw the team's pass target and its grade rings. */
-  target?: boolean;
+  /** The team's pass target (flights.ts `passTarget`), drawn with its
+   *  grade rings. */
+  target?: SidePoint | null;
   onPlay: (f: TouchFlight) => void;
 }) {
   const at = drawing(view);
   const cells = !zones
     ? []
     : (zones.regions === 'zones' ? zoneRegions : spotRegions)(zones.sender, at);
-  const target = at(TARGETS[sender]);
+  const target = showTarget ? at(onCourt(showTarget, sender)) : null;
   const far: Half = view.near === 'left' ? 'right' : 'left';
   // The focus may be the other team's flight: then nothing here is dimmed.
   const mine = focus && flights.includes(focus) ? focus : null;
@@ -232,7 +231,7 @@ export function FlightChart({
         <line x1={-0.6} y1={0} x2={W + 0.6} y2={0} strokeWidth={0.16} />
       </g>
 
-      {showTarget &&
+      {target &&
         [target].map((t) => (
           <g key={sender} pointerEvents="none">
             {RINGS.map((r) => (

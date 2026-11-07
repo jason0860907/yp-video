@@ -15,7 +15,7 @@ import { formatActionTime } from '@/lib/actionEditorModel';
 import { Button } from '@/components/ui/Button';
 import { Segmented } from '@/components/ui/Segmented';
 import { FlightChart, type ZoneCell } from './FlightChart';
-import { touchFlights, ZONES, type AttackResult, type Half, type TouchFlight } from './flights';
+import { passTarget, touchFlights, ZONES, type AttackResult, type Half, type TouchFlight } from './flights';
 import type { Arc, CameraView, CourtPositions } from '@/pages/label/court/geometry';
 
 type Kind = 'serve' | 'receive' | 'set' | 'spike';
@@ -635,7 +635,7 @@ export function FlightsCard({
                       onPick: toggle('zone'),
                     }
               }
-              target={kind === 'receive'}
+              target={kind === 'receive' ? passTarget(netHeight) : null}
               onPlay={play}
             />
           </div>
