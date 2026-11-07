@@ -284,6 +284,25 @@ _MULTI_FPS_DEFAULTS = {
     "video_limit": 0,
 }
 
+# The production recipe's Action and Actor half, for the frozen-backbone stage
+# of a head-by-head run: each half trains on the same init checkpoint's
+# backbone, and yp_spot.merge_heads puts the halves back together. Same fields
+# and defaults as the production recipe, minus what only Rally and Winner read.
+_RALLY_WINNER_ONLY = frozenset({
+    "rally_sample_fps", "winner_sample_fps", "rally_clip_len", "winner_clip_len",
+    "rally_learning_rate", "winner_learning_rate",
+    "rally_stream_weight", "winner_stream_weight",
+})
+_ACTION_ACTOR_FIELDS = (
+    *(field for field in _MULTI_FPS_FIELDS if field not in _RALLY_WINNER_ONLY),
+    "actor_stream_weight",
+)
+_ACTION_ACTOR_DEFAULTS = {
+    **{k: v for k, v in _MULTI_FPS_DEFAULTS.items() if k not in _RALLY_WINNER_ONLY},
+    "action_block_upsample": 0.1,
+    "actor_stream_weight": 2,
+}
+
 RECIPES: dict[str, Recipe] = {
     recipe.id: recipe
     for recipe in (
@@ -325,6 +344,16 @@ RECIPES: dict[str, Recipe] = {
             # The actor stream gets two shares: Rally and Winner saturate
             # within a few epochs, while picking the actor is the weakest stage.
             {**_MULTI_FPS_DEFAULTS, "action_block_upsample": 0.1, "actor_stream_weight": 2},
+        ),
+        Recipe(
+            "action_actor",
+            "Action + Actor",
+            ("action", "location", "actor"),
+            "The production model's Action half on its own: touch spotting with "
+            "its contact point and Actor. For a frozen-backbone run whose heads "
+            "merge with a Rally + Winner run's (yp_spot.merge_heads).",
+            _ACTION_ACTOR_FIELDS,
+            _ACTION_ACTOR_DEFAULTS,
         ),
     )
 }

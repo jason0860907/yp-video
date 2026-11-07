@@ -11,7 +11,7 @@ stay HTTP-thin.
 
 from __future__ import annotations
 
-from typing import Literal, TypedDict
+from typing import Literal, TypedDict, get_args
 
 from pydantic import ConfigDict, Field, model_validator
 
@@ -47,9 +47,11 @@ RecipeId = Literal[
     "rally",
     "rally_winner",
     "action",
+    "action_actor",
     "action_rally_winner",
     "action_rally_winner_actor",
 ]
+assert set(get_args(RecipeId)) == set(RECIPES), "RecipeId must name exactly RECIPES"
 
 #: One of the two label families a recipe draws from; which request fields
 #: apply follows from it (see ``Recipe.fields`` in the contract).

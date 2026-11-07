@@ -116,7 +116,7 @@ def recipe_token(recipe: Recipe) -> str:
         token = "act_ral_win" if "winner" in tasks else "act_ral"
         return f"{token}_actor" if "actor" in tasks else token
     if "action" in tasks:
-        return "act"
+        return "act_actor" if "actor" in tasks else "act"
     return "ral_win" if "winner" in tasks else "ral"
 
 
