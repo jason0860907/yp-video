@@ -7,8 +7,8 @@ pass keeps every detection of the largest seg model above a low floor, with
 its score, so the cut is chosen by the reader rather than baked in here.
 
 One ``<stem>_dense.npz`` per video in PERSON_DENSE_DIR: ``frames`` (int32,
-cv2 frame indices — the tracks' convention — of the detected rally-span
-frames), ``times`` (float64, each frame's presentation time in seconds, so a
+cv2 frame indices — the tracks' convention — of the detected padded
+rally-span frames), ``times`` (float64, each frame's presentation time in seconds, so a
 reader can align to any other frame index), ``counts`` (int32, boxes on that
 frame), ``boxes`` (float16, xyxy normalized to the frame), ``scores``
 (float16) and ``meta`` (JSON: model, floor, fps, stride, frame size, rally
@@ -32,7 +32,7 @@ from yp_video.config import PERSON_DENSE_DIR
 from yp_video.core.frames import open_video
 from yp_video.core.jsonl import atomic_binary
 from yp_video.core.progress import ProgressFn
-from yp_video.core.rallies import load_rallies, rally_fingerprint
+from yp_video.core.rallies import RALLY_PAD_S, load_rallies, rally_fingerprint
 from yp_video.person.seg_batch import BatchSegDetector, span_frames
 
 DENSE_VARIANT = "RFDETRSeg2XLarge"
@@ -124,12 +124,15 @@ def detect_dense(
     should_pause: Callable[[], bool],
     on_progress: ProgressFn | None = None,
 ) -> dict:
-    """Detect people on every frame of every rally span of one video.
+    """Detect people on every frame of every rally span of one video, each
+    span padded by RALLY_PAD_S on both sides.
 
     ``should_pause`` is polled between batches; when it returns True the
     detector is released and DensePaused raised — nothing is written, so the
     video simply runs again later.
     """
+
+    import cv2
 
     stem = video_path.stem
     rallies = load_rallies(stem)
@@ -138,7 +141,16 @@ def detect_dense(
     cap, geometry = open_video(video_path)
     fps, width, height = geometry.fps, geometry.width, geometry.height
     stride = max(1, round(fps / DENSE_MAX_FPS))
-    spans = [(r["rally_id"], int(round(r["start"] * fps)), int(round(r["end"] * fps))) for r in rallies]
+    last_frame = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) - 1
+    # The same padded spans tracking scans (tracklets/tracking.py).
+    spans = [
+        (
+            r["rally_id"],
+            max(0, int(round((r["start"] - RALLY_PAD_S) * fps))),
+            min(last_frame, int(round((r["end"] + RALLY_PAD_S) * fps))),
+        )
+        for r in rallies
+    ]
     total = sum((f1 - f0) // stride + 1 for _, f0, f1 in spans)
 
     _detector.ensure()

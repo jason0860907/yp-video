@@ -156,6 +156,33 @@ class TrackingDependencyTests(unittest.TestCase):
             tracking.track_video(Path("/nonexistent/match.mp4"))
         self.assertEqual(seen, [(1, 0, 180), (2, 90, 299)])
 
+    def test_dense_pass_scans_the_same_padded_spans(self) -> None:
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from yp_video.person import dense
+
+        cap = MagicMock()
+        cap.get.return_value = 300
+        rallies = [
+            {"rally_id": 1, "start": 1.0, "end": 4.0},
+            {"rally_id": 2, "start": 5.0, "end": 9.5},
+        ]
+        seen: list = []
+
+        def capture(_cap, spans, **_kw):
+            seen.extend(spans)
+            raise RuntimeError("stop")
+
+        with (
+            patch.object(dense, "load_rallies", return_value=rallies),
+            patch.object(dense, "open_video", return_value=(cap, SimpleNamespace(fps=30.0, width=64, height=64))),
+            patch.object(dense, "_detector", MagicMock(resolution=64)),
+            patch.object(dense, "span_frames", side_effect=capture),
+            self.assertRaisesRegex(RuntimeError, "stop"),
+        ):
+            dense.detect_dense(Path("/nonexistent/match.mp4"), should_pause=lambda: False)
+        self.assertEqual(seen, [(1, 0, 180), (2, 90, 299)])
 
 
 class PrerequisiteTests(unittest.TestCase):
