@@ -124,6 +124,39 @@ class TrackingDependencyTests(unittest.TestCase):
             tracking.track_video(Path("/nonexistent/match.mp4"))
         load.assert_called_once_with("match")
 
+    def test_tracking_pads_each_rally_and_clamps_to_the_video(self) -> None:
+        """Each rally is scanned RALLY_PAD_S beyond both ends, as action
+        inference does, without running past frame 0 or the last frame."""
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from yp_video.core.rallies import RALLY_PAD_S
+        from yp_video.tracklets import tracking
+
+        self.assertEqual(RALLY_PAD_S, 2.0)
+        cap = MagicMock()
+        cap.get.return_value = 300  # frames 0..299 at 30 fps
+        rallies = [
+            {"rally_id": 1, "start": 1.0, "end": 4.0},
+            {"rally_id": 2, "start": 5.0, "end": 9.5},
+        ]
+        seen: list = []
+
+        def capture(_cap, spans, **_kw):
+            seen.extend(spans)
+            raise RuntimeError("stop")
+
+        with (
+            patch.object(tracking, "load_rallies", return_value=rallies),
+            patch.object(tracking, "open_video", return_value=(cap, SimpleNamespace(fps=30.0, width=64, height=64))),
+            patch.object(tracking, "_detector", MagicMock(resolution=64)),
+            patch.object(tracking, "span_frames", side_effect=capture),
+            self.assertRaisesRegex(RuntimeError, "stop"),
+        ):
+            tracking.track_video(Path("/nonexistent/match.mp4"))
+        self.assertEqual(seen, [(1, 0, 180), (2, 90, 299)])
+
+
 
 class PrerequisiteTests(unittest.TestCase):
     def _state(self, **overrides) -> prereq.Prerequisites:

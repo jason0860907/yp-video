@@ -42,6 +42,11 @@ SOURCE_BY_TAG = {source.tag: source for source in RALLY_SOURCES}
 
 ANNOTATION_SUFFIX = "_annotations.jsonl"
 
+#: Slack every rally-scoped scan adds on both sides of a span — action
+#: inference and tracking alike — so the serve run-up and the point's tail
+#: stay in view.
+RALLY_PAD_S = 2.0
+
 
 def annotation_name(stem: str) -> str:
     return f"{stem}{ANNOTATION_SUFFIX}"

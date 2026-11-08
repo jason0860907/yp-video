@@ -12,8 +12,11 @@ masks persist beside the tracklets (box-crop space, packed bits — see
 store.save_track_masks), rows aligned with each tracklet's frames.
 
 One tracker per rally: between rallies players reshuffle and broadcasts cut
-away, so cross-rally tracks would be fiction. Only rally spans are scanned —
-they are where the events live and everything else is replays and crowd.
+away, so cross-rally tracks would be fiction. Only rally spans are scanned,
+each grown by RALLY_PAD_S on both sides (the same slack action inference
+uses) so the tracker is warm by the serve and the point's tail stays tracked;
+everything else is replays and crowd. Neighbouring padded spans may share
+frames — each rally keeps its own tracker over them.
 
 Rally spans come straight from the rally annotation (core/rallies.py), NOT
 from the action file's copy of them: tracking needs to know where the rallies
@@ -42,7 +45,7 @@ import numpy as np
 from yp_video.core.frames import open_video
 from yp_video.core.jsonl import write_jsonl
 from yp_video.core.progress import ProgressFn
-from yp_video.core.rallies import load_rallies, rally_fingerprint
+from yp_video.core.rallies import RALLY_PAD_S, load_rallies, rally_fingerprint
 from yp_video.person.detector import DETECTOR_NAME
 from yp_video.person.seg import SEG_WEIGHTS
 from yp_video.person.seg_batch import BatchSegDetector, SpanFrame, span_frames
@@ -96,7 +99,7 @@ def track_video(
     event_frames: set[int] | None = None,
     on_progress: ProgressFn | None = None,
 ) -> dict:
-    """Detect + track every annotated rally span of one video.
+    """Detect + track every rally span of one video, padded by RALLY_PAD_S.
 
     ``stride`` detects every Nth frame (skipped frames are grabbed but not
     decoded); ByteTrack, run inline frame by frame, sees the effective frame
@@ -110,6 +113,7 @@ def track_video(
     (extraction/pipeline.detect_video) reads them instead of re-decoding and
     re-detecting frames this dense pass already paid for.
     """
+    import cv2
     import supervision as sv
 
     stem = video_path.stem
@@ -123,8 +127,13 @@ def track_video(
     cap, geometry = open_video(video_path)
     fps, frame_w, frame_h = geometry.fps, geometry.width, geometry.height
 
+    last_frame = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) - 1
     spans = [
-        (r["rally_id"], int(round(r["start"] * fps)), int(round(r["end"] * fps)))
+        (
+            r["rally_id"],
+            max(0, int(round((r["start"] - RALLY_PAD_S) * fps))),
+            min(last_frame, int(round((r["end"] + RALLY_PAD_S) * fps))),
+        )
         for r in rallies
     ]
     total = sum((f1 - f0) // stride + 1 for _, f0, f1 in spans)

@@ -29,7 +29,7 @@ from yp_video.actor import person_action
 from yp_video.actor.candidates import frame_size, track_paths
 from yp_video.config import RALLY_SPOT_PRE_ANNOTATIONS_DIR, SPOT_CHECKPOINTS_DIR
 from yp_video.core.jsonl import write_jsonl
-from yp_video.core.rallies import annotation_name, load_rallies, number_rallies
+from yp_video.core.rallies import RALLY_PAD_S, annotation_name, load_rallies, number_rallies
 from yp_video.extraction import reassociate
 from yp_video.extraction.identify import TRACKING_STRIDE
 from yp_video.extraction.pipeline import detect_video, detections_current, load_events
@@ -44,10 +44,6 @@ from yp_video.web.r2_client import materialized_cut
 
 #: The heads the fusion checkpoint must carry; association is the actor head.
 REQUIRED_TASKS = ("rally", "action", "actor")
-
-#: Action inference scans each rally span with this much slack on both
-#: sides — the same cascade the selfhost worker runs.
-RALLY_PAD_S = 2.0
 
 STAGES = ("rally", "action", "tracking", "detection", "association")
 _UNITS_PER_STAGE = 100
