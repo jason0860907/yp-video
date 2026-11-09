@@ -26,6 +26,7 @@ FeatureArch = Literal[
     "rny008_tv_gsm", "rny008_tv_tsm", "rny008_tv",
     "rny008_gsm", "rny008_tsm", "rny008",
     "rny002_gsm", "rny002_tsm", "rny002",
+    "convnexts_dv3_gsm", "convnexts_dv3_tsm", "convnexts_dv3",
     "convnextt_dv3_gsm", "convnextt_dv3_tsm", "convnextt_dv3",
     "convnextt2_gsm", "convnextt2_tsm", "convnextt2",
     "convnextt_gsm", "convnextt_tsm", "convnextt",
