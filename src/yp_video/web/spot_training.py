@@ -21,6 +21,7 @@ from fastapi import HTTPException
 
 from yp_video.action import training
 from yp_video.action.prelabel import resolve_checkpoint_path
+from yp_video.action.training_labels import TRAINED_AS
 from yp_video.config import (
     ACTION_AUDIO_DIR,
     CUTS_DIRS,
@@ -238,6 +239,11 @@ def build_command(
         cmd.append("--activation_checkpointing")
     if req.location_stride is not None:
         cmd.extend(["--location_stride", str(req.location_stride)])
+    if req.separate_ball_labels:
+        # Nine classes train; the headline scores the shipped folding (one
+        # source: the training snapshot's own TRAINED_AS).
+        for label, scored_as in TRAINED_AS.items():
+            cmd.extend(["--eval_label_as", f"{label}={scored_as}"])
     if req.freeze_backbone:
         cmd.append("--freeze_backbone")
 

@@ -125,6 +125,7 @@ class ActionSource:
             frame_dir=ACTION_FRAMES_DIR,
             save_dir=save_dir,
             camera_view=req.camera_view,
+            separate_ball_labels=req.separate_ball_labels,
         )
         label_dir = Path(summary["label_dir"])
         extra_args: list[str] = []

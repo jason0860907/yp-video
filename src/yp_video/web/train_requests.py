@@ -219,6 +219,14 @@ class FusionTrainRequest(StrictModel):
             "contact-point heatmap more cells per player."
         ),
     )
+    separate_ball_labels: bool = Field(
+        default=False,
+        description=(
+            "Train ground, antenna and net as classes of their own (all nine "
+            "annotated labels). Off = the shipped six: ground and antenna "
+            "train as score, net is left out."
+        ),
+    )
     action_learning_rate: float | None = Field(
         default=None,
         gt=0,

@@ -18,12 +18,18 @@ from yp_video.core.rallies import load_rallies
 
 log = logging.getLogger(__name__)
 
-#: SPOT still learns the six classes it shipped with while the corpus is
-#: re-reviewed for the ball events: a floor landing trains as the score it was
-#: labelled before ground existed, an antenna hit likewise, and net is not a
-#: class yet.
+#: By default SPOT learns the six classes it shipped with: a floor landing
+#: trains as the score it was labelled before ground existed, an antenna hit
+#: likewise, and net is not a class. A run on the separate ball labels trains
+#: all nine, and scores its headline with ``TRAINED_AS`` folded (seven
+#: classes: net on its own) so it reads against the six-class runs.
 TRAINED_AS = {"ground": "score", "antenna": "score"}
 UNTRAINED = frozenset({"net"})
+
+
+def training_label_policy(separate_ball_labels: bool) -> tuple[dict[str, str], frozenset[str]]:
+    """``(trained_as, untrained)``: how annotated labels become training classes."""
+    return ({}, frozenset()) if separate_ball_labels else (TRAINED_AS, UNTRAINED)
 
 
 def prepare_action_training_labels(
@@ -32,6 +38,7 @@ def prepare_action_training_labels(
     frame_dir: Path,
     save_dir: Path,
     camera_view: str = "all",
+    separate_ball_labels: bool = False,
 ) -> dict:
     """Write run-local label copies whose frame counts match the SPOT cache.
 
@@ -42,6 +49,7 @@ def prepare_action_training_labels(
     actually used.
     """
     action = TASKS["action"]
+    trained_as, untrained = training_label_policy(separate_ball_labels)
     label_dir = save_dir / "labels" / action.label_subdir
     label_dir.mkdir(parents=True, exist_ok=True)
     for stale in label_dir.glob(action.label_glob):
@@ -84,9 +92,9 @@ def prepare_action_training_labels(
                 path.name, dropped, cache_frames,
             )
         records = [
-            {**event, "label": TRAINED_AS.get(event["label"], event["label"])}
+            {**event, "label": trained_as.get(event["label"], event["label"])}
             for event in records
-            if event["label"] not in UNTRAINED
+            if event["label"] not in untrained
         ]
 
         original_frames = int(meta.get("num_frames") or 0)
@@ -141,6 +149,7 @@ def prepare_action_training_labels(
     return {
         "label_dir": str(label_dir),
         "source_label_dir": str(ACTION_ANNOTATIONS_DIR),
+        "separate_ball_labels": separate_ball_labels,
         "videos": videos,
         "events": events,
         "frames": total_frames,
