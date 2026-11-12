@@ -211,6 +211,14 @@ class FusionTrainRequest(StrictModel):
         default=3, ge=0, le=100, description="Linear LR warm-up epochs."
     )
     learning_rate: float = Field(default=0.00003, gt=0)
+    location_stride: Literal[8, 16] | None = Field(
+        default=None,
+        description=(
+            "Backbone stride of the feature map the location head scores; "
+            "empty = the final (stride-32) map. A finer map gives the "
+            "contact-point heatmap more cells per player."
+        ),
+    )
     action_learning_rate: float | None = Field(
         default=None,
         gt=0,

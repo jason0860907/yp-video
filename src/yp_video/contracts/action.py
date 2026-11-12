@@ -227,6 +227,7 @@ _RALLY_DEFAULTS = {
 }
 _ACTION_FIELDS = (
     "action_sample_fps",
+    "location_stride",
     "acc_grad_iter",
     "audio_backend",
     "action_dilate_len",
@@ -255,6 +256,7 @@ _MULTI_FPS_FIELDS = (
     "action_fg_upsample",
     "action_block_upsample",
     "action_dilate_len",
+    "location_stride",
     "acc_grad_iter",
 )
 _MULTI_FPS_DEFAULTS = {

@@ -236,6 +236,8 @@ def build_command(
         cmd.extend(["--epoch_num_frames", str(req.epoch_num_frames)])
     if req.activation_checkpointing:
         cmd.append("--activation_checkpointing")
+    if req.location_stride is not None:
+        cmd.extend(["--location_stride", str(req.location_stride)])
     if req.freeze_backbone:
         cmd.append("--freeze_backbone")
 

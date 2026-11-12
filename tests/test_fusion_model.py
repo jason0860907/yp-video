@@ -120,6 +120,24 @@ class BuildCommandTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             defaults.validate_python({"sample_fps": 5.0})
 
+    def test_location_stride_reaches_the_trainer_only_when_set(self) -> None:
+        recipe = RECIPES["action_actor"]
+        prepared = PreparedLabels(
+            label_dirs={"action": Path("/a")},
+            label_subdirs=(), frame_dir=Path("/frames"), dataset="yp_action",
+        )
+        def command(**fields):
+            req = FusionTrainRequest(recipe=recipe.id, validation="ratio", **fields)
+            return spot_training.build_command(
+                req, recipe, prepared, save_dir=Path("/run"), init_checkpoint=None, audio_dir=None,
+            )
+        cmd = command(location_stride=16)
+        self.assertEqual(cmd[cmd.index("--location_stride") + 1], "16")
+        self.assertNotIn("--location_stride", command())
+        # A recipe without a location head rejects the field.
+        with self.assertRaises(ValidationError):
+            FusionTrainRequest(recipe="rally_winner", validation="ratio", location_stride=16)
+
     def test_tuning_fields_become_their_task_flags(self) -> None:
         recipe = RECIPES["action_rally_winner_actor"]
         req = FusionTrainRequest(
