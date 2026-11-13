@@ -12,7 +12,7 @@ from pydantic import Field
 
 from yp_video.core.ffmpeg import FFmpegError, probe_video_metadata
 from yp_video.web.access import current_actor
-from yp_video.web.app_review import feedback, sources
+from yp_video.web.app_review import feedback, sources, training
 from yp_video.web.app_review.feedback import (
     Candidate,
     DecisionKind,
@@ -199,6 +199,18 @@ def start_review(user: str, match: str) -> Review:
     lib, row = checked(sources.library_match, user, match)
     bundle, _ = checked(sources.match_bundle, lib, row)
     return detail(checked(feedback.create, bundle, current_actor()))
+
+
+class TrainingRequest(StrictModel):
+    #: None sends it under the match's own upload angle.
+    angle: training.Angle | None = None
+
+
+@router.post("/users/{user}/matches/{match}/training")
+async def send_to_training(user: str, match: str, req: TrainingRequest) -> training.TrainingOutcome:
+    """Copy the match into a ``cuts-user-<angle>`` cut with the App's
+    corrected analysis as pre-labels (web/app_review/training.py)."""
+    return await asyncio.to_thread(checked, training.add_to_training, user, match, req.angle)
 
 
 @router.get("/reviews/{review_id}")

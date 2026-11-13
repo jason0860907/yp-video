@@ -184,3 +184,32 @@ def test_unknown_angle_is_rejected(env):
     env["state"]["row"]["angle"] = "phoneSideline"
     with pytest.raises(ValueError, match="angle"):
         training.add_to_training("u1", "m1", None)
+
+
+def test_http_training_endpoint(monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from yp_video.web.routers import app_review
+
+    calls = []
+
+    def fake_add(user, match, angle):
+        calls.append((user, match, angle))
+        if match == "bad":
+            raise ValueError("This match has no analysis result yet")
+        return {"video": f"{match}.mp4", "kind": "user-high", "status": "added", "rallies": 3, "events": 40}
+
+    monkeypatch.setattr(app_review.training, "add_to_training", fake_add)
+    app = FastAPI()
+    app.include_router(app_review.router, prefix="/api/app-review")
+    with TestClient(app) as client:
+        ok = client.post("/api/app-review/users/u1/matches/m1/training", json={"angle": "high"})
+        assert ok.status_code == 200 and ok.json()["kind"] == "user-high"
+        assert client.post("/api/app-review/users/u1/matches/m2/training", json={"angle": None}).status_code == 200
+        bad = client.post("/api/app-review/users/u1/matches/bad/training", json={"angle": None})
+        assert bad.status_code == 409 and "no analysis result" in bad.json()["detail"]
+        assert client.post(
+            "/api/app-review/users/u1/matches/m1/training", json={"angle": "phoneSideline"}
+        ).status_code == 422
+    assert calls == [("u1", "m1", "high"), ("u1", "m2", None), ("u1", "bad", None)]

@@ -136,6 +136,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/app-review/users/{user}/matches/{match}/training": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send To Training
+         * @description Copy the match into a ``cuts-user-<angle>`` cut with the App's
+         *     corrected analysis as pre-labels (web/app_review/training.py).
+         */
+        post: operations["send_to_training_api_app_review_users__user__matches__match__training_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/app-review/reviews/{review_id}": {
         parameters: {
             query?: never;
@@ -1939,7 +1960,7 @@ export interface components {
                 [key: string]: components["schemas"]["ActionAttributeDefaults"];
             };
             /** Source */
-            source?: components["schemas"]["ManualSource"] | components["schemas"]["SpotSource"];
+            source?: components["schemas"]["ManualSource"] | components["schemas"]["SpotSource"] | components["schemas"]["AppSource"];
         };
         /** ActionAnnotationStats */
         ActionAnnotationStats: {
@@ -2098,6 +2119,24 @@ export interface components {
         AppReviewVideo: {
             /** Name */
             name: string;
+        };
+        /**
+         * AppSource
+         * @description A pre-annotation carried over from a user's App match
+         *     (``web.app_review.training``): the analysis they saw, corrections applied.
+         */
+        AppSource: {
+            /**
+             * Type
+             * @constant
+             */
+            type: "app";
+            /** User Id */
+            user_id: string;
+            /** Match Id */
+            match_id: string;
+            /** Job Id */
+            job_id: string;
         };
         /**
          * AppUser
@@ -5021,6 +5060,27 @@ export interface components {
             /** Runs */
             runs: string[];
         };
+        /** TrainingOutcome */
+        TrainingOutcome: {
+            /** Video */
+            video: string;
+            /** Kind */
+            kind: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "added" | "exists" | "moved";
+            /** Rallies */
+            rallies: number;
+            /** Events */
+            events: number;
+        };
+        /** TrainingRequest */
+        TrainingRequest: {
+            /** Angle */
+            angle?: ("baseline" | "corner" | "high" | "center") | null;
+        };
         /** UploadRequest */
         UploadRequest: {
             /** Category */
@@ -5325,6 +5385,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Review"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    send_to_training_api_app_review_users__user__matches__match__training_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user: string;
+                match: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrainingRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingOutcome"];
                 };
             };
             /** @description Validation Error */
