@@ -79,6 +79,16 @@ class SpotSource(TypedDict):
     prediction_video: str | None
 
 
+class AppSource(TypedDict):
+    """A pre-annotation carried over from a user's App match
+    (``web.app_review.training``): the analysis they saw, corrections applied."""
+
+    type: Literal["app"]
+    user_id: str
+    match_id: str
+    job_id: str
+
+
 class ActionAnnotationData(TypedDict):
     """One video's action annotation, as the editor loads it."""
 
@@ -97,7 +107,7 @@ class ActionAnnotationData(TypedDict):
     attribute_defaults: dict[str, ActionAttributeDefaults]
     #: The file's provenance header: saved by hand, or predicted by a SPOT
     #: checkpoint — absent when no file exists.
-    source: NotRequired[ManualSource | SpotSource]
+    source: NotRequired[ManualSource | SpotSource | AppSource]
 
 
 def annotation_path(video_name: str) -> Path:
