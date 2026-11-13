@@ -267,6 +267,7 @@ class SpotStageTests(unittest.TestCase):
             fps=30.0, num_frames=300, duration_s=10.0, checkpoint=Path("c.pt"),
             rallies=[{"start": 0.0, "end": 3.0}] if "rally" in tasks else None,
             actions=[{"events": []}],
+            action_candidates=[{"events": []}],
         )
         saved = [{"rally_id": 1, "start": 1.0, "end": 4.0, "label": "rally", "winner": None}]
         with (

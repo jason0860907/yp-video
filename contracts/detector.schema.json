@@ -317,6 +317,13 @@
           "description": "Whether the ball point was seen; false marks an estimated (off-screen or occluded) point",
           "title": "Visible",
           "type": "boolean"
+        },
+        "score": {
+          "description": "The action head's confidence in this event",
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Score",
+          "type": "number"
         }
       },
       "required": [
@@ -325,7 +332,8 @@
         "time",
         "frame",
         "xy",
-        "visible"
+        "visible",
+        "score"
       ],
       "title": "SegmentEvent",
       "type": "object"
@@ -352,6 +360,14 @@
             "$ref": "#/$defs/SegmentEvent"
           },
           "title": "Action Events",
+          "type": "array"
+        },
+        "action_candidates": {
+          "description": "Time-sorted events the action head spotted below the operating threshold \u2014 every `action_events` event scores at least 0.15, these score less. Display-only: rules and player identification never see them, so no position or id elsewhere points at one. Developer builds use them to lower a video's threshold.",
+          "items": {
+            "$ref": "#/$defs/SegmentEvent"
+          },
+          "title": "Action Candidates",
           "type": "array"
         },
         "attacks": {
@@ -400,6 +416,7 @@
       "required": [
         "total_duration",
         "rallies",
+        "action_candidates",
         "attacks",
         "rally_outcomes"
       ],

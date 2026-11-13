@@ -21,11 +21,18 @@ from pathlib import Path
 from yp_video.action import prelabel
 from yp_video.action.predict import SpotInferenceError, run_spot_inference
 from yp_video.action.rally import events_to_rally_segments
-from yp_video.action.segments import filter_events_to_spans, pad_and_merge_spans
+from yp_video.action.segments import event_timeline, filter_events_to_spans, pad_and_merge_spans
 from yp_video.core.ffmpeg import FFmpegError, probe_video_metadata
 from yp_video.core.jsonl import write_jsonl
 
 SPOT_TASKS = ("rally", "action")
+
+#: The action operating threshold. yp-spot emits every event down to its
+#: lower candidate floor; events at or above this are the pass's actions —
+#: what rules, player identification and pre-annotation run on — and the rest
+#: are ``action_candidates``, kept only so a developer can lower the cut per
+#: video when reviewing a result.
+ACTION_MIN_SCORE = 0.15
 
 
 @dataclass(frozen=True)
@@ -64,8 +71,12 @@ class SpotPassResult:
     #: seconds, timeline order; None when the pass had no rally head.
     rallies: list[dict] | None
     #: yp-spot action records (native frame numbers), events already cut to
-    #: the padded rally spans; None when the pass had no action head.
+    #: the padded rally spans and scoring at least ``ACTION_MIN_SCORE``; None
+    #: when the pass had no action head.
     actions: list[dict] | None
+    #: The same records' events below ``ACTION_MIN_SCORE`` (down to yp-spot's
+    #: candidate floor); None exactly when ``actions`` is.
+    action_candidates: list[dict] | None
 
 
 def run_spot_pass(
@@ -93,8 +104,9 @@ def run_spot_pass(
         last one held back (inference has not passed its end, so its bounds
         would still move and it could merge with the next); their
         chronological indexing therefore never renumbers.
-      * ``on_action_events(events)`` — the cumulative action events so far,
-        cut to the rally spans known at that moment and normalized exactly
+      * ``on_action_events(events)`` — the cumulative action events so far
+        at or above ``ACTION_MIN_SCORE``, cut to the rally spans known at
+        that moment and normalized exactly
         like the final annotation (label whitelist, ``score``, frame
         clamp) plus ``time`` in seconds.
 
@@ -148,6 +160,8 @@ def run_spot_pass(
                 events = filter_events_to_spans([{"events": events}], spans, fps=fps)[0]["events"]
             normalized = []
             for event in events:
+                if float(event["score"]) < ACTION_MIN_SCORE:
+                    continue
                 item = prelabel.normalize_event(event, num_frames=num_frames)
                 if item is not None:
                     item["time"] = item["frame"] / fps if fps > 0 else 0.0
@@ -170,13 +184,15 @@ def run_spot_pass(
     if "rally" in tasks:
         records = predictions["rally"]
         merged = merge((records[0].get("events") or []) if records else [])
-    actions = None
+    actions = candidates = None
     if "action" in tasks:
-        actions = predictions["action"]
+        records = predictions["action"]
         # An action-only pass was already decoded inside its spans; a joint
         # pass scanned everything and is cut here.
         if "rally" in tasks:
-            actions = filter_events_to_spans(actions, spans_of(merged), fps=fps)
+            records = filter_events_to_spans(records, spans_of(merged), fps=fps)
+        actions = _events_where(records, lambda score: score >= ACTION_MIN_SCORE)
+        candidates = _events_where(records, lambda score: score < ACTION_MIN_SCORE)
     return SpotPassResult(
         fps=fps,
         num_frames=num_frames,
@@ -184,7 +200,16 @@ def run_spot_pass(
         checkpoint=checkpoint,
         rallies=merged,
         actions=actions,
+        action_candidates=candidates,
     )
+
+
+def _events_where(records: list[dict], keep: Callable[[float], bool]) -> list[dict]:
+    """``records`` with only the events whose score passes ``keep``."""
+    return [
+        {**record, "events": [ev for ev in record.get("events", []) if keep(float(ev["score"]))]}
+        for record in records
+    ]
 
 
 def write_actions_jsonl(result: SpotPassResult, output_path: Path, *, video_path: Path) -> dict:
@@ -202,3 +227,17 @@ def write_actions_jsonl(result: SpotPassResult, output_path: Path, *, video_path
     meta = {k: v for k, v in data.items() if k != "events"}
     write_jsonl(output_path, meta, data.get("events", []))
     return data
+
+
+def candidate_timeline(result: SpotPassResult, *, video_path: Path) -> list[dict]:
+    """The pass's ``action_candidates`` as a public ``event_timeline``,
+    normalized exactly like its actions."""
+    if result.action_candidates is None:
+        raise ValueError("this pass ran no action head")
+    data = prelabel.predictions_to_annotation(
+        result.action_candidates,
+        video_path=video_path,
+        metadata={"fps": result.fps, "num_frames": result.num_frames},
+        checkpoint_path=result.checkpoint,
+    )
+    return event_timeline(data["events"], fps=result.fps)

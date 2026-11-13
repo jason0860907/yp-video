@@ -97,6 +97,7 @@ class SegmentEvent(BaseModel):
     visible: bool = Field(
         description="Whether the ball point was seen; false marks an estimated (off-screen or occluded) point",
     )
+    score: float = Field(ge=0, le=1, description="The action head's confidence in this event")
 
 
 class Attack(BaseModel):
@@ -199,6 +200,15 @@ class SuccessResult(BaseModel):
             "timelines and per-player stats from it, and joins player "
             "identification to it by event `id`. Empty when SPOT action "
             "spotting did not run (a rally-only result)."
+        ),
+    )
+    action_candidates: list[SegmentEvent] = Field(
+        description=(
+            "Time-sorted events the action head spotted below the operating "
+            "threshold — every `action_events` event scores at least 0.15, "
+            "these score less. Display-only: rules and player identification "
+            "never see them, so no position or id elsewhere points at one. "
+            "Developer builds use them to lower a video's threshold."
         ),
     )
     attacks: list[Attack] = Field(

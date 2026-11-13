@@ -11,6 +11,8 @@ from yp_video.action import spot_pass
 from yp_video.action.spot_pass import (
     RallyOptions,
     SpotOptions,
+    ACTION_MIN_SCORE,
+    candidate_timeline,
     run_spot_pass,
     write_actions_jsonl,
 )
@@ -36,6 +38,8 @@ ACTION_RECORDS = [{"video": "v", "events": [
     {"frame": 900, "label": "spike", "score": 0.9, "xy": [0.5, 0.5], "visible": True},    # 30 s, dead time
     {"frame": 1230, "label": "set", "score": 0.9, "xy": [0.5, 0.5], "visible": True},     # 41 s, inside rally 2
     {"frame": 1545, "label": "score", "score": 0.9, "xy": [0.5, 0.5], "visible": True},   # 51.5 s, inside the 2 s pad
+    {"frame": 360, "label": "block", "score": 0.05, "xy": [0.4, 0.6], "visible": False},  # 12 s, below the cut
+    {"frame": 960, "label": "set", "score": 0.05, "xy": [0.5, 0.5], "visible": True},     # 32 s, below the cut, dead time
 ]}]
 
 
@@ -79,17 +83,31 @@ class JointPassTests(unittest.TestCase):
         self.assertEqual(calls[0]["tasks"], ("rally", "action"))
         self.assertEqual((result.fps, result.num_frames, result.duration_s), (FPS, 3000, 100.0))
 
+    def test_events_below_the_operating_threshold_become_candidates(self):
+        result, _ = self._run()
+        self.assertTrue(all(e["score"] >= ACTION_MIN_SCORE for e in result.actions[0]["events"]))
+        # Cut to the rally spans like the actions: the 32 s one is dead time.
+        self.assertEqual([e["frame"] for e in result.action_candidates[0]["events"]], [360])
+        timeline = candidate_timeline(result, video_path=Path("v.mp4"))
+        self.assertEqual(
+            timeline,
+            [{"id": "f360", "label": "block", "time": 12.0, "frame": 360,
+              "xy": [0.4, 0.6], "visible": False, "score": 0.05}],
+        )
+
     def test_progressive_callbacks_are_per_head(self):
         rallies_seen, actions_seen = [], []
         script = [
             ("rally", _rally_events(10, 20)),                          # one rally: held back
             ("action", [{"frame": 330, "label": "serve", "score": 0.9, "xy": [0.5, 0.5], "visible": True},
+                        {"frame": 340, "label": "block", "score": 0.05, "xy": [0.5, 0.5], "visible": True},
                         {"frame": 900, "label": "spike", "score": 0.9, "xy": [0.5, 0.5], "visible": True}]),
             ("rally", _rally_events(10, 20) + _rally_events(40, 50)),  # two: first one settles
         ]
         self._run(script=script, on_rallies=rallies_seen.append, on_action_events=actions_seen.append)
         self.assertEqual([[round(r["start"]) for r in s] for s in rallies_seen], [[10]])
-        # The 30 s spike lies outside the only rally known at that moment.
+        # The 30 s spike lies outside the only rally known at that moment, and
+        # the candidate below the operating threshold never streams.
         self.assertEqual(len(actions_seen), 1)
         self.assertEqual([e["frame"] for e in actions_seen[0]], [330])
         self.assertAlmostEqual(actions_seen[0][0]["time"], 11.0)
@@ -123,6 +141,7 @@ class ActionOnlyPassTests(unittest.TestCase):
         self.assertIsNone(result.rallies)
         # yp-spot only decoded inside the spans; nothing to cut afterwards.
         self.assertEqual(len(result.actions[0]["events"]), 4)
+        self.assertEqual(len(result.action_candidates[0]["events"]), 2)
 
     def test_invalid_task_sets_are_rejected(self):
         with mock.patch.object(spot_pass, "probe_video_metadata", return_value=META):
