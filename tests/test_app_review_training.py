@@ -155,12 +155,15 @@ def test_add_again_is_noop_and_keeps_labels(env):
 
 
 def test_angle_change_moves_only_the_video(env):
-    env["r2"].objects.add("cuts-user-corner/m1.mp4")
+    training.add_to_training("u1", "m1", "corner")
+    labels = [env["dirs"]["rally_pre"] / "m1_annotations.jsonl", env["dirs"]["action_pre"] / "m1_actions.jsonl"]
+    before = [p.read_bytes() for p in labels]
+    env["r2"].copies.clear()
     out = training.add_to_training("u1", "m1", "high")
     assert out["status"] == "moved" and out["kind"] == "user-high"
     assert env["r2"].copies == [("pipeline", "cuts-user-corner/m1.mp4", "cuts-user-high/m1.mp4")]
     assert env["r2"].deleted == ["cuts-user-corner/m1.mp4"]
-    assert not (env["dirs"]["action_pre"] / "m1_actions.jsonl").exists()
+    assert [p.read_bytes() for p in labels] == before
 
 
 def test_refuses_operator_cut(env):
@@ -213,3 +216,27 @@ def test_http_training_endpoint(monkeypatch):
             "/api/app-review/users/u1/matches/m1/training", json={"angle": "phoneSideline"}
         ).status_code == 422
     assert calls == [("u1", "m1", "high"), ("u1", "m2", None), ("u1", "bad", None)]
+
+
+def test_failure_after_copy_is_finished_by_the_next_send(env, monkeypatch):
+    def offline(url):
+        raise OSError("ffprobe: connection reset")
+
+    monkeypatch.setattr(training, "probe_video_metadata", offline)
+    with pytest.raises(OSError):
+        training.add_to_training("u1", "m1", None)
+    assert "cuts-user-corner/m1.mp4" in env["r2"].objects
+    assert not (env["dirs"]["action_pre"] / "m1_actions.jsonl").exists()
+
+    monkeypatch.setattr(training, "probe_video_metadata", lambda url: {"fps": 30.0, "num_frames": 3000})
+    out = training.add_to_training("u1", "m1", None)
+    assert out["status"] == "exists" and out["events"] == 3
+    assert len(env["r2"].copies) == 1
+    assert (env["dirs"]["action_pre"] / "m1_actions.jsonl").exists()
+
+
+def test_refuses_a_result_analysed_from_another_video(env):
+    env["state"]["row"]["source_video"] = {"r2_key": "videos/u1/m1-reupload.mp4", "public_url": "https://x"}
+    with pytest.raises(ValueError, match="another video"):
+        training.add_to_training("u1", "m1", None)
+    assert env["r2"].copies == []

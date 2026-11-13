@@ -168,7 +168,7 @@ export function AppReviewPage() {
               onChange={(t) => set({ tab: t })}
             />
             {detail.data && <MatchSummary match={detail.data.match} />}
-            {detail.data && <SendToTraining user={user} match={detail.data.match} />}
+            {detail.data && <SendToTraining key={detail.data.match.id} user={user} match={detail.data.match} />}
             <span className="flex-1" />
             {tab !== 'review' && (
               <label className="inline-flex items-center gap-1.5 text-xs text-text-secondary">

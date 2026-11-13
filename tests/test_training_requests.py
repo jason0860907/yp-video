@@ -59,3 +59,14 @@ def test_transient_error_leaves_request_pending(monkeypatch):
     posted = setup(monkeypatch, [request("r1", "m1")], admin_down)
     assert training_requests.process_pending() == 0
     assert posted == []
+
+
+def test_missing_object_fails_the_request(monkeypatch):
+    from botocore.exceptions import ClientError
+
+    def add(user, match, angle):
+        raise ClientError({"Error": {"Code": "NoSuchKey", "Message": "gone"}}, "CopyObject")
+
+    posted = setup(monkeypatch, [request("r1", "m1")], add)
+    assert training_requests.process_pending() == 1
+    assert posted[0][1]["status"] == "failed"

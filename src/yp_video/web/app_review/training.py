@@ -8,7 +8,8 @@ model output before anything trains on them.
 
 A second send never rewrites a label: the video already in place answers
 ``exists``, and one under another angle is moved, its labels left as they
-are (they are named by the match id, not the kind).
+are (they are named by the match id, not the kind). Either fills in a
+pre-label a failed earlier send never wrote.
 """
 
 from typing import Literal, TypedDict, get_args
@@ -95,39 +96,64 @@ def add_to_training(user: str, match: str, angle: Angle | None) -> TrainingOutco
     video = f"{match}.mp4"
     target = _user_cut_key(kind_name, video)
 
+    status: Literal["added", "exists", "moved"] | None = None
     if r2_client.object_exists(target):
-        return {"video": video, "kind": kind_name, "status": "exists", "rallies": 0, "events": 0}
+        status = "exists"
     for other in USER_CUT_KINDS.values():
         existing = _user_cut_key(other, video)
-        if other != kind_name and r2_client.object_exists(existing):
+        if status is None and other != kind_name and r2_client.object_exists(existing):
             r2_client.copy_from(r2_client.bucket, existing, target)
             r2_client.delete_object(existing)
-            return {"video": video, "kind": kind_name, "status": "moved", "rallies": 0, "events": 0}
+            status = "moved"
 
-    bundle, _ = sources.match_bundle(lib, row)
-    rallies, events = prelabels(bundle)
-    r2_client.copy_from(sources.customer.bucket, source_key, target)
-    origin = {"type": "app", "user_id": row["owner_id"], "match_id": match, "job_id": bundle.result.job_id}
-    _write_rallies(match, video, bundle.result.total_duration, rallies, origin)
-    _write_actions(match, target, events, origin)
-    return {"video": video, "kind": kind_name, "status": "added", "rallies": len(rallies), "events": len(events)}
+    # A send that failed after its copy left the video without (some of) its
+    # pre-labels; any send fills in what is missing and never rewrites a file.
+    rallies = events = 0
+    if status is None or _labels_missing(match):
+        bundle, _ = sources.match_bundle(lib, row)
+        if bundle.result.video_r2_key != source_key:
+            raise ValueError("The latest analysis ran on another video than this match's source")
+        rally_rows, event_rows = prelabels(bundle)
+        if status is None:
+            r2_client.copy_from(sources.customer.bucket, source_key, target)
+            status = "added"
+        origin = {"type": "app", "user_id": row["owner_id"], "match_id": match, "job_id": bundle.result.job_id}
+        if _write_rallies(match, video, bundle.result.total_duration, rally_rows, origin):
+            rallies = len(rally_rows)
+        if _write_actions(match, target, event_rows, origin):
+            events = len(event_rows)
+    return {"video": video, "kind": kind_name, "status": status, "rallies": rallies, "events": events}
 
 
-def _write_rallies(stem: str, video: str, duration: float, rallies: list[dict], origin: dict) -> None:
+def _rally_paths(stem: str):
     name = annotation_name(stem)
-    path = RALLY_SPOT_PRE_ANNOTATIONS_DIR / name
-    if path.exists() or (RALLY_ANNOTATIONS_DIR / name).exists():
-        return
+    return RALLY_SPOT_PRE_ANNOTATIONS_DIR / name, RALLY_ANNOTATIONS_DIR / name
+
+
+def _action_paths(stem: str):
+    video = f"{stem}.mp4"
+    return action_annotations.pre_annotation_path(video), action_annotations.annotation_path(video)
+
+
+def _labels_missing(stem: str) -> bool:
+    return not all(any(p.exists() for p in pair) for pair in (_rally_paths(stem), _action_paths(stem)))
+
+
+def _write_rallies(stem: str, video: str, duration: float, rallies: list[dict], origin: dict) -> bool:
+    path, human = _rally_paths(stem)
+    if path.exists() or human.exists():
+        return False
     rows, max_id = number_rallies(rallies)
     path.parent.mkdir(parents=True, exist_ok=True)
     write_jsonl(path, {"video": video, "duration": duration, "max_rally_id": max_id, "source": origin}, rows)
-    r2_client.upload_file(path, f"rally-spot/pre-annotations/{name}")
+    r2_client.upload_file(path, f"rally-spot/pre-annotations/{path.name}")
+    return True
 
 
-def _write_actions(stem: str, cut_key: str, events: list[dict], origin: dict) -> None:
-    path = action_annotations.pre_annotation_path(f"{stem}.mp4")
-    if path.exists() or action_annotations.annotation_path(f"{stem}.mp4").exists():
-        return
+def _write_actions(stem: str, cut_key: str, events: list[dict], origin: dict) -> bool:
+    path, human = _action_paths(stem)
+    if path.exists() or human.exists():
+        return False
     meta = probe_video_metadata(r2_client.generate_presigned_url(cut_key))
     fps, num_frames = float(meta["fps"]), int(meta["num_frames"])
     normalized = action_annotations.normalize_events(stem, events, fps=fps, num_frames=num_frames, rallies=[])
@@ -144,3 +170,4 @@ def _write_actions(stem: str, cut_key: str, events: list[dict], origin: dict) ->
         "source": origin, "events": kept,
     })
     r2_client.upload_file(path, f"action/pre-annotations/{path.name}")
+    return True
