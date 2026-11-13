@@ -12,9 +12,12 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class CameraAngle(str, Enum):
-    phone_sideline = "phoneSideline"
-    fixed_venue = "fixedVenue"
-    broadcast = "broadcast"
+    """The App's upload angles (D1 matches.angle, config.USER_ANGLES)."""
+
+    baseline = "baseline"
+    corner = "corner"
+    high = "high"
+    center = "center"
 
 
 class VideoQuality(str, Enum):
@@ -172,10 +175,7 @@ class DetectorInput(BaseModel):
     video_url: str = Field(
         min_length=1, description="HTTP(S) or YouTube URL of the video to analyze"
     )
-    camera_angle: CameraAngle = Field(
-        default=CameraAngle.phone_sideline,
-        description="Camera position; affects model preprocessing.",
-    )
+    camera_angle: CameraAngle = Field(description="Where the camera stood, as picked on upload.")
     quality: VideoQuality | None = Field(
         default=None,
         description="Optional download quality. Only honoured for YouTube URLs.",

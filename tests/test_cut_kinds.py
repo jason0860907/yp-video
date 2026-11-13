@@ -32,3 +32,9 @@ def test_annotation_stats_counts_user_kinds(tmp_path, monkeypatch):
     stats = training.annotation_stats(lambda name: video)
     assert set(stats["by_view"]) == set(config.CUT_KINDS)
     assert stats["by_view"]["user-corner"]["videos"] == 1
+
+
+def test_detector_contract_angles_are_the_user_angles():
+    from yp_video.contracts.detector import CameraAngle
+
+    assert tuple(a.value for a in CameraAngle) == config.USER_ANGLES

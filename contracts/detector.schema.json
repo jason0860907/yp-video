@@ -31,10 +31,12 @@
       "type": "object"
     },
     "CameraAngle": {
+      "description": "The App's upload angles (D1 matches.angle, config.USER_ANGLES).",
       "enum": [
-        "phoneSideline",
-        "fixedVenue",
-        "broadcast"
+        "baseline",
+        "corner",
+        "high",
+        "center"
       ],
       "title": "CameraAngle",
       "type": "string"
@@ -51,8 +53,7 @@
         },
         "camera_angle": {
           "$ref": "#/$defs/CameraAngle",
-          "default": "phoneSideline",
-          "description": "Camera position; affects model preprocessing."
+          "description": "Where the camera stood, as picked on upload."
         },
         "quality": {
           "anyOf": [
@@ -81,7 +82,8 @@
         }
       },
       "required": [
-        "video_url"
+        "video_url",
+        "camera_angle"
       ],
       "title": "DetectorInput",
       "type": "object"
