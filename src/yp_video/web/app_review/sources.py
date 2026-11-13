@@ -48,15 +48,17 @@ class NotFound(Exception):
     """No such user, match or source video in the App library."""
 
 
-def admin_get(path: str):
+def _admin(method: str, path: str, body: dict | None = None):
     env = load_env()
     base, token = env.get("UPLOAD_SERVICE_URL"), env.get("AUTH_TOKEN")
     if not base or not token:
         raise AdminApiError("UPLOAD_SERVICE_URL and AUTH_TOKEN must be configured")
     try:
-        response = httpx.get(
+        response = httpx.request(
+            method,
             f"{base.rstrip('/')}/admin{path}",
             headers={"Authorization": f"Bearer {token}"},
+            json=body,
             timeout=30,
         )
     except httpx.HTTPError as exc:
@@ -66,6 +68,14 @@ def admin_get(path: str):
     if response.is_error:
         raise AdminApiError(f"VolleyIQ admin API returned {response.status_code}")
     return response.json()
+
+
+def admin_get(path: str):
+    return _admin("GET", path)
+
+
+def admin_post(path: str, body: dict):
+    return _admin("POST", path, body)
 
 
 def users() -> list[dict]:

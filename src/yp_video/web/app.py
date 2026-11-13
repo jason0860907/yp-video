@@ -15,6 +15,7 @@ from starlette.datastructures import MutableHeaders
 from yp_video.config import APP_LOG_PATH, FRONTEND_DIST_DIR, LOGS_DIR
 from yp_video.core import label_done
 from yp_video.web import audit, db, worklists
+from yp_video.web.app_review import training_requests
 from yp_video.web.access import AccessAuth, verifier
 from yp_video.web.r2_client import mirror_file, r2_client
 from yp_video.web.routers import (
@@ -134,6 +135,9 @@ async def lifespan(app: FastAPI):
     label_done.ledger.on_write = lambda path: mirror_file(path, f"label-done/{path.name}")
 
     threading.Thread(target=_warm_worklists, name="warm-worklists", daemon=True).start()
+    # Send-to-training requests from the DEBUG App (web/app_review/training_requests.py).
+    if training_requests.configured():
+        threading.Thread(target=training_requests.poll_forever, name="training-requests", daemon=True).start()
 
     yield
 
