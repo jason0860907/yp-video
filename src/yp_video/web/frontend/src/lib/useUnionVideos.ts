@@ -65,7 +65,7 @@ export function useUnionVideos() {
       else
         rows.push({
           name: `${s}.mp4`,
-          kind: r.kind === 'sideline' ? 'sideline' : 'broadcast',
+          kind: r.kind,
           rallyOnly: true,
           rally: r,
         });

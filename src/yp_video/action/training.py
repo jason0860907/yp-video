@@ -22,6 +22,7 @@ from yp_video.config import (
     ACTION_PRE_ANNOTATIONS_DIR,
     ACTION_VAL_SET_FILE,
     SPOT_CHECKPOINTS_DIR,
+    CUT_KINDS,
     CutKind,
     cut_kind_of,
 )
@@ -97,8 +98,7 @@ def annotation_stats(resolve: CutResolver) -> ActionAnnotationStats:
     # Totals plus a per-camera-view breakdown so the UI can reflect the selected
     # view. A video's view is its cut kind (broadcast / sideline).
     by_view: dict[CutKind, ViewCounts] = {
-        "broadcast": {"videos": 0, "events": 0, "frames": 0},
-        "sideline": {"videos": 0, "events": 0, "frames": 0},
+        kind: {"videos": 0, "events": 0, "frames": 0} for kind in CUT_KINDS
     }
     val_names = {Path(entry).name for entry in read_val_set_file()}
     per_video: list[ActionAnnotationVideo] = []

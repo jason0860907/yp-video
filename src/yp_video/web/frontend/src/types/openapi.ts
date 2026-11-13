@@ -1973,7 +1973,7 @@ export interface components {
             /** Frames */
             frames: number;
             /** View */
-            view: ("broadcast" | "sideline") | "unknown";
+            view: ("broadcast" | "sideline" | "user-baseline" | "user-corner" | "user-high" | "user-center") | "unknown";
             /** Is Val */
             is_val: boolean;
         };
@@ -2054,7 +2054,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "broadcast" | "sideline";
+            kind: "broadcast" | "sideline" | "user-baseline" | "user-corner" | "user-high" | "user-center";
             /** Rally Sources */
             rally_sources: string[];
             /** Has Action Annotation */
@@ -2186,7 +2186,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "broadcast" | "sideline";
+            kind: "broadcast" | "sideline" | "user-baseline" | "user-corner" | "user-high" | "user-center";
             /** Event Count */
             event_count: number;
             /** Reviewed */
@@ -2995,7 +2995,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "broadcast" | "sideline";
+            kind: "broadcast" | "sideline" | "user-baseline" | "user-corner" | "user-high" | "user-center";
             /** Event Count */
             event_count: number;
             /** Has Records */
@@ -3544,7 +3544,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "broadcast" | "sideline";
+            kind: "broadcast" | "sideline" | "user-baseline" | "user-corner" | "user-high" | "user-center";
             /** Has Rally Spot */
             has_rally_spot: boolean;
             /** Has Action Pre */
@@ -4052,7 +4052,7 @@ export interface components {
              * View
              * @enum {string}
              */
-            view: "broadcast" | "sideline";
+            view: "broadcast" | "sideline" | "user-baseline" | "user-corner" | "user-high" | "user-center";
             /** Is Val */
             is_val: boolean;
         };
@@ -4108,7 +4108,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "broadcast" | "sideline";
+            kind: "broadcast" | "sideline" | "user-baseline" | "user-corner" | "user-high" | "user-center";
             /** Done */
             done: boolean;
             /**
@@ -4601,7 +4601,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "broadcast" | "sideline";
+            kind: "broadcast" | "sideline" | "user-baseline" | "user-corner" | "user-high" | "user-center";
             /** Event Count */
             event_count: number;
             /** Embedded Models */

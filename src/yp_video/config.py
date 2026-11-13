@@ -75,7 +75,11 @@ RAW_VIDEOS_DIR = VIDEOS_DIR / "raw-videos"
 # "sideline"  = amateur side-court / tripod recording (e.g. 臨打 practice)
 CUTS_BROADCAST_DIR = VIDEOS_DIR / "cuts-broadcast"
 CUTS_SIDELINE_DIR = VIDEOS_DIR / "cuts-sideline"
-CUTS_DIRS = (CUTS_BROADCAST_DIR, CUTS_SIDELINE_DIR)
+# Users' App matches sent to training (web/app_review/training.py), one kind
+# per camera angle the App's upload asks for — the same four values as D1
+# matches.angle and the iOS CameraAngle.
+USER_ANGLES = ("baseline", "corner", "high", "center")
+USER_CUT_KINDS = {angle: f"user-{angle}" for angle in USER_ANGLES}
 # Layout rule: everything belonging to a model family — human annotations
 # and machine-generated data alike — lives under that family's dir (action/,
 # rally/, rally-spot/, reid/). Only sources (cuts) and the hand-edited
@@ -174,6 +178,10 @@ R2_CATEGORIES: dict[str, R2Category] = {
     "videos": R2Category(RAW_VIDEOS_DIR, "*.mp4", "Raw Videos", local_only=True),
     "cuts-broadcast": R2Category(CUTS_BROADCAST_DIR, "*.mp4", "Cuts (Broadcast)"),
     "cuts-sideline": R2Category(CUTS_SIDELINE_DIR, "*.mp4", "Cuts (Sideline)"),
+    **{
+        f"cuts-{kind}": R2Category(VIDEOS_DIR / f"cuts-{kind}", "*.mp4", f"Cuts (User · {angle.title()})")
+        for angle, kind in USER_CUT_KINDS.items()
+    },
     "rally-spot/annotations": R2Category(RALLY_ANNOTATIONS_DIR, "*.jsonl", "Rally Annotations"),
     "rally-spot/pre-annotations": R2Category(RALLY_SPOT_PRE_ANNOTATIONS_DIR, "*.jsonl", "Rally Predictions (SPOT)"),
     "court/annotations": R2Category(COURT_ANNOTATIONS_DIR, "*.json", "Court Calibrations"),
@@ -199,7 +207,9 @@ class CutKind(NamedTuple):
 CUT_KINDS: dict[str, CutKind] = {
     "broadcast": CutKind(CUTS_BROADCAST_DIR, "cuts-broadcast"),
     "sideline":  CutKind(CUTS_SIDELINE_DIR, "cuts-sideline"),
+    **{kind: CutKind(VIDEOS_DIR / f"cuts-{kind}", f"cuts-{kind}") for kind in USER_CUT_KINDS.values()},
 }
+CUTS_DIRS = tuple(k.local_dir for k in CUT_KINDS.values())
 DEFAULT_CUT_KIND = "broadcast"
 
 # Tuple form for callers that just need the R2 category list.
@@ -207,7 +217,7 @@ CUT_R2_CATEGORIES = tuple(k.r2_category for k in CUT_KINDS.values())
 
 
 def iter_all_cuts() -> Iterator[Path]:
-    """Yield every cut video across both split dirs."""
+    """Yield every cut video across every kind's dir."""
     seen: set[str] = set()
     for d in CUTS_DIRS:
         if not d.exists():
@@ -220,7 +230,7 @@ def iter_all_cuts() -> Iterator[Path]:
 
 
 def find_cut(name: str) -> Path | None:
-    """Return the first matching cut video across both split dirs."""
+    """Return the first matching cut video across every kind's dir."""
     for d in CUTS_DIRS:
         p = d / name
         if p.exists():
@@ -228,11 +238,13 @@ def find_cut(name: str) -> Path | None:
     return None
 
 
-CutKind = Literal["broadcast", "sideline"]
+CutKind = Literal[
+    "broadcast", "sideline", "user-baseline", "user-corner", "user-high", "user-center"
+]
 
 
 def cut_kind_of(path: Path) -> CutKind:
-    """Return the cut kind ('broadcast' / 'sideline') based on parent dir."""
+    """Return the cut kind (a ``CUT_KINDS`` key) based on parent dir."""
     parent = path.parent.resolve()
     for kind, info in CUT_KINDS.items():
         if parent == info.local_dir.resolve():

@@ -3,7 +3,9 @@
  *  listed; calibrating them is Label → Court. ?video= keeps the pick
  *  shareable and refresh-safe. */
 
+import type { CutKind } from '@/types/api';
 import { useMemo, useState } from 'react';
+import { CUT_KIND_OPTIONS } from '@/lib/cutKinds';
 import { Link, useSearchParams } from 'react-router-dom';
 import { fieldCls } from '@/components/form/Field';
 import { cn } from '@/lib/cn';
@@ -16,7 +18,7 @@ import { VideoCombobox } from '@/components/video/VideoCombobox';
 import { StatusChip } from '@/pages/label/StatusChip';
 import { AnalysisPanel } from './AnalysisPanel';
 
-type KindFilter = 'all' | 'broadcast' | 'sideline';
+type KindFilter = 'all' | CutKind;
 
 export function AnalysisPage() {
   const [params, setParams] = useSearchParams();
@@ -53,8 +55,11 @@ export function AnalysisPage() {
               className={cn(fieldCls, 'h-9 py-0 text-xs')}
             >
               <option value="all">All kinds</option>
-              <option value="broadcast">Broadcast</option>
-              <option value="sideline">Sideline</option>
+              {CUT_KIND_OPTIONS.map((o) => (
+                <option key={o.kind} value={o.kind}>
+                  {o.label}
+                </option>
+              ))}
             </select>
           </label>
           <VideoCombobox

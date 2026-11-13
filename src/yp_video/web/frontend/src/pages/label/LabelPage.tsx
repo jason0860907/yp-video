@@ -12,7 +12,9 @@
  *  URL.
  */
 
+import type { CutKind } from '@/types/api';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { CUT_KIND_OPTIONS } from '@/lib/cutKinds';
 import { useQueryClient } from '@tanstack/react-query';
 import { fieldCls } from '@/components/form/Field';
 import { errMsg } from '@/lib/api';
@@ -48,7 +50,7 @@ import type {
 
 const MODES: ModeDescriptor[] = [RALLY_MODE, ACTION_MODE, ASSOCIATION_MODE, REID_MODE, COURT_MODE];
 
-type KindFilter = 'all' | 'broadcast' | 'sideline';
+type KindFilter = 'all' | CutKind;
 
 export function LabelPage() {
   const { video, mode, set } = useLabelUrlState();
@@ -196,8 +198,11 @@ export function LabelPage() {
               className={cn(fieldCls, 'h-9 py-0 text-xs')}
             >
               <option value="all">All kinds</option>
-              <option value="broadcast">Broadcast</option>
-              <option value="sideline">Sideline</option>
+              {CUT_KIND_OPTIONS.map((o) => (
+                <option key={o.kind} value={o.kind}>
+                  {o.label}
+                </option>
+              ))}
             </select>
           </label>
           <label className="inline-flex items-center gap-2 text-xs text-text-muted">

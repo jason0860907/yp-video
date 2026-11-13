@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { CUT_KIND_OPTIONS } from '@/lib/cutKinds';
 import type { ReactNode } from 'react';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/Button';
@@ -87,11 +88,7 @@ export function VideoMultiSelectList<T extends VideoListItem>({
   const visible = videos.filter(
     (v) => (kindFilter === 'all' || v.kind === kindFilter) && (!statusPredicate || statusPredicate(v)),
   );
-  const counts = {
-    all: videos.length,
-    broadcast: videos.filter((v) => v.kind === 'broadcast').length,
-    sideline: videos.filter((v) => v.kind === 'sideline').length,
-  };
+  const count = (kind: CutKind) => videos.filter((v) => v.kind === kind).length;
 
   const toggle = (name: string, on: boolean) => {
     const next = new Set(selected);
@@ -117,9 +114,12 @@ export function VideoMultiSelectList<T extends VideoListItem>({
             </Button>
           ))}
           <select value={kindFilter} onChange={(e) => setKindFilter(e.target.value as KindFilter)} className={selectCls}>
-            <option value="all">All kinds ({counts.all})</option>
-            <option value="broadcast">Broadcast ({counts.broadcast})</option>
-            <option value="sideline">Sideline ({counts.sideline})</option>
+            <option value="all">All kinds ({videos.length})</option>
+            {CUT_KIND_OPTIONS.map((o) => (
+              <option key={o.kind} value={o.kind}>
+                {o.label} ({count(o.kind)})
+              </option>
+            ))}
           </select>
           {statusOptions && (
             <select value={status} onChange={(e) => setStatus(e.target.value)} className={selectCls}>

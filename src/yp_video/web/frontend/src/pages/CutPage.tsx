@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { CUT_KIND_OPTIONS } from '@/lib/cutKinds';
 import { useQuery } from '@tanstack/react-query';
 import { API, api, apiUrl, errMsg } from '@/lib/api';
 import { formatTimePrecise } from '@/lib/format';
@@ -167,10 +168,7 @@ export function CutPage() {
         actions={
           <>
             <Segmented<CutKind>
-              options={[
-                { key: 'broadcast', label: 'Broadcast' },
-                { key: 'sideline', label: 'Sideline' },
-              ]}
+              options={CUT_KIND_OPTIONS.map((o) => ({ key: o.kind, label: o.label }))}
               value={kind}
               onChange={setKind}
             />
