@@ -19,6 +19,7 @@ from yp_video.action import rules
 from yp_video.contracts.action import ActionLabel
 
 from .models import Bundle, Event, Rally, Side, Window
+from .sets import assign
 from .stats import Player, Stats, summary
 
 PAD = 1.0
@@ -410,6 +411,17 @@ def project(
         ),
         key=lambda r: (r.start, r.index),
     )
+    # The user's 局開頭 / 局結尾 marks: rallies outside every set leave, with
+    # the touches played in them; the rest take the set they play in.
+    excluded: list[tuple[float, float]] = []
+    if correction and correction.sets:
+        numbers = assign(((r.index, r.start) for r in rallies), correction.sets.starts, correction.sets.ends)
+        excluded = [(r.start, r.end) for r in rallies if r.index not in numbers]
+        rallies = [r.model_copy(update={"set": numbers[r.index]}) for r in rallies if r.index in numbers]
+
+    def counted(event: Event) -> bool:
+        return not any(start <= event.time <= end for start, end in excluded)
+
     overrides = correction.rally_winner_overrides if correction else {}
 
     def winner(rally: Rally | None):
@@ -490,7 +502,11 @@ def project(
     actions = [
         clip(context, number, *index.framing(position, mode))
         for number, (position, context) in enumerate(
-            (item for item in action_contexts if item[1].key not in removed_actions),
+            (
+                item
+                for item in action_contexts
+                if item[1].key not in removed_actions and counted(item[1].anchor)
+            ),
             1,
         )
     ]
@@ -517,7 +533,9 @@ def project(
         if kind(e) == "score" and index.rally_of[p] is None
     ]
     score_contexts.sort(key=lambda c: c.anchor.time)
-    visible_scores = [c for c in score_contexts if c.key not in removed_scores]
+    visible_scores = [
+        c for c in score_contexts if c.key not in removed_scores and counted(c.anchor)
+    ]
     scores = [
         clip(
             context,
