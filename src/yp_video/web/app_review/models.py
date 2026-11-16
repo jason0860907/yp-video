@@ -138,6 +138,13 @@ class TeamSides(Artifact):
     switches: list[int]
 
 
+class MatchSets(Artifact):
+    """The user's set marks (rally indices); ``sets.assign`` reads them."""
+
+    starts: list[int]
+    ends: list[int]
+
+
 class Corrections(Artifact):
     schema_version: Literal["7.0"]
     match_id: str
@@ -150,6 +157,7 @@ class Corrections(Artifact):
     rally_winner_overrides: dict[int, Side]
     player_identification: IdentificationCorrection | None = None
     team_sides: TeamSides | None = None
+    sets: MatchSets | None = None
 
     @model_validator(mode="after")
     def unique_keys(self):
