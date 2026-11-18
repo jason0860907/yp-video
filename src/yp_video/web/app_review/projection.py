@@ -411,16 +411,24 @@ def project(
         ),
         key=lambda r: (r.start, r.index),
     )
-    # The user's 局開頭 / 局結尾 marks: rallies outside every set leave, with
-    # the touches played in them; the rest take the set they play in.
-    excluded: list[tuple[float, float]] = []
-    if correction and correction.sets:
-        numbers = assign(((r.index, r.start) for r in rallies), correction.sets.starts, correction.sets.ends)
-        excluded = [(r.start, r.end) for r in rallies if r.index not in numbers]
+    # The user's 局開頭 / 局結尾 marks: rallies outside every set leave, the
+    # rest take the set they play in, and only touches inside a set's span
+    # (its first rally's start to its last rally's end) count — as the App's
+    # Match.setSpans.
+    spans: list[tuple[float, float]] | None = None
+    excluded: list[Rally] = []
+    marks = correction.sets if correction else None
+    if marks and {r.index for r in rallies} & {*marks.starts, *marks.ends}:
+        numbers = assign(((r.index, r.start) for r in rallies), marks.starts, marks.ends)
+        excluded = [r for r in rallies if r.index not in numbers]
         rallies = [r.model_copy(update={"set": numbers[r.index]}) for r in rallies if r.index in numbers]
+        by_set: dict[int, list[Rally]] = {}
+        for r in rallies:
+            by_set.setdefault(r.set, []).append(r)
+        spans = [(min(r.start for r in s), max(r.end for r in s)) for s in by_set.values()]
 
     def counted(event: Event) -> bool:
-        return not any(start <= event.time <= end for start, end in excluded)
+        return spans is None or any(start <= event.time <= end for start, end in spans)
 
     overrides = correction.rally_winner_overrides if correction else {}
 
@@ -492,7 +500,7 @@ def project(
                 for e in sorted(
                     index.all if trimmed else timeline, key=lambda e: e.time
                 )
-                if start <= e.time <= end
+                if start <= e.time <= end and counted(e)
             ],
         }
 
@@ -565,7 +573,12 @@ def project(
                 "Identification result missing or its result_id differs: only single-touch player assignments are applied, not the whole person grouping."
             )
     if correction:
-        known = {c.key for _, c in action_contexts} | {c.key for c in score_contexts}
+        # A rally outside the sets keeps its marks for when it counts again.
+        known = (
+            {c.key for _, c in action_contexts}
+            | {c.key for c in score_contexts}
+            | {f"rally-{bundle.rally_ids[r.index]}" for r in excluded if r.index in bundle.rally_ids}
+        )
         unresolved = [
             c.key for c in correction.actions + correction.scores if c.key not in known
         ]

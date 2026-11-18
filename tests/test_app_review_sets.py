@@ -2,7 +2,7 @@
 rallies outside every set — and the touches in them — are gone, and the
 rest score set by set."""
 
-from yp_video.web.app_review.models import Bundle
+from yp_video.web.app_review.models import Bundle, ClipCorrection, Event
 from yp_video.web.app_review.projection import project
 
 MATCH = "00000000-0000-4000-8000-000000000001"
@@ -47,3 +47,31 @@ def test_uncorrected_view_and_no_marks_keep_every_rally():
     marked = bundle({"starts": [2], "ends": []})
     assert len(project(marked, corrected=False)["rallies"]) == 4
     assert len(project(bundle(None))["rallies"]) == 4
+
+
+def with_gap_touches(b: Bundle) -> Bundle:
+    """One touch between rallies 1 and 2 (8 s), one between 2 and 3 (18 s)."""
+    extra = [
+        {"id": "gap1", "label": "spike", "time": 8.0, "frame": 240, "visible": True},
+        {"id": "gap2", "label": "spike", "time": 18.0, "frame": 540, "visible": True},
+    ]
+    events = sorted([*b.result.action_events, *map(Event.model_validate, extra)], key=lambda e: e.time)
+    return b.model_copy(update={"result": b.result.model_copy(update={"action_events": events})})
+
+
+def test_touches_between_rallies_count_only_inside_a_set():
+    # Set 1 is rallies 2–3: the touch before it is practice, the one inside stays.
+    preview = project(with_gap_touches(bundle({"starts": [2], "ends": [3]})))
+    times = [c["anchor_time"] for c in preview["actions"]]
+    assert 8.0 not in times and 18.0 in times
+    assert all(t["time"] != 8.0 for c in preview["actions"] + preview["scores"] for t in c["touches"])
+    # No marks: everything counts.
+    assert 8.0 in [c["anchor_time"] for c in project(with_gap_touches(bundle(None)))["actions"]]
+
+
+def test_marks_on_an_excluded_rally_ending_are_not_unmapped():
+    b = bundle({"starts": [2], "ends": []})
+    rally1 = f"rally-00000000-0000-4000-8000-{1:012d}"
+    b.corrections.scores.append(ClipCorrection.model_validate(
+        {"key": rally1, "loss_reason": "net", "removed": False, "tag_ids": []}))
+    assert not any("could not be mapped" in w for w in project(b)["warnings"])
