@@ -79,6 +79,18 @@ def _user_cut_key(kind_name: str, video: str) -> str:
     return f"{CUT_KINDS[kind_name].r2_category}/{video}"
 
 
+def sent() -> dict[str, str]:
+    """Every match already in training: match id -> its ``user-<angle>`` kind."""
+    out = {}
+    for kind_name in USER_CUT_KINDS.values():
+        prefix = f"{CUT_KINDS[kind_name].r2_category}/"
+        for obj in r2_client.list_objects_cached(prefix):
+            name = obj["key"].removeprefix(prefix)
+            if name.endswith(".mp4") and "/" not in name:
+                out[name.removesuffix(".mp4")] = kind_name
+    return out
+
+
 def add_to_training(user: str, match: str, angle: Angle | None) -> TrainingOutcome:
     """Copy ``user``'s ``match`` into training under ``angle`` (the match's
     own angle when None). Raises ``ValueError`` / ``sources.NotFound`` for a

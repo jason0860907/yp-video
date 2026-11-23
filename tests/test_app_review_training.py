@@ -86,6 +86,9 @@ class FakeR2:
     def generate_presigned_url(self, key, expires=3600):
         return f"https://r2/{key}"
 
+    def list_objects_cached(self, prefix="", ttl=30.0):
+        return [{"key": k} for k in sorted(self.objects) if k.startswith(prefix)]
+
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
@@ -240,3 +243,25 @@ def test_refuses_a_result_analysed_from_another_video(env):
     with pytest.raises(ValueError, match="another video"):
         training.add_to_training("u1", "m1", None)
     assert env["r2"].copies == []
+
+
+def test_sent_lists_matches_already_in_training(env):
+    env["r2"].objects |= {"cuts-user-high/m2.mp4", "cuts-sideline/m9.mp4"}
+    assert training.sent() == {"m2": "user-high"}
+    training.add_to_training("u1", "m1", None)
+    assert training.sent() == {"m1": "user-corner", "m2": "user-high"}
+    training.add_to_training("u1", "m2", "baseline")
+    assert training.sent() == {"m1": "user-corner", "m2": "user-baseline"}
+
+
+def test_http_sent_endpoint(monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from yp_video.web.routers import app_review
+
+    monkeypatch.setattr(app_review.training, "sent", lambda: {"m1": "user-corner"})
+    app = FastAPI()
+    app.include_router(app_review.router, prefix="/api/app-review")
+    with TestClient(app) as client:
+        assert client.get("/api/app-review/training").json() == {"m1": "user-corner"}

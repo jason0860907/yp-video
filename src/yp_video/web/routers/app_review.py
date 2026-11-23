@@ -213,6 +213,12 @@ async def send_to_training(user: str, match: str, req: TrainingRequest) -> train
     return await asyncio.to_thread(checked, training.add_to_training, user, match, req.angle)
 
 
+@router.get("/training")
+async def sent_to_training() -> dict[str, str]:
+    """Match id -> ``user-<angle>`` kind of every match already in training."""
+    return await asyncio.to_thread(training.sent)
+
+
 @router.get("/reviews/{review_id}")
 def review(review_id: str, mode: Window = "full_play", corrected: bool = True) -> Review:
     return detail(checked(feedback.load, review_id), mode=mode, corrected=corrected)
