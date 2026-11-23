@@ -1,5 +1,6 @@
 /** A user's whole library at a glance: every match with where the worker is
- *  on it and what the user has changed, newest first. A row opens the match. */
+ *  on it and what the user has changed, newest first. A row opens the match;
+ *  an analysed one can be sent to training from its row. */
 
 import { useQuery } from '@tanstack/react-query';
 import { api, errMsg } from '@/lib/api';
@@ -8,6 +9,7 @@ import { Badge } from '@/components/ui/Badge';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { IDENTIFY } from './appTerms';
 import { JobBadge } from './JobStatus';
+import { SendToTraining } from './SendToTraining';
 import type { LibraryMatch, MatchEdits } from './types';
 
 /** Overview edit kinds, in the order Review groups them. */
@@ -42,7 +44,7 @@ export function Overview({
 
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[960px] text-left text-[12.5px]">
+      <table className="w-full min-w-[1200px] text-left text-[12.5px]">
         <thead>
           <tr className="border-b border-border text-[11px] uppercase tracking-[0.06em] text-text-muted">
             <th className="pb-2 pr-3 font-normal">Match</th>
@@ -50,7 +52,8 @@ export function Overview({
             <th className="pb-2 pr-3 font-normal">{IDENTIFY}</th>
             <th className="pb-2 pr-3 font-normal">Court 3D</th>
             <th className="pb-2 pr-3 font-normal">User edits</th>
-            <th className="pb-2 font-normal">Last edited</th>
+            <th className="pb-2 pr-3 font-normal">Last edited</th>
+            <th className="pb-2 font-normal">Training</th>
           </tr>
         </thead>
         <tbody>
@@ -77,8 +80,12 @@ export function Overview({
               <td className="py-2 pr-3">
                 <Edits edits={overview.data?.[m.id]} analysed={!!m.r2_keys.result} loading={overview.isPending} />
               </td>
-              <td className="whitespace-nowrap py-2 text-text-muted">
+              <td className="whitespace-nowrap py-2 pr-3 text-text-muted">
                 {editedAt(overview.data?.[m.id])}
+              </td>
+              {/* Its own controls: a click here must not open the match. */}
+              <td className="whitespace-nowrap py-2" onClick={(e) => e.stopPropagation()}>
+                {m.r2_keys.result ? <SendToTraining user={user} match={m} /> : <span className="text-text-muted">—</span>}
               </td>
             </tr>
           ))}
