@@ -32,6 +32,7 @@ from yp_video.web.routers import (
     fusion_model,
     jobs,
     label_stats,
+    person,
     reid,
     reid_train,
     system,
@@ -225,6 +226,7 @@ app.include_router(annotate.router, prefix="/api/annotate", tags=["annotate"])
 app.include_router(court.router, prefix="/api/court", tags=["court"])
 app.include_router(tracklets.router, prefix="/api/tracklets", tags=["tracklets"])
 app.include_router(extraction.router, prefix="/api/extraction", tags=["extraction"])
+app.include_router(person.router, prefix="/api/person", tags=["person"])
 app.include_router(fusion_model.router, prefix="/api/fusion-model", tags=["fusion-model"])
 app.include_router(fusion_inference.router, prefix="/api/inference", tags=["inference"])
 app.include_router(label_stats.router, prefix="/api/label", tags=["label"])

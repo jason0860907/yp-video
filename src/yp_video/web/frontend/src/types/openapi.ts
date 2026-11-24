@@ -166,7 +166,8 @@ export interface paths {
         };
         /**
          * Sent To Training
-         * @description Match id -> ``user-<angle>`` kind of every match already in training.
+         * @description Every match already in training: its cut, and whether that cut has
+         *     its dense pass yet.
          */
         get: operations["sent_to_training_api_app_review_training_get"];
         put?: never;
@@ -932,6 +933,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/person/dense": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Dense */
+        post: operations["dense_api_person_dense_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/fusion-model/status": {
         parameters: {
             query?: never;
@@ -1358,6 +1376,23 @@ export interface paths {
          *     a dense pass.
          */
         get: operations["get_box_check_api_actor_association_box_check__name__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/actor-association/events/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Events */
+        get: operations["get_events_api_actor_association_events__name__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2237,6 +2272,36 @@ export interface components {
             /** Confirmed */
             confirmed: number;
         };
+        /**
+         * AssociationEvents
+         * @description The player's context and one row per labelable event. Each row is an
+         *     extraction record (the frontend's ``ReidRecord``) with its
+         *     ``actor_review`` verdict — a stored one, or an unassociated one for an
+         *     event Player Detection never saw.
+         */
+        AssociationEvents: {
+            meta: components["schemas"]["AssociationMeta"];
+            /** Records */
+            records: {
+                [key: string]: unknown;
+            }[];
+        };
+        /** AssociationMeta */
+        AssociationMeta: {
+            /** Rallies */
+            rallies: {
+                [key: string]: unknown;
+            }[];
+            /** Action Events */
+            action_events: components["schemas"]["SidebarEvent"][];
+            /** Fps */
+            fps: number;
+            /** Frame Size */
+            frame_size: [
+                number,
+                number
+            ];
+        };
         /** AssociationVideo */
         AssociationVideo: {
             /** Name */
@@ -2267,8 +2332,6 @@ export interface components {
              * @enum {string}
              */
             status: "unlabeled" | "pre-annotate" | "in-progress" | "done";
-            auto_counts: components["schemas"]["AutoCounts"];
-            pipeline: components["schemas"]["PipelineState"];
         };
         /**
          * Attack
@@ -2429,15 +2492,6 @@ export interface components {
              * @enum {string}
              */
             mode: "auto";
-        };
-        /** AutoCounts */
-        AutoCounts: {
-            /** Ok */
-            ok: number;
-            /** Multi */
-            multi: number;
-            /** Miss */
-            miss: number;
         };
         /**
          * BatchItem
@@ -2927,6 +2981,11 @@ export interface components {
             /** Deleted */
             deleted: string;
         };
+        /** DenseRequest */
+        DenseRequest: {
+            /** Videos */
+            videos: string[];
+        };
         /** DetectRequest */
         DetectRequest: {
             /** Videos */
@@ -3171,7 +3230,7 @@ export interface components {
              * Id
              * @enum {string}
              */
-            id: "rally" | "rally_winner" | "action" | "action_rally_winner" | "action_rally_winner_actor";
+            id: "rally" | "rally_winner" | "action" | "action_actor" | "action_rally_winner" | "action_rally_winner_actor";
             /** Name */
             name: string;
             /** Tasks */
@@ -3190,7 +3249,7 @@ export interface components {
              * Recipe
              * @enum {string}
              */
-            recipe?: "rally" | "rally_winner" | "action" | "action_rally_winner" | "action_rally_winner_actor";
+            recipe?: "rally" | "rally_winner" | "action" | "action_actor" | "action_rally_winner" | "action_rally_winner_actor";
             /** Run Name */
             run_name?: string | null;
             /** Init Checkpoint */
@@ -3236,7 +3295,7 @@ export interface components {
              * Feature Arch
              * @enum {string}
              */
-            feature_arch?: "rny008_tv_gsm" | "rny008_tv_tsm" | "rny008_tv" | "rny008_gsm" | "rny008_tsm" | "rny008" | "rny002_gsm" | "rny002_tsm" | "rny002" | "convnextt_dv3_gsm" | "convnextt_dv3_tsm" | "convnextt_dv3" | "convnextt2_gsm" | "convnextt2_tsm" | "convnextt2" | "convnextt_gsm" | "convnextt_tsm" | "convnextt" | "rn50_gsm" | "rn50_tsm" | "rn50" | "rn18_gsm" | "rn18_tsm" | "rn18";
+            feature_arch?: "rny008_tv_gsm" | "rny008_tv_tsm" | "rny008_tv" | "rny008_gsm" | "rny008_tsm" | "rny008" | "rny002_gsm" | "rny002_tsm" | "rny002" | "convnexts_dv3_gsm" | "convnexts_dv3_tsm" | "convnexts_dv3" | "convnextt_dv3_gsm" | "convnextt_dv3_tsm" | "convnextt_dv3" | "convnextt2_gsm" | "convnextt2_tsm" | "convnextt2" | "convnextt_gsm" | "convnextt_tsm" | "convnextt" | "rn50_gsm" | "rn50_tsm" | "rn50" | "rn18_gsm" | "rn18_tsm" | "rn18";
             /**
              * Temporal Arch
              * @enum {string}
@@ -3256,6 +3315,10 @@ export interface components {
             warm_up_epochs?: number;
             /** Learning Rate */
             learning_rate?: number;
+            /** Location Stride */
+            location_stride?: (8 | 16) | null;
+            /** Separate Ball Labels */
+            separate_ball_labels?: boolean;
             /** Action Learning Rate */
             action_learning_rate?: number | null;
             /** Rally Learning Rate */
@@ -3307,7 +3370,7 @@ export interface components {
              * @default action_rally_winner
              * @enum {string}
              */
-            recipe?: "rally" | "rally_winner" | "action" | "action_rally_winner" | "action_rally_winner_actor";
+            recipe?: "rally" | "rally_winner" | "action" | "action_actor" | "action_rally_winner" | "action_rally_winner_actor";
             /**
              * Run Name
              * @description Run name; empty picks {date}_{view}_{recipe}_{model}.
@@ -3408,7 +3471,7 @@ export interface components {
              * @default rny008_tv_gsm
              * @enum {string}
              */
-            feature_arch?: "rny008_tv_gsm" | "rny008_tv_tsm" | "rny008_tv" | "rny008_gsm" | "rny008_tsm" | "rny008" | "rny002_gsm" | "rny002_tsm" | "rny002" | "convnextt_dv3_gsm" | "convnextt_dv3_tsm" | "convnextt_dv3" | "convnextt2_gsm" | "convnextt2_tsm" | "convnextt2" | "convnextt_gsm" | "convnextt_tsm" | "convnextt" | "rn50_gsm" | "rn50_tsm" | "rn50" | "rn18_gsm" | "rn18_tsm" | "rn18";
+            feature_arch?: "rny008_tv_gsm" | "rny008_tv_tsm" | "rny008_tv" | "rny008_gsm" | "rny008_tsm" | "rny008" | "rny002_gsm" | "rny002_tsm" | "rny002" | "convnexts_dv3_gsm" | "convnexts_dv3_tsm" | "convnexts_dv3" | "convnextt_dv3_gsm" | "convnextt_dv3_tsm" | "convnextt_dv3" | "convnextt2_gsm" | "convnextt2_tsm" | "convnextt2" | "convnextt_gsm" | "convnextt_tsm" | "convnextt" | "rn50_gsm" | "rn50_tsm" | "rn50" | "rn18_gsm" | "rn18_tsm" | "rn18";
             /**
              * Temporal Arch
              * @description Temporal head over the frame features.
@@ -3455,6 +3518,17 @@ export interface components {
              * @default 0.00003
              */
             learning_rate?: number;
+            /**
+             * Location Stride
+             * @description Backbone stride of the feature map the location head scores; empty = the final (stride-32) map. A finer map gives the contact-point heatmap more cells per player.
+             */
+            location_stride?: (8 | 16) | null;
+            /**
+             * Separate Ball Labels
+             * @description Train ground, antenna and net as classes of their own (all nine annotated labels). Off = the shipped six: ground and antenna train as score, net is left out.
+             * @default false
+             */
+            separate_ball_labels?: boolean;
             /**
              * Action Learning Rate
              * @description Optional Action head learning rate override for mixed training. The shared backbone and other heads keep learning_rate.
@@ -3701,7 +3775,7 @@ export interface components {
          *     fails at the call site instead of becoming a silent no-op in the UI.
          * @enum {string}
          */
-        JobType: "player_detection" | "player_tracking" | "player_embed" | "spot_train" | "reid_dataset_export" | "reid_train" | "fusion_inference" | "download" | "r2_upload" | "r2_download";
+        JobType: "player_detection" | "person_dense" | "player_tracking" | "player_embed" | "spot_train" | "reid_dataset_export" | "reid_train" | "fusion_inference" | "download" | "r2_upload" | "r2_download";
         /**
          * LabelStats
          * @description Per-mode tally, keys in pipeline order (``MODES``).
@@ -4804,6 +4878,19 @@ export interface components {
             /** Label */
             label: string;
         };
+        /** SidebarEvent */
+        SidebarEvent: {
+            /** Id */
+            id: string;
+            /** Frame */
+            frame: number;
+            /** Time */
+            time: number | null;
+            /** Label */
+            label: string | null;
+            /** Visible */
+            visible: boolean;
+        };
         /**
          * SpotCheckpoint
          * @description One SPOT checkpoint package, as a picker lists it.
@@ -5080,6 +5167,18 @@ export interface components {
             /** Runs */
             runs: string[];
         };
+        /** TrainingCut */
+        TrainingCut: {
+            /** Kind */
+            kind: string;
+            /** Video */
+            video: string;
+            /**
+             * Dense
+             * @enum {string}
+             */
+            dense: "done" | "queued" | "missing";
+        };
         /** TrainingOutcome */
         TrainingOutcome: {
             /** Video */
@@ -5095,6 +5194,8 @@ export interface components {
             rallies: number;
             /** Events */
             events: number;
+            /** Actors */
+            actors: number;
         };
         /** TrainingRequest */
         TrainingRequest: {
@@ -5470,7 +5571,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
-                        [key: string]: string;
+                        [key: string]: components["schemas"]["TrainingCut"];
                     };
                 };
             };
@@ -6742,6 +6843,39 @@ export interface operations {
             };
         };
     };
+    dense_api_person_dense_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DenseRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     status_api_fusion_model_status_get: {
         parameters: {
             query?: never;
@@ -7371,6 +7505,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["BoxCheckEntry"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_events_api_actor_association_events__name__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssociationEvents"];
                 };
             };
             /** @description Validation Error */

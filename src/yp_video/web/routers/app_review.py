@@ -3,7 +3,7 @@
 import asyncio
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, TypedDict
+from typing import Any, Literal, TypedDict
 
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, HTTPException
@@ -11,6 +11,8 @@ from fastapi.responses import RedirectResponse
 from pydantic import Field
 
 from yp_video.core.ffmpeg import FFmpegError, probe_video_metadata
+from yp_video.person.dense import dense_path
+from yp_video.web import person_dense_jobs
 from yp_video.web.access import current_actor
 from yp_video.web.app_review import feedback, sources, training
 from yp_video.web.app_review.feedback import (
@@ -213,10 +215,25 @@ async def send_to_training(user: str, match: str, req: TrainingRequest) -> train
     return await asyncio.to_thread(checked, training.add_to_training, user, match, req.angle)
 
 
+class TrainingCut(training.SentCut):
+    #: The dense 2XLarge pass Association Label picks from: on disk, queued
+    #: or running in a dense job, or not started (POST /api/person/dense).
+    dense: Literal["done", "queued", "missing"]
+
+
 @router.get("/training")
-async def sent_to_training() -> dict[str, str]:
-    """Match id -> ``user-<angle>`` kind of every match already in training."""
-    return await asyncio.to_thread(training.sent)
+async def sent_to_training() -> dict[str, TrainingCut]:
+    """Every match already in training: its cut, and whether that cut has
+    its dense pass yet."""
+    cuts = await asyncio.to_thread(training.sent)
+    running = person_dense_jobs.queued()
+
+    def state(video: str) -> Literal["done", "queued", "missing"]:
+        if dense_path(video.removesuffix(".mp4")).exists():
+            return "done"
+        return "queued" if video in running else "missing"
+
+    return {match: {**cut, "dense": state(cut["video"])} for match, cut in cuts.items()}
 
 
 @router.get("/reviews/{review_id}")

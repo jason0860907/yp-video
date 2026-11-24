@@ -38,6 +38,7 @@ class JobType(str, Enum):
     """
 
     PLAYER_DETECTION = "player_detection"
+    PERSON_DENSE = "person_dense"
     PLAYER_TRACKING = "player_tracking"
     PLAYER_EMBED = "player_embed"
     SPOT_TRAIN = "spot_train"
