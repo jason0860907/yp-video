@@ -60,11 +60,13 @@ def test_removed_score_drops_only_the_score():
 
 
 class FakeR2:
+    """Objects as key -> user metadata, like R2's head_object Metadata."""
+
     bucket = "pipeline"
     configured = True
 
-    def __init__(self, existing=()):
-        self.objects = set(existing)
+    def __init__(self):
+        self.objects: dict[str, dict] = {}
         self.copies: list[tuple[str, str, str]] = []
         self.deleted: list[str] = []
         self.uploaded: list[str] = []
@@ -72,13 +74,16 @@ class FakeR2:
     def object_exists(self, key):
         return key in self.objects
 
-    def copy_from(self, bucket, src, dst):
+    def copy_from(self, bucket, src, dst, metadata):
         self.copies.append((bucket, src, dst))
-        self.objects.add(dst)
+        self.objects[dst] = dict(metadata)
+
+    def object_metadata(self, key):
+        return self.objects[key]
 
     def delete_object(self, key):
         self.deleted.append(key)
-        self.objects.discard(key)
+        self.objects.pop(key, None)
 
     def upload_file(self, path, key):
         self.uploaded.append(key)
@@ -105,8 +110,11 @@ def env(tmp_path, monkeypatch):
     r2 = FakeR2()
     monkeypatch.setattr(training, "r2_client", r2)
     monkeypatch.setattr(training, "probe_video_metadata", lambda url: {"fps": 30.0, "num_frames": 3000})
+    cuts: list = []
+    monkeypatch.setattr(training, "all_cut_paths", lambda: cuts)
+    monkeypatch.setattr(training, "_match_ids", {})
     row = {
-        "id": "m1", "owner_id": "u1", "angle": "corner",
+        "id": "m1", "owner_id": "u1", "angle": "corner", "title": "霖度C/03",
         "r2_keys": {"result": "results/u1/m1.json", "corrections": None},
         "source_video": {"r2_key": "videos/u1/m1.mp4", "public_url": "https://x"},
     }
@@ -115,39 +123,44 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(training.sources, "match_bundle", lambda lib, row: (state["bundle"], []))
     monkeypatch.setattr(training.sources.customer, "_config", {"R2_BUCKET_CUSTOMER": "customer"})
     monkeypatch.setattr(training.sources.customer, "_ensure_config", lambda: None)
-    return {"r2": r2, "dirs": dirs, "state": state}
+    return {"r2": r2, "dirs": dirs, "state": state, "cuts": cuts}
+
+
+NAME = "霖度C⧸03"
 
 
 def test_add_copies_source_and_writes_prelabels(env):
     out = training.add_to_training("u1", "m1", None)
-    assert out == {"video": "m1.mp4", "kind": "user-corner", "status": "added", "rallies": 2, "events": 3}
-    assert env["r2"].copies == [("customer", "videos/u1/m1.mp4", "cuts-user-corner/m1.mp4")]
+    assert out == {"video": f"{NAME}.mp4", "kind": "user-corner", "status": "added", "rallies": 2, "events": 3}
+    assert env["r2"].copies == [("customer", "videos/u1/m1.mp4", f"cuts-user-corner/{NAME}.mp4")]
+    assert env["r2"].objects[f"cuts-user-corner/{NAME}.mp4"] == {"match-id": "m1"}
 
-    rally_file = env["dirs"]["rally_pre"] / "m1_annotations.jsonl"
+    rally_file = env["dirs"]["rally_pre"] / f"{NAME}_annotations.jsonl"
     meta, *rows = [json.loads(line) for line in rally_file.read_text().splitlines()]
     assert meta["source"] == {"type": "app", "user_id": "u1", "match_id": "m1", "job_id": "job1"}
-    assert meta["video"] == "m1.mp4" and meta["max_rally_id"] == 2
+    assert meta["video"] == f"{NAME}.mp4" and meta["max_rally_id"] == 2
     assert [(r["start"], r["end"], r["winner"], r["rally_id"]) for r in rows] == [
         (9.0, 15.0, "near", 1), (30.0, 40.0, "far", 2)
     ]
 
-    action_file = env["dirs"]["action_pre"] / "m1_actions.jsonl"
+    action_file = env["dirs"]["action_pre"] / f"{NAME}_actions.jsonl"
     meta, *events = [json.loads(line) for line in action_file.read_text().splitlines()]
+    assert meta["video"] == NAME
     assert meta["source"]["type"] == "app" and meta["fps"] == 30.0 and meta["num_frames"] == 3000
     assert [e["score"] for e in events] == [0.9, 0.8, 0.7]
     assert not env["dirs"]["action"].exists() and not env["dirs"]["rally"].exists()
     assert sorted(env["r2"].uploaded) == [
-        "action/pre-annotations/m1_actions.jsonl",
-        "rally-spot/pre-annotations/m1_annotations.jsonl",
+        f"action/pre-annotations/{NAME}_actions.jsonl",
+        f"rally-spot/pre-annotations/{NAME}_annotations.jsonl",
     ]
 
 
 def test_add_again_is_noop_and_keeps_labels(env):
     training.add_to_training("u1", "m1", None)
-    human = env["dirs"]["action"] / "m1_actions.jsonl"
+    human = env["dirs"]["action"] / f"{NAME}_actions.jsonl"
     human.parent.mkdir(parents=True)
     human.write_text('{"_meta": true}\n')
-    pre = env["dirs"]["action_pre"] / "m1_actions.jsonl"
+    pre = env["dirs"]["action_pre"] / f"{NAME}_actions.jsonl"
     before = (human.read_bytes(), pre.read_bytes())
     env["r2"].copies.clear()
 
@@ -157,16 +170,43 @@ def test_add_again_is_noop_and_keeps_labels(env):
     assert (human.read_bytes(), pre.read_bytes()) == before
 
 
+def test_retitled_match_keeps_its_training_name(env):
+    training.add_to_training("u1", "m1", None)
+    env["state"]["row"]["title"] = "renamed"
+    out = training.add_to_training("u1", "m1", None)
+    assert out["status"] == "exists" and out["video"] == f"{NAME}.mp4"
+
+
 def test_angle_change_moves_only_the_video(env):
     training.add_to_training("u1", "m1", "corner")
-    labels = [env["dirs"]["rally_pre"] / "m1_annotations.jsonl", env["dirs"]["action_pre"] / "m1_actions.jsonl"]
+    labels = [env["dirs"]["rally_pre"] / f"{NAME}_annotations.jsonl", env["dirs"]["action_pre"] / f"{NAME}_actions.jsonl"]
     before = [p.read_bytes() for p in labels]
     env["r2"].copies.clear()
     out = training.add_to_training("u1", "m1", "high")
-    assert out["status"] == "moved" and out["kind"] == "user-high"
-    assert env["r2"].copies == [("pipeline", "cuts-user-corner/m1.mp4", "cuts-user-high/m1.mp4")]
-    assert env["r2"].deleted == ["cuts-user-corner/m1.mp4"]
+    assert out["status"] == "moved" and out["kind"] == "user-high" and out["video"] == f"{NAME}.mp4"
+    assert env["r2"].copies == [("pipeline", f"cuts-user-corner/{NAME}.mp4", f"cuts-user-high/{NAME}.mp4")]
+    assert env["r2"].objects[f"cuts-user-high/{NAME}.mp4"] == {"match-id": "m1"}
+    assert env["r2"].deleted == [f"cuts-user-corner/{NAME}.mp4"]
     assert [p.read_bytes() for p in labels] == before
+
+
+def test_taken_name_gets_the_match_id(env):
+    from pathlib import Path
+
+    env["cuts"].append(Path(f"/v/cuts-sideline/{NAME}.mp4"))
+    assert training.add_to_training("u1", "m1", None)["video"] == f"{NAME}-m1.mp4"
+
+
+def test_name_with_labels_but_no_cut_is_taken(env):
+    other = env["dirs"]["action"] / f"{NAME}_actions.jsonl"
+    other.parent.mkdir(parents=True)
+    other.write_text('{"_meta": true}\n')
+    assert training.add_to_training("u1", "m1", None)["video"] == f"{NAME}-m1.mp4"
+
+
+def test_blank_title_falls_back_to_match_id(env):
+    env["state"]["row"]["title"] = "  "
+    assert training.add_to_training("u1", "m1", None)["video"] == "m1.mp4"
 
 
 def test_refuses_operator_cut(env):
@@ -228,14 +268,14 @@ def test_failure_after_copy_is_finished_by_the_next_send(env, monkeypatch):
     monkeypatch.setattr(training, "probe_video_metadata", offline)
     with pytest.raises(OSError):
         training.add_to_training("u1", "m1", None)
-    assert "cuts-user-corner/m1.mp4" in env["r2"].objects
-    assert not (env["dirs"]["action_pre"] / "m1_actions.jsonl").exists()
+    assert f"cuts-user-corner/{NAME}.mp4" in env["r2"].objects
+    assert not (env["dirs"]["action_pre"] / f"{NAME}_actions.jsonl").exists()
 
     monkeypatch.setattr(training, "probe_video_metadata", lambda url: {"fps": 30.0, "num_frames": 3000})
     out = training.add_to_training("u1", "m1", None)
     assert out["status"] == "exists" and out["events"] == 3
     assert len(env["r2"].copies) == 1
-    assert (env["dirs"]["action_pre"] / "m1_actions.jsonl").exists()
+    assert (env["dirs"]["action_pre"] / f"{NAME}_actions.jsonl").exists()
 
 
 def test_refuses_a_result_analysed_from_another_video(env):
@@ -246,12 +286,12 @@ def test_refuses_a_result_analysed_from_another_video(env):
 
 
 def test_sent_lists_matches_already_in_training(env):
-    env["r2"].objects |= {"cuts-user-high/m2.mp4", "cuts-sideline/m9.mp4"}
+    env["r2"].objects.update({"cuts-user-high/x.mp4": {"match-id": "m2"}, "cuts-sideline/m9.mp4": {}})
     assert training.sent() == {"m2": "user-high"}
     training.add_to_training("u1", "m1", None)
     assert training.sent() == {"m1": "user-corner", "m2": "user-high"}
-    training.add_to_training("u1", "m2", "baseline")
-    assert training.sent() == {"m1": "user-corner", "m2": "user-baseline"}
+    training.add_to_training("u1", "m1", "baseline")
+    assert training.sent() == {"m1": "user-baseline", "m2": "user-high"}
 
 
 def test_http_sent_endpoint(monkeypatch):

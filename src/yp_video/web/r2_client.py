@@ -215,11 +215,19 @@ class R2Client:
             ),
         )
 
-    def copy_from(self, bucket: str, src: str, dst: str) -> None:
+    def copy_from(self, bucket: str, src: str, dst: str, metadata: dict[str, str]) -> None:
         """Server-side copy of ``bucket``/``src`` into this bucket as ``dst``
-        (boto3's managed copy: multipart past 5 GB, bytes never pass here)."""
-        self._get_client().copy({"Bucket": bucket, "Key": src}, self.bucket, dst)
+        with ``metadata`` as its user metadata (boto3's managed copy:
+        multipart past 5 GB, bytes never pass here)."""
+        self._get_client().copy(
+            {"Bucket": bucket, "Key": src}, self.bucket, dst,
+            ExtraArgs={"Metadata": metadata, "MetadataDirective": "REPLACE"},
+        )
         self._invalidate_listings(dst)
+
+    def object_metadata(self, key: str) -> dict[str, str]:
+        """The object's user metadata (``x-amz-meta-*``, keys lowercased)."""
+        return self._get_client().head_object(Bucket=self.bucket, Key=key)["Metadata"]
 
     def generate_presigned_url(self, key: str, expires: int = 3600) -> str:
         """Generate a presigned URL for temporary access."""

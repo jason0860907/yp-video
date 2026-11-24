@@ -6,10 +6,16 @@ with their corrections applied — becomes the cut's rally and action
 pre-annotations. Pre-annotations only: a human reviews them in Label like any
 model output before anything trains on them.
 
+The cut is named after the match's App title (``/`` -> ``⧸``, as yt-dlp
+names the other cuts), with ``-<match id prefix>`` when another video or label
+already uses that name. The video carries its match id as R2 metadata
+(``match-id``): that, not the name, finds a match's cut again, so retitling
+the match in the App never renames training data.
+
 A second send never rewrites a label: the video already in place answers
-``exists``, and one under another angle is moved, its labels left as they
-are (they are named by the match id, not the kind). Either fills in a
-pre-label a failed earlier send never wrote.
+``exists``, and one under another angle is moved under the same name, its
+labels left as they are (they are named by the video, not the kind). Either
+fills in a pre-label a failed earlier send never wrote.
 """
 
 from typing import Literal, TypedDict, get_args
@@ -24,7 +30,7 @@ from yp_video.core.ffmpeg import probe_video_metadata
 from yp_video.core.jsonl import write_jsonl
 from yp_video.core.rallies import annotation_name, number_rallies
 from yp_video.web import action_annotations
-from yp_video.web.r2_client import r2_client
+from yp_video.web.r2_client import all_cut_paths, r2_client
 
 from . import sources
 from .models import Bundle, Event, Rally
@@ -79,16 +85,42 @@ def _user_cut_key(kind_name: str, video: str) -> str:
     return f"{CUT_KINDS[kind_name].r2_category}/{video}"
 
 
-def sent() -> dict[str, str]:
-    """Every match already in training: match id -> its ``user-<angle>`` kind."""
+#: User cut key -> its ``match-id`` metadata. A key's object is only ever
+#: written by a send for that match, so an entry never goes stale.
+_match_ids: dict[str, str | None] = {}
+
+
+def _sent_cuts() -> dict[str, tuple[str, str]]:
+    """Match id -> ``(kind, video)`` of every user cut that names its match."""
     out = {}
     for kind_name in USER_CUT_KINDS.values():
         prefix = f"{CUT_KINDS[kind_name].r2_category}/"
         for obj in r2_client.list_objects_cached(prefix):
-            name = obj["key"].removeprefix(prefix)
-            if name.endswith(".mp4") and "/" not in name:
-                out[name.removesuffix(".mp4")] = kind_name
+            key = obj["key"]
+            video = key.removeprefix(prefix)
+            if not video.endswith(".mp4") or "/" in video:
+                continue
+            if key not in _match_ids:
+                _match_ids[key] = r2_client.object_metadata(key).get("match-id")
+            if _match_ids[key]:
+                out[_match_ids[key]] = (kind_name, video)
     return out
+
+
+def sent() -> dict[str, str]:
+    """Every match already in training: match id -> its ``user-<angle>`` kind."""
+    return {match: kind_name for match, (kind_name, _) in _sent_cuts().items()}
+
+
+def video_name(title: str | None, match: str) -> str:
+    """A new cut's file name: the App title, made unique with the match id."""
+    stem = "".join(c for c in (title or "") if c.isprintable()).replace("/", "⧸").strip().strip(".")
+    if not stem:
+        return f"{match}.mp4"
+    taken = {p.name for p in all_cut_paths()}
+    if f"{stem}.mp4" in taken or _labels_exist(stem):
+        stem = f"{stem}-{match[:8]}"
+    return f"{stem}.mp4"
 
 
 def add_to_training(user: str, match: str, angle: Angle | None) -> TrainingOutcome:
@@ -105,34 +137,38 @@ def add_to_training(user: str, match: str, angle: Angle | None) -> TrainingOutco
     if chosen not in USER_CUT_KINDS:
         raise ValueError(f"Unknown camera angle {chosen!r}")
     kind_name = USER_CUT_KINDS[chosen]
-    video = f"{match}.mp4"
-    target = _user_cut_key(kind_name, video)
+    metadata = {"match-id": match}
 
     status: Literal["added", "exists", "moved"] | None = None
-    if r2_client.object_exists(target):
+    if match in (cuts := _sent_cuts()):
+        sent_kind, video = cuts[match]
+        target = _user_cut_key(kind_name, video)
         status = "exists"
-    for other in USER_CUT_KINDS.values():
-        existing = _user_cut_key(other, video)
-        if status is None and other != kind_name and r2_client.object_exists(existing):
-            r2_client.copy_from(r2_client.bucket, existing, target)
+        if sent_kind != kind_name:
+            existing = _user_cut_key(sent_kind, video)
+            r2_client.copy_from(r2_client.bucket, existing, target, metadata)
             r2_client.delete_object(existing)
             status = "moved"
+    else:
+        video = video_name(row.get("title"), match)
+        target = _user_cut_key(kind_name, video)
+    stem = video.removesuffix(".mp4")
 
     # A send that failed after its copy left the video without (some of) its
     # pre-labels; any send fills in what is missing and never rewrites a file.
     rallies = events = 0
-    if status is None or _labels_missing(match):
+    if status is None or _labels_missing(stem):
         bundle, _ = sources.match_bundle(lib, row)
         if bundle.result.video_r2_key != source_key:
             raise ValueError("The latest analysis ran on another video than this match's source")
         rally_rows, event_rows = prelabels(bundle)
         if status is None:
-            r2_client.copy_from(sources.customer.bucket, source_key, target)
+            r2_client.copy_from(sources.customer.bucket, source_key, target, metadata)
             status = "added"
         origin = {"type": "app", "user_id": row["owner_id"], "match_id": match, "job_id": bundle.result.job_id}
-        if _write_rallies(match, video, bundle.result.total_duration, rally_rows, origin):
+        if _write_rallies(stem, video, bundle.result.total_duration, rally_rows, origin):
             rallies = len(rally_rows)
-        if _write_actions(match, target, event_rows, origin):
+        if _write_actions(stem, target, event_rows, origin):
             events = len(event_rows)
     return {"video": video, "kind": kind_name, "status": status, "rallies": rallies, "events": events}
 
@@ -149,6 +185,10 @@ def _action_paths(stem: str):
 
 def _labels_missing(stem: str) -> bool:
     return not all(any(p.exists() for p in pair) for pair in (_rally_paths(stem), _action_paths(stem)))
+
+
+def _labels_exist(stem: str) -> bool:
+    return any(p.exists() for pair in (_rally_paths(stem), _action_paths(stem)) for p in pair)
 
 
 def _write_rallies(stem: str, video: str, duration: float, rallies: list[dict], origin: dict) -> bool:
