@@ -96,7 +96,11 @@ def policy_from_answers(rows: list[dict], answers: list[dict], *,
         pick, count = answer["pick"], answer["num_candidates"]
         if pick is not None and not (type(pick) is int and 0 <= pick < count):
             raise ValueError("Person/action pick does not name a candidate")
-        if (pick is None) != (answer["status"] == "no_candidate"):
+        # abstained: candidates there were, but the head named none of them
+        # (yp-spot's per-package actor_abstain_below).
+        if answer["status"] not in ("selected", "no_candidate", "abstained"):
+            raise ValueError(f"Unknown person/action status {answer['status']!r}")
+        if (pick is None) != (answer["status"] != "selected") or (answer["status"] == "no_candidate") != (count == 0):
             raise ValueError("Person/action status disagrees with its pick")
         options = keys[answer["id"]]
         if count != len(options):

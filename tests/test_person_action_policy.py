@@ -7,12 +7,22 @@ from yp_video.tracklets.geometry import TrackRef
 
 @pytest.mark.parametrize("change", [
     {"id": "wrong"}, {"frame": 8}, {"label": "spike"}, {"pick": True}, {"status": "no_candidate"},
+    {"status": "abstained"}, {"status": "maybe"}, {"pick": None, "status": "no_candidate"},
 ])
 def test_invalid_tracklet_output_is_rejected(change):
     row = {"id": "f7", "frame": 7, "label": "set"}
     answer = {**row, "box": [.1, .2, .3, .8], "pick": 0, "num_candidates": 2, "status": "selected", **change}
     with pytest.raises(ValueError):
         policy_from_answers([row], [answer], keys={"f7": ["3:1", "3:4"]})
+
+
+def test_an_abstained_event_names_nobody():
+    rows = [{"id": "f7", "frame": 7, "label": "serve"}]
+    answers = [{"id": "f7", "frame": 7, "label": "serve", "box": None, "pick": None,
+                "num_candidates": 2, "status": "abstained"}]
+    policy = policy_from_answers(rows, answers, keys={"f7": ["3:1", "3:4"]})
+    pick = policy.decide("f7")
+    assert not pick.decided and pick.candidates == 2 and pick.diagnostic["status"] == "abstained"
 
 
 def test_missing_event_does_not_silently_produce_empty_identity():
