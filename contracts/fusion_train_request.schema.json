@@ -11,6 +11,7 @@
         "rally",
         "rally_winner",
         "action",
+        "action_actor",
         "action_rally_winner",
         "action_rally_winner_actor"
       ],
@@ -186,6 +187,9 @@
         "rny002_gsm",
         "rny002_tsm",
         "rny002",
+        "convnexts_dv3_gsm",
+        "convnexts_dv3_tsm",
+        "convnexts_dv3",
         "convnextt_dv3_gsm",
         "convnextt_dv3_tsm",
         "convnextt_dv3",
@@ -265,6 +269,29 @@
       "exclusiveMinimum": 0,
       "title": "Learning Rate",
       "type": "number"
+    },
+    "location_stride": {
+      "anyOf": [
+        {
+          "enum": [
+            8,
+            16
+          ],
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Backbone stride of the feature map the location head scores; empty = the final (stride-32) map. A finer map gives the contact-point heatmap more cells per player.",
+      "title": "Location Stride"
+    },
+    "separate_ball_labels": {
+      "default": false,
+      "description": "Train ground, antenna and net as classes of their own (all nine annotated labels). Off = the shipped six: ground and antenna train as score, net is left out.",
+      "title": "Separate Ball Labels",
+      "type": "boolean"
     },
     "action_learning_rate": {
       "anyOf": [

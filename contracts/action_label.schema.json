@@ -180,6 +180,8 @@
       "description": "Touch spotting with the contact-point, actor side and jump heads.",
       "fields": [
         "action_sample_fps",
+        "location_stride",
+        "separate_ball_labels",
         "acc_grad_iter",
         "audio_backend",
         "action_dilate_len",
@@ -226,6 +228,8 @@
         "action_fg_upsample",
         "action_block_upsample",
         "action_dilate_len",
+        "location_stride",
+        "separate_ball_labels",
         "acc_grad_iter"
       ],
       "defaults": {
@@ -284,6 +288,8 @@
         "action_fg_upsample",
         "action_block_upsample",
         "action_dilate_len",
+        "location_stride",
+        "separate_ball_labels",
         "acc_grad_iter",
         "actor_stream_weight"
       ],
@@ -311,6 +317,50 @@
         "winner_sample_fps": 5.0,
         "rally_clip_len": null,
         "winner_clip_len": null,
+        "video_limit": 0,
+        "actor_stream_weight": 2
+      }
+    },
+    "action_actor": {
+      "id": "action_actor",
+      "name": "Action + Actor",
+      "tasks": [
+        "action",
+        "location",
+        "actor"
+      ],
+      "description": "The production model's Action half on its own: touch spotting with its contact point and Actor. For a frozen-backbone run whose heads merge with a Rally + Winner run's (yp_spot.merge_heads).",
+      "fields": [
+        "action_sample_fps",
+        "video_limit",
+        "audio_backend",
+        "action_learning_rate",
+        "audio_learning_rate",
+        "action_stream_weight",
+        "action_fg_upsample",
+        "action_block_upsample",
+        "action_dilate_len",
+        "location_stride",
+        "separate_ball_labels",
+        "acc_grad_iter",
+        "actor_stream_weight"
+      ],
+      "defaults": {
+        "batch_size": 64,
+        "feature_arch": "convnextt_dv3_gsm",
+        "num_workers": 4,
+        "acc_grad_iter": 64,
+        "num_epochs": 50,
+        "warm_up_epochs": 3,
+        "learning_rate": 3e-05,
+        "audio_backend": "logmel",
+        "action_learning_rate": 3e-05,
+        "audio_learning_rate": null,
+        "action_stream_weight": 1,
+        "action_fg_upsample": null,
+        "action_block_upsample": 0.1,
+        "action_dilate_len": 0,
+        "action_sample_fps": 30.0,
         "video_limit": 0,
         "actor_stream_weight": 2
       }
