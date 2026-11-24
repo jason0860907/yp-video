@@ -223,6 +223,16 @@ def save(stem: str, event_id: str, label: ActorLabel | None) -> None:
         _write(stem, labels)
 
 
+def create(stem: str, labels: dict[str, ActorLabel]) -> bool:
+    """Write a video's first labels — machine proposals brought in with it.
+    False, writing nothing, when the video already has any label."""
+    with _store.transaction():
+        if _read(stem):
+            return False
+        _write(stem, labels)
+        return bool(labels)
+
+
 def confirm(stem: str, confirmations: dict[str, ActorLabel]) -> list[str]:
     """Record endorsements, never overwriting a human verdict.
 

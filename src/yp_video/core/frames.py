@@ -32,7 +32,7 @@ class VideoGeometry:
     height: int
 
 
-def open_video(video_path: Path):
+def open_video(video_path: Path | str):
     """``(capture, geometry)`` for a readable video; the caller releases it.
 
     Raises ValueError when the video will not open or reports no frame rate
@@ -52,7 +52,7 @@ def open_video(video_path: Path):
     return cap, geometry
 
 
-def video_geometry(video_path: Path) -> VideoGeometry:
+def video_geometry(video_path: Path | str) -> VideoGeometry:
     cap, geometry = open_video(video_path)
     cap.release()
     return geometry

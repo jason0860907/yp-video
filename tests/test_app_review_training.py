@@ -2,10 +2,12 @@
 what a second send must never touch. Every write lands under tmp_path."""
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
 from yp_video.action import rules
+from yp_video.core.cache import StatCache
 from yp_video.web import action_annotations
 from yp_video.web.app_review import training
 from yp_video.web.app_review.models import Bundle
@@ -115,7 +117,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(training, "_match_ids", {})
     row = {
         "id": "m1", "owner_id": "u1", "angle": "corner", "title": "霖度C/03",
-        "r2_keys": {"result": "results/u1/m1.json", "corrections": None},
+        "r2_keys": {"result": "results/u1/m1.json", "corrections": None, "reid": "reid/u1/m1/run1.json"},
         "source_video": {"r2_key": "videos/u1/m1.mp4", "public_url": "https://x"},
     }
     state = {"row": row, "bundle": make_bundle()}
@@ -123,7 +125,25 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(training.sources, "match_bundle", lambda lib, row: (state["bundle"], []))
     monkeypatch.setattr(training.sources.customer, "_config", {"R2_BUCKET_CUSTOMER": "customer"})
     monkeypatch.setattr(training.sources.customer, "_ensure_config", lambda: None)
-    return {"r2": r2, "dirs": dirs, "state": state, "cuts": cuts}
+    dirs["actors"] = tmp_path / "actors"
+    monkeypatch.setattr(training.actor_labels, "actors_path", lambda stem: dirs["actors"] / f"{stem}_actors.json")
+    monkeypatch.setattr(training.actor_labels._store, "_cache", StatCache())
+    blobs = {"reid/u1/m1/run1.json": REID}
+    monkeypatch.setattr(training.sources.customer, "read_json", lambda key: blobs[key])
+    monkeypatch.setattr(training, "video_geometry", lambda url: SimpleNamespace(width=1000, height=500))
+    return {"r2": r2, "dirs": dirs, "state": state, "cuts": cuts, "blobs": blobs}
+
+
+#: The match's advanced analysis: the toucher of the serve and the receive.
+REID = {
+    "version": 6, "job_id": "run1", "user_id": "u1", "match_id": "m1", "units": [],
+    "actors": {"f300": [0.1, 0.2, 0.3, 0.6], "f330": [0.5, 0.2, 0.6, 0.8]},
+}
+
+
+def _actors(env):
+    path = env["dirs"]["actors"] / f"{NAME}_actors.json"
+    return json.loads(path.read_text())["actors"] if path.exists() else None
 
 
 NAME = "霖度C⧸03"
@@ -131,7 +151,9 @@ NAME = "霖度C⧸03"
 
 def test_add_copies_source_and_writes_prelabels(env):
     out = training.add_to_training("u1", "m1", None)
-    assert out == {"video": f"{NAME}.mp4", "kind": "user-corner", "status": "added", "rallies": 2, "events": 3}
+    assert out == {
+        "video": f"{NAME}.mp4", "kind": "user-corner", "status": "added", "rallies": 2, "events": 3, "actors": 2,
+    }
     assert env["r2"].copies == [("customer", "videos/u1/m1.mp4", f"cuts-user-corner/{NAME}.mp4")]
     assert env["r2"].objects[f"cuts-user-corner/{NAME}.mp4"] == {"match-id": "m1"}
 
@@ -151,8 +173,43 @@ def test_add_copies_source_and_writes_prelabels(env):
     assert not env["dirs"]["action"].exists() and not env["dirs"]["rally"].exists()
     assert sorted(env["r2"].uploaded) == [
         f"action/pre-annotations/{NAME}_actions.jsonl",
+        f"association/annotations/{NAME}_actors.json",
         f"rally-spot/pre-annotations/{NAME}_annotations.jsonl",
     ]
+    # Keyed by the cut's own event ids, the App's boxes in pixels on the
+    # event frame, as proposals a human must confirm.
+    ids = {e["frame"]: e["id"] for e in events}
+    assert _actors(env) == {
+        ids[300]: {"verdict": "agent", "frame": 300, "box": [100.0, 100.0, 300.0, 300.0]},
+        ids[330]: {"verdict": "agent", "frame": 330, "box": [500.0, 100.0, 600.0, 400.0]},
+    }
+
+
+def test_a_users_nobody_mark_becomes_an_occluded_proposal(env):
+    env["state"]["bundle"] = make_bundle({"player_identification": {
+        "result_id": "run1", "unit_roster": {}, "event_overrides": {"f330": None}, "removed_units": [],
+    }})
+    env["blobs"]["reid/u1/m1/run1.json"] = REID
+    training.add_to_training("u1", "m1", None)
+    assert sorted(v["verdict"] for v in _actors(env).values()) == ["agent", "agent_occluded"]
+
+
+def test_without_advanced_analysis_no_actor_is_proposed(env):
+    env["state"]["row"]["r2_keys"]["reid"] = None
+    assert training.add_to_training("u1", "m1", None)["actors"] == 0
+    assert _actors(env) is None
+
+
+def test_a_later_send_adds_actors_and_never_rewrites_them(env):
+    env["state"]["row"]["r2_keys"]["reid"] = None
+    training.add_to_training("u1", "m1", None)
+    env["state"]["row"]["r2_keys"]["reid"] = "reid/u1/m1/run1.json"
+    out = training.add_to_training("u1", "m1", None)
+    assert out["status"] == "exists" and out["actors"] == 2 and out["events"] == 0
+    path = env["dirs"]["actors"] / f"{NAME}_actors.json"
+    before = path.read_bytes()
+    assert training.add_to_training("u1", "m1", None)["actors"] == 0
+    assert path.read_bytes() == before
 
 
 def test_add_again_is_noop_and_keeps_labels(env):
@@ -244,7 +301,7 @@ def test_http_training_endpoint(monkeypatch):
         calls.append((user, match, angle))
         if match == "bad":
             raise ValueError("This match has no analysis result yet")
-        return {"video": f"{match}.mp4", "kind": "user-high", "status": "added", "rallies": 3, "events": 40}
+        return {"video": f"{match}.mp4", "kind": "user-high", "status": "added", "rallies": 3, "events": 40, "actors": 30}
 
     monkeypatch.setattr(app_review.training, "add_to_training", fake_add)
     app = FastAPI()
@@ -287,11 +344,12 @@ def test_refuses_a_result_analysed_from_another_video(env):
 
 def test_sent_lists_matches_already_in_training(env):
     env["r2"].objects.update({"cuts-user-high/x.mp4": {"match-id": "m2"}, "cuts-sideline/m9.mp4": {}})
-    assert training.sent() == {"m2": "user-high"}
+    x = {"kind": "user-high", "video": "x.mp4"}
+    assert training.sent() == {"m2": x}
     training.add_to_training("u1", "m1", None)
-    assert training.sent() == {"m1": "user-corner", "m2": "user-high"}
+    assert training.sent() == {"m1": {"kind": "user-corner", "video": f"{NAME}.mp4"}, "m2": x}
     training.add_to_training("u1", "m1", "baseline")
-    assert training.sent() == {"m1": "user-baseline", "m2": "user-high"}
+    assert training.sent()["m1"]["kind"] == "user-baseline"
 
 
 def test_http_sent_endpoint(monkeypatch):
@@ -300,8 +358,14 @@ def test_http_sent_endpoint(monkeypatch):
 
     from yp_video.web.routers import app_review
 
-    monkeypatch.setattr(app_review.training, "sent", lambda: {"m1": "user-corner"})
+    monkeypatch.setattr(app_review.training, "sent", lambda: {
+        m: {"kind": "user-corner", "video": f"{m}.mp4"} for m in ("done", "queued", "missing")
+    })
+    monkeypatch.setattr(app_review, "dense_path", lambda stem: SimpleNamespace(exists=lambda: stem == "done"))
+    monkeypatch.setattr(app_review.person_dense_jobs, "queued", lambda: {"queued.mp4"})
     app = FastAPI()
     app.include_router(app_review.router, prefix="/api/app-review")
     with TestClient(app) as client:
-        assert client.get("/api/app-review/training").json() == {"m1": "user-corner"}
+        listed = client.get("/api/app-review/training").json()
+    assert {m: v["dense"] for m, v in listed.items()} == {"done": "done", "queued": "queued", "missing": "missing"}
+    assert listed["done"] == {"kind": "user-corner", "video": "done.mp4", "dense": "done"}
