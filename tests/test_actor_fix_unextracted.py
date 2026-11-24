@@ -11,6 +11,7 @@ from unittest.mock import patch
 import numpy as np
 
 from yp_video.actor.labels import ActorLabel, ActorVerdict
+from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import read_jsonl, write_jsonl
 from yp_video.extraction import actor_fix, pipeline, store
 from yp_video.reid import store as reid_store
@@ -83,6 +84,34 @@ class UnextractedEventTests(unittest.TestCase):
         self.assertEqual(grown, [(2, 2)])
         self.assertEqual(np.load(self.matrix).shape, (1, 2))
         self.assertEqual([r["id"] for r in read_jsonl(self.records)[1]], ["e1"])
+
+
+
+class NoRecordsFixTests(unittest.TestCase):
+    """A video Player Detection never ran on: the label is the whole fix."""
+
+    def test_the_label_lands_and_nothing_derived_is_created(self) -> None:
+        with tempfile.TemporaryDirectory() as raw_dir:
+            root = Path(raw_dir)
+            records, actions = root / "records.jsonl", root / "actions.jsonl"
+            write_jsonl(actions, {}, [{"id": "e1", "frame": 10, "label": "serve"}])
+            with (
+                patch.object(store, "records_path", return_value=records),
+                patch.object(pipeline, "action_annotation_path", return_value=actions),
+                patch.object(actor_fix.actor_labels, "actors_path", return_value=root / "actors.json"),
+                patch.object(actor_fix.actor_labels._store, "_cache", StatCache()),
+                patch.object(pipeline, "apply_actor_fix") as derived,
+            ):
+                result = actor_fix.apply(
+                    "v", "unused.mp4",
+                    actor_fix.PickActor(mode="pick", event_id="e1", box=(1, 2, 3, 4)),
+                )
+                labels = actor_fix.actor_labels.load("v")
+
+            derived.assert_not_called()
+            self.assertFalse(records.exists())
+            self.assertEqual(labels["e1"], ActorLabel(ActorVerdict.MANUAL, 10, (1, 2, 3, 4)))
+            self.assertEqual((result.refreshing_models, result.actor_revision), ((), None))
 
 
 if __name__ == "__main__":

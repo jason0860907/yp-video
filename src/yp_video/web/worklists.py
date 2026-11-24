@@ -25,11 +25,11 @@ from yp_video.actor import review as actor_review
 from yp_video.actor.box_check import pending_count as box_check_pending
 from yp_video.config import CutKind, cut_kind_of
 from yp_video.core import label_done
-from yp_video.core.jsonl import read_jsonl_header
 from yp_video.core.rallies import RALLY_SOURCES, rally_sources
 from yp_video.extraction import pipeline as extraction_pipeline
 from yp_video.extraction import store as extraction_store
 from yp_video.extraction.prerequisites import PipelineState, prerequisites
+from yp_video.person.dense import dense_path
 from yp_video.reid import store as reid_store
 from yp_video.web.action_annotations import annotation_state
 from yp_video.web.r2_client import all_cut_paths, r2_client, resolve_cut
@@ -68,12 +68,6 @@ class ActionVideo(TypedDict):
     frame_cache: FrameCacheState
 
 
-class AutoCounts(TypedDict):
-    ok: int
-    multi: int
-    miss: int
-
-
 class AssociationVideo(TypedDict):
     name: str
     kind: CutKind
@@ -86,8 +80,6 @@ class AssociationVideo(TypedDict):
     box_check: int
     done: bool
     status: LabelStatus
-    auto_counts: AutoCounts
-    pipeline: PipelineState
 
 
 class ReidVideo(TypedDict):
@@ -213,33 +205,26 @@ def action_videos() -> list[ActionVideo]:
 
 
 def association_videos() -> list[AssociationVideo]:
-    """Extracted videos and how much of their actor review is left.
+    """Videos ready for actor review and how much of it is left.
 
-    Action annotations own event membership and labels. Extraction records
-    only say which of those events have detector output, and actor labels say
+    Action annotations own event membership and labels, and actor labels say
     which current, labelable ids a human reviewed.
 
     A video missing anything association is built on is left out entirely
     rather than listed as a row with nothing in it: actions own which events
-    exist, rallies own which of them are in play (and namespace every tracklet
-    an answer can name), and records hold the detections a pick chooses among.
-    Producing any of the three is another page's job, so a row here would be a
-    dead end — the pipeline chips on those pages are where the gap belongs.
+    exist, rallies own which of them are in play, and the dense 2XLarge pass
+    holds the boxes a pick chooses among. Player Detection is not among them
+    (extraction/board.py). Producing any of the three is another page's job,
+    so a row here would be a dead end.
     """
     results = []
     for path in sorted(all_cut_paths(), key=lambda p: p.name):
-        # Cheapest gate first: this walks every cut on every page load, and
-        # only a minority have been extracted at all.
-        records = extraction_store.records_path(path.stem)
-        if not records.exists():
+        # Cheapest gate first: this walks every cut on every page load.
+        if not dense_path(path.stem).exists():
             continue
-        pipeline = prerequisites(path.stem)
-        if not (pipeline.rally_sources and pipeline.has_action):
+        if not (rally_sources(path.stem) and extraction_store.action_annotation_path(path.stem)):
             continue
-        header = read_jsonl_header(records)
-        progress = actor_review.review_progress(
-            path.stem, float(header.get("fps") or 0)
-        )
+        progress = actor_review.review_progress(path.stem)
         done = label_done.is_done(path.stem, "association")
         results.append(
             {
@@ -257,21 +242,9 @@ def association_videos() -> list[AssociationVideo]:
                 # The human "I'm finished" flag — a verdict counts can't
                 # derive, same as ReID's (see core/label_done.py).
                 "done": done,
-                # A listed row exists only once extraction ran, and the auto
-                # policy's picks are machine pre-annotation awaiting review.
                 "status": ("done" if done
                            else "in-progress" if progress.reviewed > 0
                            else "pre-annotate"),
-                # The automatic policy's own outcome, for context on how much
-                # of the remainder is likely to just need confirming. These
-                # are detector-run diagnostics; unlike progress above they
-                # deliberately describe that immutable run.
-                "auto_counts": AutoCounts(
-                    ok=int(header.get("ok") or 0),
-                    multi=int(header.get("multi") or 0),
-                    miss=int(header.get("miss") or 0),
-                ),
-                "pipeline": pipeline.payload(),
             }
         )
     return results

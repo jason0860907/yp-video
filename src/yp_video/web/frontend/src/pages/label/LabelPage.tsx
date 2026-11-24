@@ -31,6 +31,7 @@ import { toast } from '@/components/feedback/toast';
 import { CopyFilenameButton } from '@/components/video/CopyFilenameButton';
 import { KindBadge } from '@/components/video/KindBadge';
 import { PipelineChips } from '@/components/video/PipelineChips';
+import { LABELING_ROWS } from '@/components/labeling/useVideoLabelingData';
 import { VideoCombobox } from '@/components/video/VideoCombobox';
 import { RALLY_MODE, RallyPanel } from './RallyPanel';
 import { ACTION_MODE, ActionPanel } from './ActionPanel';
@@ -160,7 +161,10 @@ export function LabelPage() {
       );
       void qc.invalidateQueries({ queryKey: [active.listKey] });
       void qc.invalidateQueries({ queryKey: ['label-stats'] });
-      if (res.confirmed) void qc.invalidateQueries({ queryKey: ['extraction-records', video] });
+      if (res.confirmed) {
+        void qc.invalidateQueries({ queryKey: LABELING_ROWS.association(video).queryKey });
+        void qc.invalidateQueries({ queryKey: LABELING_ROWS.reid(video).queryKey });
+      }
     } catch (e) {
       toast.error(`Done failed: ${errMsg(e)}`);
     } finally {
@@ -243,7 +247,7 @@ export function LabelPage() {
                 // name plus what's blocking it (pipeline chips when we have
                 // them, hover for the full hint).
                 const ready = active.available(v);
-                const pipeline = (v.reid ?? v.assoc)?.pipeline;
+                const pipeline = v.reid?.pipeline;
                 return (
                   <>
                     <KindBadge kind={v.kind} />

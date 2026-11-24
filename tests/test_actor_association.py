@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from fastapi import HTTPException
@@ -14,7 +15,7 @@ from yp_video.actor import labels as actor_labels
 from yp_video.actor.labels import ActorLabel, ActorVerdict
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import write_jsonl
-from yp_video.extraction import actor_fix, done
+from yp_video.extraction import actor_fix, board, done, pipeline, store
 from yp_video.web.routers import actor_association as router
 
 
@@ -165,15 +166,43 @@ class DoneConfirmationTests(unittest.TestCase):
         )
 
 
+@contextmanager
+def _association_video(records: list[dict] | None, actions: list[dict]):
+    """One scratch video as the Association endpoints read it: its action
+    annotation, its extraction records (None = Player Detection never ran),
+    an empty label store and a 30 fps dense pass."""
+    with tempfile.TemporaryDirectory() as raw_dir:
+        root = Path(raw_dir)
+        record_file = root / "match.jsonl"
+        action = root / "match_actions.jsonl"
+        if records is not None:
+            write_jsonl(record_file, {"video": "match"}, records)
+        write_jsonl(action, {"video": "match"}, actions)
+        with (
+            patch.object(board, "records_path", return_value=record_file),
+            patch.object(board, "action_annotation_path", return_value=action),
+            patch.object(board, "_rows_cache", StatCache()),
+            patch.object(store, "action_annotation_path", return_value=action),
+            patch.object(store, "load_rallies", return_value=[]),
+            patch.object(pipeline, "action_annotation_path", return_value=action),
+            patch.object(actor_labels, "actors_path", return_value=root / "match_actors.json"),
+            patch.object(actor_labels._store, "_cache", StatCache()),
+            patch.object(router, "_dense", return_value=SimpleNamespace(fps=30.0)),
+            patch("yp_video.actor.box_style.dense_pass", return_value=None),
+            patch.object(router, "sync_to_r2"),
+        ):
+            yield root
+
+
 class FixEndpointTests(unittest.TestCase):
     """The Association Label page's one write, wired end to end.
 
-    Everything below the router is stubbed on purpose: this asserts the
-    transport contract (mode → command, response shape, deferred refresh
-    scheduled) without letting a test touch a real video's annotations.
+    The service is stubbed on purpose: this asserts the transport contract
+    (mode → command, response shape, deferred refresh scheduled) without
+    letting a test touch a real video's annotations.
     """
 
-    def _fix(self, payload: dict) -> tuple[dict, tuple, list]:
+    def _fix(self, payload: dict, *, revision: int | None = 3) -> tuple[dict, tuple, list]:
         adapter = TypeAdapter(router.ActorFixRequest)
         applied: list[tuple] = []
 
@@ -188,22 +217,18 @@ class FixEndpointTests(unittest.TestCase):
 
         def fake_apply(stem, frame_source, command):
             applied.append((command, frame_source))
+            label = command.label_on(7)
+            actor_labels.save(stem, command.event_id, label)
             return actor_fix.ActorFixResult(
-                record={"id": "e1", "actor_revision": 3, "detections": [{"box": [1, 2, 3, 4], "score": 0.9}]},
-                label=command.label_on(7),
-                refreshing_models=("clip-reid",),
-                actor_revision=3,
+                label=label,
+                refreshing_models=("clip-reid",) if revision is not None else (),
+                actor_revision=revision,
             )
 
-        with tempfile.TemporaryDirectory() as raw_dir:
-            records = Path(raw_dir) / "match.jsonl"
-            records.touch()
+        with _association_video(None, [{"id": "e1", "frame": 7, "label": "set"}]) as root:
             with (
-                patch.object(router, "resolve_cut", return_value=Path(raw_dir) / "match.mp4"),
+                patch.object(router, "resolve_cut", return_value=root / "match.mp4"),
                 patch.object(router, "cut_frame_source", return_value="https://r2.test/match.mp4"),
-                patch.object(
-                    router.extraction_store, "records_path", return_value=records
-                ),
                 patch.object(router.actor_fix, "apply", side_effect=fake_apply),
             ):
                 response = router.fix(
@@ -221,13 +246,22 @@ class FixEndpointTests(unittest.TestCase):
         )
         # An R2-only cut is read over its URL, not required on disk.
         self.assertEqual(frame_source, "https://r2.test/match.mp4")
+        self.assertEqual(response["record"]["id"], "e1")
         self.assertEqual(response["record"]["actor_review"], "manual")
-        self.assertNotIn("track_link", response)
         self.assertEqual(response["refreshing_models"], ("clip-reid",))
         # Every matrix is refreshed after the response; unscheduled, they'd
         # stay silently stale.
         self.assertEqual(len(scheduled), 1)
         self.assertEqual(scheduled[0][2]["expected_revision"], 3)
+
+    def test_without_records_nothing_is_left_to_refresh(self) -> None:
+        response, _applied, scheduled = self._fix(
+            {"mode": "occluded", "event_id": "e1"}, revision=None
+        )
+
+        self.assertEqual(response["record"]["actor_review"], "occluded")
+        self.assertEqual(response["refreshing_models"], ())
+        self.assertEqual(scheduled, [])
 
     def test_revert_reports_the_event_as_unreviewed_again(self) -> None:
         response, (command, _frame_source), _scheduled = self._fix(
@@ -245,16 +279,12 @@ class FixEndpointTests(unittest.TestCase):
             with self.subTest(extra=extra), self.assertRaises(ValueError):
                 adapter.validate_python({"mode": "pick", "event_id": "e1", "box": [1, 2, 3, 4], **extra})
 
-    def test_a_video_without_records_is_a_404(self) -> None:
+    def test_a_video_without_a_dense_pass_is_a_404(self) -> None:
         adapter = TypeAdapter(router.ActorFixRequest)
         with tempfile.TemporaryDirectory() as raw_dir:
             with (
                 patch.object(router, "resolve_cut", return_value=Path(raw_dir) / "m.mp4"),
-                patch.object(
-                    router.extraction_store,
-                    "records_path",
-                    return_value=Path(raw_dir) / "missing.jsonl",
-                ),
+                patch.object(router, "dense_pass", return_value=None),
                 patch.object(router.actor_fix, "apply") as apply,
             ):
                 with self.assertRaises(HTTPException) as caught:
@@ -265,6 +295,30 @@ class FixEndpointTests(unittest.TestCase):
                     )
         self.assertEqual(caught.exception.status_code, 404)
         apply.assert_not_called()
+
+
+class EventsEndpointTests(unittest.TestCase):
+    def test_a_video_detection_never_ran_on_lists_every_event_unassociated(self) -> None:
+        actions = [
+            {"id": "a", "frame": 30, "label": "serve"},
+            {"id": "b", "frame": 60, "label": "receive"},
+            {"id": "c", "frame": 90, "label": "score"},
+        ]
+        with _association_video(None, actions):
+            actor_labels.save("match", "b", ActorLabel(ActorVerdict.AGENT_OCCLUDED))
+            dense = SimpleNamespace(fps=30.0, meta={"frame_size": [1920, 1080]})
+            with patch.object(router, "_dense", return_value=dense):
+                response = router.get_events("match.mp4")
+
+        self.assertEqual(response["meta"]["fps"], 30.0)
+        self.assertEqual(response["meta"]["frame_size"], (1920, 1080))
+        self.assertEqual([e["id"] for e in response["meta"]["action_events"]], ["a", "b", "c"])
+        # A score has nobody to identify.
+        rows = {r["id"]: r for r in response["records"]}
+        self.assertEqual(list(rows), ["a", "b"])
+        self.assertEqual(rows["a"]["resolution"], "unresolved")
+        self.assertEqual(rows["a"]["label"], "serve")
+        self.assertEqual(rows["b"]["actor_review"], "agent_occluded")
 
 
 class ConfirmEndpointTests(unittest.TestCase):
@@ -281,35 +335,8 @@ class ConfirmEndpointTests(unittest.TestCase):
         },
     ]
 
-    @contextmanager
-    def _video(self):
-        with tempfile.TemporaryDirectory() as raw_dir:
-            root = Path(raw_dir)
-            records = root / "match.jsonl"
-            action = root / "match_actions.jsonl"
-            write_jsonl(records, {"video": "match"}, self.RECORDS)
-            write_jsonl(
-                action,
-                {"video": "match"},
-                [{"id": r["id"], "frame": r["frame"]} for r in self.RECORDS],
-            )
-            with (
-                patch.object(
-                    router.extraction_store, "records_path", return_value=records
-                ),
-                patch.object(
-                    router.extraction_store,
-                    "action_annotation_path",
-                    return_value=action,
-                ),
-                patch.object(
-                    actor_labels, "actors_path", return_value=root / "match_actors.json"
-                ),
-                patch.object(actor_labels._store, "_cache", StatCache()),
-                patch("yp_video.actor.box_style.dense_pass", return_value=None),
-                patch.object(router, "sync_to_r2"),
-            ):
-                yield
+    def _video(self, records=RECORDS):
+        return _association_video(records, [{"id": r["id"], "frame": r["frame"]} for r in self.RECORDS])
 
     def test_confirms_automatic_picks_and_leaves_a_human_fix_alone(self) -> None:
         with self._video():
@@ -367,6 +394,16 @@ class ConfirmEndpointTests(unittest.TestCase):
         self.assertEqual(response["confirmed"], {"fixed": "confirmed", "miss": "occluded"})
         self.assertEqual(labels["fixed"], ActorLabel(ActorVerdict.CONFIRMED, 3, (9.0, 10.0, 11.0, 12.0)))
         self.assertEqual(labels["miss"].verdict, ActorVerdict.OCCLUDED)
+
+    def test_without_records_only_agent_proposals_are_confirmable(self) -> None:
+        with self._video(records=None):
+            actor_labels.save("match", "auto-a", ActorLabel(ActorVerdict.AGENT, 1, (1, 2, 3, 4)))
+            with self.assertRaises(HTTPException) as caught:
+                router.confirm("match.mp4", router.ConfirmRequest(event_ids=["auto-b"]))
+            response = router.confirm("match.mp4", router.ConfirmRequest(event_ids=["auto-a"]))
+
+        self.assertEqual(caught.exception.status_code, 400)
+        self.assertEqual(response["confirmed"], {"auto-a": "confirmed"})
 
     def test_a_miss_cannot_be_confirmed(self) -> None:
         """It needs a real verdict; reporting success would be a lie."""

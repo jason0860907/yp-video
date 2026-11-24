@@ -27,13 +27,9 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import Field
 
-from yp_video.actor import labels as actor_labels
 from yp_video.config import CutKind, cut_kind_of
-from yp_video.contracts.action import event_id
-from yp_video.core.cache import StatCache
-from yp_video.core.jsonl import read_jsonl, read_jsonl_cached, read_jsonl_header
-from yp_video.core.rallies import load_rallies
-from yp_video.extraction import pipeline
+from yp_video.core.jsonl import read_jsonl_header
+from yp_video.extraction import board, pipeline
 from yp_video.extraction import store as extraction_store
 from yp_video.extraction.prerequisites import PipelineState, prerequisites
 from yp_video.tracklets import store as tracks_store
@@ -44,12 +40,6 @@ from yp_video.web.schemas import StrictModel
 
 log = logging.getLogger(__name__)
 router = APIRouter()
-
-
-# Slimmed UI payload, rebuilt when the detector output OR either annotation
-# source changes. Values are shared across requests — read-only, like
-# everything cached.
-_slim_records_cache: StatCache = StatCache()
 
 
 class ExtractionVideo(TypedDict):
@@ -183,61 +173,15 @@ def records(name: str) -> ExtractionRecords:
     path = extraction_store.records_path(stem)
     if not path.exists():
         raise HTTPException(404, f"No extraction records for {stem}")
-    # Cached parse shares objects across requests — filter into copies, never
-    # mutate what read_jsonl_cached hands out.
-    meta, _records = read_jsonl_cached(path)
-    meta = dict(meta)
-    # The video-sync overlay needs fps (frame ↔ time); the rally navigator
-    # reads the LIVE rally store — the action file carries no rally copy,
-    # so a rally re-edit reaches the boards without re-saving the action
-    # annotation. The full event list (score / non-visible included, which
-    # extraction skips) rides along for the boards' action sidebar.
-    ann = extraction_store.action_annotation_path(stem)
-    if ann is not None:
-        ann_meta, ann_events = read_jsonl(ann)
-        if not meta.get("fps") and ann_meta.get("fps"):
-            meta["fps"] = ann_meta["fps"]
-        fps = float(meta.get("fps") or 0)
-        meta["action_events"] = [
-            {
-                "id": event_id(event),
-                "frame": event.get("frame"),
-                "time": (
-                    float(event["frame"]) / fps
-                    if fps and event.get("frame") is not None
-                    else None
-                ),
-                "label": event.get("label"),
-                "visible": event.get("visible", True),
-            }
-            for event in ann_events
-            if event.get("frame") is not None
-        ]
-    meta["rallies"] = load_rallies(stem)
-    sources = [path, *extraction_store.action_source_paths(stem)]
-    rows = _slim_records_cache.get(
-        stem, sources, lambda: _slim_records(path, stem)
-    )
-    labels = actor_labels.load(stem)
-    records = [
-        {
-            **record,
-            "actor_review": labels[record["id"]].verdict.value if record["id"] in labels else "unreviewed",
-        }
-        for record in rows
-    ]
-    return {"meta": meta, "records": records}
-
-
-def _slim_records(path: Path, stem: str) -> list[dict]:
-    meta, records = read_jsonl_cached(path)
-    # Only the events somebody can actually be identified in — a score has no
-    # player, and nobody is tracked between rallies (extraction/store.py) —
-    # including events added since detection ran, which a fix records
-    # (pipeline.unextracted_records). Frame order, like a detection pass.
-    rows = [*records, *pipeline.unextracted_records(records, stem)]
-    labelable = extraction_store.labelable(rows, stem, float(meta.get("fps") or 0))
-    return sorted(labelable, key=lambda r: r["frame"])
+    # Cached parse shares objects across requests — copy, never mutate.
+    meta = dict(read_jsonl_header(path))
+    if not meta.get("fps"):
+        ann = extraction_store.action_annotation_path(stem)
+        if ann is not None:
+            meta["fps"] = read_jsonl_header(ann).get("fps")
+    fps = float(meta.get("fps") or 0)
+    rows = board.labelable_records(stem, fps)
+    return {"meta": {**meta, **board.video_context(stem, fps)}, "records": board.with_verdicts(stem, rows)}
 
 
 @router.get("/crop/{name}/{crop_file}")

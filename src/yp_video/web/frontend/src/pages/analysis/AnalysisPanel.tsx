@@ -39,7 +39,7 @@ export function AnalysisPanel({ video }: { video: string }) {
   });
   const state = query.data;
   const fit = state?.fit ?? null;
-  const { meta, tracksQuery } = useVideoLabelingData(video);
+  const { meta, tracksQuery } = useVideoLabelingData(video, 'reid');
   const fps = meta.fps;
 
   const [aspect, setAspect] = useState(16 / 9);

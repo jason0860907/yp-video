@@ -2,8 +2,11 @@
 
 Serves the Association Label page — which video still has unreviewed actors,
 and the one write that answers "this person performed this action". Player
-identity is the ReID router's business; the only thing the two share is the
-extraction records they both read.
+identity is the ReID router's business. What this page stands on is the
+action annotation, the rallies and the dense 2XLarge pass: a pick is one of
+that pass's boxes, so Player Detection is not a prerequisite. Its records,
+where they exist, add the automatic picks to confirm, and a fix keeps them
+(and the ReID crops cut from them) in step.
 """
 
 from __future__ import annotations
@@ -16,11 +19,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from yp_video.actor import labels as actor_labels
 from yp_video.actor.box_check import BoxCheckEntry, box_check
+from yp_video.actor.box_style import dense_pass
 from yp_video.core import label_done
-from yp_video.core.jsonl import read_jsonl_cached
-from yp_video.extraction import actor_fix
+from yp_video.extraction import actor_fix, board
 from yp_video.extraction import done as extraction_done
-from yp_video.extraction import store as extraction_store
+from yp_video.extraction.board import VideoContext
+from yp_video.person.dense import DensePass
 from yp_video.web import audit, worklists
 from yp_video.web.r2_client import (
     cut_frame_source,
@@ -43,6 +47,41 @@ def get_box_check(name: str) -> list[BoxCheckEntry]:
     whether its label box is one of them (actor/box_check.py). Empty without
     a dense pass."""
     return box_check(Path(name).stem)
+
+
+class AssociationMeta(VideoContext):
+    fps: float
+    frame_size: tuple[int, int]
+
+
+class AssociationEvents(TypedDict):
+    """The player's context and one row per labelable event. Each row is an
+    extraction record (the frontend's ``ReidRecord``) with its
+    ``actor_review`` verdict — a stored one, or an unassociated one for an
+    event Player Detection never saw."""
+
+    meta: AssociationMeta
+    records: list[dict[str, Any]]
+
+
+def _dense(stem: str) -> DensePass:
+    """The pass every Association read stands on — its boxes are the picks."""
+    dense = dense_pass(stem)
+    if dense is None:
+        raise HTTPException(404, f"No dense 2XLarge pass for {stem}")
+    return dense
+
+
+@router.get("/events/{name}")
+def get_events(name: str) -> AssociationEvents:
+    stem = Path(name).stem
+    dense = _dense(stem)
+    width, height = dense.meta["frame_size"]
+    rows = board.labelable_records(stem, dense.fps)
+    return {
+        "meta": {"fps": dense.fps, "frame_size": (width, height), **board.video_context(stem, dense.fps)},
+        "records": board.with_verdicts(stem, rows),
+    }
 
 
 class AssociationDone(TypedDict):
@@ -97,14 +136,7 @@ def confirm(name: str, req: ConfirmRequest) -> AssociationConfirmed:
     actually landed.
     """
     stem = Path(name).stem
-    path = extraction_store.records_path(stem)
-    if not path.exists():
-        raise HTTPException(404, f"No extraction records for {stem}")
-
-    meta, records = read_jsonl_cached(path)
-    records = extraction_store.labelable(
-        records, stem, float(meta.get("fps") or 0)
-    )
+    records = board.labelable_records(stem, _dense(stem).fps)
     labels = actor_labels.load(stem)
     confirmable = {
         **extraction_done.confirmations_for(stem, records),
@@ -191,10 +223,9 @@ def _actor_rows(labels) -> list[dict]:
 
 
 class ReidActorFixResponse(TypedDict):
-    #: The changed extraction record, joined to its current action event and
-    #: carrying ``actor_review``. Open: it is the stored record verbatim
-    #: (extraction/pipeline.py writes it), the same row /extraction/records
-    #: serves.
+    #: The event's row as /events serves it after the fix: its extraction
+    #: record (stored, or unassociated without Player Detection) carrying
+    #: ``actor_review``.
     record: dict[str, Any]
     #: Non-visible models refreshing after the response.
     refreshing_models: list[str]
@@ -217,8 +248,7 @@ def fix(
     if video_path is None:
         raise HTTPException(404, f"Video not found: {name}")
     stem = video_path.stem
-    if not extraction_store.records_path(stem).exists():
-        raise HTTPException(404, f"No extraction records for {stem}")
+    fps = _dense(stem).fps
 
     before = _actor_rows(actor_labels.load(stem))
     command: actor_fix.ActorFixCommand = req.command
@@ -232,9 +262,11 @@ def fix(
         raise HTTPException(400, str(exc)) from exc
     sync_to_r2(actor_labels.actors_path(stem), "association/annotations")
 
-    current = extraction_store.with_current_actions([result.record], stem)
-    record = current[0] if current else result.record
-    record["actor_review"] = result.label.verdict.value if result.label else "unreviewed"
+    record = next(
+        row
+        for row in board.with_verdicts(stem, board.labelable_records(stem, fps))
+        if row["id"] == req.event_id
+    )
     # Association is labeling work like the other three panels: one call per
     # event the reviewer re-points. Folded into a session (see audit's
     # _COALESCING) so an afternoon of it reads as hours worked rather than as
@@ -246,13 +278,14 @@ def fix(
         key=lambda r: r["id"],
         event=req.event_id,
     )
-    background_tasks.add_task(
-        actor_fix.refresh_deferred,
-        stem,
-        req.event_id,
-        models=result.refreshing_models,
-        expected_revision=result.actor_revision,
-    )
+    if result.actor_revision is not None:
+        background_tasks.add_task(
+            actor_fix.refresh_deferred,
+            stem,
+            req.event_id,
+            models=result.refreshing_models,
+            expected_revision=result.actor_revision,
+        )
     return {
         "record": record,
         "refreshing_models": result.refreshing_models,

@@ -266,14 +266,9 @@ class ActorFixTransactionTests(unittest.TestCase):
         """The records may still carry the frame detection saw; the label
         takes the action annotation's, which the picker was showing."""
         with tempfile.TemporaryDirectory() as raw_dir:
-            root = Path(raw_dir)
-            records, action = root / "match.jsonl", root / "match_actions.jsonl"
-            write_jsonl(records, {}, [{"id": "e1", "frame": 10}])
+            action = Path(raw_dir) / "match_actions.jsonl"
             write_jsonl(action, {}, [{"id": "e1", "frame": 12}])
-            with (
-                patch.object(actor_fix.extraction_store, "records_path", return_value=records),
-                patch.object(actor_fix.extraction_store, "action_annotation_path", return_value=action),
-            ):
+            with patch.object(actor_fix.pipeline, "action_annotation_path", return_value=action):
                 self.assertEqual(actor_fix._event_frame("match", "e1"), 12)
                 with self.assertRaises(KeyError):
                     actor_fix._event_frame("match", "gone")

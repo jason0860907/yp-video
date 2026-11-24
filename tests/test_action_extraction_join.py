@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
-from dataclasses import replace
+from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import patch
 
@@ -11,7 +11,6 @@ from yp_video.actor.labels import ActorLabel, ActorVerdict
 from yp_video.core.cache import StatCache
 from yp_video.core.jsonl import write_jsonl
 from yp_video.extraction import store
-from yp_video.extraction.prerequisites import Prerequisites
 from yp_video.web import worklists
 
 
@@ -113,25 +112,26 @@ class CurrentActionJoinTests(unittest.TestCase):
 
 
 class AssociationProgressTests(unittest.TestCase):
+    def _listing(self, root: Path, video: Path, action: Path, *, dense: bool = True, rallies=("annotation",)):
+        dense_file = root / "match_dense.npz"
+        if dense:
+            dense_file.touch()
+        return (
+            patch.object(worklists, "all_cut_paths", return_value=[video]),
+            patch.object(worklists, "dense_path", return_value=dense_file),
+            patch.object(worklists, "rally_sources", return_value=list(rallies)),
+            patch.object(store, "action_annotation_path", return_value=action),
+            patch.object(store, "load_rallies", return_value=[{"start": 0.0, "end": 10.0}]),
+            patch.object(actor_labels, "actors_path", return_value=root / "match_actors.json"),
+            patch.object(actor_labels._store, "_cache", StatCache()),
+        )
+
     def test_progress_counts_only_current_labelable_action_ids(self) -> None:
-        with tempfile.TemporaryDirectory() as raw_dir:
+        with tempfile.TemporaryDirectory() as raw_dir, ExitStack() as stack:
             root = Path(raw_dir)
             video = root / "match.mp4"
             video.touch()
-            records = root / "match.jsonl"
             action = root / "match_actions.jsonl"
-            actors = root / "match_actors.json"
-            write_jsonl(
-                records,
-                {"fps": 30, "events": 4, "ok": 3, "miss": 1},
-                [
-                    {"id": "reviewed", "frame": 30, "label": "set", "status": "ok"},
-                    {"id": "pending", "frame": 60, "label": "set", "status": "miss"},
-                    # Both are stale snapshots and must not block Done.
-                    {"id": "now-score", "frame": 90, "label": "spike", "status": "ok"},
-                    {"id": "outside", "frame": 900, "label": "serve", "status": "ok"},
-                ],
-            )
             write_jsonl(
                 action,
                 {"fps": 30},
@@ -142,100 +142,45 @@ class AssociationProgressTests(unittest.TestCase):
                     {"id": "outside", "frame": 900, "time": 30.0, "label": "serve"},
                 ],
             )
-
-            with (
-                patch.object(worklists, "all_cut_paths", return_value=[video]),
-                patch.object(store, "records_path", return_value=records),
-                patch.object(store, "action_annotation_path", return_value=action),
-                patch.object(
-                    store,
-                    "load_rallies",
-                    return_value=[{"start": 0.0, "end": 10.0}],
-                ),
-                patch.object(actor_labels, "actors_path", return_value=actors),
-                patch.object(actor_labels._store, "_cache", StatCache()),
-                patch.object(
-                    worklists,
-                    "prerequisites",
-                    return_value=Prerequisites(
-                        rally_sources=["annotation"],
-                        has_action=True,
-                        has_tracks=True,
-                        has_masks=True,
-                        tracks_stale=False,
-                        has_records=True,
-                    ),
-                ),
-            ):
-                actor_labels.save(
-                    "match",
-                    "reviewed",
-                    ActorLabel(ActorVerdict.CONFIRMED, 30, (1, 2, 3, 4)),
-                )
-                # Old verdicts are durable, but do not count toward current
-                # progress or its verdict breakdown.
-                actor_labels.save(
-                    "match",
-                    "now-score",
-                    ActorLabel(ActorVerdict.OCCLUDED),
-                )
-                result = worklists.association_videos()[0]
+            for p in self._listing(root, video, action):
+                stack.enter_context(p)
+            actor_labels.save(
+                "match", "reviewed", ActorLabel(ActorVerdict.CONFIRMED, 30, (1, 2, 3, 4))
+            )
+            # Old verdicts are durable, but do not count toward current
+            # progress or its verdict breakdown.
+            actor_labels.save("match", "now-score", ActorLabel(ActorVerdict.OCCLUDED))
+            result = worklists.association_videos()[0]
 
         self.assertEqual(result["event_count"], 2)
         self.assertEqual(result["reviewed"], 1)
         self.assertEqual(result["unreviewed"], 1)
         self.assertEqual(result["verdicts"], {"confirmed": 1})
-        self.assertEqual(
-            result["auto_counts"], {"ok": 3, "multi": 0, "miss": 1}
-        )
 
     def test_a_video_missing_an_association_input_is_not_listed(self) -> None:
-        """Extraction alone does not put a video on this list. Without actions
-        there are no events, and without rallies there are no tracklet keys for
-        an answer to name — a row would offer work that cannot be done here.
-        """
+        """Actions own the events, rallies which are in play, and the dense
+        pass the boxes a pick chooses among — without any of them a row would
+        offer work that cannot be done here. Player Detection is not one: a
+        video it never ran on is listed."""
         with tempfile.TemporaryDirectory() as raw_dir:
             root = Path(raw_dir)
             video = root / "match.mp4"
             video.touch()
-            records = root / "match.jsonl"
             action = root / "match_actions.jsonl"
-            write_jsonl(records, {"fps": 30}, [{"id": "a", "frame": 30, "label": "set"}])
             write_jsonl(action, {"fps": 30}, [{"id": "a", "frame": 30, "label": "set"}])
-            complete = Prerequisites(
-                rally_sources=["annotation"],
-                has_action=True,
-                has_tracks=True,
-                has_masks=True,
-                tracks_stale=False,
-                has_records=True,
-            )
 
-            def listed(pipeline: Prerequisites, record_file: Path) -> list[dict]:
-                with (
-                    patch.object(
-                        worklists, "all_cut_paths", return_value=[video]
-                    ),
-                    patch.object(
-                        worklists, "prerequisites", return_value=pipeline
-                    ),
-                    patch.object(store, "records_path", return_value=record_file),
-                    patch.object(store, "action_annotation_path", return_value=action),
-                    patch.object(
-                        store, "load_rallies", return_value=[{"start": 0.0, "end": 10.0}]
-                    ),
-                    patch.object(actor_labels, "actors_path", return_value=root / "a.json"),
-                    patch.object(actor_labels._store, "_cache", StatCache()),
-                ):
+            def listed(**kwargs) -> list[dict]:
+                with ExitStack() as stack:
+                    for p in self._listing(root, video, kwargs.pop("action", action), **kwargs):
+                        stack.enter_context(p)
                     return worklists.association_videos()
 
-            # The fixture is listable, so each removal below is the only cause.
-            self.assertEqual(len(listed(complete, records)), 1)
-
-            for missing, value in (("rally_sources", []), ("has_action", False)):
-                with self.subTest(missing=missing):
-                    gap = replace(complete, **{missing: value})
-                    self.assertEqual(listed(gap, records), [])
-
-            with self.subTest(missing="records"):
-                self.assertEqual(listed(complete, root / "absent.jsonl"), [])
+            # No records file anywhere in the fixture, and it is listed.
+            self.assertEqual(len(listed()), 1)
+            with self.subTest(missing="rallies"):
+                self.assertEqual(listed(rallies=()), [])
+            with self.subTest(missing="action"):
+                self.assertEqual(listed(action=None), [])
+            with self.subTest(missing="dense"):
+                (root / "match_dense.npz").unlink()
+                self.assertEqual(listed(dense=False), [])

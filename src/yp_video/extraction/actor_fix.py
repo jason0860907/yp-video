@@ -35,6 +35,7 @@ from typing import Literal
 
 from yp_video.actor import labels as actor_labels
 from yp_video.actor.labels import ActorLabel, ActorVerdict
+from yp_video.contracts.action import event_id as action_event_id
 from yp_video.core.jsonl import atomic_binary, read_jsonl_cached
 from yp_video.extraction import pipeline
 from yp_video.extraction import store as extraction_store
@@ -84,10 +85,12 @@ ActorFixCommand = PickActor | MarkOccluded | RevertActor
 
 @dataclass(frozen=True)
 class ActorFixResult:
-    record: dict
     label: ActorLabel | None
+    #: Matrices the fix made stale, and the record revision their background
+    #: refresh must still find — empty / None for a video Player Detection
+    #: never ran on, which has no record, crop or embedding to follow.
     refreshing_models: tuple[str, ...]
-    actor_revision: int
+    actor_revision: int | None
 
 
 @dataclass(frozen=True)
@@ -128,7 +131,8 @@ def _directory_files(path: Path) -> set[Path]:
 
 
 def apply(stem: str, frame_source: str, command: ActorFixCommand) -> ActorFixResult:
-    """Apply one actor fix: the label, the derived record and its crop.
+    """Apply one actor fix: the label, and — on a video Player Detection ran
+    on — the derived record and its crop.
 
     ``frame_source`` is what OpenCV opens to cut the crop — the local mp4, or
     a presigned R2 URL when the cut isn't on this machine (one seek, so
@@ -139,9 +143,14 @@ def apply(stem: str, frame_source: str, command: ActorFixCommand) -> ActorFixRes
     takes the old vector as current.
     """
     _validate(command)
+    label = command.label_on(_event_frame(stem, command.event_id))
     record_file = extraction_store.records_path(stem)
     if not record_file.exists():
-        raise FileNotFoundError(f"No extraction records for {stem}")
+        # The label is the whole answer: no record, crop or identity was ever
+        # derived from this video, so there is nothing for it to move.
+        with _transaction_lock:
+            actor_labels.save(stem, command.event_id, label)
+        return ActorFixResult(label=label, refreshing_models=(), actor_revision=None)
 
     with (
         _transaction_lock,
@@ -178,7 +187,6 @@ def apply(stem: str, frame_source: str, command: ActorFixCommand) -> ActorFixRes
         try:
             # Derived record first: it is the only step that can fail on the
             # video itself, and a failed fix must not leave a label behind.
-            label = command.label_on(_event_frame(stem, command.event_id))
             record = pipeline.apply_actor_fix(
                 stem, frame_source, command.event_id, label
             )
@@ -187,7 +195,6 @@ def apply(stem: str, frame_source: str, command: ActorFixCommand) -> ActorFixRes
             # name was attached to the old one is no longer evidence.
             store.drop_assignment(stem, command.event_id)
             return ActorFixResult(
-                record=record,
                 label=label,
                 refreshing_models=refreshing_models,
                 actor_revision=int(record["actor_revision"]),
@@ -205,12 +212,10 @@ def apply(stem: str, frame_source: str, command: ActorFixCommand) -> ActorFixRes
 
 
 def _event_frame(stem: str, event_id: str) -> int:
-    """The event's current frame — the action annotation's, joined by id."""
-    _meta, records = read_jsonl_cached(extraction_store.records_path(stem))
-    joined = [*records, *pipeline.unextracted_records(records, stem)]
-    for record in extraction_store.with_current_actions(joined, stem):
-        if record["id"] == event_id:
-            return int(record["frame"])
+    """The event's current frame, from the action annotation."""
+    for event in pipeline.load_events(stem):
+        if action_event_id(event) == event_id:
+            return int(event["frame"])
     raise KeyError(f"No current action event {event_id}")
 
 

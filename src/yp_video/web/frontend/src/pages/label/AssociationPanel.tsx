@@ -19,13 +19,11 @@ import { useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { API, api, apiUrl, errMsg } from '@/lib/api';
 import { Badge } from '@/components/ui/Badge';
-import { Card } from '@/components/ui/Card';
-import { STAGE_HINT } from '@/components/video/PipelineChips';
 import { toast } from '@/components/feedback/toast';
 import { EventVideoPlayer, type PlayerHandle } from '@/components/labeling/EventVideoPlayer';
 import { canConfirm, type ActorFix } from '@/components/labeling/shared';
-import { useVideoLabelingData } from '@/components/labeling/useVideoLabelingData';
-import type { ReidActorFixResponse, ReidRecord } from '@/types/api';
+import { LABELING_ROWS, useVideoLabelingData, type LabelingRows } from '@/components/labeling/useVideoLabelingData';
+import type { ReidActorFixResponse } from '@/types/api';
 import { assocStatus } from '@/lib/labelStatus';
 import { STATUS_OPTIONS, type ModeDescriptor, type PlaybackClock } from './mode';
 
@@ -45,10 +43,7 @@ export const ASSOCIATION_MODE: ModeDescriptor = {
     return assocStatus(row) === status;
   },
   available: (row) => Boolean(row.assoc),
-  hint: (row) => {
-    const blocked = row.reid?.pipeline.blocked_on;
-    return blocked ? STAGE_HINT[blocked] : 'Not ready for actor review — needs rallies, action labels and extraction records';
-  },
+  hint: () => 'Not ready for actor review — needs rallies, action labels and a dense 2XLarge pass',
   rowExtras: (row) => {
     const v = row.assoc;
     if (!v) return null;
@@ -82,13 +77,7 @@ export function AssociationPanel({ video, clock }: { video: string; clock?: Play
   const [selectedRally, setSelectedRally] = useState<number | 'all'>('all');
   const playerRef = useRef<PlayerHandle>(null);
 
-  const videosQuery = useQuery({
-    queryKey: ['association-videos'],
-    queryFn: () => api.get('/api/actor-association/videos'),
-  });
-  const videos = useMemo(() => videosQuery.data ?? [], [videosQuery.data]);
-
-  const { records, meta, tracksQuery, trackLinks, actionEvents } = useVideoLabelingData(video);
+  const { records, meta, tracksQuery, trackLinks, actionEvents } = useVideoLabelingData(video, 'association');
   // Every event's 2XLarge boxes — what a pick clicks — and its label's box
   // check (actor/box_check.py).
   const eventBoxesQuery = useQuery({
@@ -116,10 +105,10 @@ export function AssociationPanel({ video, clock }: { video: string; clock?: Play
         params: { path: { name: video } },
         body: { event_id: eventId, ...fix },
       })) as unknown as ReidActorFixResponse;
-      // The POST returns the changed record — patch the large records
-      // payload locally instead of downloading it again.
-      qc.setQueryData<{ meta: Record<string, unknown>; records: ReidRecord[] }>(
-        ['extraction-records', video],
+      // The POST returns the changed row — patch it in locally instead of
+      // downloading every event again.
+      qc.setQueryData<LabelingRows>(
+        LABELING_ROWS.association(video).queryKey,
         (current) =>
           current
             ? {
@@ -141,6 +130,7 @@ export function AssociationPanel({ video, clock }: { video: string; clock?: Play
       void qc.invalidateQueries({ queryKey: ['association-box-check', video] });
       void qc.invalidateQueries({ queryKey: ['tracklet-links', video] });
       void qc.invalidateQueries({ queryKey: ['label-stats'] });
+      void qc.invalidateQueries({ queryKey: LABELING_ROWS.reid(video).queryKey, refetchType: 'none' });
       void qc.invalidateQueries({ queryKey: ['reid-clusters', video], refetchType: 'none' });
       void qc.invalidateQueries({ queryKey: ['reid-players', video], refetchType: 'none' });
     } catch (e) {
@@ -177,8 +167,8 @@ export function AssociationPanel({ video, clock }: { video: string; clock?: Play
         params: { path: { name: video } },
         body: { event_ids: ids },
       });
-      qc.setQueryData<{ meta: Record<string, unknown>; records: ReidRecord[] }>(
-        ['extraction-records', video],
+      qc.setQueryData<LabelingRows>(
+        LABELING_ROWS.association(video).queryKey,
         (current) =>
           current
             ? {
@@ -195,6 +185,7 @@ export function AssociationPanel({ video, clock }: { video: string; clock?: Play
       void qc.invalidateQueries({ queryKey: ['association-box-check', video] });
       void qc.invalidateQueries({ queryKey: ['tracklet-links', video] });
       void qc.invalidateQueries({ queryKey: ['label-stats'] });
+      void qc.invalidateQueries({ queryKey: LABELING_ROWS.reid(video).queryKey, refetchType: 'none' });
       const n = Object.keys(confirmed).length;
       const occluded = Object.values(confirmed).filter((v) => v === 'occluded').length;
       toast.success(
@@ -207,17 +198,8 @@ export function AssociationPanel({ video, clock }: { video: string; clock?: Play
     }
   };
 
-  const pickedVideo = videos.find((v) => v.name === video);
-
   return (
     <div className="space-y-5">
-      {pickedVideo?.pipeline.blocked_on && (
-        <Card>
-          <p className="text-xs text-amber-400">
-            This video is not ready for actor review — {STAGE_HINT[pickedVideo.pipeline.blocked_on]}.
-          </p>
-        </Card>
-      )}
       {video && meta.fps && meta.frame_size && (
         <EventVideoPlayer
           ref={playerRef}

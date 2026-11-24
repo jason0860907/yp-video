@@ -16,22 +16,39 @@ interface VideoMeta {
 // Stable identity while the links load, so memos keyed on them hold.
 const EMPTY_LINKS: TrackLinks = {};
 
-/** The per-video data layer both labeling pages (ReID, Association) share:
- *  extraction records, tracklets (null until tracked — the 404 is an answer,
- *  not an error), the event→tracklet links (their own query: an actor fix
- *  moves them, never the tracklets) and the full action annotation flattened
- *  for the sidebar.
- *  The query keys are shared across the pages too, so switching between them
- *  re-downloads nothing. */
-export function useVideoLabelingData(picked: string) {
-  const resultsQuery = useQuery({
-    queryKey: ['extraction-records', picked],
+/** The event rows a labeling page draws, and the video context around them
+ *  (extraction/board.py). Each page reads its own: ReID Label the extraction
+ *  records, Association Label its events, which need no Player Detection run. */
+export interface LabelingRows {
+  meta: Record<string, unknown>;
+  records: ReidRecord[];
+}
+
+/** Where each page's rows come from — also the cache key its writes patch. */
+export const LABELING_ROWS = {
+  reid: (video: string) => ({
+    queryKey: ['extraction-records', video],
     queryFn: () =>
       // The records themselves are still open on the backend.
-      api.get('/api/extraction/records/{name}', { params: { path: { name: picked } } }) as unknown as Promise<{
-        meta: Record<string, unknown>;
-        records: ReidRecord[];
-      }>,
+      api.get('/api/extraction/records/{name}', { params: { path: { name: video } } }) as unknown as Promise<LabelingRows>,
+  }),
+  association: (video: string) => ({
+    queryKey: ['association-events', video],
+    queryFn: () =>
+      api.get('/api/actor-association/events/{name}', { params: { path: { name: video } } }) as unknown as Promise<LabelingRows>,
+  }),
+} as const;
+
+/** The per-video data layer both labeling pages (ReID, Association) share:
+ *  the page's event rows, tracklets (null until tracked — the 404 is an
+ *  answer, not an error), the event→tracklet links (their own query: an
+ *  actor fix moves them, never the tracklets) and the full action annotation
+ *  flattened for the sidebar.
+ *  The tracklet keys are shared across the pages, so switching between them
+ *  re-downloads none of those. */
+export function useVideoLabelingData(picked: string, rows: keyof typeof LABELING_ROWS) {
+  const resultsQuery = useQuery({
+    ...LABELING_ROWS[rows](picked),
     enabled: Boolean(picked),
   });
   const records = useMemo(() => resultsQuery.data?.records ?? [], [resultsQuery.data]);
@@ -57,7 +74,7 @@ export function useVideoLabelingData(picked: string) {
   });
   const trackLinks = linksQuery.data ?? EMPTY_LINKS;
 
-  // The full action event list rides on the extraction records response
+  // The full action event list rides on the rows response
   // (meta.action_events) — same active annotation file the join uses, so
   // the sidebar and the board can never disagree about the event set.
   const actionEvents = useMemo<SidebarAction[]>(

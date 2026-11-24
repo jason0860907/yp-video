@@ -91,7 +91,7 @@ export function CourtPanel({ video, clock }: { video: string; clock?: PlaybackCl
     queryFn: () => api.get('/api/court/video/{name}', { params: { path: { name: video } } }),
   });
   const state = query.data;
-  const { meta } = useVideoLabelingData(video);
+  const { meta } = useVideoLabelingData(video, 'reid');
   const fps = meta.fps;
 
   const wrapRef = useRef<HTMLDivElement>(null);
